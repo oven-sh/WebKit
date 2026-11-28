@@ -1,0 +1,113 @@
+# The list follows from the program alone. What a function of the program gives back to a built-in that called it is looked at like what is handed to one: under a text an object would be converted, so it is refused;
+# a text is paid for by its characters, each time that it is given.
+# listed: "a".replace("a", () => ["x"]) . sorted: const numeral = doubled("1", 19); [5, 4, 3, 2, 1].sort(() => numeral).length: the engine makes each answer a number . plain: "a".replace("a", () => "z") is entered as ever.   (doubled(text, k): text = text + text, k times)
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /Xx/
+# CHECK-NOT: text /Y5/
+# CHECK: text /Zz/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="listed" variable=g0}, {name="plain" variable=g1}, {name="sorted" variable=g2}]
+entry module=m0
+variable g0 name="listed" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="plain" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="sorted" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="numeral" module=m0 declared={type=anything|absent}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = NewClosure function=f3
+    PutModuleVariable v4 variable=g2
+    v6 = Undefined
+    Return v6
+}
+function f1 name="listed" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="a"
+    v2 = NewClosure function=f4
+    v3 = PropGet v0 key="replace"
+    v4 = Call v3, v0, v1, v2 calleeKey="replace"
+    v5 = String string="x"
+    v6 = PropGet v5 key="toUpperCase"
+    v7 = Call v6, v5 calleeKey="toUpperCase"
+    v8 = Builtin builtin=RegExp
+    v9 = Add v7, v4
+    v10 = Construct v8, -, v9
+    Return v10
+}
+function f2 name="plain" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="a"
+    v2 = NewClosure function=f5
+    v3 = PropGet v0 key="replace"
+    v4 = Call v3, v0, v1, v2 calleeKey="replace"
+    v5 = String string="z"
+    v6 = PropGet v5 key="toUpperCase"
+    v7 = Call v6, v5 calleeKey="toUpperCase"
+    v8 = Builtin builtin=RegExp
+    v9 = Add v7, v4
+    v10 = Construct v8, -, v9
+    Return v10
+}
+function f3 name="sorted" module=m0 position=30 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="1"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    v19 = Add v18, v18
+    PutModuleVariable v19 variable=g3
+    v21 = Integer integer=5
+    v22 = Integer integer=4
+    v23 = Integer integer=3
+    v24 = Integer integer=2
+    v25 = Integer integer=1
+    v26 = NewArray v21, v22, v23, v24, v25 contents=anything
+    v27 = NewClosure function=f6
+    v28 = PropGet v26 key="sort"
+    v29 = Call v28, v26, v27 calleeKey="sort"
+    v30 = PropGet v29 key="length"
+    v31 = String string="y"
+    v32 = PropGet v31 key="toUpperCase"
+    v33 = Call v32, v31 calleeKey="toUpperCase"
+    v34 = Builtin builtin=RegExp
+    v35 = Add v33, v30
+    v36 = Construct v34, -, v35
+    Return v36
+}
+function f4 name="list" module=m0 position=40 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="x"
+    v1 = NewArray v0 contents=anything
+    Return v1
+}
+function f5 name="letter" module=m0 position=50 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="z"
+    Return v0
+}
+function f6 name="held" module=m0 position=60 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    Return v0
+}

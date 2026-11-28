@@ -54,6 +54,7 @@
 #include "WorkerThread.h"
 #include <cmath>
 #include <optional>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
@@ -73,7 +74,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CookieStore);
 
 class CookieStore::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main> {
 public:
-    static Ref<MainThreadBridge> LEGACY_NODELETE create(CookieStore& cookieStore)
+    NODELETE static Ref<MainThreadBridge> create(CookieStore& cookieStore)
     {
         return adoptRef(*new MainThreadBridge(cookieStore));
     }
@@ -81,7 +82,7 @@ public:
     void get(CookieStoreGetOptions&&, URL&&, Function<void(CookieStore&, ExceptionOr<Vector<Cookie>>&&)>&&);
     void set(Cookie&&, URL&&, Function<void(CookieStore&, std::optional<Exception>&&)>&&);
 
-    void LEGACY_NODELETE detach() { m_cookieStore = nullptr; }
+    NODELETE void detach() { m_cookieStore = nullptr; }
 
 private:
     explicit MainThreadBridge(CookieStore&);
@@ -106,7 +107,7 @@ void CookieStore::MainThreadBridge::ensureOnMainThread(Function<void(ScriptExecu
     RefPtr context = m_cookieStore->scriptExecutionContext();
     if (!context)
         return;
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
 
     if (is<Document>(*context)) {
         task(*context);
@@ -300,7 +301,7 @@ void CookieStore::getShared(GetType getType, CookieStoreGetOptions&& options, Re
                 return;
             }
 
-            promise->resolve<IDLDictionary<CookieListItem>>(CookieListItem::fromCookie(WTF::move(cookies[0])));
+            promise->resolve<IDLDictionary<CookieListItem>>(CookieListItem::fromCookie(WTF::move(borrow(cookies)[0])));
         } else {
             promise->resolve<IDLSequence<IDLDictionary<CookieListItem>>>(WTF::map(WTF::move(cookies), [](Cookie&& cookie) {
                 return CookieListItem::fromCookie(WTF::move(cookie));
@@ -385,8 +386,8 @@ void CookieStore::set(CookieInit&& options, Ref<DeferredPromise>&& promise)
             return;
     }
 
-    // FIXME: <rdar://85515842> Obtain the encoded length without allocating and encoding.
-    if (cookie.name.utf8().length() + cookie.value.utf8().length() > maximumNameValuePairSize) {
+    size_t nameAndValueLength;
+    if (!WTF::safeAdd(utf8Length(cookie.name), utf8Length(cookie.value), nameAndValueLength) || nameAndValueLength > maximumNameValuePairSize) {
         promise->reject(Exception { ExceptionCode::TypeError, makeString("The size of the cookie name and value must not be greater than "_s, maximumNameValuePairSize, " bytes"_s) });
         return;
     }
@@ -414,8 +415,7 @@ void CookieStore::set(CookieInit&& options, Ref<DeferredPromise>&& promise)
             return;
         }
 
-        // FIXME: <rdar://85515842> Obtain the encoded length without allocating and encoding.
-        if (cookie.domain.utf8().length() > maximumAttributeValueSize) {
+        if (utf8Length(cookie.domain) > maximumAttributeValueSize) {
             promise->reject(Exception { ExceptionCode::TypeError, makeString("The size of the domain must not be greater than "_s, maximumAttributeValueSize, " bytes"_s) });
             return;
         }
@@ -442,8 +442,7 @@ void CookieStore::set(CookieInit&& options, Ref<DeferredPromise>&& promise)
         return;
     }
 
-    // FIXME: <rdar://85515842> Obtain the encoded length without allocating and encoding.
-    if (cookie.path.utf8().length() > maximumAttributeValueSize) {
+    if (utf8Length(cookie.path) > maximumAttributeValueSize) {
         promise->reject(Exception { ExceptionCode::TypeError, makeString("The size of the path must not be greater than "_s, maximumAttributeValueSize, " bytes"_s) });
         return;
     }

@@ -29,6 +29,7 @@
 
 #include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
+#include "DecimalNumberScanner.h"
 #include "GCMemoryOperations.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -48,6 +49,10 @@
 #include <wtf/unicode/UTF8Conversion.h>
 
 #include "KeywordLookup.h"
+
+#if ENABLE(AOT)
+#include "AOTJSONHooks.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -220,25 +225,27 @@ ALWAYS_INLINE Identifier LiteralParser<CharType, reviverMode>::makeIdentifier(VM
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, JSONCache& cache, typename Lexer::LiteralParserTokenPtr token)
+ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, JSONCache& cache)
 {
+    auto token = m_lexer.currentToken();
     if constexpr (Lexer::isUTF8) {
         if (token->stringOrIdentifierLength > JSONCache::maxLongStringLength) [[unlikely]] {
             if (String string = m_lexer.takeStringOfCurrentToken(); !string.isNull())
                 return jsNontrivialString(vm, WTF::move(string));
         }
     }
+    bool isSourceText = m_lexer.currentStringIsSourceText();
     if (token->stringIs8Bit)
-        return cache.tryMakeJSString(vm, token->string8());
-    return cache.tryMakeJSString(vm, token->string16());
+        return cache.tryMakeJSString(vm, token->string8(), isSourceText);
+    return cache.tryMakeJSString(vm, token->string16(), isSourceText);
 }
 
-[[maybe_unused]] static ALWAYS_INLINE bool LEGACY_NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)
+NODELETE [[maybe_unused]] static ALWAYS_INLINE bool cannotBeIdentPartOrEscapeStart(Latin1Character)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-[[maybe_unused]] static ALWAYS_INLINE bool LEGACY_NODELETE cannotBeIdentPartOrEscapeStart(char16_t)
+NODELETE [[maybe_unused]] static ALWAYS_INLINE bool cannotBeIdentPartOrEscapeStart(char16_t)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -766,15 +773,15 @@ static constexpr const bool safeStringLatin1CharactersInStrictJSON[256] = {
 };
 
 template <typename CharType>
-static ALWAYS_INLINE bool LEGACY_NODELETE isJSONWhiteSpace(const CharType& c)
+NODELETE static ALWAYS_INLINE bool isJSONWhiteSpace(const CharType& c)
 {
     return tokenTypesOfLatin1Characters[static_cast<uint8_t>(c)] == TokErrorSpace && isLatin1(c);
 }
 
 // Scans (0 | [1-9][0-9]*) from a digit and returns the end of the scan. The value can wrap beyond
-// numberOfDigitsForSafeInt32 digits, so the caller must check the length before using it.
+// maxMantissaDigitsForDecimalNumber digits, so the caller must check the length before using it.
 template<typename CharType>
-static ALWAYS_INLINE const CharType* scanJSONIntegerDigits(const CharType* ptr, const CharType* end, uint32_t& accumulated)
+static ALWAYS_INLINE const CharType* scanJSONIntegerDigits(const CharType* ptr, const CharType* end, uint64_t& accumulated)
 {
     ASSERT(ptr < end && isASCIIDigit(*ptr));
     auto character = *ptr++;
@@ -987,6 +994,22 @@ ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextAfterVa
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
+ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextValueStart()
+{
+    if constexpr (reviverMode == JSONReviverMode::Disabled) {
+        if (m_ptr < m_end && *m_ptr == '{') [[likely]] {
+            ++m_ptr;
+#if ASSERT_ENABLED
+            m_currentTokenID++;
+#endif
+            m_currentToken.type = TokLBrace;
+            return TokLBrace;
+        }
+    }
+    return next();
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextString()
 {
     if constexpr (reviverMode == JSONReviverMode::Enabled)
@@ -1029,6 +1052,15 @@ static ALWAYS_INLINE simde_uint8x16_t lessThanOrNotASCII(simde_uint8x16_t input,
     return simde_vcltq_s8(simde_vreinterpretq_s8_u8(input), simde_vreinterpretq_s8_u8(limit));
 }
 
+// findUnsafeJSONStringCharacter() for UTF-8 bytes: a byte that is not ASCII is unsafe too.
+static ALWAYS_INLINE auto findUnsafeOrNonASCIIJSONStringCharacter(simde_uint8x16_t input)
+{
+    auto quotes = SIMD::equal(input, SIMD::splat<uint8_t>('"'));
+    auto escapes = SIMD::equal(input, SIMD::splat<uint8_t>('\\'));
+    auto controls = lessThanOrNotASCII(input, SIMD::splat<uint8_t>(' '));
+    return SIMD::findFirstNonZeroIndex(SIMD::bitOr(quotes, escapes, controls));
+}
+
 template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::tryConsumeStringEqualTo(std::span<const Latin1Character> expected)
 {
@@ -1039,10 +1071,7 @@ ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::tryConsumeString
         if (m_end - body < static_cast<ptrdiff_t>(stride8) || *m_ptr != '"')
             return false;
         auto input = SIMD::load(std::bit_cast<const uint8_t*>(body));
-        auto quotes = SIMD::equal(input, SIMD::splat<uint8_t>('"'));
-        auto escapes = SIMD::equal(input, SIMD::splat<uint8_t>('\\'));
-        auto controls = isUTF8 ? lessThanOrNotASCII(input, SIMD::splat<uint8_t>(' ')) : SIMD::lessThan(input, SIMD::splat<uint8_t>(' '));
-        auto index = SIMD::findFirstNonZeroIndex(SIMD::bitOr(quotes, escapes, controls));
+        auto index = isUTF8 ? findUnsafeOrNonASCIIJSONStringCharacter(input) : findUnsafeJSONStringCharacter<uint8_t>(input);
         if (!index || *index != expected.size() || body[expected.size()] != '"')
             return false;
     } else {
@@ -1059,16 +1088,28 @@ ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::tryConsumeString
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE void LiteralParser<CharType, reviverMode>::Lexer::cacheString(JSONCache& cache, JSString* string, std::span<const CachedCharType> source)
+ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::currentStringIsSourceText() const
+{
+    // The token only points into the source when the string had no escapes. Only strict JSON quotes
+    // every string with '"' and escapes every character that needs it.
+    // (In UTF-8 bytes it also had ASCII characters only: the lexer copies every other character.)
+    if (m_mode != StrictJSON)
+        return false;
+    if constexpr (sizeof(CharType) == 1)
+        return m_currentToken.stringStart8 == std::bit_cast<const Latin1Character*>(m_currentStringStart) + 1;
+    else
+        return !m_currentToken.stringIs8Bit && m_currentToken.stringStart16 == m_currentStringStart + 1;
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+ALWAYS_INLINE void LiteralParser<CharType, reviverMode>::Lexer::cacheString(JSONCache& cache, JSString* string)
 {
     if constexpr (sizeof(CharType) == 1) {
-        // The token only points into the source when the string had no escapes, and then the source text
-        // from the opening quote to the closing one is exactly what a later match compares against.
-        if (m_currentToken.stringStart8 != source.data() + 1)
+        if (!currentStringIsSourceText())
             return;
-        cache.addString(source, remaining().data() - source.data(), string, isUTF8);
+        cache.addString(currentStringSource(), m_ptr - m_currentStringStart, string, isUTF8);
     } else
-        UNUSED_PARAM(cache), UNUSED_PARAM(string), UNUSED_PARAM(source);
+        UNUSED_PARAM(cache), UNUSED_PARAM(string);
 }
 
 template <>
@@ -1092,10 +1133,8 @@ ALWAYS_INLINE void setParserTokenString<char8_t>(LiteralParserToken<char8_t>& to
     token.stringStart8 = byteCast<Latin1Character>(ascii);
 }
 
-enum class SafeStringCharacterSet { Strict, Sloppy };
-
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(Latin1Character c, Latin1Character terminator)
+NODELETE static ALWAYS_INLINE bool isSafeStringCharacter(Latin1Character c, Latin1Character terminator)
 {
     if constexpr (set == SafeStringCharacterSet::Strict)
         return safeStringLatin1CharactersInStrictJSON[c];
@@ -1104,13 +1143,13 @@ static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(Latin1Character 
 }
 
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(char8_t c, char8_t terminator)
+NODELETE static ALWAYS_INLINE bool isSafeStringCharacter(char8_t c, char8_t terminator)
 {
     return isSafeStringCharacter<set>(Latin1Character { c }, Latin1Character { terminator });
 }
 
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(char16_t c, char16_t terminator)
+NODELETE static ALWAYS_INLINE bool isSafeStringCharacter(char16_t c, char16_t terminator)
 {
     if (!isLatin1(c))
         return true;
@@ -1118,7 +1157,7 @@ static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(char16_t c, char
 }
 
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacterForIdentifier(char16_t c, char16_t terminator)
+NODELETE static ALWAYS_INLINE bool isSafeStringCharacterForIdentifier(char16_t c, char16_t terminator)
 {
     if constexpr (set == SafeStringCharacterSet::Strict)
         return isSafeStringCharacter<set>(static_cast<Latin1Character>(c), static_cast<Latin1Character>(terminator)) || !isLatin1(c);
@@ -1126,64 +1165,62 @@ static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacterForIdentifier(cha
         return (c >= ' ' && isLatin1(c) && c != '\\' && c != terminator) || (c == '\t');
 }
 
+template<SafeStringCharacterSet set, typename UnsignedType, typename VectorType>
+static ALWAYS_INLINE auto findUnsafeStringCharacterInVector(VectorType input, UnsignedType terminator)
+{
+    if constexpr (set == SafeStringCharacterSet::Strict) {
+        ASSERT_UNUSED(terminator, terminator == '"');
+        return findUnsafeJSONStringCharacter<UnsignedType>(input);
+    } else {
+        auto quotes = SIMD::equal(input, SIMD::splat<UnsignedType>(terminator));
+        auto escapes = SIMD::equal(input, SIMD::splat<UnsignedType>('\\'));
+        auto controls = SIMD::lessThan(input, SIMD::splat<UnsignedType>(' '));
+        auto notTabs = SIMD::bitNot(SIMD::equal(input, SIMD::splat<UnsignedType>('\t')));
+        auto controlsExceptTabs = SIMD::bitAnd(notTabs, controls);
+        return SIMD::findFirstNonZeroIndex(SIMD::bitOr(quotes, escapes, controlsExceptTabs));
+    }
+}
+
+template<SafeStringCharacterSet set, typename CharType>
+static ALWAYS_INLINE const CharType* findUnsafeStringCharacterInRange(const CharType* start, const CharType* end, CharType terminator)
+{
+    using UnsignedType = SameSizeUnsignedInteger<CharType>;
+    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+        return findUnsafeStringCharacterInVector<set>(input, static_cast<UnsignedType>(terminator));
+    };
+    auto scalarMatch = [&](CharType character) ALWAYS_INLINE_LAMBDA {
+        return !isSafeStringCharacter<set>(character, terminator);
+    };
+    return SIMD::find(std::span { start, end }, vectorMatch, scalarMatch);
+}
+
 template<typename CharType, JSONReviverMode reviverMode>
 template<JSONStringScan scan>
 ALWAYS_INLINE const CharType* LiteralParser<CharType, reviverMode>::Lexer::findUnsafeStringCharacter(const CharType* start, const CharType* end, CharType terminator) const
 {
-    using UnsignedType = SameSizeUnsignedInteger<CharType>;
-    constexpr auto escapeMask = SIMD::splat<UnsignedType>('\\');
-    constexpr auto controlMask = SIMD::splat<UnsignedType>(' ');
     if (mode() == StrictJSON) {
-        ASSERT(terminator == '"');
-        constexpr auto quoteMask = SIMD::splat<UnsignedType>('"');
-        auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-            auto quotes = SIMD::equal(input, quoteMask);
-            auto escapes = SIMD::equal(input, escapeMask);
-            auto controls = [&] ALWAYS_INLINE_LAMBDA {
-                if constexpr (scan == JSONStringScan::StopsAtNonASCII)
-                    return lessThanOrNotASCII(input, controlMask);
-                else
-                    return SIMD::lessThan(input, controlMask);
-            }();
-            auto mask = SIMD::bitOr(quotes, escapes, controls);
-            return SIMD::findFirstNonZeroIndex(mask);
-        };
-
-        auto scalarMatch = [&](CharType character) ALWAYS_INLINE_LAMBDA {
-            if constexpr (scan == JSONStringScan::StopsAtNonASCII) {
+        if constexpr (scan == JSONStringScan::StopsAtNonASCII) {
+            ASSERT(terminator == '"');
+            auto vectorMatch = [](auto input) ALWAYS_INLINE_LAMBDA {
+                return findUnsafeOrNonASCIIJSONStringCharacter(input);
+            };
+            auto scalarMatch = [&](CharType character) ALWAYS_INLINE_LAMBDA {
                 if (!isASCII(character))
                     return true;
-            }
-            return !isSafeStringCharacter<SafeStringCharacterSet::Strict>(character, terminator);
-        };
-
-        return SIMD::find(std::span { start, end }, vectorMatch, scalarMatch);
+                return !isSafeStringCharacter<SafeStringCharacterSet::Strict>(character, terminator);
+            };
+            return SIMD::find(std::span { start, end }, vectorMatch, scalarMatch);
+        } else
+            return findUnsafeStringCharacterInRange<SafeStringCharacterSet::Strict>(start, end, terminator);
     }
-
-    auto quoteMask = SIMD::splat<UnsignedType>(terminator);
-    constexpr auto tabMask = SIMD::splat<UnsignedType>('\t');
-    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-        auto quotes = SIMD::equal(input, quoteMask);
-        auto escapes = SIMD::equal(input, escapeMask);
-        auto controls = SIMD::lessThan(input, controlMask);
-        auto notTabs = SIMD::bitNot(SIMD::equal(input, tabMask));
-        auto controlsExceptTabs = SIMD::bitAnd(notTabs, controls);
-        auto mask = SIMD::bitOr(quotes, escapes, controlsExceptTabs);
-        return SIMD::findFirstNonZeroIndex(mask);
-    };
-
-    auto scalarMatch = [&](auto character) ALWAYS_INLINE_LAMBDA {
-        return !isSafeStringCharacter<SafeStringCharacterSet::Sloppy>(character, terminator);
-    };
-
-    return SIMD::find(std::span { start, end }, vectorMatch, scalarMatch);
+    return findUnsafeStringCharacterInRange<SafeStringCharacterSet::Sloppy>(start, end, terminator);
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
 template <JSONIdentifierHint hint>
 ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexString(LiteralParserToken<CharType>& token, CharType terminator)
 {
-    ++m_ptr;
+    m_currentStringStart = m_ptr++;
     const CharType* runStart = m_ptr;
 
     if constexpr (hint == JSONIdentifierHint::MaybeIdentifier) {
@@ -1266,7 +1303,7 @@ static bool hasCharacterBeyondLatin1(std::span<const char8_t> validUTF8)
     return SIMD::find(validUTF8, vectorMatch, scalarMatch) != std::to_address(validUTF8.end());
 }
 
-// What a string builder or a new string copies its characters from: 8-bit if no character lies beyond Latin-1.
+// What the buffer of a string with escapes or a new string copies its characters from: 8-bit if no character lies beyond Latin-1.
 class DecodedUTF8 {
 public:
     explicit DecodedUTF8(std::span<const char8_t> bytes)
@@ -1307,37 +1344,6 @@ private:
     bool m_isValid;
     bool m_is8Bit { false };
 };
-
-class Latin1In16Bits {
-public:
-    explicit Latin1In16Bits(std::span<const char16_t> characters)
-        : m_characters(characters)
-    {
-    }
-
-    unsigned length() const { return m_characters.size(); }
-    bool is8Bit() const { return true; }
-    template<typename DestinationType> void writeTo(std::span<DestinationType> destination) const { WTF::copyElements(destination, m_characters); }
-
-private:
-    std::span<const char16_t> m_characters;
-};
-
-template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE void LiteralParser<CharType, reviverMode>::Lexer::appendToBuilder(std::span<const CharType> characters, bool isASCII)
-{
-    if constexpr (isUTF8) {
-        if (isASCII) [[likely]]
-            m_builder.append(byteCast<Latin1Character>(characters));
-        else if (characters.size() > maxLengthDecodedInPlace)
-            m_builder.appendFromAdapters(DecodedUTF8 { characters });
-        else if (auto decoded = decodeInPlace(characters); m_builder.is8Bit() && WTF::charactersAreAllLatin1(decoded))
-            m_builder.appendFromAdapters(Latin1In16Bits { decoded });
-        else
-            m_builder.append(decoded);
-    } else
-        m_builder.append(characters);
-}
 
 template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE std::span<const char16_t> LiteralParser<CharType, reviverMode>::Lexer::decodeInPlace(std::span<const char8_t> bytes)
@@ -1403,6 +1409,31 @@ String LiteralParser<CharType, reviverMode>::Lexer::takeStringOfCurrentToken()
     return std::exchange(m_decodedString, String());
 }
 
+template<typename CharType>
+static constexpr size_t escapedStringBufferRoom = SIMD::stride<SameSizeUnsignedInteger<CharType>> + 1;
+
+// The character that each single-character escape stands for, indexed by the character after the backslash, or 0.
+static constexpr auto singleCharacterEscapes = [] {
+    std::array<Latin1Character, 256> table { };
+    table['"'] = '"';
+    table['\\'] = '\\';
+    table['/'] = '/';
+    table['b'] = '\b';
+    table['f'] = '\f';
+    table['n'] = '\n';
+    table['r'] = '\r';
+    table['t'] = '\t';
+    return table;
+}();
+
+template<typename CharType>
+NODELETE static ALWAYS_INLINE Latin1Character decodeSingleCharacterEscape(CharType escaped)
+{
+    if (!isLatin1(escaped))
+        return { };
+    return singleCharacterEscapes[escaped];
+}
+
 template<typename CharType, JSONReviverMode reviverMode>
 TokenType LiteralParser<CharType, reviverMode>::Lexer::lexStringSlow(LiteralParserToken<CharType>& token, const CharType* runStart, CharType terminator)
 {
@@ -1416,118 +1447,219 @@ TokenType LiteralParser<CharType, reviverMode>::Lexer::lexStringSlow(LiteralPars
         }
     }
 
-    m_builder.clear();
-    bool runIsASCII = true;
-    auto passOverNonASCII = [&] ALWAYS_INLINE_LAMBDA {
-        if constexpr (isUTF8) {
-            runIsASCII = m_ptr >= m_end || isASCII(*m_ptr);
-            if (!runIsASCII)
-                m_ptr = findUnsafeStringCharacter<JSONStringScan::PassesOverNonASCII>(m_ptr, m_end, terminator);
-        }
-    };
-    passOverNonASCII();
-    goto slowPathBegin;
-    do {
-        runStart = m_ptr;
-        m_ptr = findUnsafeStringCharacter(m_ptr, m_end, terminator);
-        passOverNonASCII();
-
-        if (!m_builder.isEmpty())
-            appendToBuilder(std::span { runStart, m_ptr }, runIsASCII);
-
-slowPathBegin:
-        if ((mode() != SloppyJSON) && m_ptr < m_end && *m_ptr == '\\') {
-            if (m_builder.isEmpty() && runStart < m_ptr)
-                appendToBuilder(std::span { runStart, m_ptr }, runIsASCII);
-            ++m_ptr;
-            if (m_ptr >= m_end) {
-                m_lexErrorMessage = "Unterminated string"_s;
-                return TokError;
-            }
-            switch (*m_ptr) {
-                case '"':
-                    m_builder.append('"');
-                    m_ptr++;
-                    break;
-                case '\\':
-                    m_builder.append('\\');
-                    m_ptr++;
-                    break;
-                case '/':
-                    m_builder.append('/');
-                    m_ptr++;
-                    break;
-                case 'b':
-                    m_builder.append('\b');
-                    m_ptr++;
-                    break;
-                case 'f':
-                    m_builder.append('\f');
-                    m_ptr++;
-                    break;
-                case 'n':
-                    m_builder.append('\n');
-                    m_ptr++;
-                    break;
-                case 'r':
-                    m_builder.append('\r');
-                    m_ptr++;
-                    break;
-                case 't':
-                    m_builder.append('\t');
-                    m_ptr++;
-                    break;
-
-                case 'u':
-                    if ((m_end - m_ptr) < 5) { 
-                        m_lexErrorMessage = "\\u must be followed by 4 hex digits"_s;
-                        return TokError;
-                    } // uNNNN == 5 characters
-                    for (int i = 1; i < 5; i++) {
-                        if (!isASCIIHexDigit(m_ptr[i])) {
-                            if constexpr (!isUTF8)
-                                m_lexErrorMessage = makeString("\"\\"_s, std::span { m_ptr, 5 }, "\" is not a valid unicode escape"_s);
-                            return TokError;
-                        }
-                    }
-                    m_builder.append(convertUnicode(m_ptr[1], m_ptr[2], m_ptr[3], m_ptr[4]));
-                    m_ptr += 5;
-                    break;
-
-                default:
-                    if (*m_ptr == '\'' && mode() != StrictJSON) {
-                        m_builder.append('\'');
-                        m_ptr++;
-                        break;
-                    }
-                    if constexpr (!isUTF8)
-                        m_lexErrorMessage = makeString("Invalid escape character "_s, span(*m_ptr));
-                    return TokError;
-            }
-        }
-    } while ((mode() != SloppyJSON) && m_ptr != runStart && (m_ptr < m_end) && *m_ptr != terminator);
-
-    if (m_ptr >= m_end || *m_ptr != terminator) {
+    switch (mode()) {
+    case StrictJSON:
+        return lexStringWithEscapes<SafeStringCharacterSet::Strict>(token, runStart, terminator);
+    case JSONP:
+        return lexStringWithEscapes<SafeStringCharacterSet::Sloppy>(token, runStart, terminator);
+    case SloppyJSON:
+        // The eval pre-parser leaves every string it cannot take directly from the source to the full parser.
         m_lexErrorMessage = "Unterminated string"_s;
         return TokError;
     }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
-    if (m_builder.isEmpty()) {
-        setParserTokenString<CharType>(token, runStart);
-        token.stringOrIdentifierLength = m_ptr - runStart;
-    } else {
-        if (m_builder.is8Bit()) {
-            token.stringIs8Bit = 1;
-            token.stringStart8 = m_builder.span8().data();
-        } else {
-            token.stringIs8Bit = 0;
-            token.stringStart16 = m_builder.span16().data();
-        }
-        token.stringOrIdentifierLength = m_builder.length();
+template<typename CharType, JSONReviverMode reviverMode>
+template<SafeStringCharacterSet set>
+ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexStringWithEscapes(LiteralParserToken<CharType>& token, const CharType* runStart, CharType terminator)
+{
+    const CharType* ptr = m_ptr;
+    if (ptr >= m_end || (*ptr != '\\' && !isSafeStringCharacter<set>(*ptr, terminator))) [[unlikely]]
+        return lexStringError(ptr);
+
+    size_t length = ptr - runStart;
+    size_t needed = length + escapedStringBufferRoom<CharType>;
+    if (m_unescapedCharacters.size() < needed && !m_unescapedCharacters.tryGrow(needed)) [[unlikely]] {
+        m_failedToAllocate = true;
+        m_lexErrorMessage = "Out of memory"_s;
+        token.type = TokError;
+        return TokError;
     }
-    token.type = TokString;
-    ++m_ptr;
-    return TokString;
+    memcpySpan(m_unescapedCharacters.mutableSpan().first(length), std::span { runStart, length });
+    return lexStringWithEscapesImpl<set>(token, m_unescapedCharacters, length, ptr, terminator);
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+template<SafeStringCharacterSet set, typename OutputCharType>
+TokenType LiteralParser<CharType, reviverMode>::Lexer::lexStringWithEscapesImpl(LiteralParserToken<CharType>& token, Vector<OutputCharType>& characters, size_t length, const CharType* ptr, CharType terminator)
+{
+    static_assert(sizeof(OutputCharType) >= sizeof(CharType));
+    using UnsignedType = SameSizeUnsignedInteger<CharType>;
+    constexpr size_t stride = SIMD::stride<UnsignedType>;
+    constexpr size_t room = escapedStringBufferRoom<CharType>;
+    const CharType* end = m_end;
+
+    // Writes go at most room characters past length before the room is checked again. Decoding never makes the string
+    // longer, so the buffer never needs more than the characters decoded so far plus the rest of the input.
+    size_t maximumCapacity = length + (end - ptr) + room;
+    SUPPRESS_UNBORROWED_LOCAL OutputCharType* buffer = characters.mutableSpan().data();
+    size_t capacity = characters.size();
+    ASSERT(capacity >= length);
+    // False if the buffer cannot be allocated: JSON text can hold a string of any length.
+    auto reserve = [&](size_t needed) ALWAYS_INLINE_LAMBDA {
+        if (needed > capacity) [[unlikely]] {
+            ASSERT(needed <= maximumCapacity);
+            size_t newCapacity = std::min(std::max(needed, capacity * 2), maximumCapacity);
+            if (!characters.tryGrow(newCapacity)) [[unlikely]]
+                return false;
+            buffer = characters.mutableSpan().data();
+            capacity = characters.size();
+        }
+        return true;
+    };
+    auto failToAllocate = [&] {
+        m_failedToAllocate = true;
+        m_lexErrorMessage = "Out of memory"_s;
+        token.type = TokError;
+        return TokError;
+    };
+    if (!reserve(length + room)) [[unlikely]]
+        return failToAllocate();
+
+    while (true) {
+        if (ptr >= end) [[unlikely]]
+            break;
+        CharType character = *ptr;
+        if (character == terminator) {
+            m_ptr = ptr + 1;
+            if constexpr (sizeof(OutputCharType) == 1) {
+                token.stringIs8Bit = 1;
+                token.stringStart8 = buffer;
+            } else {
+                token.stringIs8Bit = 0;
+                token.stringStart16 = buffer;
+            }
+            token.stringOrIdentifierLength = length;
+            token.type = TokString;
+            return TokString;
+        }
+        if (character == '\\') {
+            if (end - ptr < 2) [[unlikely]]
+                break;
+            CharType escaped = ptr[1];
+            if (escaped == 'u') {
+                if (end - ptr < 6 || !isASCIIHexDigit(ptr[2]) || !isASCIIHexDigit(ptr[3]) || !isASCIIHexDigit(ptr[4]) || !isASCIIHexDigit(ptr[5])) [[unlikely]]
+                    break;
+                char16_t unicode = convertUnicode(ptr[2], ptr[3], ptr[4], ptr[5]);
+                if constexpr (sizeof(OutputCharType) == 1) {
+                    if (!isLatin1(unicode)) {
+                        size_t needed = length + room;
+                        if (m_widenedUnescapedCharacters.size() < needed && !m_widenedUnescapedCharacters.tryGrow(needed)) [[unlikely]]
+                            return failToAllocate();
+                        StringImpl::copyCharacters(m_widenedUnescapedCharacters.mutableSpan().first(length), std::span<const Latin1Character> { buffer, length });
+                        return lexStringWithEscapesImpl<set>(token, m_widenedUnescapedCharacters, length, ptr, terminator);
+                    }
+                }
+                buffer[length++] = unicode;
+                ptr += 6;
+            } else if (Latin1Character decoded = decodeSingleCharacterEscape(escaped)) {
+                buffer[length++] = decoded;
+                ptr += 2;
+            } else if (set == SafeStringCharacterSet::Sloppy && escaped == '\'') {
+                buffer[length++] = '\'';
+                ptr += 2;
+            } else [[unlikely]]
+                break;
+        } else if (isUTF8 && !isASCII(character)) {
+            // lexString stops at every UTF-8 byte that is not ASCII. The text from that byte on is decoded below.
+        } else if (isSafeStringCharacter<set>(character, terminator)) {
+            // lexString stops at characters outside Latin-1 when it scans for an identifier.
+            buffer[length++] = character;
+            ++ptr;
+        } else [[unlikely]]
+            break;
+
+        if constexpr (isUTF8) {
+            // ASCII is copied as it is. From a byte that is not ASCII, the text up to the next unsafe character is decoded, with
+            // U+FFFD in place of an invalid sequence. The string stays in 8 bits while no character lies beyond Latin-1.
+            const CharType* runEnd = findUnsafeStringCharacter(ptr, end, terminator);
+            size_t runLength = runEnd - ptr;
+            if (!reserve(length + runLength + room)) [[unlikely]]
+                return failToAllocate();
+            StringImpl::copyCharacters(unsafeMakeSpan(buffer + length, runLength), byteCast<Latin1Character>(unsafeMakeSpan(ptr, runLength)));
+            ptr = runEnd;
+            length += runLength;
+            if (ptr < end && !isASCII(*ptr)) {
+                runEnd = findUnsafeStringCharacter<JSONStringScan::PassesOverNonASCII>(ptr, end, terminator);
+                DecodedUTF8 decodedRun { std::span { ptr, runEnd } };
+                if constexpr (sizeof(OutputCharType) == 1) {
+                    if (!decodedRun.is8Bit()) {
+                        size_t needed = length + room;
+                        if (m_widenedUnescapedCharacters.size() < needed && !m_widenedUnescapedCharacters.tryGrow(needed)) [[unlikely]]
+                            return failToAllocate();
+                        StringImpl::copyCharacters(m_widenedUnescapedCharacters.mutableSpan().first(length), std::span<const Latin1Character> { buffer, length });
+                        return lexStringWithEscapesImpl<set>(token, m_widenedUnescapedCharacters, length, ptr, terminator);
+                    }
+                }
+                if (!reserve(length + decodedRun.length() + room)) [[unlikely]]
+                    return failToAllocate();
+                decodedRun.writeTo(unsafeMakeSpan(buffer + length, decodedRun.length()));
+                ptr = runEnd;
+                length += decodedRun.length();
+            }
+        } else if constexpr (sizeof(OutputCharType) != sizeof(CharType)) {
+            const CharType* runEnd = findUnsafeStringCharacterInRange<set>(ptr, end, terminator);
+            size_t runLength = runEnd - ptr;
+            if (!reserve(length + runLength + room)) [[unlikely]]
+                return failToAllocate();
+            StringImpl::copyCharacters(unsafeMakeSpan(buffer + length, runLength), unsafeMakeSpan(ptr, runLength));
+            ptr = runEnd;
+            length += runLength;
+        } else {
+            // When input and output characters are the same, we do check and copy in the same tight loop.
+            // Microbenchmarks showed this is faster.
+            while (true) {
+                if (static_cast<size_t>(end - ptr) < stride) {
+                    while (ptr < end && isSafeStringCharacter<set>(*ptr, terminator))
+                        buffer[length++] = *ptr++;
+                    break;
+                }
+                auto input = SIMD::load(std::bit_cast<const UnsignedType*>(ptr));
+                SIMD::store(input, std::bit_cast<UnsignedType*>(buffer + length));
+                if (auto index = findUnsafeStringCharacterInVector<set>(input, static_cast<UnsignedType>(terminator))) {
+                    ptr += *index;
+                    length += *index;
+                    break;
+                }
+                ptr += stride;
+                length += stride;
+                if (!reserve(length + room)) [[unlikely]]
+                    return failToAllocate();
+            }
+        }
+        if (!reserve(length + room)) [[unlikely]]
+            return failToAllocate();
+    }
+
+    return lexStringError(ptr);
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+NEVER_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexStringError(const CharType* ptr)
+{
+    m_ptr = ptr;
+    if (ptr >= m_end || *ptr != '\\' || m_end - ptr < 2) {
+#if USE(BUN_JSC_ADDITIONS)
+        // Text that ends after a backslash ends in a string, as text without the closing quote does: tryStreamingParse()
+        // asks for more text only where the lexer is at the end.
+        if (ptr < m_end && *ptr == '\\')
+            m_ptr = m_end;
+#endif
+        m_lexErrorMessage = "Unterminated string"_s;
+        return TokError;
+    }
+    const CharType* escaped = ptr + 1;
+    if (*escaped != 'u') {
+        if constexpr (!isUTF8)
+            m_lexErrorMessage = makeString("Invalid escape character "_s, span(*escaped));
+    } else if (m_end - escaped < 5)
+        m_lexErrorMessage = "\\u must be followed by 4 hex digits"_s;
+    else {
+        if constexpr (!isUTF8)
+            m_lexErrorMessage = makeString("\"\\"_s, std::span { escaped, 5 }, "\" is not a valid unicode escape"_s);
+    }
+    return TokError;
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
@@ -1557,7 +1689,7 @@ TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumber(LiteralParserTo
     auto* start = m_ptr; // Do not include '-'.
 
     // (0 | [1-9][0-9]*)
-    uint32_t accumulated = 0;
+    uint64_t accumulated = 0;
     if (m_ptr < m_end && isASCIIDigit(*m_ptr)) [[likely]]
         m_ptr = scanJSONIntegerDigits(m_ptr, m_end, accumulated);
     else {
@@ -1581,6 +1713,22 @@ TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumber(LiteralParserTo
         token.type = TokNumberInt32;
         token.int32Token = -result;
         return TokNumberInt32;
+    }
+
+    return lexDouble(token, initial, start, accumulated);
+}
+
+// Out of line, so that lexing the integers that most JSON numbers are does not pay for converting doubles.
+template<typename CharType, JSONReviverMode reviverMode>
+NEVER_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexDouble(LiteralParserToken<CharType>& token, const CharType* initial, const CharType* start, uint64_t integer)
+{
+    bool negative = initial != start;
+    if (auto decimal = scanDecimalNumber<DecimalFractionSyntax::RequiresDigit>(start, m_ptr, m_end, integer)) {
+        double value = WTF::parseDoubleFromDecimalDigits(decimal->mantissa, decimal->exponent, decimal->digitCount);
+        m_ptr = decimal->end;
+        token.type = TokNumber;
+        token.numberToken = negative ? -value : value;
+        return TokNumber;
     }
 
     size_t parsedLength = 0;
@@ -1637,6 +1785,17 @@ NEVER_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumberErr
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
+JSValue LiteralParser<CharType, reviverMode>::didFailToParse()
+{
+    if (m_lexer.failedToAllocate()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+        if (!scope.exception())
+            throwOutOfMemoryError(m_globalObject, scope);
+    }
+    return { };
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
 void LiteralParser<CharType, reviverMode>::setErrorMessageForToken(TokenType tokenType)
 {
     switch (tokenType) {
@@ -1660,7 +1819,7 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
 {
     switch (m_lexer.currentToken()->type) {
     case TokString: {
-        JSString* result = tryMakeJSString(vm, m_jsonCache, m_lexer.currentToken());
+        JSString* result = tryMakeJSString(vm, m_jsonCache);
         if (!result) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(vm);
             throwOutOfMemoryError(m_globalObject, scope);
@@ -1821,16 +1980,16 @@ JSValue LiteralParser<CharType, reviverMode>::evalRecursivelyEntry(VM& vm)
 template<typename CharType, JSONReviverMode reviverMode>
 JSArray* LiteralParser<CharType, reviverMode>::materializeArray(VM& vm, unsigned stackBase)
 {
+    unsigned length = m_elementStack.size() - stackBase;
+    RELEASE_ASSERT(length);
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    unsigned length = m_elementStack.size() - stackBase;
-    JSValue* values = m_elementStack.begin() + stackBase;
-    ASSERT(length);
+    auto values = unsafeMakeSpan(m_elementStack.begin() + stackBase, length);
 
     // putDirectIndex would have discovered this while growing the butterfly one element at a time.
     IndexingType indexingType = ArrayWithInt32;
-    for (unsigned i = 0; i < length; ++i) {
-        JSValue value = values[i];
+    for (JSValue value : values) {
         if (value.isInt32())
             continue;
         if (value.isDouble()) {
@@ -1841,36 +2000,47 @@ JSArray* LiteralParser<CharType, reviverMode>::materializeArray(VM& vm, unsigned
         break;
     }
 
-    {
-        ObjectInitializationScope initializationScope(vm);
-        Structure* structure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
-        if (JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, structure, length)) [[likely]] {
-            // The structure can have a different shape than requested, for example when double arrays are disabled.
-            IndexingType shape = array->indexingType() & IndexingShapeMask;
-            if (shape == DoubleShape) {
+    Structure* structure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
+    IndexingType actualIndexingType = structure->indexingType();
+    if (!hasAnyArrayStorage(actualIndexingType) && length <= MAX_STORAGE_VECTOR_LENGTH) [[likely]] {
+        ASSERT(!structure->outOfLineCapacity());
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), length);
+        void* memory = vm.auxiliarySpace().allocate(
+            vm,
+            Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)),
+            nullptr, AllocationFailureMode::ReturnNull);
+        if (memory) [[likely]] {
+            Butterfly* butterfly = Butterfly::fromBase(memory, 0, 0);
+            butterfly->setVectorLength(vectorLength);
+            butterfly->setPublicLength(length);
+            if (hasDouble(actualIndexingType)) {
                 // JSON has no NaN, so every element can be stored as a double.
-                double* data = array->butterfly()->contiguousDouble().data();
+                auto data = unsafeMakeSpan(butterfly->contiguousDouble().data(), length);
                 for (unsigned i = 0; i < length; ++i)
                     data[i] = values[i].asNumber();
-            } else if (shape == Int32Shape)
-                memcpy(std::bit_cast<JSValue*>(array->butterfly()->contiguous().data()), values, length * sizeof(JSValue));
-            else if (shape == ContiguousShape) {
-                gcSafeMemcpy(std::bit_cast<JSValue*>(array->butterfly()->contiguous().data()), values, length * sizeof(JSValue));
-                vm.writeBarrier(array);
             } else {
-                for (unsigned i = 0; i < length; ++i)
-                    array->initializeIndex(initializationScope, i, values[i]);
+                auto dst = unsafeMakeSpan(std::bit_cast<JSValue*>(butterfly->contiguous().data()), length);
+                if (length == 1)
+                    dst[0] = values[0];
+                else if (length <= 4) {
+                    dst[0] = values[0];
+                    dst[1] = values[1];
+                    dst[length - 2] = values[length - 2];
+                    dst[length - 1] = values[length - 1];
+                } else
+                    memcpySpan(dst, values);
             }
-            return array;
+            Butterfly::clearRange(actualIndexingType, butterfly, length, vectorLength);
+            return JSArray::createWithButterfly(vm, nullptr, structure, butterfly);
         }
     }
 
-    // Lengths beyond what a contiguous vector can hold, and allocation failures, grow an empty array
-    // instead so that they report out of memory rather than crashing.
+    // Array storage shapes take the general path, and so do lengths beyond what a contiguous vector
+    // can hold and allocation failures, which have to report out of memory rather than crash.
     JSArray* array = constructEmptyArray(m_globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    for (unsigned i = 0; i < length; ++i) {
-        array->putDirectIndex(m_globalObject, i, values[i]);
+    for (auto [i, value] : indexedRange(values)) {
+        array->putDirectIndex(m_globalObject, i, value);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return array;
@@ -1889,415 +2059,436 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
         return { };
     JSONCache& jsonCache = m_jsonCache;
     TokenType type = m_lexer.currentToken()->type;
-    if (type == TokLBracket) {
-        TokenType type = m_lexer.next();
+    // Objects are parsed by this lambda, which has a single call site in the element loop below, so that the
+    // objects in an array are parsed in the array's frame rather than by a recursive call each.
+    auto parseObject = [&] ALWAYS_INLINE_LAMBDA -> JSValue {
+        ASSERT(m_lexer.currentToken()->type == TokLBrace);
+        // The objects of an array are made in the array's frame, so the check above is not made for each of them.
+        if (throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope)) [[unlikely]]
+            return { };
+        JSObject* object = constructEmptyObject(m_globalObject);
+
+        struct ExistingProperty {
+            Structure* structure;
+            PropertyOffset offset;
+        };
+
+        // Dispatching on the first character skips the generic token dispatch that
+        // parsePrimitiveValue would otherwise repeat on the token type.
+        auto parseValue = [&, &vm = vm](bool lookUpCachedStrings) ALWAYS_INLINE_LAMBDA -> JSValue {
+            UNUSED_PARAM(lookUpCachedStrings);
+            switch (m_lexer.peek()) {
+            case '"': {
+                if constexpr (parserMode == StrictJSON && sizeof(CharType) == 1) {
+                    if (lookUpCachedStrings) {
+                        if (auto* entry = m_lexer.mayHaveCachedString() ? jsonCache.findOrCreateString(vm, m_lexer.remaining(), StructureID(), !Lexer::isUTF8) : nullptr) {
+                            m_lexer.advance(entry->textLength());
+                            m_lexer.nextAfterValue();
+                            return entry->string();
+                        }
+                    }
+                }
+                if (m_lexer.nextString() == TokString) [[likely]] {
+                    JSString* result = tryMakeJSString(vm, jsonCache);
+                    if (!result) [[unlikely]]
+                        return parsePrimitiveValue(vm); // Throws the out of memory error.
+                    if constexpr (parserMode == StrictJSON && sizeof(CharType) == 1)
+                        m_lexer.cacheString(jsonCache, result);
+                    m_lexer.nextAfterValue();
+                    return result;
+                }
+                return parsePrimitiveValue(vm);
+            }
+            case '-':
+            case '0': case '1': case '2': case '3': case '4':
+            case '5': case '6': case '7': case '8': case '9':
+                if (m_lexer.nextNumber() == TokNumberInt32) [[likely]] {
+                    JSValue result = jsNumber(m_lexer.currentToken()->int32Token);
+                    m_lexer.nextAfterValue();
+                    return result;
+                }
+                return parsePrimitiveValue(vm);
+            default: {
+                TokenType type = m_lexer.next();
+                if (type == TokLBrace || type == TokLBracket)
+                    return parseRecursively<parserMode>(vm, stackLimit);
+                return parsePrimitiveValue(vm);
+            }
+            }
+        };
+
+        // Objects from JSON are JSFinalObjects that rarely have duplicate keys and usually share an existing
+        // Structure, so adding a property is a store plus a StructureID swap with no generic put machinery.
+        auto putWithTransition = [&, &vm = vm](StructureID originalStructureID, StructureID newStructureID, PropertyOffset offset, JSValue value) ALWAYS_INLINE_LAMBDA {
+            ASSERT(object->structureID() == originalStructureID);
+            Structure* originalStructure = originalStructureID.decode();
+            Structure* newStructure = newStructureID.decode();
+            // Both capacities are zero while the properties still fit in inline storage, which
+            // is the common case, and reading them means touching two Structures.
+            if (offset >= firstOutOfLineOffset) [[unlikely]] {
+                if (originalStructure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
+                    ASSERT(newStructure != originalStructure);
+                    Butterfly* newButterfly = object->allocateMoreOutOfLineStorage(vm, originalStructure->outOfLineCapacity(), newStructure->outOfLineCapacity());
+                    object->nukeStructureAndSetButterfly(vm, originalStructureID, newButterfly);
+                }
+            }
+
+            validateOffset(offset);
+            ASSERT(newStructure->isValidOffset(offset));
+            // This assertion verifies that the concurrent GC won't read garbage if the concurrentGC
+            // is running at the same time we put without transitioning.
+            ASSERT(!object->getDirect(offset) || !JSValue::encode(object->getDirect(offset)));
+            // A property addition transition keeps the cell's type, inline flags, and indexing type,
+            // so only the StructureID changes, and one barrier covers both stores.
+            ASSERT(newStructure->typeInfo().type() == originalStructure->typeInfo().type());
+            ASSERT(newStructure->typeInfo().inlineTypeFlags() == originalStructure->typeInfo().inlineTypeFlags());
+            ASSERT(newStructure->indexingModeIncludingHistory() == originalStructure->indexingModeIncludingHistory());
+            ASSERT(!newStructure->mayBePrototype()); // There is no way to make it prototype object.
+            object->putDirectWithoutBarrier(offset, value);
+            object->setStructureIDDirectly(newStructureID);
+            vm.writeBarrier(object);
+        };
+
+        auto finishObject = [&](TokenType type) ALWAYS_INLINE_LAMBDA -> JSValue {
+            if (type != TokRBrace) [[unlikely]] {
+                setErrorMessageForToken(TokRBrace);
+                return { };
+            }
+            m_lexer.nextAfterValue();
+            return object;
+        };
+
+        Structure* structure = object->structure();
+        // The index of the current Structure in JSONCache's name table. A name entry stores the index of the
+        // Structure it transitions to, so the next key's lookup does not wait on hashing that Structure's ID.
+        unsigned structureNameIndex = 0;
+        if constexpr (parserMode == StrictJSON)
+            structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
+        auto existingProperty = [&](Structure* structure, PropertyOffset offset) ALWAYS_INLINE_LAMBDA {
+            if constexpr (parserMode == StrictJSON)
+                structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
+            return ExistingProperty { structure, offset };
+        };
+
+        bool afterComma = false;
+        while (true) {
+            if constexpr (parserMode == StrictJSON) {
+                // JSON.parse will encounter the same-shaped objects repeatedly, so the next key is likely one that an
+                // existing transition adds, and it can be compared against the source directly. This loop reads such
+                // keys, and string values found in JSONCache, through a local cursor, which unlike the lexer's position
+                // can stay in a register. The lexer gets the position back only for values that it has to read.
+                StructureID structureID = StructureID::encode(structure);
+                const CharType* cursor = m_lexer.ptr();
+                const CharType* end = m_lexer.end();
+                while (true) {
+                    if (cursor < end && *cursor != '"') [[unlikely]] {
+                        while (cursor < end && isJSONWhiteSpace(*cursor))
+                            ++cursor;
+                    }
+                    auto* entry = jsonCache.findName(structureID, structureNameIndex, std::span { std::bit_cast<const typename Lexer::CachedCharType*>(cursor), static_cast<size_t>(end - cursor) });
+                    if (!entry || (Lexer::isUTF8 && !entry->textIsASCII))
+                        break;
+                    cursor += entry->textLength;
+                    StructureID newStructureID = entry->to.value();
+                    PropertyOffset offset = entry->offset;
+                    structureNameIndex = entry->toNameIndex;
+
+                    // The name text ends at the colon. Whitespace after it, which only indented JSON has, is left to
+                    // the lexer, so that compact JSON does not pay for checking it here.
+                    JSValue value;
+                    if (cursor < end) [[likely]] {
+                        if (*cursor == '"') {
+                            if constexpr (sizeof(CharType) == 1) {
+                                std::span source { std::bit_cast<const typename Lexer::CachedCharType*>(cursor), static_cast<size_t>(end - cursor) };
+                                if (auto* stringEntry = Lexer::mayHaveCachedString(cursor, end) ? jsonCache.findOrCreateString(vm, source, newStructureID, !Lexer::isUTF8) : nullptr) {
+                                    value = stringEntry->string();
+                                    cursor += stringEntry->textLength();
+                                }
+                            }
+                        } else if (isASCIIDigit(*cursor)) {
+                            auto endsProperty = [&](const CharType* position) ALWAYS_INLINE_LAMBDA {
+                                return position < end && (*position == ',' || *position == '}');
+                            };
+                            uint64_t integer;
+                            const CharType* digits = scanJSONIntegerDigits(cursor, end, integer);
+                            if (static_cast<size_t>(digits - cursor) <= numberOfDigitsForSafeInt32 && endsProperty(digits)) {
+                                value = jsNumber(static_cast<int32_t>(integer));
+                                cursor = digits;
+                            } else if (auto decimal = scanDecimalNumber<DecimalFractionSyntax::RequiresDigit>(cursor, digits, end, integer); decimal && endsProperty(decimal->end)) {
+                                value = jsNumber(WTF::parseDoubleFromDecimalDigits(decimal->mantissa, decimal->exponent, decimal->digitCount));
+                                cursor = decimal->end;
+                            }
+                        }
+                    }
+
+                    TokenType type;
+                    if (value) {
+                        putWithTransition(structureID, newStructureID, offset, value);
+                        structureID = newStructureID;
+                        if (cursor < end) [[likely]] {
+                            if (*cursor == ',') {
+                                ++cursor;
+                                afterComma = true;
+                                continue;
+                            }
+                            if (*cursor == '}') {
+                                m_lexer.setPtr(cursor + 1);
+                                m_lexer.nextAfterValue();
+                                return object;
+                            }
+                        }
+                        m_lexer.setPtr(cursor);
+                        type = m_lexer.next();
+                    } else {
+                        // JSONCache keeps the Structure alive only while the entry stays in it. Parsing the value can
+                        // evict the entry and run a GC, and conservative scanning does not recognize a StructureID.
+                        EnsureStillAliveScope newStructureScope(newStructureID.decode());
+                        m_lexer.setPtr(cursor);
+                        value = parseValue(/* lookUpCachedStrings */ false);
+                        EXCEPTION_ASSERT((!!scope.exception() || !m_parseErrorMessage.isNull()) == !value);
+                        if (!value) [[unlikely]]
+                            return { };
+                        putWithTransition(structureID, newStructureID, offset, value);
+                        structureID = newStructureID;
+                        type = m_lexer.currentToken()->type;
+                    }
+
+                    cursor = m_lexer.ptr();
+                    if (type == TokComma) [[likely]] {
+                        afterComma = true;
+                        continue;
+                    }
+                    return finishObject(type);
+                }
+                m_lexer.setPtr(cursor);
+                structure = structureID.decode();
+            }
+
+            std::optional<ExistingProperty> consumedProperty;
+            if constexpr (parserMode == StrictJSON) {
+                if (Structure* transition = structure->trySingleTransition()) {
+                    SUPPRESS_UNCOUNTED_LOCAL UniquedStringImpl* name = transition->transitionPropertyName();
+                    if (transition->transitionKind() == TransitionKind::PropertyAddition
+                        && (!vm.mayHaveUncacheableTransitions() || transition->isCacheableTransitionFrom(structure))
+                        && !transition->transitionPropertyAttributes()
+                        && !name->isSymbol()
+                        && name->is8Bit()
+                        && m_lexer.tryConsumeStringEqualTo(name->span8())) {
+                        PropertyOffset offset = transition->transitionOffset();
+                        jsonCache.addName(structure, transition, offset);
+                        consumedProperty = existingProperty(transition, offset);
+                    }
+                }
+            }
+
+            if (!consumedProperty) {
+                TokenType type;
+                if (sizeof(CharType) == 2 && !afterComma)
+                    type = m_lexer.nextMaybeIdentifier();
+                else
+                    type = m_lexer.next();
+                bool isPropertyKey = type == TokString;
+                if constexpr (parserMode != StrictJSON)
+                    isPropertyKey |= type == TokIdentifier;
+                if (!isPropertyKey) [[unlikely]] {
+                    if (afterComma) {
+                        m_parseErrorMessage = "Property name must be a string literal"_s;
+                        return { };
+                    }
+                    return finishObject(type);
+                }
+            }
+
+            ASSERT(object->structure() == structure);
+            auto* originalStructure = structure;
+            auto property = [&, &vm = vm] ALWAYS_INLINE_LAMBDA -> Variant<ExistingProperty, Identifier> {
+                if (consumedProperty)
+                    return *consumedProperty;
+                if (Structure* transition = originalStructure->trySingleTransition()) {
+                    // This check avoids hash lookup and refcount churn in the common case of a matching single transition.
+                    SUPPRESS_UNCOUNTED_ARG if (transition->transitionKind() == TransitionKind::PropertyAddition
+                        && (!vm.mayHaveUncacheableTransitions() || transition->isCacheableTransitionFrom(originalStructure))
+                        && !transition->transitionPropertyAttributes()
+                        && equalIdentifier(transition->transitionPropertyName(), m_lexer.currentToken())) {
+                        if constexpr (parserMode == StrictJSON)
+                            return existingProperty(transition, transition->transitionOffset());
+                        else if (transition->transitionPropertyName() != vm.propertyNames->underscoreProto && m_visitedUnderscoreProto.isEmpty())
+                            return existingProperty(transition, transition->transitionOffset());
+                    }
+                } else if (!originalStructure->isDictionary()) {
+                    bool isCacheable = false;
+                    if constexpr (parserMode == StrictJSON) {
+                        auto token = m_lexer.currentToken();
+                        auto tryCachedTransition = [&]<typename KeyCharacterType>(std::span<const KeyCharacterType> key) ALWAYS_INLINE_LAMBDA -> Structure* {
+                            isCacheable = true;
+                            Structure* transition = jsonCache.getTransition(originalStructure, key);
+#if ASSERT_ENABLED
+                            if (transition) {
+                                PropertyOffset expectedOffset = 0;
+                                RefPtr<AtomStringImpl> expectedName = key.empty() ? RefPtr { emptyAtom().impl() } : AtomStringImpl::lookUp(key);
+                                ASSERT(expectedName);
+                                ASSERT(Structure::addPropertyTransitionToExistingStructure(originalStructure, expectedName.get(), 0, expectedOffset) == transition);
+                                ASSERT(expectedOffset == transition->transitionOffset());
+                            }
+#endif
+                            return transition;
+                        };
+                        Structure* transition = nullptr;
+                        if (token->type == TokString) {
+                            if (token->stringIs8Bit)
+                                transition = tryCachedTransition(token->string8());
+                            else if constexpr (sizeof(CharType) == 2)
+                                transition = tryCachedTransition(token->string16());
+                        }
+                        if (transition) {
+                            PropertyOffset offset = transition->transitionOffset();
+                            jsonCache.addPrefixedName(originalStructure, transition, offset);
+                            return existingProperty(transition, offset);
+                        }
+                    }
+                    // This check avoids refcount churn in the common case of a cached Identifier.
+                    if (SUPPRESS_UNCOUNTED_LOCAL AtomStringImpl* ident = existingIdentifier(vm, jsonCache, m_lexer.currentToken())) {
+                        PropertyOffset offset = 0;
+                        Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(originalStructure, ident, 0, offset);
+                        if (newStructure && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(originalStructure))) [[likely]] {
+                            if constexpr (parserMode == StrictJSON) {
+                                if (isCacheable) {
+                                    auto token = m_lexer.currentToken();
+                                    if (sizeof(CharType) == 1 || token->stringIs8Bit)
+                                        jsonCache.addTransition(originalStructure, newStructure, token->string8());
+                                    else
+                                        jsonCache.addTransition(originalStructure, newStructure, token->string16());
+                                    jsonCache.addPrefixedName(originalStructure, newStructure, offset);
+                                }
+                                return existingProperty(newStructure, offset);
+                            } else if (newStructure->transitionPropertyName() != vm.propertyNames->underscoreProto && m_visitedUnderscoreProto.isEmpty())
+                                return existingProperty(newStructure, offset);
+                        }
+                        return Identifier::fromString(vm, ident);
+                    }
+                }
+
+                return makeIdentifier(vm, m_lexer.currentToken());
+            }();
+
+            if (!m_lexer.consumeColon()) [[unlikely]] {
+                setErrorMessageForToken(TokColon);
+                return { };
+            }
+
+            JSValue value = parseValue(/* lookUpCachedStrings */ true);
+            EXCEPTION_ASSERT((!!scope.exception() || !m_parseErrorMessage.isNull()) == !value);
+            if (!value) [[unlikely]]
+                return { };
+
+            // After parseRecursively, user code may have run (e.g. due to a __proto__ setter in a
+            // nested object), which may have changed the structure of the object. This invalidates
+            // any cached transition, so reset it to Identifier to take the slow path.
+            if constexpr (parserMode != StrictJSON) {
+                if (object->structure() != originalStructure && std::holds_alternative<ExistingProperty>(property)) [[unlikely]]
+                    property = Identifier::fromUid(vm, std::get<ExistingProperty>(property).structure->transitionPropertyName());
+            } else {
+                // A strict JSON value cannot run user code, so parsing it cannot have changed the parent's Structure,
+                // but for a dictionary that was being filled and has been given its shared Structure meanwhile.
+                ASSERT(object->structure() == originalStructure || (originalStructure->isDictionary() && std::holds_alternative<Identifier>(property)));
+            }
+
+            if (std::holds_alternative<ExistingProperty>(property)) {
+                auto& [newStructure, offset] = std::get<ExistingProperty>(property);
+                ASSERT(newStructure != originalStructure);
+                putWithTransition(StructureID::encode(originalStructure), StructureID::encode(newStructure), offset, value);
+                structure = newStructure;
+            } else {
+                ASSERT(std::holds_alternative<Identifier>(property));
+                auto& ident = std::get<Identifier>(property);
+                if (parserMode != StrictJSON && ident == vm.propertyNames->underscoreProto) [[unlikely]] {
+                    if (!m_visitedUnderscoreProto.add(object).isNewEntry) [[unlikely]] {
+                        m_parseErrorMessage = "Attempted to redefine __proto__ property"_s;
+                        return { };
+                    }
+                    PutPropertySlot slot(object, m_nullOrCodeBlock && m_nullOrCodeBlock->ownerExecutable()->isInStrictContext());
+                    JSValue(object).put(m_globalObject, ident, value, slot);
+                    RETURN_IF_EXCEPTION(scope, { });
+                } else if (std::optional<uint32_t> index = parseIndex(ident)) {
+                    object->putDirectIndex(m_globalObject, index.value(), value);
+                    RETURN_IF_EXCEPTION(scope, { });
+                } else
+                    object->putDirect(vm, ident, value);
+                structure = object->structure();
+                if constexpr (parserMode == StrictJSON)
+                    structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
+            }
+
+            TokenType separator = m_lexer.currentToken()->type;
+            if (separator == TokComma) {
+                afterComma = true;
+                continue;
+            }
+            return finishObject(separator);
+        }
+    };
+
+    bool isArray = type == TokLBracket;
+    ASSERT(isArray || type == TokLBrace);
+    unsigned stackBase = 0;
+    if (isArray) {
+        type = m_lexer.next();
         if (type == TokRBracket) {
             m_lexer.nextAfterValue();
             RELEASE_AND_RETURN(scope, constructEmptyArray(m_globalObject, nullptr));
         }
-
         // Elements are collected first so that the array is allocated once at its final length and
         // indexing type, rather than growing a butterfly once per element.
-        unsigned stackBase = m_elementStack.size();
-        while (true) {
-            JSValue value;
-            if (type == TokLBrace || type == TokLBracket)
-                value = parseRecursively<parserMode>(vm, stackLimit);
-            else
-                value = parsePrimitiveValue(vm);
-            EXCEPTION_ASSERT((!!scope.exception() || !m_parseErrorMessage.isNull()) == !value);
-            if (!value) [[unlikely]] {
-                m_elementStack.shrink(stackBase);
-                return { };
-            }
-            m_elementStack.append(value);
-            if (m_elementStack.hasOverflowed()) [[unlikely]] {
-                m_elementStack.shrink(stackBase);
-                throwOutOfMemoryError(m_globalObject, scope);
-                return { };
-            }
-
-            type = m_lexer.currentToken()->type;
-            if (type == TokComma) {
-                type = m_lexer.next();
-                if (type == TokRBracket) [[unlikely]] {
-                    m_parseErrorMessage = "Unexpected comma at the end of array expression"_s;
-                    m_elementStack.shrink(stackBase);
-                    return { };
-                }
-                continue;
-            }
-
-            if (type != TokRBracket) [[unlikely]] {
-                setErrorMessageForToken(TokRBracket);
-                m_elementStack.shrink(stackBase);
-                return { };
-            }
-
-            m_lexer.nextAfterValue();
-            break;
-        }
-
-        JSArray* array = materializeArray(vm, stackBase);
-        m_elementStack.shrink(stackBase);
-        RETURN_IF_EXCEPTION(scope, { });
-        return array;
+        stackBase = m_elementStack.size();
     }
 
-    ASSERT(type == TokLBrace);
-    JSObject* object = constructEmptyObject(m_globalObject);
-
-    struct ExistingProperty {
-        Structure* structure;
-        PropertyOffset offset;
-    };
-
-    // Dispatching on the first character skips the generic token dispatch that
-    // parsePrimitiveValue would otherwise repeat on the token type.
-    auto parseValue = [&, &vm = vm](bool lookUpCachedStrings) ALWAYS_INLINE_LAMBDA -> JSValue {
-        UNUSED_PARAM(lookUpCachedStrings);
-        switch (m_lexer.peek()) {
-        case '"': {
-            if constexpr (parserMode == StrictJSON && sizeof(CharType) == 1) {
-                if (lookUpCachedStrings) {
-                    if (auto* entry = m_lexer.mayHaveCachedString() ? jsonCache.findString(m_lexer.remaining()) : nullptr; entry && (!Lexer::isUTF8 || entry->textIsASCII)) {
-                        m_lexer.advance(entry->textLength);
-                        m_lexer.nextAfterValue();
-                        return entry->string;
-                    }
-                }
-            }
-            auto source = m_lexer.remaining();
-            if (m_lexer.nextString() == TokString) [[likely]] {
-                JSString* result = tryMakeJSString(vm, jsonCache, m_lexer.currentToken());
-                if (!result) [[unlikely]]
-                    return parsePrimitiveValue(vm); // Throws the out of memory error.
-                if constexpr (parserMode == StrictJSON && sizeof(CharType) == 1)
-                    m_lexer.cacheString(jsonCache, result, source);
-                m_lexer.nextAfterValue();
-                return result;
-            }
-            return parsePrimitiveValue(vm);
-        }
-        case '-':
-        case '0': case '1': case '2': case '3': case '4':
-        case '5': case '6': case '7': case '8': case '9':
-            if (m_lexer.nextNumber() == TokNumberInt32) [[likely]] {
-                JSValue result = jsNumber(m_lexer.currentToken()->int32Token);
-                m_lexer.nextAfterValue();
-                return result;
-            }
-            return parsePrimitiveValue(vm);
-        default: {
-            TokenType type = m_lexer.next();
-            if (type == TokLBrace || type == TokLBracket)
-                return parseRecursively<parserMode>(vm, stackLimit);
-            return parsePrimitiveValue(vm);
-        }
-        }
-    };
-
-    // Objects from JSON are JSFinalObjects that rarely have duplicate keys and usually share an existing
-    // Structure, so adding a property is a store plus a StructureID swap with no generic put machinery.
-    auto putWithTransition = [&, &vm = vm](StructureID originalStructureID, StructureID newStructureID, PropertyOffset offset, JSValue value) ALWAYS_INLINE_LAMBDA {
-        ASSERT(object->structureID() == originalStructureID);
-        Structure* originalStructure = originalStructureID.decode();
-        Structure* newStructure = newStructureID.decode();
-        // Both capacities are zero while the properties still fit in inline storage, which
-        // is the common case, and reading them means touching two Structures.
-        if (offset >= firstOutOfLineOffset) [[unlikely]] {
-            if (originalStructure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
-                ASSERT(newStructure != originalStructure);
-                Butterfly* newButterfly = object->allocateMoreOutOfLineStorage(vm, originalStructure->outOfLineCapacity(), newStructure->outOfLineCapacity());
-                object->nukeStructureAndSetButterfly(vm, originalStructureID, newButterfly);
-            }
-        }
-
-        validateOffset(offset);
-        ASSERT(newStructure->isValidOffset(offset));
-        // This assertion verifies that the concurrent GC won't read garbage if the concurrentGC
-        // is running at the same time we put without transitioning.
-        ASSERT(!object->getDirect(offset) || !JSValue::encode(object->getDirect(offset)));
-        // A property addition transition keeps the cell's type, inline flags, and indexing type,
-        // so only the StructureID changes, and one barrier covers both stores.
-        ASSERT(newStructure->typeInfo().type() == originalStructure->typeInfo().type());
-        ASSERT(newStructure->typeInfo().inlineTypeFlags() == originalStructure->typeInfo().inlineTypeFlags());
-        ASSERT(newStructure->indexingModeIncludingHistory() == originalStructure->indexingModeIncludingHistory());
-        ASSERT(!newStructure->mayBePrototype()); // There is no way to make it prototype object.
-        object->putDirectWithoutBarrier(offset, value);
-        object->setStructureIDDirectly(newStructureID);
-        vm.writeBarrier(object);
-    };
-
-    auto finishObject = [&](TokenType type) ALWAYS_INLINE_LAMBDA -> JSValue {
-        if (type != TokRBrace) [[unlikely]] {
-            setErrorMessageForToken(TokRBrace);
-            return { };
-        }
-        m_lexer.nextAfterValue();
-        return object;
-    };
-
-    Structure* structure = object->structure();
-    // The index of the current Structure in JSONCache's name table. A name entry stores the index of the
-    // Structure it transitions to, so the next key's lookup does not wait on hashing that Structure's ID.
-    unsigned structureNameIndex = 0;
-    if constexpr (parserMode == StrictJSON)
-        structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
-    auto existingProperty = [&](Structure* structure, PropertyOffset offset) ALWAYS_INLINE_LAMBDA {
-        if constexpr (parserMode == StrictJSON)
-            structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
-        return ExistingProperty { structure, offset };
-    };
-
-    bool afterComma = false;
     while (true) {
-        if constexpr (parserMode == StrictJSON) {
-            // JSON.parse will encounter the same-shaped objects repeatedly, so the next key is likely one that an
-            // existing transition adds, and it can be compared against the source directly. This loop reads such
-            // keys, and string values found in JSONCache, through a local cursor, which unlike the lexer's position
-            // can stay in a register. The lexer gets the position back only for values that it has to read.
-            StructureID structureID = StructureID::encode(structure);
-            const CharType* cursor = m_lexer.ptr();
-            const CharType* end = m_lexer.end();
-            while (true) {
-                if (cursor < end && *cursor != '"') [[unlikely]] {
-                    while (cursor < end && isJSONWhiteSpace(*cursor))
-                        ++cursor;
-                }
-                auto* entry = jsonCache.findName(structureID, structureNameIndex, std::span { std::bit_cast<const typename Lexer::CachedCharType*>(cursor), static_cast<size_t>(end - cursor) });
-                if (!entry || (Lexer::isUTF8 && !entry->textIsASCII))
-                    break;
-                cursor += entry->textLength;
-                StructureID newStructureID = entry->to.value();
-                PropertyOffset offset = entry->offset;
-                structureNameIndex = entry->toNameIndex;
-
-                // The name text ends at the colon. Whitespace after it, which only indented JSON has, is left to
-                // the lexer, so that compact JSON does not pay for checking it here.
-                JSValue value;
-                if (cursor < end) [[likely]] {
-                    if (*cursor == '"') {
-                        if constexpr (sizeof(CharType) == 1) {
-                            if (auto* stringEntry = Lexer::mayHaveCachedString(cursor, end) ? jsonCache.findString(std::span { std::bit_cast<const typename Lexer::CachedCharType*>(cursor), static_cast<size_t>(end - cursor) }) : nullptr; stringEntry && (!Lexer::isUTF8 || stringEntry->textIsASCII)) {
-                                value = stringEntry->string;
-                                cursor += stringEntry->textLength;
-                            }
-                        }
-                    } else if (isASCIIDigit(*cursor)) {
-                        // An integer of at most nine digits that ends the property is always an int32. Anything
-                        // else, including a fraction, an exponent, or a leading zero, is left to the lexer.
-                        uint32_t integer;
-                        const CharType* digits = scanJSONIntegerDigits(cursor, end, integer);
-                        if (static_cast<size_t>(digits - cursor) <= numberOfDigitsForSafeInt32 && digits < end && (*digits == ',' || *digits == '}')) {
-                            value = jsNumber(static_cast<int32_t>(integer));
-                            cursor = digits;
-                        }
-                    }
-                }
-
-                if (value) {
-                    putWithTransition(structureID, newStructureID, offset, value);
-                    structureID = newStructureID;
-                    if (cursor < end) [[likely]] {
-                        if (*cursor == ',') {
-                            ++cursor;
-                            afterComma = true;
-                            continue;
-                        }
-                        if (*cursor == '}') {
-                            m_lexer.setPtr(cursor + 1);
-                            m_lexer.nextAfterValue();
-                            return object;
-                        }
-                    }
-                    m_lexer.setPtr(cursor);
-                    type = m_lexer.next();
-                } else {
-                    // JSONCache keeps the Structure alive only while the entry stays in it. Parsing the value can
-                    // evict the entry and run a GC, and conservative scanning does not recognize a StructureID.
-                    EnsureStillAliveScope newStructureScope(newStructureID.decode());
-                    m_lexer.setPtr(cursor);
-                    value = parseValue(/* lookUpCachedStrings */ false);
-                    EXCEPTION_ASSERT((!!scope.exception() || !m_parseErrorMessage.isNull()) == !value);
-                    if (!value) [[unlikely]]
-                        return { };
-                    putWithTransition(structureID, newStructureID, offset, value);
-                    structureID = newStructureID;
-                    type = m_lexer.currentToken()->type;
-                }
-
-                cursor = m_lexer.ptr();
-                if (type == TokComma) [[likely]] {
-                    afterComma = true;
-                    continue;
-                }
-                return finishObject(type);
-            }
-            m_lexer.setPtr(cursor);
-            structure = structureID.decode();
-        }
-
-        std::optional<ExistingProperty> consumedProperty;
-        if constexpr (parserMode == StrictJSON) {
-            if (Structure* transition = structure->trySingleTransition()) {
-                SUPPRESS_UNCOUNTED_LOCAL UniquedStringImpl* name = transition->transitionPropertyName();
-                if (transition->transitionKind() == TransitionKind::PropertyAddition
-                    && (!vm.mayHaveUncacheableTransitions() || transition->isCacheableTransitionFrom(structure))
-                    && !transition->transitionPropertyAttributes()
-                    && !name->isSymbol()
-                    && name->is8Bit()
-                    && m_lexer.tryConsumeStringEqualTo(name->span8())) {
-                    PropertyOffset offset = transition->transitionOffset();
-                    jsonCache.addName(structure, transition, offset);
-                    consumedProperty = existingProperty(transition, offset);
-                }
-            }
-        }
-
-        if (!consumedProperty) {
-            if (sizeof(CharType) == 2 && !afterComma)
-                type = m_lexer.nextMaybeIdentifier();
-            else
-                type = m_lexer.next();
-            bool isPropertyKey = type == TokString;
-            if constexpr (parserMode != StrictJSON)
-                isPropertyKey |= type == TokIdentifier;
-            if (!isPropertyKey) [[unlikely]] {
-                if (afterComma) {
-                    m_parseErrorMessage = "Property name must be a string literal"_s;
-                    return { };
-                }
-                return finishObject(type);
-            }
-        }
-
-        ASSERT(object->structure() == structure);
-        auto* originalStructure = structure;
-        auto property = [&, &vm = vm] ALWAYS_INLINE_LAMBDA -> Variant<ExistingProperty, Identifier> {
-            if (consumedProperty)
-                return *consumedProperty;
-            if (Structure* transition = originalStructure->trySingleTransition()) {
-                // This check avoids hash lookup and refcount churn in the common case of a matching single transition.
-                SUPPRESS_UNCOUNTED_ARG if (transition->transitionKind() == TransitionKind::PropertyAddition
-                    && (!vm.mayHaveUncacheableTransitions() || transition->isCacheableTransitionFrom(originalStructure))
-                    && !transition->transitionPropertyAttributes()
-                    && equalIdentifier(transition->transitionPropertyName(), m_lexer.currentToken())) {
-                    if constexpr (parserMode == StrictJSON)
-                        return existingProperty(transition, transition->transitionOffset());
-                    else if (transition->transitionPropertyName() != vm.propertyNames->underscoreProto && m_visitedUnderscoreProto.isEmpty())
-                        return existingProperty(transition, transition->transitionOffset());
-                }
-            } else if (!originalStructure->isDictionary()) {
-                bool isCacheable = false;
-                if constexpr (parserMode == StrictJSON) {
-                    auto token = m_lexer.currentToken();
-                    auto tryCachedTransition = [&]<typename KeyCharacterType>(std::span<const KeyCharacterType> key) ALWAYS_INLINE_LAMBDA -> Structure* {
-                        isCacheable = true;
-                        Structure* transition = jsonCache.getTransition(originalStructure, key);
-#if ASSERT_ENABLED
-                        if (transition) {
-                            PropertyOffset expectedOffset = 0;
-                            RefPtr<AtomStringImpl> expectedName = key.empty() ? RefPtr { emptyAtom().impl() } : AtomStringImpl::lookUp(key);
-                            ASSERT(expectedName);
-                            ASSERT(Structure::addPropertyTransitionToExistingStructure(originalStructure, expectedName.get(), 0, expectedOffset) == transition);
-                            ASSERT(expectedOffset == transition->transitionOffset());
-                        }
-#endif
-                        return transition;
-                    };
-                    Structure* transition = nullptr;
-                    if (token->type == TokString) {
-                        if (token->stringIs8Bit)
-                            transition = tryCachedTransition(token->string8());
-                        else if constexpr (sizeof(CharType) == 2)
-                            transition = tryCachedTransition(token->string16());
-                    }
-                    if (transition) {
-                        PropertyOffset offset = transition->transitionOffset();
-                        jsonCache.addPrefixedName(originalStructure, transition, offset);
-                        return existingProperty(transition, offset);
-                    }
-                }
-                // This check avoids refcount churn in the common case of a cached Identifier.
-                if (SUPPRESS_UNCOUNTED_LOCAL AtomStringImpl* ident = existingIdentifier(vm, jsonCache, m_lexer.currentToken())) {
-                    PropertyOffset offset = 0;
-                    Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(originalStructure, ident, 0, offset);
-                    if (newStructure && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(originalStructure))) [[likely]] {
-                        if constexpr (parserMode == StrictJSON) {
-                            if (isCacheable) {
-                                auto token = m_lexer.currentToken();
-                                if (sizeof(CharType) == 1 || token->stringIs8Bit)
-                                    jsonCache.addTransition(originalStructure, newStructure, token->string8());
-                                else
-                                    jsonCache.addTransition(originalStructure, newStructure, token->string16());
-                                jsonCache.addPrefixedName(originalStructure, newStructure, offset);
-                            }
-                            return existingProperty(newStructure, offset);
-                        } else if (newStructure->transitionPropertyName() != vm.propertyNames->underscoreProto && m_visitedUnderscoreProto.isEmpty())
-                            return existingProperty(newStructure, offset);
-                    }
-                    return Identifier::fromString(vm, ident);
-                }
-            }
-
-            return makeIdentifier(vm, m_lexer.currentToken());
-        }();
-
-        if (!m_lexer.consumeColon()) [[unlikely]] {
-            setErrorMessageForToken(TokColon);
-            return { };
-        }
-
-        JSValue value = parseValue(/* lookUpCachedStrings */ true);
+        JSValue value;
+        if (type == TokLBrace)
+            value = parseObject();
+        else if (type == TokLBracket)
+            value = parseRecursively<parserMode>(vm, stackLimit);
+        else
+            value = parsePrimitiveValue(vm);
+        if (!isArray)
+            return value;
         EXCEPTION_ASSERT((!!scope.exception() || !m_parseErrorMessage.isNull()) == !value);
-        if (!value) [[unlikely]]
+        if (!value) [[unlikely]] {
+            m_elementStack.shrink(stackBase);
             return { };
-
-        // After parseRecursively, user code may have run (e.g. due to a __proto__ setter in a
-        // nested object), which may have changed the structure of the object. This invalidates
-        // any cached transition, so reset it to Identifier to take the slow path.
-        if constexpr (parserMode != StrictJSON) {
-            if (object->structure() != originalStructure && std::holds_alternative<ExistingProperty>(property)) [[unlikely]]
-                property = Identifier::fromUid(vm, std::get<ExistingProperty>(property).structure->transitionPropertyName());
-        } else {
-            // A strict JSON value cannot run user code, so parsing it cannot have changed the parent's Structure.
-            ASSERT(object->structure() == originalStructure);
         }
-
-        if (std::holds_alternative<ExistingProperty>(property)) {
-            auto& [newStructure, offset] = std::get<ExistingProperty>(property);
-            ASSERT(newStructure != originalStructure);
-            putWithTransition(StructureID::encode(originalStructure), StructureID::encode(newStructure), offset, value);
-            structure = newStructure;
-        } else {
-            ASSERT(std::holds_alternative<Identifier>(property));
-            auto& ident = std::get<Identifier>(property);
-            if (parserMode != StrictJSON && ident == vm.propertyNames->underscoreProto) [[unlikely]] {
-                if (!m_visitedUnderscoreProto.add(object).isNewEntry) [[unlikely]] {
-                    m_parseErrorMessage = "Attempted to redefine __proto__ property"_s;
-                    return { };
-                }
-                PutPropertySlot slot(object, m_nullOrCodeBlock && m_nullOrCodeBlock->ownerExecutable()->isInStrictContext());
-                JSValue(object).put(m_globalObject, ident, value, slot);
-                RETURN_IF_EXCEPTION(scope, { });
-            } else if (std::optional<uint32_t> index = parseIndex(ident)) {
-                object->putDirectIndex(m_globalObject, index.value(), value);
-                RETURN_IF_EXCEPTION(scope, { });
-            } else
-                object->putDirect(vm, ident, value);
-            structure = object->structure();
-            if constexpr (parserMode == StrictJSON)
-                structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
+        m_elementStack.append(value);
+        if (m_elementStack.hasOverflowed()) [[unlikely]] {
+            m_elementStack.shrink(stackBase);
+            throwOutOfMemoryError(m_globalObject, scope);
+            return { };
         }
 
         type = m_lexer.currentToken()->type;
         if (type == TokComma) {
-            afterComma = true;
+            type = m_lexer.nextValueStart();
+            if (type == TokRBracket) [[unlikely]] {
+                m_parseErrorMessage = "Unexpected comma at the end of array expression"_s;
+                m_elementStack.shrink(stackBase);
+                return { };
+            }
             continue;
         }
-        return finishObject(type);
+
+        if (type != TokRBracket) [[unlikely]] {
+            setErrorMessageForToken(TokRBracket);
+            m_elementStack.shrink(stackBase);
+            return { };
+        }
+
+        m_lexer.nextAfterValue();
+        break;
     }
+
+    JSArray* array = materializeArray(vm, stackBase);
+    m_elementStack.shrink(stackBase);
+    RETURN_IF_EXCEPTION(scope, { });
+    return array;
 }
 
 constexpr unsigned maximumRangesStackRecursion = 4500;
@@ -2362,8 +2553,10 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
             array->putDirectIndex(m_globalObject, array->length(), lastValue);
             RETURN_IF_EXCEPTION(scope, { });
             if constexpr (reviverMode == JSONReviverMode::Enabled) {
-                if (sourceRanges)
-                    std::get<JSONRanges::Array>(m_rangesStack.last().properties).append(WTF::move(lastValueRange));
+                if (sourceRanges && !std::get<JSONRanges::Array>(m_rangesStack.last().properties).tryAppend(WTF::move(lastValueRange))) [[unlikely]] {
+                    throwOutOfMemoryError(m_globalObject, scope);
+                    return { };
+                }
             }
 
             if (m_lexer.currentToken()->type == TokComma)
@@ -2416,8 +2609,11 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
 
                     TokenType nextType = m_lexer.next();
                     if (nextType == TokLBrace || nextType == TokLBracket) {
+                        if (!m_identifierStack.tryAppend(WTF::move(ident))) [[unlikely]] {
+                            throwOutOfMemoryError(m_globalObject, scope);
+                            return { };
+                        }
                         m_objectStack.appendWithCrashOnOverflow(object);
-                        m_identifierStack.append(WTF::move(ident));
                         m_stateStack.append(DoParseObjectEndExpression);
                         if (nextType == TokLBrace)
                             goto startParseObject;
@@ -2797,6 +2993,12 @@ JSValue JSONParse(JSGlobalObject* globalObject, std::span<const char8_t> utf8)
     RELEASE_ASSERT(utf8.size() <= String::MaxLength);
     if (!charactersAreAllASCII(utf8))
         return { };
+#if ENABLE(AOT)
+    if (globalObject->aotInstance()) [[unlikely]] {
+        if (JSValue parsed = AOT::tryParseJSON(globalObject, StringView { byteCast<Latin1Character>(utf8) }, AOT::JSONTextMemory::MayChange))
+            return parsed;
+    }
+#endif
     LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, byteCast<Latin1Character>(utf8), StrictJSON);
     return parser.tryLiteralParse();
 }

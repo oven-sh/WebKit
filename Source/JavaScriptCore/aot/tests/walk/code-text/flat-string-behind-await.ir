@@ -1,0 +1,27 @@
+# the emitter holds the characters of a flat string by a raw pointer, and while the body is suspended the text may become a key and get other characters: a flat string that is made in one block is not read in a later one where a block between the two suspends
+# RUN: verify-code
+# CHECK: InvalidSuspension: f0 CoroutineBody b2 v6 (GetStringCodeUnit): a flat string outlives a suspension: v4 (FlattenString)
+# -- code
+# code f0:CoroutineBody {
+#   v2: 0 @Int32 = Integer
+#   v3: "abcdefgh" @Cell = String string="abcdefgh"
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v4: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
+#     Jump -> next b1()
+#   b1():
+#     v5: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b2()
+#   b2():
+#     v6: int[0, 65535] @Int32 = GetStringCodeUnit v4, v2 traits=[mayTouchMemory]
+#     Return v5
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abcdefgh"
+    v2 = Await v0
+    Return v2
+}
+entry module=m0

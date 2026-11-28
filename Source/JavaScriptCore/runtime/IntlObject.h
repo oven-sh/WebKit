@@ -105,7 +105,7 @@ inline const LocaleSet& intlDurationFormatAvailableLocales() { return intlAvaila
 using CalendarID = unsigned;
 JS_EXPORT_PRIVATE const Vector<String>& intlAvailableCalendars();
 
-JS_EXPORT_PRIVATE const UncheckedKeyHashMap<String, CalendarID, ASCIICaseInsensitiveHash>& intlAvailableCalendarIndex();
+JS_EXPORT_PRIVATE const HashMap<String, CalendarID, ASCIICaseInsensitiveHash>& intlAvailableCalendarIndex();
 
 extern CalendarID JS_EXPORT_PRIVATE iso8601CalendarIDStorage;
 CalendarID JS_EXPORT_PRIVATE iso8601CalendarIDSlow();
@@ -205,16 +205,16 @@ Vector<char, 32> canonicalizeUnicodeExtensionsAfterICULocaleCanonicalization(Vec
 
 bool isUnicodeLocaleIdentifierType(StringView);
 
-bool LEGACY_NODELETE isUnicodeLanguageSubtag(StringView);
-bool LEGACY_NODELETE isUnicodeScriptSubtag(StringView);
-bool LEGACY_NODELETE isUnicodeRegionSubtag(StringView);
-bool LEGACY_NODELETE isUnicodeVariantSubtag(StringView);
+NODELETE bool isUnicodeLanguageSubtag(StringView);
+NODELETE bool isUnicodeScriptSubtag(StringView);
+NODELETE bool isUnicodeRegionSubtag(StringView);
+NODELETE bool isUnicodeVariantSubtag(StringView);
 bool isUnicodeLanguageId(StringView);
 JS_EXPORT_PRIVATE bool isStructurallyValidLanguageTag(StringView);
 String canonicalizeUnicodeLocaleID(const ASCIICString& languageTag);
 JS_EXPORT_PRIVATE String canonicalizeUnicodeLocaleID(const StringView);
 
-bool LEGACY_NODELETE isWellFormedCurrencyCode(StringView);
+NODELETE bool isWellFormedCurrencyCode(StringView);
 
 bool ensureCollationIsAvailable(JSGlobalObject*);
 

@@ -67,11 +67,12 @@ UserMessageHandlersNamespace* WebKitNamespace::messageHandlers()
 {
 #if ENABLE(APP_BOUND_DOMAINS)
     if (frame()) {
-        if (frame()->loader().client().shouldEnableInAppBrowserPrivacyProtections()) {
+        Ref client = frame()->loader().client();
+        if (client->shouldEnableInAppBrowserPrivacyProtections()) {
             WEBKIT_NAMESPACE_RELEASE_LOG_ERROR(Loading, "Ignoring messageHandlers() request for non app-bound domain");
             return nullptr;
         }
-        frame()->loader().client().notifyPageOfAppBoundBehavior();
+        client->notifyPageOfAppBoundBehavior();
     }
 #endif
 
@@ -91,7 +92,7 @@ JSC::JSValue WebKitNamespace::evaluateScript(JSC::JSGlobalObject& globalObject, 
     RefPtr frame = this->frame();
     if (!frame)
         return JSC::jsNull();
-    WTFBeginSignpost(this, EvaluateJavaScriptFromBuffer, "evaluateScript(url: %" PRIVATE_LOG_STRING ")", url.utf8());
+    WTFBeginSignpost(this, EvaluateJavaScriptFromBuffer, "evaluateScript(url: %" PRIVATE_LOG_STRING ")", makeUTF8CString(url));
     auto result = protect(frame->script())->evaluateInWorldIgnoringException(ScriptSourceCode { source, JSC::SourceTaintedOrigin::Untainted, URL { url } }, world);
     WTFEndSignpost(this, EvaluateJavaScriptFromBuffer);
     return result;

@@ -107,7 +107,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> checkExceptionGenerator(VM& vm)
 }
 
 template<typename TagType>
-inline void LEGACY_NODELETE emitPointerValidation(CCallHelpers& jit, GPRReg pointerGPR, TagType tag)
+NODELETE inline void emitPointerValidation(CCallHelpers& jit, GPRReg pointerGPR, TagType tag)
 {
 #if CPU(ARM64E)
     if (!ASSERT_ENABLED)
@@ -1249,6 +1249,39 @@ MacroAssemblerCodeRef<JITThunkPtrTag> absThunkGenerator(VM& vm)
     jit.convertInt32ToDouble(GPRInfo::regT0, FPRInfo::fpRegT0);
     jit.jump().linkTo(absFPR0Label, &jit);
     return jit.finalize(vm.jitStubs->ctiNativeTailCall(vm), "abs");
+}
+
+MacroAssemblerCodeRef<JITThunkPtrTag> signThunkGenerator(VM& vm)
+{
+    SpecializedThunkJIT jit(vm, 1);
+
+    jit.loadJSArgument(0, GPRInfo::regT0);
+    auto notInteger = jit.branchIfNotInt32(GPRInfo::regT0);
+
+    // Sign Int32: (x >> 31) | (-x >>> 31).
+    jit.rshift32(GPRInfo::regT0, MacroAssembler::TrustedImm32(31), GPRInfo::regT1);
+    jit.neg32(GPRInfo::regT0, GPRInfo::regT2);
+    jit.urshift32(MacroAssembler::TrustedImm32(31), GPRInfo::regT2);
+    jit.or32(GPRInfo::regT2, GPRInfo::regT1);
+    jit.returnInt32(GPRInfo::regT1);
+
+    // Sign Double. Zeros and NaN are returned unchanged.
+    notInteger.link(&jit);
+    jit.appendFailure(jit.branchIfNotNumber(GPRInfo::regT0));
+    jit.unboxDoubleWithoutAssertions(GPRInfo::regT0, GPRInfo::regT0, FPRInfo::fpRegT0);
+    jit.moveZeroToDouble(FPRInfo::fpRegT1);
+    auto notPositive = jit.branchDouble(MacroAssembler::DoubleLessThanOrEqualOrUnordered, FPRInfo::fpRegT0, FPRInfo::fpRegT1);
+    jit.move(MacroAssembler::TrustedImm64(JSValue::encode(jsNumber(1))), GPRInfo::regT0);
+    jit.returnJSValue(GPRInfo::regT0);
+
+    notPositive.link(&jit);
+    auto notNegative = jit.branchDouble(MacroAssembler::DoubleGreaterThanOrEqualOrUnordered, FPRInfo::fpRegT0, FPRInfo::fpRegT1);
+    jit.move(MacroAssembler::TrustedImm64(JSValue::encode(jsNumber(-1))), GPRInfo::regT0);
+    jit.returnJSValue(GPRInfo::regT0);
+
+    notNegative.link(&jit);
+    jit.returnDouble(FPRInfo::fpRegT0);
+    return jit.finalize(vm.jitStubs->ctiNativeTailCall(vm), "sign");
 }
 
 MacroAssemblerCodeRef<JITThunkPtrTag> imulThunkGenerator(VM& vm)

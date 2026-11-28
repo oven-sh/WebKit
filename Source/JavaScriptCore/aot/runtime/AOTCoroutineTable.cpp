@@ -8,26 +8,29 @@
 
 #if ENABLE(AOT)
 
-#include "AOTImageOfCellScope.h"
 #include "AOTAsyncResumption.h"
+#include "AOTClosure.h"
 #include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
-#include "AOTRuntimeValidation.h"
+#include "AOTReactionChain.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSavedFrame.h"
 #include "AOTState.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AsyncGeneratorFunctionPrototype.h"
 #include "AsyncGeneratorPrototype.h"
+#include "GeneratorFunctionPrototype.h"
 #include "GeneratorPrototype.h"
-#include "HeapUtil.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
 #include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSCPtrTag.h"
 #include "JSPromise.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSSentinel.h"
@@ -37,7 +40,6 @@
 #include "SlotVisitorInlines.h"
 #include "VMInlines.h"
 #include <wtf/CompactPointerTuple.h>
-#include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -61,7 +63,16 @@ CoroutineTable::CoroutineTable(State& state)
     m_instance.coroutines.emptyAsyncGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->asyncGeneratorPrototype());
     initializeCoroutineWords(vm);
     state.caches->add(CacheKind::StrongRoots, "coroutine resume state"_s, *this, RootVolatility::GreyedByExecution);
-    state.caches->add(CacheKind::WeakByKey, "saved frames"_s, *this);
+}
+
+Structure* CoroutineTable::reactionChainStructure(VM& vm)
+{
+    if (!m_reactionChainStructure) {
+        m_reactionChainStructure = ReactionChain::createStructure(vm, m_instance.globalObject);
+        m_state.immortalCells->add(m_reactionChainStructure);
+        m_instance.coroutines.reactionChainHeader = cellHeaderFor(m_reactionChainStructure);
+    }
+    return m_reactionChainStructure;
 }
 
 uint32_t CoroutineTable::createEmptyPrototypeStructure(VM& vm, JSObject* parent)
@@ -82,7 +93,6 @@ static uint64_t jobWord(JSGlobalObject* globalObject, InternalMicrotask task, JS
 void CoroutineTable::initializeCoroutineWords(VM& vm)
 {
     CoroutineWords& words = m_instance.coroutines;
-    words.savedFramesAreListed = validatesRuntime(vm);
     words.resumeJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled);
     words.resumeJobWords[1] = jobWord(m_instance.globalObject, InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Rejected);
     words.bodyCallJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::AsyncGeneratorBodyCallNormal, JSPromise::Status::Fulfilled);
@@ -95,6 +105,12 @@ void CoroutineTable::initializeCoroutineWords(VM& vm)
     words.reactionJobWords[3] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Rejected, promiseReactionJobAsyncContextFlag);
     words.performMicrotaskJobWord = jobWord(m_instance.globalObject, InternalMicrotask::BunPerformMicrotaskJob, JSPromise::Status::Pending);
     words.promiseAllResolveJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllResolveJob, JSPromise::Status::Fulfilled);
+    words.promiseRaceResolveJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseRaceResolveJob, JSPromise::Status::Fulfilled);
+    words.promiseAllSettledResolveJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllSettledResolveJob, JSPromise::Status::Fulfilled);
+    words.promiseAllSettledResolveJobWords[1] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllSettledResolveJob, JSPromise::Status::Rejected);
+    words.reactionChainStepJobWord = jobWord(m_instance.globalObject, InternalMicrotask::CompiledReactionChainStep, JSPromise::Status::Fulfilled);
+    words.resolveThenableJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseResolveThenableJobFast, JSPromise::Status::Pending);
+    words.resolveWithoutHandlerJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseResolveWithoutHandlerJob, JSPromise::Status::Fulfilled);
     words.asyncGeneratorAllocator = subspaceFor<JSAsyncGenerator>(vm)->allocatorFor(sizeof(JSAsyncGenerator), AllocatorForMode::EnsureAllocator).localAllocator();
     words.asyncGeneratorSentinel = vm.fastAsyncGeneratorSentinel();
 }
@@ -111,45 +127,6 @@ void CoroutineTable::visitRoots(Visitor& visitor)
 template void CoroutineTable::visitRoots(AbstractSlotVisitor&);
 template void CoroutineTable::visitRoots(SlotVisitor&);
 
-size_t CoroutineTable::removeDeadEntries(VM& vm, CollectionScope)
-{
-    // A dead word goes back onto the stack with the frame. There it must not name the next tenant of a cell that this collection frees.
-    const uint64_t replacement = validatesRuntime(vm) ? SavedFrame::poisonedWord : 0;
-    for (ListOfVisitedFrames& list : m_visitedFramesWithDeadWords) {
-        Locker locker { list.lock };
-        constexpr size_t prefetchDistance = 8;
-        for (size_t index = 0; index < list.frames.size(); ++index) {
-            if (index + prefetchDistance < list.frames.size()) {
-                __builtin_prefetch(list.frames[index + prefetchDistance].frame, 1);
-                __builtin_prefetch(list.frames[index + prefetchDistance].frame + 1, 1);
-            }
-            const VisitedFrameWithDeadWords& visited = list.frames[index];
-            visited.frame->overwriteDeadWords(visited.version, SavedFrameMap::fromFirstWord(visited.firstWordOfMap), replacement);
-        }
-        list.frames.clear();
-    }
-
-    size_t numberOfDeadFrames = m_savedFramesForValidation.removeAllMatching([&](SavedFrame* frame) {
-        return !vm.heap.isMarked(frame);
-    });
-    for (SavedFrame* frame : m_savedFramesForValidation)
-        frame->poisonDeadUnlistedWords(vm);
-    return numberOfDeadFrames;
-}
-
-void CoroutineTable::didVisitFrameWithDeadWords(SavedFrame* frame, uint32_t version, const uint32_t* firstWordOfMap)
-{
-    ListOfVisitedFrames& list = m_visitedFramesWithDeadWords[Thread::currentSingleton().uid() % m_visitedFramesWithDeadWords.size()];
-    Locker locker { list.lock };
-    list.frames.append({ frame, firstWordOfMap, version });
-}
-
-void CoroutineTable::didCreateSavedFrame(VM& vm, SavedFrame* frame)
-{
-    if (validatesRuntime(vm)) [[unlikely]]
-        m_savedFramesForValidation.append(frame);
-}
-
 const ClassInfo SavedFrame::s_info = { "SavedFrame"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SavedFrame) };
 
 Structure* SavedFrame::createStructure(VM& vm, JSGlobalObject* globalObject)
@@ -165,7 +142,7 @@ CallData SavedFrame::getCallData(JSCell* cell)
 
 SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
 {
-    if (std::bit_cast<const void*>(frame[1]) != instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter))
+    if (!instance.stubs.isReturnAddress(StubFrameKind::SavedFrameAdapter, frame[1]))
         return nullptr;
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
@@ -177,18 +154,13 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, s
     SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, coroutineTable.savedFrameStructure(), kind, static_cast<uint16_t>(numberOfWords), static_cast<uint8_t>(savedRegistersOrPairs), static_cast<uint16_t>(skippedAtBottom));
     saved->finishCreation(vm);
     saved->m_promiseOrWaiter = saved;
-    coroutineTable.didCreateSavedFrame(vm, saved);
     return saved;
 }
 
 SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, const SuspendedMachineFrame& machineFrame)
 {
     uint64_t siteWord = machineFrame.words->siteWord;
-    size_t numberOfWords = machineFrame.numberOfWords();
-    RELEASE_ASSERT(clearedWordsOf(siteWord) <= numberOfWords);
-    // What an earlier call left at their addresses would be kept, and every resumption would put it back on the stack.
-    std::ranges::fill(std::span { const_cast<uint64_t*>(machineFrame.firstSavedWord()), clearedWordsOf(siteWord) }, 0);
-    return create(vm, instance, kind, numberOfWords, savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
+    return create(vm, instance, kind, machineFrame.numberOfWords(), savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
 }
 
 SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numberOfWords, void* resumeAddress)
@@ -196,8 +168,19 @@ SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numbe
     SavedFrame* saved = create(vm, instance, CoroutineKind::Generator, numberOfWords, 0, 0);
     std::ranges::fill(std::span { saved->words(), numberOfWords }, 0);
     saved->m_resumeAddress = resumeAddress;
-    saved->m_flags = isHeapFrameFlag;
+    saved->m_numberOfSavedRegisterPairs = liesOnHeapBit;
+    saved->m_flags = isSuspendedAtYieldFlag;
+    saved->m_preservedRegister = numberOfWords;
+    vm.mutatorFence();
     return saved;
+}
+
+void SavedFrame::suspendAtYield(VM& vm, JSCell* generator, void* resumeAddress)
+{
+    RELEASE_ASSERT(liesOnHeap() && m_numberOfWords > generatorWord);
+    words()[generatorWord] = static_cast<uint64_t>(JSValue::encode(generator));
+    m_resumeAddress = resumeAddress;
+    vm.writeBarrier(this);
 }
 
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
@@ -227,8 +210,9 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 {
     size_t numberOfWords = machineFrame.numberOfWords();
     uint64_t siteWord = machineFrame.words->siteWord;
-    RELEASE_ASSERT(m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
+    RELEASE_ASSERT(!liesOnHeap() && m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
     RELEASE_ASSERT(m_numberOfSavedRegisterPairs == savedRegistersOrPairsOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
+    ASSERT(!goesOnInContextOfItsAwait());
     willWrite();
     uint64_t* words = this->words();
     const uint64_t* source = machineFrame.firstSavedWord();
@@ -236,7 +220,11 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
         words[i] = source[i];
     if constexpr (preservedRegister != InvalidGPRReg)
         m_preservedRegister = machineFrame.words->preservedRegister;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    m_resumeAddress = resignReturnAddress(machineFrame.resumeAddress, machineFrame.bottom, modifierOfResumeAddress());
+#else
     m_resumeAddress = machineFrame.resumeAddress;
+#endif
     m_flags = kind == SuspensionKind::Yield ? isSuspendedAtYieldFlag : 0;
     m_liveSlotMapOffsetPlusOne = liveSlotMapOffsetOf(siteWord) + 1;
     didWrite();
@@ -245,69 +233,19 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
-    const Image* image = Image::current();
-    // The collector's threads ask too, and know nothing of which image runs.
-    if (image->sharesRealms()) [[unlikely]]
-        image = image->findInListByCodeAddress(static_cast<const uint8_t*>(m_resumeAddress) - 1);
-    // The byte before a return address is in the calling function. The return address itself may start the next one.
-    CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
-    if (where.kind != CodeKind::Function)
-        return std::nullopt;
-    return SavedFrameMap::tryCreate(image->frameMapWords(where.function), (offsetPlusOne & ~hasNoDeadWordsToOverwrite) - 1);
-}
-
-void SavedFrame::overwriteDeadWordsAtEndOfCollection(uint32_t versionAtVisit, const SavedFrameMap& map)
-{
-    Instance::owning(this)->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
-}
-
-void SavedFrame::overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap& map, uint64_t replacement)
-{
-    if (m_version != versionAtVisit)
-        return;
-    RELEASE_ASSERT(!isOnStack());
-    willWrite();
-    forEachDeadWord(map, [&](uint64_t& word) {
-        word = replacement;
-        return true;
-    });
-    m_liveSlotMapOffsetPlusOne |= hasNoDeadWordsToOverwrite;
-    didWrite();
+    return SavedFrameMap::tryCreate(Image::current()->frameMapWordsAt(resumeAddress()), offsetPlusOne - 1);
 }
 
 template<typename Visitor>
 void SavedFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    Base::visitChildren(cell, visitor);
-    visitFields(uncheckedDowncast<SavedFrame>(cell), visitor);
+    auto* saved = uncheckedDowncast<SavedFrame>(cell);
+    ASSERT(!saved->butterfly());
+    JSCell::visitChildren(saved, visitor);
+    visitFields(saved, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(SavedFrame);
-
-// A word that the map does not list is dead, or it is no reference: an integer, half a fraction, the header for the next closure, whatever compiled code keeps over the suspension.
-// A live word that is no reference can read as one: of two integers that share it, the upper one may be the upper half of the addresses of cells. Where the map says that a word is live, it is kept.
-void SavedFrame::poisonDeadUnlistedWords(VM& vm)
-{
-    static_assert(locationHolding(2 * 3) == 3 && !isInUpperHalf(2 * 3) && locationHolding(2 * 3 - 1) == 3 && isInUpperHalf(2 * 3 - 1));
-    if (isOnStack())
-        return;
-    std::optional<SavedFrameMap> map = liveSlotMap(m_liveSlotMapOffsetPlusOne);
-    RELEASE_ASSERT(map);
-    auto poisonDeadUnlistedWord = [&](uint32_t location) {
-        if (map->listsValue(location) || map->listsOtherLiveWord(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
-            return;
-        uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + numberOfWordsSkippedAtTop() - location];
-        if (HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell)
-            word = poisonedWord;
-    };
-    willWrite();
-    uint32_t lastLocation = m_numberOfWords + numberOfWordsSkippedAtTop();
-    for (uint32_t location = numberOfWordsSkippedAtTop() + 1; location <= lastLocation; ++location)
-        poisonDeadUnlistedWord(location);
-    if constexpr (preservedRegister != InvalidGPRReg)
-        poisonDeadUnlistedWord(locationInRegister);
-    didWrite();
-}
 
 JSPromise* SavedFrame::promise() const
 {
@@ -346,7 +284,6 @@ void SavedFrame::setCombinatorElement(VM& vm, JSCell* globalContext, uint32_t in
     vm.writeBarrier(this);
 }
 
-// For a function that waits for a settled result of a call. A synchronous module load resumes the body of a module before it returns.
 void SavedFrame::queueResumeJob(JSGlobalObject* globalObject, VM& vm, JSValue resolution, bool isRejected, JSValue asyncContext)
 {
     auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
@@ -366,7 +303,6 @@ void SavedFrame::settle(JSGlobalObject* globalObject, VM& vm, JSValue value, boo
         waiter->queueResumeJob(globalObject, vm, value, isRejected, JSValue::decode(waiter->m_asyncContext));
         return;
     }
-    // The job that the promise of the function would queue, had Promise.all been given one.
     case Continuation::CombinatorElement:
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, status, m_promiseOrWaiter, value, jsNumber(combinatorIndex()));
         return;
@@ -423,9 +359,9 @@ Generator* Generator::create(VM& vm, Structure* structure)
 
 bool Generator::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
-    ImageOfCellScope imageOfCell(globalObject->vm(), object);
+    auto* generator = uncheckedDowncast<Generator>(object);
     bool isSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
-    uncheckedDowncast<Generator>(object)->m_hasOtherPrototype = !object->structure()->storedPrototype().isObject();
+    generator->m_hasOtherPrototype = !object->structure()->storedPrototype().isObject();
     return isSet;
 }
 
@@ -433,7 +369,8 @@ template<typename Visitor>
 void Generator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Base::visitChildren(cell, visitor);
-    visitor.appendUnbarriered(uncheckedDowncast<Generator>(cell)->m_savedFrame);
+    auto* generator = uncheckedDowncast<Generator>(cell);
+    visitor.appendUnbarriered(generator->m_savedFrame);
 }
 
 DEFINE_VISIT_CHILDREN(Generator);
@@ -450,6 +387,17 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (m_state) {
     case State::Running:
+        if (!m_savedFrame) [[unlikely]] {
+            if (m_leavesAtOnce && mode != ResumeMode::Next) {
+                didEnd();
+                RELEASE_AND_RETURN(scope, resume(globalObject, mode, value));
+            }
+            RuntimeCheckFailure failure("generator check failed"_s);
+            failure.atTopCall(vm).detail("the generator of a loop is resumed by a return that was defined while the loop ran");
+            failure.report();
+            failure.crashInHost(globalObject);
+            CRASH();
+        }
         throwException(globalObject, scope, createGeneratorIsExecutingError(globalObject));
         return { };
     case State::Completed:
@@ -473,21 +421,71 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     }
     m_state = State::Running;
     JSValue result = enterSavedFrame(vm, *Instance::owning(m_savedFrame), m_savedFrame, mode, value);
-    if (scope.exception()) [[unlikely]] {
-        m_state = State::Completed;
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception))
+            didEnd();
         return { };
     }
-    // A body that suspended again has left through the suspension stub, which stores SuspendedAtYield.
     bool isDone = m_state == State::Running;
     if (isDone)
-        m_state = State::Completed;
+        didEnd();
     return createIteratorResultObject(globalObject, result, isDone);
+}
+
+Structure* CoroutineTable::structureOfGeneratorsOfLibrary(VM& vm, bool isAsync)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    Structure* structure = isAsync ? realm->asyncGeneratorStructure() : m_generatorStructure;
+    uint32_t& remembered = m_instance.coroutines.structureIDsOfGeneratorsOfLibrary[isAsync];
+    if (remembered)
+        return structure;
+    if (std::exchange(m_hasAskedAboveGeneratorFunctionsOfLibrary[isAsync], true))
+        return nullptr;
+    JSObject* holder = isAsync ? static_cast<JSObject*>(realm->asyncGeneratorFunctionPrototype()) : realm->generatorFunctionPrototype();
+    auto isPrototypeOfStructure = [&](JSValue held) { return held == structure->storedPrototype(); };
+    auto watch = PropertyValueWatchpoint::tryWatch(vm, holder, vm.propertyNames->prototype.impl(), isPrototypeOfStructure, [](PropertyValueWatchpoint& fired) {
+        fired.owner<Instance>().coroutines.structureIDsOfGeneratorsOfLibrary[fired.number()] = 0;
+    }, &m_instance, isAsync);
+    if (!watch)
+        return nullptr;
+    m_watchesAboveGeneratorFunctionsOfLibrary[isAsync] = WTF::move(watch);
+    remembered = structure->id().bits();
+    return structure;
+}
+
+static bool isGeneratorFunctionOfLibraryAsMade(const Instance& instance, JSObject* generatorFunction, bool isAsync)
+{
+    auto* closure = dynamicDowncast<Closure>(generatorFunction);
+    if (!closure || !closure->kind().isInRuntimeModule)
+        return false;
+    return closure->structureID().bits() == static_cast<uint32_t>(instance.closures.closureHeaders[closureStructureOfGeneratorFunctions(isAsync)]);
+}
+
+static Structure* structureOfFirstGenerator(VM& vm, const Instance& instance, JSObject* generatorFunction, Structure* base, bool isAsync)
+{
+    auto* closure = dynamicDowncast<Closure>(generatorFunction);
+    if (!closure || base->realm() != instance.globalObject || closure->structureID().bits() != static_cast<uint32_t>(instance.closures.closureHeaders[closureStructureOfGeneratorFunctions(isAsync)]))
+        return nullptr;
+    FunctionRareData* rareData = closure->ensureRareData(vm);
+    if (rareData->internalFunctionAllocationStructure())
+        return nullptr;
+    const CoroutineWords& words = instance.coroutines;
+    auto structureOfPrototype = std::bit_cast<StructureID>(isAsync ? words.emptyAsyncGeneratorPrototypeStructureID : words.emptyGeneratorPrototypeStructureID);
+    JSObject* prototype = constructEmptyObject(vm, structureOfPrototype.decode());
+    return rareData->createInternalFunctionAllocationStructureFromBase(vm, instance.globalObject, prototype, base);
 }
 
 Structure* structureOfGenerator(JSGlobalObject* globalObject, Instance& instance, JSObject* generatorFunction, CoroutineKind kind)
 {
     RELEASE_ASSERT(kind != CoroutineKind::AsyncFunction);
+    bool isAsync = kind == CoroutineKind::AsyncGenerator;
+    if (isGeneratorFunctionOfLibraryAsMade(instance, generatorFunction, isAsync)) {
+        if (Structure* structure = instance.state->coroutines->structureOfGeneratorsOfLibrary(globalObject->vm(), isAsync))
+            return structure;
+    }
     Structure* base = kind == CoroutineKind::Generator ? instance.state->coroutines->generatorStructure() : globalObject->asyncGeneratorStructure();
+    if (Structure* structure = structureOfFirstGenerator(globalObject->vm(), instance, generatorFunction, base, isAsync))
+        return structure;
     return InternalFunction::createSubclassStructure(globalObject, generatorFunction, base);
 }
 

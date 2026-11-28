@@ -367,14 +367,14 @@ bool JSTestNamedDeleterNoIdentifierOwner::isReachableFromOpaqueRoots(JSC::Handle
     return false;
 }
 
-void JSTestNamedDeleterNoIdentifierOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestNamedDeleterNoIdentifierOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestNamedDeleterNoIdentifier = static_cast<JSTestNamedDeleterNoIdentifier*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestNamedDeleterNoIdentifier->wrapped(), jsTestNamedDeleterNoIdentifier);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -390,7 +390,7 @@ static inline void verifyVTable(TestNamedDeleterNoIdentifier* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestNamedDeleterNoIdentifier@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore28TestNamedDeleterNoIdentifierE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore28TestNamedDeleterNoIdentifierE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -401,7 +401,6 @@ static inline void verifyVTable(TestNamedDeleterNoIdentifier* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestNamedDeleterNoIdentifier>&& impl)
 {

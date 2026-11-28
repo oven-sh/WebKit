@@ -1,7 +1,7 @@
 import { enumBlock, flagWord } from "./emit-rust-enums.ts";
 import { blocks, braced, delimited, indent, rustMarker } from "./lines.ts";
 import type { AbiLayout, Schema, SchemaRecord } from "./model.ts";
-import { recordsOf } from "./model.ts";
+import { isWideFlagWord, recordsOf } from "./model.ts";
 import { rustIdTypeName, rustIdentifier, rustTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 import { abiFieldTypeOf, holdsDouble } from "./rust-types.ts";
@@ -11,12 +11,32 @@ const bytesPerWord = 4;
 const wordReader =
   "fn word_at(bytes: &[u8], offset: usize) -> u32 { u32::from_ne_bytes([bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]]) }";
 
+const wideWordReader =
+  "fn wide_word_at(bytes: &[u8], offset: usize) -> u64 { let mut word = [0u8; 8]; word.copy_from_slice(&bytes[offset..offset + 8]); u64::from_ne_bytes(word) }";
+
 interface AbiFile {
   readonly output: string;
   readonly input: string;
   readonly imports: readonly string[];
   readonly holds: "enums" | "records" | "enums and records";
+  readonly firstEnum?: string;
 }
+
+const compileCallEnums = "compile_call_enums.rs";
+function partOfCompileCallEnums(output: string, firstEnum: string): AbiFile {
+  return { output, input: "schema/compile-call.def", imports: [], holds: "enums", firstEnum };
+}
+const partsOfCompileCallEnums: readonly AbiFile[] = [
+  partOfCompileCallEnums("compile_call_finding_enums.rs", "KnowledgeLevel"),
+  partOfCompileCallEnums("compile_call_decline_enums.rs", "ImageVerdict"),
+  partOfCompileCallEnums("compile_call_option_enums.rs", "CompileAction"),
+  partOfCompileCallEnums("compile_call_image_enums.rs", "AdmittedCode"),
+];
+
+export const modulesOfCompileCallEnums: readonly string[] = [
+  compileCallEnums,
+  ...partsOfCompileCallEnums.map(part => part.output),
+].map(name => name.slice(0, -".rs".length));
 
 const abiFiles: readonly AbiFile[] = [
   {
@@ -25,7 +45,6 @@ const abiFiles: readonly AbiFile[] = [
     imports: ["super::statistics::StatisticId"],
     holds: "enums and records",
   },
-  { output: "passes.rs", input: "schema/passes.def", imports: ["super::statistics::StatisticId"], holds: "enums" },
   { output: "statistics.rs", input: "schema/statistics.def", imports: [], holds: "enums and records" },
   {
     output: "diagnostics.rs",
@@ -33,7 +52,7 @@ const abiFiles: readonly AbiFile[] = [
     imports: ["super::limits::Stage"],
     holds: "enums and records",
   },
-  { output: "compile_call_enums.rs", input: "schema/compile-call.def", imports: [], holds: "enums" },
+  ...partsOfCompileCallEnums,
   {
     output: "compile_call.rs",
     input: "schema/compile-call.def",
@@ -41,9 +60,8 @@ const abiFiles: readonly AbiFile[] = [
     imports: [
       "super::compile_call_enums::*",
       "super::diagnostics::{InternalErrorKind, UserDiagnosticKind}",
-      "super::enums::{IllTypedCause, TypeSiteKind}",
+      "super::enums::TypeSiteKind",
       "super::limits::{LimitId, Stage}",
-      "super::passes::PassId",
       "crate::ir::ids::*",
     ],
   },
@@ -52,10 +70,23 @@ const abiFiles: readonly AbiFile[] = [
 interface CheckedWord {
   readonly offset: number;
   readonly type: string;
+  readonly isWide: boolean;
 }
 
-function abiEnumsOf(schema: Schema, input: string): string[] {
-  const own = [...schema.enums, ...schema.flagWords].filter(type => type.isAbi && type.file.path === input);
+function abiEnumsOf(schema: Schema, file: AbiFile): string[] {
+  const declared = [...schema.enums, ...schema.flagWords]
+    .filter(type => type.isAbi && type.file.path === file.input)
+    .sort((left, right) => left.location.line - right.location.line || left.location.column - right.location.column);
+  const startOf = (part: AbiFile) => {
+    const index = declared.findIndex(type => type.name === part.firstEnum);
+    if (index < 0) throw new Error(`${part.input} declares no ${part.firstEnum}, with which ${part.output} begins`);
+    return index;
+  };
+  const parts = abiFiles.filter(other => other.input === file.input && other.firstEnum !== undefined);
+  const starts = parts.map(startOf).sort((left, right) => left - right);
+  if (starts.length > 0 && starts[0] !== 0) throw new Error(`no file holds ${declared[0].name} of ${file.input}`);
+  const start = file.firstEnum === undefined ? 0 : startOf(file);
+  const own = declared.slice(start, starts.find(other => other > start));
   return blocks(...own.map(type => (type.isFlags ? flagWord(type) : enumBlock(schema, type))));
 }
 
@@ -74,9 +105,11 @@ function checkedWords(record: SchemaRecord, base: number): CheckedWord[] {
       return elements.flatMap(element => checkedWords(kind.record, base + offsets[index] + element * size));
     }
     if ((kind.tag !== "Enum" && kind.tag !== "Flags") || field.isOptional) return [];
+    const isWide = isWideFlagWord(kind.type);
     return elements.map(element => ({
-      offset: base + offsets[index] + element * bytesPerWord,
+      offset: base + offsets[index] + element * bytesPerWord * (isWide ? 2 : 1),
       type: rustTypeName(kind.type.name),
+      isWide,
     }));
   });
 }
@@ -102,7 +135,9 @@ function abiRecord(record: SchemaRecord): string[] {
     `align_of::<${type}>() == ${layout.alignment}`,
     ...names.map((name, index) => `core::mem::offset_of!(${type}, ${name}) == ${layout.offsets[index]}`),
   ];
-  const checks = checkedWords(record, 0).map(word => `${word.type}::from_wire(word_at(record, ${word.offset}))?;`);
+  const checks = checkedWords(record, 0).map(
+    word => `${word.type}::from_wire(${word.isWide ? "wide_word_at" : "word_at"}(record, ${word.offset}))?;`,
+  );
   const derives = ["Copy", "Clone", "PartialEq", ...(holdsDouble({ tag: "Record", record }) ? [] : ["Eq"]), "Debug"];
   return [
     "#[repr(C)]",
@@ -132,16 +167,21 @@ function abiRecord(record: SchemaRecord): string[] {
 function abiRs(schema: Schema, file: AbiFile): string[] {
   const declared = recordsOf(schema).filter(record => record.form === "abi" && record.file.path === file.input);
   const records = file.holds === "enums" ? [] : declared;
-  const enums = file.holds === "records" ? [] : abiEnumsOf(schema, file.input);
+  const enums = file.holds === "records" ? [] : abiEnumsOf(schema, file);
   return [
     rustMarker,
     "",
     ...(file.imports.length > 0 ? [...file.imports.map(path => `use ${path};`), ""] : []),
     ...(records.length > 0 ? [wordReader, ""] : []),
+    ...(records.some(record => checkedWords(record, 0).some(word => word.isWide)) ? [wideWordReader, ""] : []),
     ...blocks(enums, ...records.map(abiRecord)),
   ];
 }
 
 export function emitRustAbi(context: EmitContext): OutputFile[] {
-  return abiFiles.map(file => ({ name: file.output, lines: abiRs(context.schema, file) }));
+  const whole = partsOfCompileCallEnums.map(part => `pub use super::${part.output.slice(0, -".rs".length)}::*;`);
+  return [
+    { name: compileCallEnums, lines: [rustMarker, "", ...whole] },
+    ...abiFiles.map(file => ({ name: file.output, lines: abiRs(context.schema, file) })),
+  ];
 }

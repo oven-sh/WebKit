@@ -145,13 +145,13 @@ LegacyRenderSVGResourceSolidColor* LegacyRenderSVGResource::sharedSolidPaintingR
 static void removeFromCacheAndInvalidateDependencies(RenderElement& renderer, bool needsLayout, SingleThreadWeakHashSet<RenderObject>* visitedRenderers)
 {
     if (auto* resources = SVGResourcesCache::cachedResourcesForRenderer(renderer)) {
-        if (LegacyRenderSVGResourceFilter* filter = resources->filter())
+        if (CheckedPtr filter = resources->filter())
             filter->removeClientFromCacheAndMarkForInvalidation(renderer);
 
-        if (LegacyRenderSVGResourceMasker* masker = resources->masker())
+        if (CheckedPtr masker = resources->masker())
             masker->removeClientFromCacheAndMarkForInvalidation(renderer);
 
-        if (LegacyRenderSVGResourceClipper* clipper = resources->clipper())
+        if (CheckedPtr clipper = resources->clipper())
             clipper->removeClientFromCacheAndMarkForInvalidation(renderer);
     }
 
@@ -160,7 +160,7 @@ static void removeFromCacheAndInvalidateDependencies(RenderElement& renderer, bo
         return;
 
     for (auto& element : svgElement->referencingElements()) {
-        if (auto* renderer = element->renderer()) {
+        if (CheckedPtr renderer = element->renderer()) {
             // We allow cycles in SVGDocumentExtensions reference sets in order to avoid expensive
             // reference graph adjustments on changes, so we need to break possible cycles here.
             static NeverDestroyed<WeakHashSet<SVGElement, WeakPtrImplWithEventTargetData>> invalidatingDependencies;
@@ -204,21 +204,21 @@ void LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidationIfNeeded
         // If we are inside the layout of an LegacyRenderSVGRoot, do not cross the SVG boundary to
         // invalidate the ancestor renderer because it may have finished its layout already.
         if (CheckedPtr svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(object); svgRoot && svgRoot->isInLayout())
-            svgRoot->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            svgRoot->setNeedsLayout(MarkingBehavior::OnlyThis);
         else {
             if (CheckedPtr element = dynamicDowncast<RenderElement>(object)) {
-                auto svgRoot = SVGRenderSupport::findTreeRootObject(*element);
+                CheckedPtr svgRoot = SVGRenderSupport::findTreeRootObject(*element);
                 if (!svgRoot || !svgRoot->isInLayout())
-                    element->setNeedsLayout(MarkingBehavior::MarkContainingBlockChain);
+                    element->setNeedsLayout(MarkingBehavior::ContainingBlockChain);
                 else {
                     // We just want to re-layout the ancestors up to the RenderSVGRoot.
-                    element->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
-                    for (auto current = element->parent(); current != svgRoot; current = current->parent())
-                        current->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
-                    svgRoot->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                    element->setNeedsLayout(MarkingBehavior::OnlyThis);
+                    for (CheckedPtr current = element->parent(); current != svgRoot; current = current->parent())
+                        current->setNeedsLayout(MarkingBehavior::OnlyThis);
+                    svgRoot->setNeedsLayout(MarkingBehavior::OnlyThis);
                 }
             } else
-                object.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                object.setNeedsLayout(MarkingBehavior::OnlyThis);
         }
     }
 
@@ -226,7 +226,7 @@ void LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidationIfNeeded
         removeFromCacheAndInvalidateDependencies(*element, needsLayout, visitedRenderers);
 
     // Invalidate resources in ancestor chain, if needed.
-    auto current = object.parent();
+    CheckedPtr current = object.parent();
     while (current) {
         removeFromCacheAndInvalidateDependencies(*current, needsLayout, visitedRenderers);
 

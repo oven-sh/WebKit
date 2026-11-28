@@ -1,0 +1,439 @@
+# Two instances of the image in one heap, as in objects-of-another-instance-behind-a-test-of-their-shape.ir. Here a field holds a function and a list holds things.
+# A function of the other instance that lies in a field of ours, laid there by either instance, once and in a loop, runs with the variables of the instance that made it; so does `who` of each thing in a list into which both have pushed.
+# Without the question for the instance behind a shape the list answered with one `mark` for all: 19 of 21.
+# class Caller { constructor(f) { this.f = f; } runInLoop(turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += this.f(); return sum; } runOnce() { return this.f(); } }
+# class Keeper { constructor() { this.list = []; } add(thing) { this.list.push(thing); } sum() { let sum = 0; for (let i = 0; i < this.list.length; i++) sum += this.list[i].who(); return sum; } }
+# class Thing { who() { return mark; } }
+# var mark = id(0);
+# function inner() { return mark + 40; }
+# function maker() { return inner; }
+# function fresh() { return function made() { return mark + 50; }; }
+# function thing() { return new Thing(); }
+# function caller(f) { return new Caller(f); }
+# function setF(held, f) { held.f = f; }
+# function setInLoop(held, f, turns) { for (let i = 0; i < turns; i++) held.f = f; }
+# function run(held, turns) { return held.runInLoop(turns) + held.runOnce(); }
+# function runHere(held, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += held.f(); return sum; }
+# function keeper() { return new Keeper(); }
+# function add(kept, thing) { kept.add(thing); }
+# function pushHere(kept, thing) { kept.list.push(thing); }
+# function sum(kept) { return kept.sum(); }
+# function own() { const c = caller(inner), d = caller(fresh()), k = keeper(); setF(c, inner); setInLoop(c, inner, 2); add(k, thing()); pushHere(k, thing()); return run(c, 2) + run(d, 2) + runHere(c, 2) + sum(k); }
+# register(maker, fresh, thing, caller, setF, setInLoop, run, runHere, keeper, add, pushHere, sum, own);
+# LIBRARY: own
+# OPTIONS: several-realms
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; globalThis.id = () => 1; second.id = () => 2; const kitOf = f => ({ maker: f[0], fresh: f[1], thing: f[2], caller: f[3], setF: f[4], setInLoop: f[5], run: f[6], runHere: f[7], keeper: f[8], add: f[9], pushHere: f[10], sum: f[11], own: f[12] }); const twin = (id, register) => { class Caller { constructor(f) { this.f = f; } runInLoop(turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += this.f(); return sum; } runOnce() { return this.f(); } } class Keeper { constructor() { this.list = []; } add(thing) { this.list.push(thing); } sum() { let sum = 0; for (let i = 0; i < this.list.length; i++) sum += this.list[i].who(); return sum; } } class Thing { who() { return mark; } } var mark = id(0); function inner() { return mark + 40; } function maker() { return inner; } function fresh() { return function made() { return mark + 50; }; } function thing() { return new Thing(); } function caller(f) { return new Caller(f); } function setF(held, f) { held.f = f; } function setInLoop(held, f, turns) { for (let i = 0; i < turns; i++) held.f = f; } function run(held, turns) { return held.runInLoop(turns) + held.runOnce(); } function runHere(held, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += held.f(); return sum; } function keeper() { return new Keeper(); } function add(kept, thing) { kept.add(thing); } function pushHere(kept, thing) { kept.list.push(thing); } function sum(kept) { return kept.sum(); } function own() { const c = caller(inner), d = caller(fresh()), k = keeper(); setF(c, inner); setInLoop(c, inner, 2); add(k, thing()); pushHere(k, thing()); return run(c, 2) + run(d, 2) + runHere(c, 2) + sum(k); } register(maker, fresh, thing, caller, setF, setInLoop, run, runHere, keeper, add, pushHere, sum, own); }; const rows = (a, b) => { const said = []; const say = (label, run) => { try { said.push(label + " " + String(run())); } catch (error) { said.push(label + " throws " + error.name); } }; say("own", () => a.own() + "," + b.own()); const sides = [[a, b], [b, a]]; for (let side = 0; side < 2; side++) { const x = sides[side][0], y = sides[side][1]; const asked = held => x.run(held, 3) + "," + y.run(held, 3) + "," + x.runHere(held, 3) + "," + y.runHere(held, 3); say("own", () => asked(x.caller(x.maker())) + ";" + asked(x.caller(x.fresh()))); say("theirs", () => asked(y.caller(y.maker())) + ";" + asked(y.caller(y.fresh()))); say("their function in a new one of ours", () => asked(x.caller(y.maker())) + ";" + asked(x.caller(y.fresh()))); say("we set theirs in ours", () => { const held = x.caller(x.maker()); x.setF(held, y.maker()); return asked(held); }); say("we set theirs in ours, in a loop", () => { const held = x.caller(x.maker()); x.setInLoop(held, y.maker(), 3); return asked(held); }); say("they set theirs in ours", () => { const held = x.caller(x.maker()); y.setF(held, y.maker()); return asked(held); }); say("they set theirs in ours, in a loop", () => { const held = x.caller(x.maker()); y.setInLoop(held, y.maker(), 3); return asked(held); }); say("we set ours in theirs", () => { const held = y.caller(y.maker()); x.setF(held, x.maker()); return asked(held); }); say("we set ours in theirs, in a loop", () => { const held = y.caller(y.maker()); x.setInLoop(held, x.maker(), 3); return asked(held); }); say("kept", () => { const kept = x.keeper(); x.add(kept, x.thing()); x.add(kept, y.thing()); y.add(kept, y.thing()); x.pushHere(kept, y.thing()); y.pushHere(kept, y.thing()); y.pushHere(kept, x.thing()); return x.sum(kept) + "," + y.sum(kept); }); } return said; }; const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const twins = { }; twin(() => 1, (...f) => { twins.first = kitOf(f); }); twin(() => 2, (...f) => { twins.second = kitOf(f); }); const got = rows(kits.first, kits.second), expected = rows(twins.first, twins.second); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("row " + n + ": " + got[n].slice(0, 120) + " and not " + expected[n].slice(0, 120)); } print(same + " of " + expected.length); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: 21 of 21
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Caller" module=m0 position=6 constructor=f15 fields=[{key="f" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Keeper" module=m0 position=180 constructor=f18 fields=[{key="list" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="Thing" module=m0 position=374 constructor=f21
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="inner" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="fresh" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="thing" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="caller" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="setF" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="setInLoop" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="run" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="runHere" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="keeper" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="add" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="pushHere" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="sum" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="Caller" module=m0 declared={type=absent|f15 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g13 name="Keeper" module=m0 declared={type=absent|f18 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g14 name="Thing" module=m0 declared={type=absent|f21 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g15 name="mark" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g16 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g17 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g18 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Undefined @0
+    v1 = NewClosure function=f13 @0
+    v2 = Convert v1 declared={type=f13 flags=[IsFromCompiler]} @0
+    v3 = NewClosure function=f14 @0
+    v4 = Convert v3 declared={type=f14 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f15 @0
+    v6 = NewClass v5 layout=L0 @0
+    PutModuleVariable v6 variable=g16 @0
+    v8 = NewClosure function=f16 @46
+    DefineMethod v6, v8 layout=L0 key="runInLoop" @46
+    v10 = NewClosure function=f17 @141
+    DefineMethod v6, v10 layout=L0 index=1 key="runOnce" @141
+    v12 = FinishClass v6 layout=L0 @0
+    v13 = Convert v12 declared={type=f15 flags=[IsFromCompiler]} @0
+    v14 = Convert v12 declared={type=f15 flags=[IsFromCompiler]} @0
+    PutModuleVariable v14 variable=g12 @0
+    v16 = NewClosure function=f18 @174
+    v17 = NewClass v16 layout=L1 @174
+    PutModuleVariable v17 variable=g17 @174
+    v19 = NewClosure function=f19 @223
+    DefineMethod v17, v19 layout=L1 key="add" @223
+    v21 = NewClosure function=f20 @261
+    DefineMethod v17, v21 layout=L1 index=1 key="sum" @261
+    v23 = FinishClass v17 layout=L1 @174
+    v24 = Convert v23 declared={type=f18 flags=[IsFromCompiler]} @174
+    v25 = Convert v23 declared={type=f18 flags=[IsFromCompiler]} @174
+    PutModuleVariable v25 variable=g13 @174
+    v27 = NewClosure function=f21 @368
+    v28 = NewClass v27 layout=L2 @368
+    PutModuleVariable v28 variable=g18 @368
+    v30 = NewClosure function=f22 @382
+    DefineMethod v28, v30 layout=L2 key="who" @382
+    v32 = FinishClass v28 layout=L2 @368
+    v33 = Convert v32 declared={type=f21 flags=[IsFromCompiler]} @368
+    v34 = Convert v32 declared={type=f21 flags=[IsFromCompiler]} @368
+    PutModuleVariable v34 variable=g14 @368
+    v36 = Builtin builtin=GlobalThis @418
+    v37 = PropGet v36 key="id" [isFreeName] @418
+    v38 = Integer @421
+    v39 = Call v37, -, v38 calleeName="id" @418
+    PutModuleVariable v39 variable=g15 @411
+    v41 = Builtin builtin=GlobalThis @1362
+    v42 = PropGet v41 key="register" [isFreeName] @1362
+    v43 = GetModuleVariable variable=g1 @1378
+    v44 = GetModuleVariable variable=g2 @1385
+    v45 = GetModuleVariable variable=g3 @1392
+    v46 = GetModuleVariable variable=g4 @1400
+    v47 = GetModuleVariable variable=g5 @1406
+    v48 = GetModuleVariable variable=g6 @1417
+    v49 = GetModuleVariable variable=g7 @1422
+    v50 = GetModuleVariable variable=g8 @1431
+    v51 = GetModuleVariable variable=g9 @1439
+    v52 = GetModuleVariable variable=g10 @1444
+    v53 = GetModuleVariable variable=g11 @1454
+    v54 = Call v42, -, v2, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v53, v4 calleeName="register" @1362
+    v55 = Undefined @1362
+    Return v55 @1362
+}
+function f1 name="inner" module=m0 position=425 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @425
+  b1():
+    v0 = GetModuleVariable variable=g15 @451
+    v1 = Integer integer=40 @458
+    v2 = Add v0, v1 @458
+    Return v2 @458
+}
+function f2 name="fresh" module=m0 position=499 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @499
+  b1():
+    v0 = NewClosure function=f23 @525
+    Return v0 @525
+}
+function f3 name="thing" module=m0 position=566 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @566
+  b1():
+    v0 = GetModuleVariable variable=g14 @596
+    v1 = CheckInitialized v0 name="Thing" @596
+    v2 = Construct v1 calleeName="Thing" @596
+    Return v2 @592
+}
+function f4 name="caller" module=m0 position=607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @607
+  b1():
+    v1 = GetModuleVariable variable=g12 @639
+    v2 = CheckInitialized v1 name="Caller" @639
+    v3 = Construct v2, -, v0 calleeName="Caller" @639
+    Return v3 @635
+}
+function f5 name="setF" module=m0 position=652 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @652
+  b1():
+    PropSet v0, v1 key="f" @677
+    v3 = Undefined @677
+    Return v3 @677
+}
+function f6 name="setInLoop" module=m0 position=691 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @691
+  b1():
+    v3 = Integer @741
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @741
+    Jump -> next b2(v4) @737
+  b2(v5):
+    LoopHint @737
+    v7 = Less v5, v2 @748
+    Branch v7 -> taken b3(), notTaken b5() @748
+  b3():
+    PropSet v0, v1 key="f" @760
+    Jump -> next b4() @760
+  b4():
+    v9 = Increment v5 @755
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @755
+    Jump -> next b2(v10) @755
+  b5():
+    v11 = Undefined @755
+    Return v11 @755
+}
+function f7 name="run" module=m0 position=774 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @774
+  b1():
+    v2 = PropGet v0 key="runInLoop" @809
+    v3 = Call v2, v0, v1 calleeKey="runInLoop" calleeName="held.runInLoop" @814
+    v4 = PropGet v0 key="runOnce" @833
+    v5 = Call v4, v0 calleeKey="runOnce" calleeName="held.runOnce" @838
+    v6 = Add v3, v5 @833
+    Return v6 @833
+}
+function f8 name="runHere" module=m0 position=851 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @851
+  b1():
+    v2 = Integer @893
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @893
+    v4 = Integer @909
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @909
+    Jump -> next b2(v3, v5) @905
+  b2(v6, v7):
+    LoopHint @905
+    v9 = Less v7, v1 @916
+    Branch v9 -> taken b3(), notTaken b5() @916
+  b3():
+    v10 = PropGet v0 key="f" @935
+    v11 = Call v10, v0 calleeKey="f" calleeName="held.f" @940
+    v12 = Add v6, v11 @935
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @928
+    Jump -> next b4() @928
+  b4():
+    v14 = Increment v7 @923
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @923
+    Jump -> next b2(v13, v15) @923
+  b5():
+    Return v6 @952
+}
+function f9 name="keeper" module=m0 position=959 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @959
+  b1():
+    v0 = GetModuleVariable variable=g13 @990
+    v1 = CheckInitialized v0 name="Keeper" @990
+    v2 = Construct v1 calleeName="Keeper" @990
+    Return v2 @986
+}
+function f10 name="add" module=m0 position=1002 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1002
+  b1():
+    v2 = PropGet v0 key="add" @1030
+    v3 = Call v2, v0, v1 calleeKey="add" calleeName="kept.add" @1035
+    v4 = Undefined @1030
+    Return v4 @1030
+}
+function f11 name="pushHere" module=m0 position=1049 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: anything):
+    Jump -> next b1() @1049
+  b1():
+    v2 = PropGet v0 key="list" @1082
+    v3 = PropGet v2 key="push" @1087
+    v4 = Call v3, v2, v1 calleeKey="push" calleeName="kept.list.push" @1092
+    v5 = Undefined @1082
+    Return v5 @1082
+}
+function f12 name="sum" module=m0 position=1107 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1107
+  b1():
+    v1 = PropGet v0 key="sum" @1135
+    v2 = Call v1, v0 calleeKey="sum" calleeName="kept.sum" @1140
+    ReturnCall v2 @1140
+}
+function f13 name="maker" module=m0 position=464 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @464
+  b1():
+    v0 = GetModuleVariable variable=g0 @490
+    Return v0 @490
+}
+function f14 name="own" module=m0 position=1149 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1149
+  b1():
+    v0 = GetModuleVariable variable=g3 @1176
+    v1 = GetModuleVariable variable=g0 @1183
+    v2 = Call v0, -, v1 calleeName="caller" @1176
+    v3 = GetModuleVariable variable=g3 @1195
+    v4 = GetModuleVariable variable=g1 @1202
+    v5 = Call v4 calleeName="fresh" @1202
+    v6 = Call v3, -, v5 calleeName="caller" @1195
+    v7 = GetModuleVariable variable=g8 @1216
+    v8 = Call v7 calleeName="keeper" @1216
+    v9 = GetModuleVariable variable=g4 @1226
+    v10 = GetModuleVariable variable=g0 @1234
+    v11 = Call v9, -, v2, v10 calleeName="setF" @1226
+    v12 = GetModuleVariable variable=g5 @1242
+    v13 = GetModuleVariable variable=g0 @1255
+    v14 = Integer integer=2 @1262
+    v15 = Call v12, -, v2, v13, v14 calleeName="setInLoop" @1242
+    v16 = GetModuleVariable variable=g9 @1266
+    v17 = GetModuleVariable variable=g2 @1273
+    v18 = Call v17 calleeName="thing" @1273
+    v19 = Call v16, -, v8, v18 calleeName="add" @1266
+    v20 = GetModuleVariable variable=g10 @1283
+    v21 = GetModuleVariable variable=g2 @1295
+    v22 = Call v21 calleeName="thing" @1295
+    v23 = Call v20, -, v8, v22 calleeName="pushHere" @1283
+    v24 = GetModuleVariable variable=g6 @1312
+    v25 = Integer integer=2 @1319
+    v26 = Call v24, -, v2, v25 calleeName="run" @1312
+    v27 = GetModuleVariable variable=g6 @1324
+    v28 = Integer integer=2 @1331
+    v29 = Call v27, -, v6, v28 calleeName="run" @1324
+    v30 = Add v26, v29 @1324
+    v31 = GetModuleVariable variable=g7 @1336
+    v32 = Integer integer=2 @1347
+    v33 = Call v31, -, v2, v32 calleeName="runHere" @1336
+    v34 = Add v30, v33 @1336
+    v35 = GetModuleVariable variable=g11 @1352
+    v36 = Call v35, -, v8 calleeName="sum" @1352
+    v37 = Add v34, v36 @1352
+    Return v37 @1352
+}
+function f15 name="Caller" module=m0 position=26 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @26
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @26
+    v3 = NewObject v2 layout=L0 @26
+    v4 = Convert v3 declared={type=L0} @26
+    PropSet v4, v1 key="f" @32
+    v6 = Undefined @32
+    v7 = TypeTest v6 testedType=object @32
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0) @32
+  b2(v8):
+    Jump -> next b4(v8) @32
+  b3(v9):
+    Jump -> next b4(v4) @32
+  b4(v10):
+    Return v10 @32
+}
+function f16 name="runInLoop" module=m0 position=46 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @46
+  b1():
+    v2 = Integer @75
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @75
+    v4 = Integer @91
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @91
+    Jump -> next b2(v3, v5) @87
+  b2(v6, v7):
+    LoopHint @87
+    v9 = Less v7, v1 @98
+    Branch v9 -> taken b3(), notTaken b5() @98
+  b3():
+    v10 = PropGet v0 key="f" @117
+    v11 = Call v10, v0 calleeKey="f" calleeName="this.f" @122
+    v12 = Add v6, v11 @117
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @110
+    Jump -> next b4() @110
+  b4():
+    v14 = Increment v7 @105
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @105
+    Jump -> next b2(v13, v15) @105
+  b5():
+    Return v6 @134
+}
+function f17 name="runOnce" module=m0 position=141 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @141
+  b1():
+    v1 = PropGet v0 key="f" @160
+    v2 = Call v1, v0 calleeKey="f" calleeName="this.f" @165
+    ReturnCall v2 @165
+}
+function f18 name="Keeper" module=m0 position=200 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    Jump -> next b1() @200
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @200
+    v2 = NewObject v1 layout=L1 @200
+    v3 = Convert v2 declared={type=L1} @200
+    v4 = Data data=d0 @217
+    PropSet v3, v4 key="list" @205
+    v6 = Undefined @205
+    v7 = TypeTest v6 testedType=object @205
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0) @205
+  b2(v8):
+    Jump -> next b4(v8) @205
+  b3(v9):
+    Jump -> next b4(v3) @205
+  b4(v10):
+    Return v10 @205
+}
+function f19 name="add" module=m0 position=223 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: anything):
+    Jump -> next b1() @223
+  b1():
+    v2 = PropGet v0 key="list" @236
+    v3 = PropGet v2 key="push" @241
+    v4 = Call v3, v2, v1 calleeKey="push" calleeName="this.list.push" @246
+    v5 = Undefined @236
+    Return v5 @236
+}
+function f20 name="sum" module=m0 position=261 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @261
+  b1():
+    v1 = Integer @279
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @279
+    v3 = Integer @295
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @295
+    Jump -> next b2(v2, v4) @291
+  b2(v5, v6):
+    LoopHint @291
+    v8 = PropGet v0 key="list" @302
+    v9 = PropGet v8 key="length" @307
+    v10 = Less v6, v9 @302
+    Branch v10 -> taken b3(), notTaken b5() @302
+  b3():
+    v11 = PropGet v0 key="list" @332
+    v12 = ElemGet v11, v6 @337
+    v13 = PropGet v12 key="who" @342
+    v14 = Call v13, v12 calleeKey="who" calleeName="this.list[i].who" @345
+    v15 = Add v5, v14 @332
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @325
+    Jump -> next b4() @325
+  b4():
+    v17 = Increment v6 @320
+    v18 = Convert v17 declared={type=i32 flags=[IsExpected]} @320
+    Jump -> next b2(v16, v18) @320
+  b5():
+    Return v5 @359
+}
+function f21 name="Thing" module=m0 position=374 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    Jump -> next b1() @374
+  b1():
+    v1 = GetConstructPrototype v0 layout=L2 @374
+    v2 = NewObject v1 layout=L2 @374
+    v3 = Convert v2 declared={type=L2} @374
+    Return v3 @374
+}
+function f22 name="who" module=m0 position=382 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @382
+  b1():
+    v0 = GetModuleVariable variable=g15 @397
+    Return v0 @397
+}
+function f23 name="made" module=m0 position=525 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @525
+  b1():
+    v0 = GetModuleVariable variable=g15 @550
+    v1 = Integer integer=50 @557
+    v2 = Add v0, v1 @557
+    Return v2 @557
+}

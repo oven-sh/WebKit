@@ -153,16 +153,44 @@ private:
     }
 
 public:
+    // The locations of callInformationFor(signature, role).params or .results, one after another, without a CallInformation.
+    class LocationCursor {
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        LocationCursor(const WasmCallingConvention& convention, CallRole role)
+            : m_convention(convention)
+            , m_role(role)
+            , m_stackOffset(headerIncludingThisSizeInBytes(role))
+        { }
+
+        ArgumentLocation next(Type valueType) { return m_convention.marshallLocation(m_role, valueType, m_gpArgumentCount, m_fpArgumentCount, m_stackOffset); }
+
+    private:
+        const WasmCallingConvention& m_convention;
+        const CallRole m_role;
+        size_t m_gpArgumentCount { 0 };
+        size_t m_fpArgumentCount { 0 };
+        size_t m_stackOffset;
+    };
+
+    // Equal to callInformationFor(signature, role).computeResultsOffsetList().sizeOfAreaInBytes().
+    size_t sizeOfResultRegisterAreaInBytes(const RTT& signature, CallRole role) const
+    {
+        // One result lies in one register.
+        if (!signature.returnCount())
+            return 0;
+        if (signature.returnCount() == 1 && signature.returnType(0).kind() != TypeKind::V128)
+            return sizeof(CPURegister);
+        return callInformationFor(signature, role).computeResultsOffsetList().sizeOfAreaInBytes();
+    }
+
     CallInformation callInformationFor(const RTT& signature, CallRole role = CallRole::Caller) const
     {
         size_t gpArgumentCount = 0;
         size_t fpArgumentCount = 0;
-        size_t headerSize = headerSizeInBytes;
-        if (role == CallRole::Caller)
-            headerSize -= sizeof(CallerFrameAndPC);
-
-        ArgumentLocation thisArgument = { role == CallRole::Caller ? ValueLocation::stackArgument(headerSize) : ValueLocation::stack(headerSize), widthForBytes(sizeof(void*)) };
-        headerSize += sizeof(Register); // thisArgument
+        size_t headerSize = headerIncludingThisSizeInBytes(role);
+        size_t thisOffset = headerSize - sizeof(Register);
+        ArgumentLocation thisArgument = { role == CallRole::Caller ? ValueLocation::stackArgument(thisOffset) : ValueLocation::stack(thisOffset), widthForBytes(sizeof(void*)) };
 
         size_t argStackOffset = headerSize;
         Vector<ArgumentLocation, 8> params(signature.argumentCount(),
@@ -182,6 +210,35 @@ public:
         size_t totalFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(std::max(argStackOffset, resultStackOffset));
 
         return { thisArgument, WTF::move(params), WTF::move(results), totalFrameSize, headerSize };
+    }
+
+    // Equal to callInformationFor(signature, role).headerIncludingThisSizeInBytes.
+    static constexpr size_t headerIncludingThisSizeInBytes(CallRole role)
+    {
+        size_t headerSize = headerSizeInBytes;
+        if (role == CallRole::Caller)
+            headerSize -= sizeof(CallerFrameAndPC);
+        return headerSize + sizeof(Register); // thisArgument
+    }
+
+    // Equal to callInformationFor(signature, role).headerAndArgumentStackSizeInBytes.
+    size_t headerAndArgumentStackSizeInBytes(const RTT& signature, CallRole role) const
+    {
+        size_t headerSize = headerIncludingThisSizeInBytes(role);
+
+        size_t gpArgumentCount = 0;
+        size_t fpArgumentCount = 0;
+        size_t argStackOffset = headerSize;
+        for (unsigned index = 0; index < signature.argumentCount(); ++index)
+            marshallLocation(role, signature.argumentType(index), gpArgumentCount, fpArgumentCount, argStackOffset);
+
+        gpArgumentCount = 0;
+        fpArgumentCount = 0;
+        size_t resultStackOffset = headerSize;
+        for (unsigned index = 0; index < signature.returnCount(); ++index)
+            marshallLocation(role, signature.returnType(index), gpArgumentCount, fpArgumentCount, resultStackOffset);
+
+        return WTF::roundUpToMultipleOf<stackAlignmentBytes()>(std::max(argStackOffset, resultStackOffset));
     }
 
     RegisterSet argumentGPRs() const { return RegisterSet::argumentGPRs(); }
@@ -238,6 +295,26 @@ private:
     }
 
 public:
+    // The locations of callInformationFor(signature, role).params, one after another, without a CallInformation.
+    class LocationCursor {
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        LocationCursor(const JSCallingConvention& convention, CallRole role)
+            : m_convention(convention)
+            , m_role(role)
+            , m_stackOffset(headerSizeInBytes - (role == CallRole::Caller ? sizeof(CallerFrameAndPC) : 0) + sizeof(Register))
+        { }
+
+        ArgumentLocation next(Type valueType) { return m_convention.marshallLocation(m_role, valueType, m_gpArgumentCount, m_fpArgumentCount, m_stackOffset); }
+
+    private:
+        const JSCallingConvention& m_convention;
+        const CallRole m_role;
+        size_t m_gpArgumentCount { 0 };
+        size_t m_fpArgumentCount { 0 };
+        size_t m_stackOffset;
+    };
+
     CallInformation callInformationFor(const RTT& signature, CallRole role = CallRole::Callee) const
     {
         size_t gpArgumentCount = 0;

@@ -1,0 +1,7 @@
+# the same functions with guesses withheld: no test of ours is put in, and every turn saves the frame
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations
+# NEVER-NOT: = AwaitMayContinue
+# PROGRAM-OF: await-of-a-number-in-a-loop-asks-whether-the-frame-may-go-on.ir

@@ -26,6 +26,7 @@
 
 #include <WebCore/FloatPoint.h>
 #include <WebCore/GlyphBuffer.h>
+#include <WebCore/TextRun.h>
 #include <WebCore/TextSpacing.h>
 #include <wtf/HashSet.h>
 #include <wtf/Platform.h>
@@ -51,7 +52,6 @@ namespace WebCore {
 
 class FontCascade;
 class Font;
-class TextRun;
 
 enum class GlyphIterationStyle : bool { IncludePartialGlyphs, ByWholeGlyphs };
 
@@ -110,7 +110,7 @@ public:
         std::span<const char16_t> characters() const { return m_characters; }
         unsigned stringLocation() const { return m_stringLocation; }
         size_t stringLength() const { return m_characters.size(); }
-        ALWAYS_INLINE unsigned LEGACY_NODELETE indexAt(unsigned) const;
+        NODELETE ALWAYS_INLINE unsigned indexAt(unsigned) const;
         unsigned indexBegin() const { return m_indexBegin; }
         unsigned indexEnd() const { return m_indexEnd; }
         unsigned endOffsetAt(unsigned i) const { ASSERT(!m_isMonotonic); return m_glyphEndOffsets[i]; }
@@ -174,10 +174,10 @@ private:
     void collectComplexTextRunsForCharacters(std::span<const char16_t>, unsigned stringLocation, const Font*, std::span<const char16_t> charactersToShape = { }, std::span<const unsigned> originalIndices = { });
     void adjustGlyphsAndAdvances();
 
-    unsigned LEGACY_NODELETE indexOfCurrentRun(unsigned& leftmostGlyph);
-    unsigned LEGACY_NODELETE incrementCurrentRun(unsigned& leftmostGlyph);
+    NODELETE unsigned indexOfCurrentRun(unsigned& leftmostGlyph);
+    NODELETE unsigned incrementCurrentRun(unsigned& leftmostGlyph);
 
-    float LEGACY_NODELETE runWidthSoFarFraction(unsigned glyphStartOffset, unsigned glyphEndOffset, unsigned oldCharacterInCurrentGlyph, GlyphIterationStyle) const;
+    NODELETE float runWidthSoFarFraction(unsigned glyphStartOffset, unsigned glyphEndOffset, unsigned oldCharacterInCurrentGlyph, GlyphIterationStyle) const;
 
     FloatPoint glyphOrigin(unsigned index) const { return index < m_glyphOrigins.size() ? m_glyphOrigins[index] : FloatPoint(); }
 
@@ -209,7 +209,7 @@ private:
     SingleThreadWeakHashSet<const Font>* m_fallbackFonts { nullptr };
 
     const CheckedRef<const FontCascade> m_fontCascade;
-    const CheckedRef<const TextRun> m_run;
+    const TextRun m_run;
 
     unsigned m_currentCharacter { 0 };
     unsigned m_end { 0 };

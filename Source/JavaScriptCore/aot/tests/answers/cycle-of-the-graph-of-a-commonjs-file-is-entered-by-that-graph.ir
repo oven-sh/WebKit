@@ -1,0 +1,79 @@
+# root.js: import "./x.js"; import "./k.cjs"    x.js: import "./y.js"    y.js: import "./x.js"    k.cjs: require("./other.js")    other.js: import "./y.js"; import "./k.cjs"
+# k.cjs runs while the graph of root.js is loaded, ahead of x.js and y.js. If its require() entered their cycle, at y.js, x.js would run ahead of y.js
+# and read what y.js has yet to declare. other.js imports k.cjs, which is all that the graph of root.js waits for, so that graph runs before the require() returns. It was asked for first:
+# it runs first and enters the cycle, at x.js, so y.js runs ahead of x.js.
+# RUN: run-in-shell globalThis.register = closure => { globalThis.registered = closure; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => registered()).then(() => print("imported")); return result; };
+# CHECK: k.cjs begins
+# CHECK-NEXT: y.js
+# CHECK-NEXT: x.js
+# CHECK-NEXT: root.js
+# CHECK-NEXT: other.js
+# CHECK-NEXT: k.cjs ends
+# CHECK-NEXT: imported
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m6 completes=true isHoisted=true}, {target=m2 completes=true}, {target=m6 completes=true}]
+module m2 path="/x.js" displayPath="x.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/y.js" displayPath="y.js" body=f3 requests=[{target=m2 completes=true}]
+module m4 path="/other.js" displayPath="other.js" body=f4 requests=[{target=m6 completes=true isHoisted=true}, {target=m3 completes=true}, {target=m6 completes=true}]
+module m5 path="/k.cjs" displayPath="k.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g0 requests=[{target=m4 kind=Require completes=true}]
+module m6 path="#6" displayPath="k.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f6 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+variable g0 name="exports" module=m5 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m6 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f7
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="root.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="x" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="x.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="y" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="y.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="other" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="other.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f5 name="k" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="k.cjs begins"
+    v3 = Call v1, -, v2
+    EvaluateModule module=m4 referrer=m5 [isCallOfRequire]
+    v5 = String string="k.cjs ends"
+    v6 = Call v1, -, v5
+    v7 = NewDictionary
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f6 name="facadeOfK" module=m5 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m6 [isBare]
+    Return
+}
+function f7 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}

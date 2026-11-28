@@ -36,8 +36,7 @@
 #include <unicode/ubidi.h>
 #include <wtf/Range.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct ExpansionInfo;
 class InlineContentAligner;
@@ -81,13 +80,13 @@ public:
     bool isTrailingRunFullyTrimmable() const { return m_trimmableTrailingContent.isTrailingRunFullyTrimmable(); }
 
     std::optional<InlineLayoutUnit> trailingSoftHyphenWidth() const { return m_trailingSoftHyphenWidth; }
-    void LEGACY_NODELETE addTrailingHyphen(InlineLayoutUnit hyphenLogicalWidth);
+    NODELETE void addTrailingHyphen(InlineLayoutUnit hyphenLogicalWidth);
 
     enum class TrailingContentAction : uint8_t { Remove, Preserve };
     InlineLayoutUnit handleTrailingTrimmableContent(TrailingContentAction);
     void handleTrailingHangingContent(std::optional<IntrinsicWidthMode>, InlineLayoutUnit horizontalAvailableSpace, bool isLastFormattedLine);
     void handleOverflowingNonBreakingSpace(TrailingContentAction, InlineLayoutUnit overflowingWidth);
-    const Box* LEGACY_NODELETE removeOverflowingOutOfFlowContent();
+    NODELETE const Box* removeOverflowingOutOfFlowContent();
     void resetBidiLevelForTrailingWhitespace(UBiDiLevel rootBidiLevel);
 
     using Run = LineRun;
@@ -105,25 +104,25 @@ public:
     Result close(TrailingContentAction hangingTrailingWhitespace = TrailingContentAction::Preserve);
 
     static bool restoreTrimmedTrailingWhitespace(InlineLayoutUnit trimmedTrailingWhitespaceWidth, RunList&, InlineItemRange, const InlineItemList&);
-    static bool LEGACY_NODELETE hasTrailingForcedLineBreak(const RunList&);
+    NODELETE static bool hasTrailingForcedLineBreak(const RunList&);
 
 private:
     InlineLayoutUnit lastRunLogicalRight() const { return m_runs.isEmpty() ? 0.0f : m_runs.last().logicalRight(); }
 
-    void LEGACY_NODELETE resetTrailingContent();
+    NODELETE void resetTrailingContent();
     void removeHangingTrailingWhitespace();
 
     bool lineHasVisuallyNonEmptyContent() const;
 
     bool isFirstFormattedLine() const { return m_isFirstFormattedLine; }
-    const InlineFormattingContext& LEGACY_NODELETE formattingContext() const LIFETIME_BOUND;
+    NODELETE const InlineFormattingContext& formattingContext() const LIFETIME_BOUND;
     static bool appendTrailingInlineItemAsTrailingRun(RunList&, InlineLayoutUnit trimmedTrailingWhitespaceWidth, InlineItemRange, const InlineItemList&);
 
     struct TrimmableTrailingContent {
-        TrimmableTrailingContent(RunList&);
+        NODELETE TrimmableTrailingContent(RunList&);
 
-        void LEGACY_NODELETE addFullyTrimmableContent(size_t runIndex, InlineLayoutUnit trimmableContentOffset, InlineLayoutUnit trimmableWidth);
-        void LEGACY_NODELETE addPartiallyTrimmableContent(size_t runIndex, InlineLayoutUnit trimmableWidth);
+        NODELETE void addFullyTrimmableContent(size_t runIndex, InlineLayoutUnit trimmableContentOffset, InlineLayoutUnit trimmableWidth);
+        NODELETE void addPartiallyTrimmableContent(size_t runIndex, InlineLayoutUnit trimmableWidth);
         InlineLayoutUnit remove();
         InlineLayoutUnit removePartiallyTrimmableContent();
 
@@ -198,7 +197,7 @@ inline bool Line::hasContent() const
     if (m_runs.isEmpty())
         return false;
     for (auto& run : m_runs | std::views::reverse) {
-        if (run.isContentful() && !run.isListMarker())
+        if (run.isContentful())
             return true;
     }
     return false;
@@ -241,5 +240,4 @@ inline size_t Line::HangingContent::length() const
     return length;
 }
 
-}
 }

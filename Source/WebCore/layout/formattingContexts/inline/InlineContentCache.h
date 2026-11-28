@@ -31,8 +31,7 @@
 #include <WebCore/LineLayoutResult.h>
 #include <wtf/HashMap.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 // InlineContentCache is used to cache content for subsequent layouts.
 class InlineContentCache {
@@ -46,6 +45,8 @@ public:
             bool requiresVisualReordering { false };
             // Note that <span>this is text</span> returns true as inline boxes are not considered 'content' here.
             bool hasTextAndLineBreakOnlyContent { false };
+            // Text in a display: contents element.
+            bool hasTextWithStyleOfItsOwn { false };
             bool hasTextAutospace { false };
             bool hasWhiteSpaceTrim { false };
             size_t inlineBoxCount { 0 };
@@ -62,6 +63,7 @@ public:
 
         bool requiresVisualReordering() const { return m_contentAttributes.requiresVisualReordering; }
         bool hasTextAndLineBreakOnlyContent() const { return m_contentAttributes.hasTextAndLineBreakOnlyContent; }
+        bool hasTextWithStyleOfItsOwn() const { return m_contentAttributes.hasTextWithStyleOfItsOwn; }
         bool hasTextAutospace() const { return m_contentAttributes.hasTextAutospace; }
         bool hasInlineBoxes() const { return !!inlineBoxCount(); }
         size_t inlineBoxCount() const { return m_contentAttributes.inlineBoxCount; }
@@ -135,5 +137,3 @@ inline void InlineContentCache::InlineItems::replace(size_t insertionPosition, I
 }
 
 }
-}
-

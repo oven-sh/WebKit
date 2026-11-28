@@ -38,7 +38,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLSpace);
 
-RenderMathMLSpace::RenderMathMLSpace(MathMLSpaceElement& element, Style::ComputedStyle&& style)
+RenderMathMLSpace::RenderMathMLSpace(MathMLSpaceElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLBlock(Type::MathMLSpace, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLSpace());
@@ -51,19 +51,10 @@ MathMLSpaceElement& RenderMathMLSpace::element() const
     return downcast<MathMLSpaceElement>(nodeForNonAnonymous());
 }
 
-void RenderMathMLSpace::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMathMLSpace::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
-
-    m_maxContentLogicalWidthContribution = spaceWidth();
-    m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
-    adjustContentLogicalWidthsForBorderAndPadding();
-
-    clearContentLogicalWidthsInvalidation();
+    return intrinsicLogicalWidthContributionsForMathContent(spaceWidth());
 }
 
 LayoutUnit RenderMathMLSpace::spaceWidth() const

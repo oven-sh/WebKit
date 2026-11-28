@@ -32,29 +32,27 @@ WI.MediaInstrument = class MediaInstrument extends WI.Instrument
         return WI.TimelineRecord.Type.Media;
     }
 
-    startInstrumentation(initiatedByBackend)
+    startInstrumentation(initiatingTarget)
     {
         // Audio/Video/Picture instrumentation is always happening.
 
-        if (!initiatedByBackend) {
-            // COMPATIBILITY (iOS 13): Animation domain did not exist yet.
-            if (InspectorBackend.hasDomain("Animation")) {
-                let target = WI.assumingMainTarget();
+        // COMPATIBILITY (iOS 13): Animation domain did not exist yet.
+        if (InspectorBackend.hasDomain("Animation")) {
+            let target = WI.assumingMainTarget();
+            if (target !== initiatingTarget) {
+                WI.timelineManager.willStartTrackingForTarget(target, "Animation");
                 target.AnimationAgent.startTracking();
             }
         }
     }
 
-    stopInstrumentation(initiatedByBackend)
+    startInstrumentationForTarget(target)
     {
-        // Audio/Video/Picture instrumentation is always happening.
+        // Nothing to do, only the main target that existed when capturing started is instrumented.
+    }
 
-        if (!initiatedByBackend) {
-            // COMPATIBILITY (iOS 13): Animation domain did not exist yet.
-            if (InspectorBackend.hasDomain("Animation")) {
-                let target = WI.assumingMainTarget();
-                target.AnimationAgent.stopTracking();
-            }
-        }
+    stopInstrumentation()
+    {
+        // Audio/Video/Picture instrumentation is always happening, and TimelineManager stops every domain that is tracking.
     }
 };

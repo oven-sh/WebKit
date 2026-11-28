@@ -26,6 +26,7 @@
 #pragma once
 
 #include <cstdint>
+#include <wtf/ThreadSafetyAnalysis.h>
 
 namespace JSC {
 
@@ -37,7 +38,23 @@ enum class GCConductor : uint8_t {
     Collector
 };
 
-const char* LEGACY_NODELETE gcConductorShortName(GCConductor officer);
+NODELETE const char* gcConductorShortName(GCConductor officer);
+
+// Being the conductor: the collector thread, or a mutator holding the conn. One global capability rather than one per
+// Collector, so that Heap's methods can require it too. Exists only for thread-safety analysis; the variable is never
+// defined.
+class WTF_CAPABILITY("conductor") ConductorRole { };
+extern ConductorRole& conductorRole;
+
+// Being the conductor during a phase that stops the world (Begin, Fixpoint, Reloop and End), so that no mutator runs.
+// Global for the same reason as ConductorRole, and likewise never defined.
+class WTF_CAPABILITY("conductor with world stopped") ConductorWithWorldStoppedRole { };
+extern ConductorWithWorldStoppedRole& conductorWithWorldStoppedRole;
+
+// Being a marker while every member heap's world is stopped: the conductor or one of its marking helpers. Held shared,
+// since they mark at the same time. Global for the same reason as ConductorRole, and likewise never defined.
+class WTF_CAPABILITY("marker with world stopped") MarkerWithWorldStoppedRole { };
+extern MarkerWithWorldStoppedRole& markerWithWorldStoppedRole;
 
 } // namespace JSC
 

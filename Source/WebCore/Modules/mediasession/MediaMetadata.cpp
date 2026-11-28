@@ -42,6 +42,7 @@
 #include "NodeInlinesLight.h"
 #include "SpaceSplitString.h"
 #include <ranges>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -167,9 +168,8 @@ void MediaMetadata::setAlbum(const String& album)
 ExceptionOr<void> MediaMetadata::setArtwork(ScriptExecutionContext& context, Vector<MediaImage>&& artwork)
 {
     ASSERT(!m_defaultImages.size());
-    Vector<MediaImage> resolvedArtwork;
-    resolvedArtwork.reserveInitialCapacity(artwork.size());
-    for (auto& image : artwork) {
+    Vector<MediaImage> resolvedArtwork(ReserveCapacityTag { }, artwork.size());
+    for (auto& image : borrow(artwork)) {
         auto resolvedSrc = context.parseURL(image.src);
         if (!resolvedSrc.isValid())
             return Exception { ExceptionCode::TypeError };
@@ -188,7 +188,7 @@ ExceptionOr<void> MediaMetadata::setArtwork(ScriptExecutionContext& context, Vec
 // A score of 0 is for images smaller than the minimum size
 // A score of 1 indicates an image of ideal size with an aspect ratio of 1 (square)
 // The closer to the ideal size, the higher the score.
-static float LEGACY_NODELETE imageDimensionsScore(IntSize size)
+NODELETE static float imageDimensionsScore(IntSize size)
 {
     constexpr double minimumSize = MediaSessionArtworkSizing::minimumSize.maxDimension();
     constexpr double idealSize = MediaSessionArtworkSizing::idealSize.maxDimension();

@@ -1,0 +1,53 @@
+# const k = Symbol("k");
+# function P(a) { this.x = a; this[k] = a; }        globalThis.P = P;
+# function read(p) { return [p.x, p[k]]; }          globalThis.read = read;
+# No layout lists `k`: Link appends it, because the constructor itself stores it on `this`. So every object has it, and a read under it looks at the slot: filled, the slot holds the object's own value, which a lookup finds first
+# whatever stands above and whatever the run time prepares in front of a lookup under a symbol. Empty, the read goes as it is written. Until then an appended field was never taken to be there, and under a symbol nothing was looked at.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: ShapeTest v0 layouts=[L0]
+# CHECK: IsSlotFilled {{*}}key=symbol("k")@m0:0 receivers=[L0]
+# CHECK: GetSlot {{*}}key=symbol("k")@m0:0 receivers=[L0]
+# The arm where a test fails reads as it is written.
+# RUN(ARM): walk f2 mechanisms=all
+# ARM-LABEL: code f2:Body
+# ARM: PropGet v0 key=symbol("k")@m0:0
+# A store goes by more than whether the slot is filled: nothing changes for it.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.1 symbol("k")@m0:0 appended
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 module=m0 fields=[{key=symbol("k")@m0:0 declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="k" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="k"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v4 key="P"
+    PropSet v6, v5 key="read"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="x"
+    v3 = GetModuleVariable variable=g0
+    ElemSet v0, v3, v1
+    v5 = Undefined
+    Return v5
+}
+function f2 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = GetModuleVariable variable=g0
+    v3 = ElemGet v0, v2
+    v4 = NewArray v1, v3
+    Return v4
+}

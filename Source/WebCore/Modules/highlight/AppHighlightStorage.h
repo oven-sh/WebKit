@@ -52,14 +52,14 @@ enum class ScrollToHighlight : bool { No, Yes };
 class AppHighlightStorage final {
     WTF_MAKE_TZONE_ALLOCATED(AppHighlightStorage);
 public:
-    AppHighlightStorage(Document&);
+    NODELETE AppHighlightStorage(Document&);
     ~AppHighlightStorage();
 
     WEBCORE_EXPORT void storeAppHighlight(Ref<StaticRange>&&, CompletionHandler<void(AppHighlight&&)>&&);
     WEBCORE_EXPORT void restoreAndScrollToAppHighlight(Ref<SharedBuffer>&&, ScrollToHighlight);
     void restoreUnrestoredAppHighlights();
 
-    bool LEGACY_NODELETE shouldRestoreHighlights(MonotonicTime timestamp);
+    NODELETE bool shouldRestoreHighlights(MonotonicTime timestamp);
 
     bool hasUnrestoredHighlights() const { return m_unrestoredHighlights.size() || m_unrestoredScrollHighlight; }
 

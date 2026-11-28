@@ -108,15 +108,15 @@ void GraphicsContextCairo::save(GraphicsContextState::Purpose purpose)
     cairo_save(m_cr.get());
 }
 
-void GraphicsContextCairo::restore(GraphicsContextState::Purpose purpose)
+bool GraphicsContextCairo::restore(GraphicsContextState::Purpose purpose)
 {
-    if (!stackSize())
-        return;
+    if (!canRestore(purpose))
+        return false;
 
     GraphicsContext::restore(purpose);
 
     if (m_cairoStateStack.isEmpty())
-        return;
+        return true;
 
     if (m_cairoState->m_mask.pattern) {
         cairo_pop_group_to_source(m_cr.get());
@@ -133,6 +133,7 @@ void GraphicsContextCairo::restore(GraphicsContextState::Purpose purpose)
     m_cairoState = &m_cairoStateStack.last();
 
     cairo_restore(m_cr.get());
+    return true;
 }
 
 // Draws a filled rectangle with a stroked border.
@@ -142,7 +143,7 @@ void GraphicsContextCairo::drawRect(const FloatRect& rect, float borderThickness
     Cairo::drawRect(*this, rect, borderThickness, fillColor(), strokeStyle(), strokeColor());
 }
 
-void GraphicsContextCairo::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void GraphicsContextCairo::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     auto& state = this->state();
     Cairo::drawPlatformImage(*this, nativeImage.platformImage().get(), destRect, srcRect, { options, imageInterpolationQualityForOptions(options) }, state.alpha(), Cairo::ShadowState(state));
@@ -187,7 +188,7 @@ void GraphicsContextCairo::fillRect(const FloatRect& rect, RequiresClipToRect)
     Cairo::fillRect(*this, rect, Cairo::FillSource(state), Cairo::ShadowState(state));
 }
 
-void GraphicsContextCairo::fillRect(const FloatRect& rect, Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
+void GraphicsContextCairo::fillRect(const FloatRect& rect, const Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
 {
     auto& state = this->state();
     Cairo::fillRect(*this, rect, Cairo::FillSource(state, gradient, gradientSpaceTransform), Cairo::ShadowState(state));
@@ -218,10 +219,9 @@ IntRect GraphicsContextCairo::clipBounds() const
     return Cairo::State::getClipBounds(*platformContext());
 }
 
-void GraphicsContextCairo::clipToImageBuffer(ImageBuffer& buffer, const FloatRect& destRect)
+void GraphicsContextCairo::clipToNativeImage(const NativeImage& nativeImage, const FloatRect& destRect)
 {
-    if (auto nativeImage = nativeImageForDrawing(buffer))
-        Cairo::clipToImageBuffer(*this, nativeImage->platformImage().get(), destRect);
+    Cairo::clipToImageBuffer(*this, nativeImage.platformImage().get(), destRect);
 }
 
 void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color, float)
@@ -367,7 +367,7 @@ void GraphicsContextCairo::fillRectWithRoundedHole(const FloatRect& rect, const 
     Cairo::fillRectWithRoundedHole(*this, rect, roundedHoleRect, Cairo::FillSource(state), Cairo::ShadowState(state));
 }
 
-void GraphicsContextCairo::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void GraphicsContextCairo::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;

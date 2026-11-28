@@ -1,0 +1,47 @@
+# as lookup-that-answered-absent-is-told-again.ir, where the store goes through a value that has stopped naming its built-ins: which of them take the name is known when the flow has ended, so the name counts as added from the store on
+# marked.marked; other.other; same(Math); same(Function.prototype).marked = true
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 callers-known
+# CHECK: function f3 callers-known
+# RUN(OLDEST): link functions oldest-first mechanisms=all
+# OLDEST-NOT: function f2 callers-known
+# OLDEST: function f3 callers-known
+# RUN(ADDS): test-run
+# ADDS: adds FunctionPrototype "marked"
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = PropGet v0 key="marked"
+    v2 = Call v0, -
+    v3 = NewClosure function=f3
+    v4 = PropGet v3 key="other"
+    v5 = Call v3, -
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Function" [isFreeName]
+    v8 = PropGet v7 key="prototype"
+    v9 = PropGet v6 key="Math" [isFreeName]
+    v10 = NewClosure function=f1
+    v11 = Call v10, -, v9
+    v12 = Call v10, -, v8
+    v13 = Boolean boolean=true
+    PropSet v12, v13 key="marked"
+    Return v13
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="marked" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="other" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

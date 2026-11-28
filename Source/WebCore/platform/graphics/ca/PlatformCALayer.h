@@ -165,7 +165,7 @@ public:
 
     LayerType layerType() const { return m_layerType; }
     
-    bool LEGACY_NODELETE canHaveBackingStore() const;
+    NODELETE bool canHaveBackingStore() const;
 
     virtual PlatformCALayer* superlayer() const = 0;
     virtual void removeFromSuperlayer() = 0;
@@ -190,10 +190,13 @@ public:
 #if ENABLE(THREADED_ANIMATIONS)
     virtual void clearAcceleratedEffectsAndBaseValues();
     virtual void setAcceleratedEffectsAndBaseValues(const AcceleratedEffects&, const AcceleratedEffectValues&);
+    // The area, in this layer's coordinate space without its own transform, that the content affected by
+    // the accelerated effects set on this layer, descendants included, may cover over the course of the effects.
+    virtual void setAnimationExtent(std::optional<FloatRect>);
 #endif
 
     virtual void setMaskLayer(RefPtr<PlatformCALayer>&&);
-    PlatformCALayer* LEGACY_NODELETE maskLayer() const;
+    NODELETE PlatformCALayer* maskLayer() const;
 
     virtual bool isOpaque() const = 0;
     virtual void setOpaque(bool) = 0;
@@ -293,6 +296,8 @@ public:
     virtual Path shadowPath() const = 0;
     virtual void setShadowPath(const Path&) = 0;
 
+    virtual void setHidesFromScreenCapture(bool) = 0;
+
     virtual void setAntialiasesEdges(bool) = 0;
 
     virtual MediaPlayerVideoGravity videoGravity() const = 0;
@@ -384,8 +389,6 @@ public:
 
     virtual void purgeFrontBufferForTesting() { }
     virtual void purgeBackBufferForTesting() { }
-
-    bool needsPlatformContext() const;
 
 protected:
     PlatformCALayer(LayerType, PlatformCALayerClient* owner);

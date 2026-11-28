@@ -197,7 +197,7 @@ void RenderScrollbar::updateScrollbarParts()
     }
 }
 
-static PseudoElementType LEGACY_NODELETE pseudoForScrollbarPart(ScrollbarPart part)
+NODELETE static PseudoElementType pseudoForScrollbarPart(ScrollbarPart part)
 {
     switch (part) {
         case BackButtonStartPart:
@@ -259,9 +259,9 @@ void RenderScrollbar::updateScrollbarPart(ScrollbarPart partType)
     }
 
     if (auto& partRendererSlot = m_parts.add(partType, nullptr).iterator->value)
-        partRendererSlot->setStyle(WTF::move(*partStyle));
+        partRendererSlot->setStyle(makeUniqueRefFromNonNullUniquePtr(WTF::move(partStyle)));
     else {
-        partRendererSlot = createRenderer<RenderScrollbarPart>(protect(owningRenderer()->document()), WTF::move(*partStyle), this, partType);
+        partRendererSlot = createRenderer<RenderScrollbarPart>(protect(owningRenderer()->document()), makeUniqueRefFromNonNullUniquePtr(WTF::move(partStyle)), this, partType);
         partRendererSlot->initializeStyle();
     }
 }

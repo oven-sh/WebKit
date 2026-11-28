@@ -26,6 +26,7 @@
 #include "Lexer.h"
 
 #include "BuiltinNames.h"
+#include "DecimalNumberScanner.h"
 #include "Identifier.h"
 #include "KeywordLookup.h"
 #include "Lexer.lut.h"
@@ -34,6 +35,7 @@
 #include <limits.h>
 #include <string.h>
 #include <wtf/Assertions.h>
+#include <wtf/FastFloat.h>
 #include <wtf/HexNumber.h>
 #include <wtf/MathExtras.h>
 #include <wtf/dtoa.h>
@@ -505,7 +507,7 @@ Lexer<T>::Lexer(VM& vm, JSParserBuiltinMode builtinMode, JSParserScriptMode scri
 {
 }
 
-static inline JSTokenType LEGACY_NODELETE tokenTypeForIntegerLikeToken(double doubleValue)
+NODELETE static inline JSTokenType tokenTypeForIntegerLikeToken(double doubleValue)
 {
     if ((doubleValue || !std::signbit(doubleValue)) && truncateDoubleToInt64(doubleValue) == doubleValue)
         return INTEGER;
@@ -916,7 +918,7 @@ template<typename CharacterType> inline void Lexer<CharacterType>::recordUnicode
 }
 
 #if ASSERT_ENABLED
-bool isSafeBuiltinIdentifier(VM& vm, const Identifier* ident)
+bool isSafeBuiltinIdentifier(VM& vm, UniquedStringImpl* ident)
 {
     if (!ident)
         return true;
@@ -924,13 +926,13 @@ bool isSafeBuiltinIdentifier(VM& vm, const Identifier* ident)
      * be used as a safety net while implementing builtins.
      */
     // FIXME: How can a debug-only assertion be a safety net?
-    if (*ident == vm.propertyNames->builtinNames().callPublicName())
+    if (ident == vm.propertyNames->builtinNames().callPublicName().impl())
         return false;
-    if (*ident == vm.propertyNames->builtinNames().applyPublicName())
+    if (ident == vm.propertyNames->builtinNames().applyPublicName().impl())
         return false;
-    if (*ident == vm.propertyNames->eval)
+    if (ident == vm.propertyNames->eval.impl())
         return false;
-    if (*ident == vm.propertyNames->Function)
+    if (ident == vm.propertyNames->Function.impl())
         return false;
     return true;
 }
@@ -1003,34 +1005,32 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<Latin1Cha
     if (m_current == '\\') [[unlikely]]
         return parseIdentifierSlowCase<shouldCreateIdentifier>(tokenData, lexerFlags, strictMode, identifierStart);
 
-    const Identifier* ident = nullptr;
-    
+    SUPPRESS_UNCOUNTED_LOCAL UniquedStringImpl* ident = nullptr;
+
     if (shouldCreateIdentifier || m_parsingBuiltinFunction) {
         const std::span<const Latin1Character> identifierSpan { identifierStart, static_cast<size_t>(currentSourcePtr() - identifierStart) };
         if (m_parsingBuiltinFunction && isBuiltinName) {
             if (isWellKnownSymbol)
-                ident = &m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpWellKnownSymbol(identifierSpan));
+                SUPPRESS_UNCOUNTED_LOCAL ident = m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpWellKnownSymbol(identifierSpan));
             else {
 #if ASSERT_ENABLED
                     auto *symbol = m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan);
                     ASSERT_WITH_MESSAGE(symbol, "Private symbol not found: %s", identifierSpan.data());
 #endif
 
-                ident = &m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan));
+                SUPPRESS_UNCOUNTED_LOCAL ident = m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan));
             }
             if (!ident)
                 return INVALID_PRIVATE_NAME_ERRORTOK;
         } else {
-            ident = makeIdentifier(identifierSpan);
+            SUPPRESS_UNCOUNTED_LOCAL ident = makeIdentifier(identifierSpan);
             if (m_parsingBuiltinFunction) {
 #if !USE(BUN_JSC_ADDITIONS)
                 if (!isSafeBuiltinIdentifier(m_vm, ident)) {
-                    m_lexErrorMessage = makeString("The use of '"_s, ident->string(), "' is disallowed in builtin functions."_s);
+                    m_lexErrorMessage = makeString("The use of '"_s, StringView { ident }, "' is disallowed in builtin functions."_s);
                     return ERRORTOK;
                 }
 #endif
-                if (*ident == m_vm.propertyNames->undefinedKeyword)
-                    tokenData->ident = &m_vm.propertyNames->undefinedPrivateName;
             }
         }
         tokenData->ident = ident;
@@ -1041,7 +1041,7 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<Latin1Cha
     if ((remaining < maxTokenLength) && !lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[unlikely]] {
         if (!isBuiltinName) {
             ASSERT(shouldCreateIdentifier);
-            const HashTableValue* entry = JSC::mainTable.entry(*ident);
+            const HashTableValue* entry = JSC::mainTable.entry(ident);
             ASSERT((remaining < maxTokenLength) || !entry);
             if (!entry)
                 return identType;
@@ -1114,31 +1114,30 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<char16_t>
         return parseIdentifierSlowCase<shouldCreateIdentifier>(tokenData, lexerFlags, strictMode, identifierStart);
 
     bool isAll8Bit = !(orAllChars & ~0xff);
-    const Identifier* ident = nullptr;
-    
-    if (shouldCreateIdentifier) {
+    if constexpr (shouldCreateIdentifier) {
+        SUPPRESS_UNCOUNTED_LOCAL UniquedStringImpl* ident = nullptr;
         if (isAll8Bit)
-            ident = makeLatin1Identifier(std::span { identifierStart, currentSourcePtr() });
+            SUPPRESS_UNCOUNTED_LOCAL ident = makeLatin1Identifier(std::span { identifierStart, currentSourcePtr() });
         else
-            ident = makeIdentifier(std::span { identifierStart, currentSourcePtr() });
+            SUPPRESS_UNCOUNTED_LOCAL ident = makeIdentifier(std::span { identifierStart, currentSourcePtr() });
         tokenData->ident = ident;
-    } else
-        tokenData->ident = nullptr;
-    
-    if (isPrivateName)
-        return PRIVATENAME;
 
-    if ((remaining < maxTokenLength) && !lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[unlikely]] {
-        ASSERT(shouldCreateIdentifier);
-        const HashTableValue* entry = JSC::mainTable.entry(*ident);
-        ASSERT((remaining < maxTokenLength) || !entry);
-        if (!entry)
-            return IDENT;
-        JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
-        return (token != RESERVED_IF_STRICT) || strictMode ? token : IDENT;
+        if (isPrivateName)
+            return PRIVATENAME;
+
+        if ((remaining < maxTokenLength) && !lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[unlikely]] {
+            const HashTableValue* entry = JSC::mainTable.entry(ident);
+            ASSERT((remaining < maxTokenLength) || !entry);
+            if (!entry)
+                return IDENT;
+            JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
+            return (token != RESERVED_IF_STRICT) || strictMode ? token : IDENT;
+        }
+        return IDENT;
     }
 
-    return IDENT;
+    tokenData->ident = nullptr;
+    return isPrivateName ? PRIVATENAME : IDENT;
 }
 
 template<typename CharacterType>
@@ -1173,7 +1172,7 @@ JSTokenType Lexer<CharacterType>::parseIdentifierSlowCase(JSTokenData* tokenData
                 return character.isIncomplete() ? UNTERMINATED_IDENTIFIER_UNICODE_ESCAPE_ERRORTOK : INVALID_IDENTIFIER_UNICODE_ESCAPE_ERRORTOK;
             if (isStart ? !isIdentStart(character.value()) : !isIdentPart(character.value())) [[unlikely]]
                 return INVALID_IDENTIFIER_UNICODE_ESCAPE_ERRORTOK;
-            if (shouldCreateIdentifier)
+            if constexpr (shouldCreateIdentifier)
                 recordUnicodeCodePoint(character.value());
             identifierStart = currentSourcePtr();
             return identType;
@@ -1212,26 +1211,24 @@ JSTokenType Lexer<CharacterType>::parseIdentifierSlowCase(JSTokenData* tokenData
             return type;
     }
 
-    const Identifier* ident = nullptr;
-    if (shouldCreateIdentifier) {
+    if constexpr (shouldCreateIdentifier) {
         if (identifierStart != currentSourcePtr())
             m_buffer16.append(std::span(identifierStart, currentSourcePtr() - identifierStart));
-        ident = makeIdentifier(m_buffer16.span());
-
+        SUPPRESS_UNCOUNTED_LOCAL auto* ident = makeIdentifier(m_buffer16.span());
         tokenData->ident = ident;
-    } else
+        m_buffer16.shrink(0);
+
+        if (!lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[likely]] {
+            const HashTableValue* entry = JSC::mainTable.entry(ident);
+            if (!entry)
+                return identType;
+            JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
+            if ((token != RESERVED_IF_STRICT) || strictMode)
+                return ESCAPED_KEYWORD;
+        }
+    } else {
         tokenData->ident = nullptr;
-
-    m_buffer16.shrink(0);
-
-    if (!lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[likely]] {
-        ASSERT(shouldCreateIdentifier);
-        const HashTableValue* entry = JSC::mainTable.entry(*ident);
-        if (!entry)
-            return identType;
-        JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
-        if ((token != RESERVED_IF_STRICT) || strictMode)
-            return ESCAPED_KEYWORD;
+        m_buffer16.shrink(0);
     }
 
     return identType;
@@ -1242,7 +1239,7 @@ static ALWAYS_INLINE bool characterRequiresParseStringSlowCase(Latin1Character c
     return character < 0xE;
 }
 
-static ALWAYS_INLINE bool LEGACY_NODELETE characterRequiresParseStringSlowCase(char16_t character)
+NODELETE static ALWAYS_INLINE bool characterRequiresParseStringSlowCase(char16_t character)
 {
     return character < 0xE || !isLatin1(character);
 }
@@ -1822,6 +1819,43 @@ ALWAYS_INLINE auto Lexer<T>::parseOctal() -> std::optional<NumberParseResult>
         return std::nullopt;
 
     return NumberParseResult { parseIntOverflow(m_buffer8.span(), 8) };
+}
+
+// Converts a decimal literal as it is scanned, rather than copying it into m_buffer8 for parseDouble. If the literal has
+// separators, a BigInt suffix, too many digits, or a syntax error, or is directly followed by an identifier, this consumes
+// nothing and returns ERRORTOK so that the general path handles it. Kept out of line so that lexing short integers, the
+// most common literals, does not pay for it.
+template <typename T>
+NEVER_INLINE JSTokenType Lexer<T>::lexDecimalWithoutSeparators(JSTokenData* tokenData, const T* start, const T* integerEnd, uint64_t integer)
+{
+    auto decimal = scanDecimalNumber<DecimalFractionSyntax::AllowsEmpty>(start, integerEnd, m_codeEnd, integer);
+    if (!decimal)
+        return ERRORTOK;
+    T next = decimal->end < m_codeEnd ? *decimal->end : T { };
+    if (!cannotBeIdentStart(next)) [[unlikely]]
+        return ERRORTOK;
+    double value = WTF::parseDoubleFromDecimalDigits(decimal->mantissa, decimal->exponent, decimal->digitCount);
+    tokenData->doubleValue = value;
+    m_code = decimal->end;
+    m_current = next;
+    if (integerEnd < m_codeEnd && *integerEnd == '.')
+        return DOUBLE;
+    return tokenTypeForIntegerLikeToken(value);
+}
+
+template <typename T>
+NEVER_INLINE JSTokenType Lexer<T>::scanDecimalArrayElementFollowedByComma(double& value, const T* start, const T* integerEnd, uint64_t integer)
+{
+    auto decimal = scanDecimalNumber<DecimalFractionSyntax::AllowsEmpty>(start, integerEnd, m_codeEnd, integer);
+    if (!decimal || decimal->end >= m_codeEnd || *decimal->end != ',')
+        return ERRORTOK;
+    value = WTF::parseDoubleFromDecimalDigits(decimal->mantissa, decimal->exponent, decimal->digitCount);
+    m_code = decimal->end + 1;
+    m_current = m_code < m_codeEnd ? *m_code : T { };
+    m_hasLineTerminatorBeforeToken = false;
+    if (*integerEnd == '.')
+        return DOUBLE;
+    return tokenTypeForIntegerLikeToken(value);
 }
 
 template <typename T>
@@ -2482,6 +2516,10 @@ start:
             token = DOT;
             break;
         }
+        if (auto type = lexDecimalWithoutSeparators(tokenData, m_code - 1, m_code - 1, 0); type != ERRORTOK) [[likely]] {
+            token = type;
+            break;
+        }
         if (!parseNumberAfterDecimalPoint()) [[unlikely]] {
             m_lexErrorMessage = "Non-number found after decimal point"_s;
             token = atEnd() ? UNTERMINATED_NUMERIC_LITERAL_ERRORTOK : INVALID_NUMERIC_LITERAL_ERRORTOK;
@@ -2530,7 +2568,7 @@ start:
             else {
                 token = BIGINT;
                 shift();
-                tokenData->bigIntString = std::get<const Identifier*>(*parseNumberResult);
+                tokenData->bigIntString = std::get<UniquedStringImpl*>(*parseNumberResult);
                 tokenData->radix = 16;
             }
 
@@ -2569,7 +2607,7 @@ start:
             else {
                 token = BIGINT;
                 shift();
-                tokenData->bigIntString = std::get<const Identifier*>(*parseNumberResult);
+                tokenData->bigIntString = std::get<UniquedStringImpl*>(*parseNumberResult);
                 tokenData->radix = 2;
             }
 
@@ -2609,7 +2647,7 @@ start:
             else {
                 token = BIGINT;
                 shift();
-                tokenData->bigIntString = std::get<const Identifier*>(*parseNumberResult);
+                tokenData->bigIntString = std::get<UniquedStringImpl*>(*parseNumberResult);
                 tokenData->radix = 8;
             }
 
@@ -2656,6 +2694,12 @@ start:
                 token = INTEGER;
                 break;
             }
+            if (m_current == '.' || isASCIIAlphaCaselessEqual(m_current, 'e')) {
+                if (auto type = lexDecimalWithoutSeparators(tokenData, m_code - 1, m_code, 0); type != ERRORTOK) [[likely]] {
+                    token = type;
+                    break;
+                }
+            }
             record8('0');
         }
         [[fallthrough]];
@@ -2687,6 +2731,14 @@ start:
                     m_current = *ptr;
                     break;
                 }
+
+                // Separators, BigInt suffixes, and identifiers cannot follow a literal that the fast path accepts.
+                if (ptr == m_codeEnd || *ptr == '.' || isASCIIAlphaCaselessEqual(*ptr, 'e') || cannotBeIdentStart(*ptr)) {
+                    if (auto type = lexDecimalWithoutSeparators(tokenData, start, ptr, result); type != ERRORTOK) [[likely]] {
+                        token = type;
+                        break;
+                    }
+                }
             }
 
             auto parseNumberResult = parseDecimal();
@@ -2697,7 +2749,7 @@ start:
                 } else {
                     token = BIGINT;
                     shift();
-                    tokenData->bigIntString = std::get<const Identifier*>(*parseNumberResult);
+                    tokenData->bigIntString = std::get<UniquedStringImpl*>(*parseNumberResult);
                     tokenData->radix = 10;
                 }
             } else {
@@ -3091,7 +3143,7 @@ template <>
 inline void orCharacter<Latin1Character>(char16_t&, char16_t) { }
 
 template <>
-inline void LEGACY_NODELETE orCharacter<char16_t>(char16_t& orAccumulator, char16_t character)
+NODELETE inline void orCharacter<char16_t>(char16_t& orAccumulator, char16_t character)
 {
     orAccumulator |= character;
 }
@@ -3100,22 +3152,24 @@ template <typename T>
 JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
 {
     JSTokenData* tokenData = &tokenRecord->m_data;
-    ASSERT(m_buffer16.isEmpty());
 
     bool lastWasEscape = false;
     bool inBrackets = false;
     char16_t charactersOredTogether = 0;
 
+    // The pattern is taken verbatim from the source, including the prefix the caller already consumed.
+    const T* patternStart = m_code;
     if (patternPrefix) {
         ASSERT(!isLineTerminator(patternPrefix));
         ASSERT(patternPrefix != '/');
         ASSERT(patternPrefix != '[');
-        record16(patternPrefix);
+        ASSERT(patternStart > m_codeStart && patternStart[-1] == patternPrefix);
+        --patternStart;
+        orCharacter<T>(charactersOredTogether, patternPrefix);
     }
 
     while (true) {
         if (isLineTerminator(m_current) || atEnd()) {
-            m_buffer16.shrink(0);
             JSTokenType token = UNTERMINATED_REGEXP_LITERAL_ERRORTOK;
             fillTokenInfo(tokenRecord, currentPosition());
             m_error = true;
@@ -3130,7 +3184,6 @@ JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
         if (prev == '/' && !lastWasEscape && !inBrackets)
             break;
 
-        record16(prev);
         orCharacter<T>(charactersOredTogether, prev);
 
         if (lastWasEscape) {
@@ -3151,20 +3204,21 @@ JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
         }
     }
 
-    tokenData->pattern = makeRightSizedIdentifier(m_buffer16, charactersOredTogether);
-    m_buffer16.shrink(0);
+    std::span<const T> pattern { patternStart, m_code - 1 };
+    if constexpr (std::is_same_v<T, Latin1Character>)
+        tokenData->pattern = makeIdentifier(pattern);
+    else
+        tokenData->pattern = makeRightSizedIdentifier(pattern, charactersOredTogether);
 
-    ASSERT(m_buffer8.isEmpty());
+    const T* flagsStart = m_code;
     while (isLatin1(m_current)) [[likely]] {
         if (!isIdentPart(static_cast<Latin1Character>(m_current)))
             break;
-        record8(static_cast<Latin1Character>(m_current));
         shift();
     }
 
     // Normally this would not be a lex error but dealing with surrogate pairs here is annoying and it's going to be an error anyway...
     if (!isLatin1(m_current) && !isWhiteSpace(m_current) && !isLineTerminator(m_current)) [[unlikely]] {
-        m_buffer8.shrink(0);
         JSTokenType token = INVALID_IDENTIFIER_UNICODE_ERRORTOK;
         fillTokenInfo(tokenRecord, currentPosition());
         m_error = true;
@@ -3175,8 +3229,7 @@ JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
         return token;
     }
 
-    tokenData->flags = makeIdentifier(m_buffer8.span());
-    m_buffer8.shrink(0);
+    tokenData->flags = makeLatin1Identifier(std::span<const T> { flagsStart, m_code });
 
     // Since RegExp always ends with / or flags (IdentifierPart), m_atLineStart always becomes false.
     m_atLineStart = false;

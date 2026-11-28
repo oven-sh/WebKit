@@ -1,0 +1,131 @@
+# a Boolean needs no ToBoolean, and behind the branch that asks it it is true on one side and false on the other. So nobody but the branch reads the comparison, which then leaves its answer in no register
+# function either(k) { return k === 1 || k === 2; }
+# function kept(a, b) { const same = a === b; if (same) return same; return same; }
+# function anything(x, y) { return x || y; }          x is handed on as it came, and is asked for its truth
+# function negated(a, b) { const less = a < b; const no = !less; if (no) return less; return no; }
+# function round(n) { let more = n > 0; let i = 0; while (more) { i++; more = i < n; } return more; }
+# all five are handed to sink, so nothing is known of what they are given
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK: mechanisms Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[yes]]: true {{*}} = Boolean boolean=true
+# CHECK: [[first]]: {{*}} = StrictEq
+# CHECK-NEXT: Branch [[first]] -> taken
+# CHECK: Jump -> next [[join]]([[yes]])
+# CHECK: [[second]]: {{*}} = StrictEq
+# CHECK-NEXT: Jump -> next [[join]]([[second]])
+# RUN(NEVER): walk f1 f2 f4 f5 mechanisms=none+Folding
+# NEVER-NOT: ToBoolean
+# NEVER-NOT: Narrowed
+# RUN(KEPT): walk f2 mechanisms=none+Folding
+# KEPT-LABEL: code f2:Body
+# KEPT: [[yes]]: true {{*}} = Boolean boolean=true
+# KEPT: [[no]]: false {{*}} = Boolean
+# KEPT: [[same]]: {{*}} = StrictEq {{*}} uses=1
+# KEPT-NEXT: Branch [[same]] -> taken
+# KEPT: Return [[yes]]
+# KEPT: Return [[no]]
+# RUN(ANYTHING): walk f3 mechanisms=none+Folding
+# ANYTHING-LABEL: code f3:Body
+# ANYTHING: b0([[x]]: anything
+# ANYTHING: [[truth]]: {{*}} = ToBoolean [[x]]
+# ANYTHING-NEXT: Branch [[truth]] -> taken
+# ANYTHING: Jump -> next {{*}}([[x]])
+# RUN(PLAIN): walk f3 mechanisms=all
+# PLAIN-LABEL: code f3:Body
+# PLAIN-NOT: = Boolean
+# RUN(NEGATED): walk f4 mechanisms=none+Folding
+# NEGATED-LABEL: code f4:Body
+# NEGATED: [[no]]: false {{*}} = Boolean
+# NEGATED: [[less]]: {{*}} = Less {{*}} uses=1
+# NEGATED-NEXT: Branch [[less]] -> taken
+# NEGATED-COUNT-2: Return [[no]]
+# RUN(ROUND): walk f5 mechanisms=none+Folding
+# ROUND-LABEL: code f5:Body
+# ROUND: [[no]]: false {{*}} = Boolean
+# ROUND: ([[more]]: boolean {{*}} isLoopHead=true
+# ROUND: Branch [[more]] -> taken
+# ROUND: Return [[no]]
+# RUN(ALL): walk f1 f2 f4 f5 mechanisms=all
+# ALL-NOT: ToBoolean
+# ALL-NOT: Narrowed
+# RUN(SHELL): run-in-shell globalThis.sink = (either, kept, anything, negated, round) => { const values = [0, 1, 2, 3, 1.5, NaN, "1", "", null, undefined, true, false]; let said = ""; for (let i = 0; i < values.length; i++) { const v = values[i]; said += (i ? " " : "") + either(v) + "," + kept(v, 1) + "," + String(anything(v, "y")) + "," + negated(v, 1) + "," + round(v); } print(said); };
+# SHELL: false,false,y,false,false true,true,1,false,false true,false,2,false,false false,false,3,false,false false,false,1.5,false,false false,false,y,false,false false,false,1,false,false false,false,y,false,false false,false,y,false,false false,false,y,false,false false,false,true,false,false false,false,y,false,false
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="either" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b3(v4)
+  b2(v5):
+    v6 = Integer integer=2
+    v7 = StrictEq v0, v6
+    Jump -> next b3(v7)
+  b3(v8):
+    Return v8
+}
+function f2 name="kept" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v2
+  b2(v5):
+    Return v2
+}
+function f3 name="anything" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Jump -> next b3(v3)
+  b2(v4):
+    Jump -> next b3(v1)
+  b3(v5):
+    Return v5
+}
+function f4 name="negated" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    v3 = LogicalNot v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v3
+}
+function f5 name="round" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Greater v0, v1
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = ToBoolean v4
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v8):
+    v9 = Increment v5
+    v10 = Less v9, v0
+    Jump -> next b1(v10, v9)
+  b3(v11):
+    Return v4
+}

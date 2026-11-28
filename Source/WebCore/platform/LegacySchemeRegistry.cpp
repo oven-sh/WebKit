@@ -110,7 +110,7 @@ static const URLSchemesMap& allBuiltinSchemes()
 
 static const URLSchemesMap& builtinLocalURLSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static NeverDestroyed schemes = URLSchemesMap {
         "file"_s,
 #if PLATFORM(COCOA)
@@ -122,14 +122,14 @@ static const URLSchemesMap& builtinLocalURLSchemes() WTF_REQUIRES_LOCK(schemeReg
 
 static URLSchemesMap& localURLSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static NeverDestroyed<URLSchemesMap> localSchemes = builtinLocalURLSchemes();
     return localSchemes;
 }
 
-static URLSchemesMap& LEGACY_NODELETE displayIsolatedURLSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
+NODELETE static URLSchemesMap& displayIsolatedURLSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static NeverDestroyed<URLSchemesMap> displayIsolatedSchemes;
     return displayIsolatedSchemes;
 }
@@ -153,14 +153,14 @@ static std::span<const ASCIILiteral> builtinSecureSchemes()
 
 static URLSchemesMap& secureSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static auto secureSchemes = makeNeverDestroyedSchemeSet(builtinSecureSchemes);
     return secureSchemes;
 }
 
-static URLSchemesMap& LEGACY_NODELETE schemesAllowingServiceWorkerClients()
+NODELETE static URLSchemesMap& schemesAllowingServiceWorkerClients()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<URLSchemesMap> schemesAllowingServiceWorkerClients;
     return schemesAllowingServiceWorkerClients;
 }
@@ -179,7 +179,7 @@ static std::span<const ASCIILiteral> builtinSchemesWithUniqueOrigins()
 
 static URLSchemesMap& schemesWithUniqueOrigins() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static auto schemesWithUniqueOrigins = makeNeverDestroyedSchemeSet(builtinSchemesWithUniqueOrigins);
     return schemesWithUniqueOrigins;
 }
@@ -192,14 +192,14 @@ static std::span<const ASCIILiteral> builtinEmptyDocumentSchemes()
 
 static URLSchemesMap& emptyDocumentSchemes()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static auto emptyDocumentSchemes = makeNeverDestroyedSchemeSet(builtinEmptyDocumentSchemes);
     return emptyDocumentSchemes;
 }
 
-static URLSchemesMap& LEGACY_NODELETE schemesForbiddenFromDomainRelaxation()
+NODELETE static URLSchemesMap& schemesForbiddenFromDomainRelaxation()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<URLSchemesMap> schemes;
     return schemes;
 }
@@ -213,14 +213,14 @@ static std::span<const ASCIILiteral> builtinCanDisplayOnlyIfCanRequestSchemes()
 static URLSchemesMap& canDisplayOnlyIfCanRequestSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
     ASSERT(!isInNetworkProcess());
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static auto canDisplayOnlyIfCanRequestSchemes = makeNeverDestroyedSchemeSet(builtinCanDisplayOnlyIfCanRequestSchemes);
     return canDisplayOnlyIfCanRequestSchemes;
 }
 
-static URLSchemesMap& LEGACY_NODELETE notAllowingJavascriptURLsSchemes()
+NODELETE static URLSchemesMap& notAllowingJavascriptURLsSchemes()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<URLSchemesMap> notAllowingJavascriptURLsSchemes;
     return notAllowingJavascriptURLsSchemes;
 }
@@ -243,9 +243,9 @@ void LegacySchemeRegistry::removeURLSchemeRegisteredAsLocal(const String& scheme
     localURLSchemes().remove(scheme);
 }
 
-static MemoryCompactRobinHoodHashSet<String>& LEGACY_NODELETE schemesHandledBySchemeHandler() WTF_REQUIRES_LOCK(schemeRegistryLock)
+NODELETE static MemoryCompactRobinHoodHashSet<String>& schemesHandledBySchemeHandler() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static NeverDestroyed<MemoryCompactRobinHoodHashSet<String>> set;
     return set.get();
 }
@@ -265,9 +265,9 @@ bool LegacySchemeRegistry::schemeIsHandledBySchemeHandler(StringView scheme)
     return schemesHandledBySchemeHandler().contains<StringViewHashTranslator>(scheme);
 }
 
-static URLSchemesMap& LEGACY_NODELETE schemesAllowingDatabaseAccessInPrivateBrowsing()
+NODELETE static URLSchemesMap& schemesAllowingDatabaseAccessInPrivateBrowsing()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<URLSchemesMap> schemesAllowingDatabaseAccessInPrivateBrowsing;
     return schemesAllowingDatabaseAccessInPrivateBrowsing;
 }
@@ -280,7 +280,7 @@ static std::span<const ASCIILiteral> builtinCORSEnabledSchemes()
 
 static URLSchemesMap& CORSEnabledSchemes()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     // FIXME: http://bugs.webkit.org/show_bug.cgi?id=77160
     static auto schemes = makeNeverDestroyedSchemeSet(builtinCORSEnabledSchemes);
     return schemes;
@@ -294,9 +294,9 @@ static std::span<const ASCIILiteral> builtinCSPBypassingSchemes()
 }
 #endif
 
-static URLSchemesMap& LEGACY_NODELETE ContentSecurityPolicyBypassingSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
+NODELETE static URLSchemesMap& ContentSecurityPolicyBypassingSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
 #if ENABLE(PDFJS)
     static auto schemes = makeNeverDestroyedSchemeSet(builtinCSPBypassingSchemes);
 #else
@@ -305,16 +305,16 @@ static URLSchemesMap& LEGACY_NODELETE ContentSecurityPolicyBypassingSchemes() WT
     return schemes;
 }
 
-static URLSchemesMap& LEGACY_NODELETE cachePartitioningSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
+NODELETE static URLSchemesMap& cachePartitioningSchemes() WTF_REQUIRES_LOCK(schemeRegistryLock)
 {
-    ASSERT(schemeRegistryLock.isHeld());
+    RELEASE_ASSERT(schemeRegistryLock.isHeld());
     static NeverDestroyed<URLSchemesMap> schemes;
     return schemes;
 }
 
-static URLSchemesMap& LEGACY_NODELETE alwaysRevalidatedSchemes()
+NODELETE static URLSchemesMap& alwaysRevalidatedSchemes()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<URLSchemesMap> schemes;
     return schemes;
 }
@@ -384,7 +384,7 @@ bool LegacySchemeRegistry::shouldTreatURLSchemeAsSecure(StringView scheme)
 
 void LegacySchemeRegistry::registerURLSchemeAsAllowingServiceWorkerClients(const String& scheme)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (scheme.isNull())
         return;
 
@@ -393,7 +393,7 @@ void LegacySchemeRegistry::registerURLSchemeAsAllowingServiceWorkerClients(const
 
 bool LegacySchemeRegistry::shouldTreatURLSchemeAsAllowingServiceWorkerClients(StringView scheme)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (scheme.isNull())
         return false;
 

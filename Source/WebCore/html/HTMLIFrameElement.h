@@ -45,7 +45,7 @@ public:
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const final;
 
-    String LEGACY_NODELETE srcdoc() const;
+    NODELETE String srcdoc() const;
     ExceptionOr<void> setSrcdoc(Variant<Ref<TrustedHTML>, String>&&, SubstituteData::SessionHistoryVisibility = SubstituteData::SessionHistoryVisibility::Visible);
     SubstituteData::SessionHistoryVisibility srcdocSessionHistoryVisibility() const { return m_srcdocSessionHistoryVisibility; };
 
@@ -75,7 +75,7 @@ private:
     bool isInteractiveContent() const final { return true; }
 
     bool rendererIsNeeded(const Style::ComputedStyle&) final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
 
     ReferrerPolicy referrerPolicyFromAttribute() const;

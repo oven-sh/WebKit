@@ -81,7 +81,7 @@ private:
     // GPUProcessConnection::Client.
     void gpuProcessConnectionDidClose(GPUProcessConnection&) final;
 
-    uint32_t LEGACY_NODELETE totalFrameCount() const;
+    NODELETE uint32_t totalFrameCount() const;
 
 #if PLATFORM(IOS_FAMILY)
     void setSceneIdentifier(const String&) final;
@@ -103,7 +103,7 @@ private:
     String m_inputDeviceId;
     unsigned m_numberOfInputChannels;
     float m_remoteSampleRate;
-    size_t m_audioUnitLatency;
+    size_t m_audioUnitLatency { 0 };
 #if PLATFORM(IOS_FAMILY)
     String m_sceneIdentifier;
 #endif

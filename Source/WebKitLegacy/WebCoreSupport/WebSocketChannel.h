@@ -31,6 +31,7 @@
 #pragma once
 
 #include "SocketStreamHandleClient.h"
+#include <WebCore/EventTarget.h>
 #include <WebCore/ExceptionCode.h>
 #include <WebCore/FileReaderLoaderClient.h>
 #include <WebCore/ThreadableWebSocketChannel.h>
@@ -109,7 +110,7 @@ public:
     ResourceRequest clientHandshakeRequest(const CookieGetter&) const final;
     const ResourceResponse& serverHandshakeResponse() const final;
 
-    Document* LEGACY_NODELETE document();
+    NODELETE Document* document();
     
 private:
     WEBCORE_EXPORT WebSocketChannel(Document&, WebSocketChannelClient&, SocketProvider&);

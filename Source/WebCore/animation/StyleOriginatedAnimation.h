@@ -50,7 +50,7 @@ public:
 
     bool isStyleOriginatedAnimation() const final { return true; }
 
-    const std::optional<const Styleable> LEGACY_NODELETE owningElement() const;
+    NODELETE const std::optional<const Styleable> owningElement() const;
 
     void cancelFromStyle(WebAnimation::Silently = WebAnimation::Silently::No);
 
@@ -65,7 +65,7 @@ public:
     ExceptionOr<void> bindingsPause() override;
 
     void setTimeline(RefPtr<AnimationTimeline>&&) final;
-    void cancel(WebAnimation::Silently = WebAnimation::Silently::No) final;
+    void cancel(WebAnimation::Silently = WebAnimation::Silently::No) override;
 
     void tick(WebAnimation::ShouldDispatchProgressEvent) override;
 

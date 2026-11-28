@@ -1,0 +1,29 @@
+# const view = new Uint8Array(8);  function mark(i) { view[i] = true; view[i + 1] = i > 3; }  mark(1)
+# What is a boolean goes into a view of numbers as 0 or 1, in line.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ToNumber
+# CHECK: PutTypedArrayElement {{*}}level=Proven
+# RUN(NOT): walk f1 mechanisms=all
+# NOT-NOT: ElemSet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=8
+    v1 = Builtin builtin=Uint8Array
+    v2 = Construct v1, -, v0 calleeName="Uint8Array"
+    v3 = NewClosure function=f1
+    v4 = Integer integer=1
+    v5 = Call v3, -, v2, v4 calleeName="mark"
+    Return v5
+}
+function f1 name="mark" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=3
+    v3 = Greater v1, v2
+    ElemSet v0, v1, v3
+    v5 = Undefined
+    Return v5
+}

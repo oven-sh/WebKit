@@ -39,6 +39,7 @@
 #import "WKIntelligenceSmartReplyTextEffectCoordinator.h"
 #import "WKIntelligenceTextEffectCoordinator.h"
 #import "WKMarketplaceKit.h"
+#import "WKPhoneNumberPossessionPlatformManaging.h"
 #import "WKPreviewWindowController.h"
 #import "WKRKEntity.h"
 #import "WKSExperienceController.h"
@@ -47,3 +48,4 @@
 #import "WKStageMode.h"
 #import "WKStageModeOrbitSimulator.h"
 #import "WKTextAnimationManagerIOS.h"
+#import "WKWebXRImmersiveSpaceHost.h"

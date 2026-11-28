@@ -1,0 +1,26 @@
+# typeof map
+# A free name is a read off the global object, which does not close its names: the lookup answers "unknown". What it may find lies on the global object or above it
+# (something that the program or the host laid there), never on another holder: Array.prototype.map is not read.
+# If Link told "a name is read off a value nobody knows", the facts would find the name on every holder that is looked through and enter the library's function behind it,
+# which the front end's load, that counts the names of members, has not sent: the build of this one line stopped with an internal compiler error.
+# The controls stand beside this file: a-free-name-*.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeMapOfList function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="map" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMapOfList thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, -, v0
+    Return v2
+}

@@ -1,0 +1,54 @@
+# class Box { w: number; constructor(w: number) { this.w = w; } }  class Other { constructor() {} }  function read(box: Box) { return box.w; }  register(Box, Other, read, new Box(7));
+# RUN(MADE): run-in-shell globalThis.register = (Box, Other, read, box) => { print(read(box)); const bare = Reflect.construct(Other, [], Box); print(bare instanceof Box, Object.keys(bare).length, read(bare)); print(read(new Box(8))); bare.w = 5; print(read(bare)); };
+# MADE: 7
+# MADE-NEXT: true 0 undefined
+# MADE-NEXT: 8
+# MADE-NEXT: 5
+# MADE-NEXT: exited with 0
+# RUN(DELETED): run-in-shell globalThis.register = (Box, Other, read, box) => { print(read(box)); delete box.w; print(read(box)); Box.prototype.w = "above"; print(read(box)); box.w = 9; print(read(box)); };
+# DELETED: 7
+# DELETED-NEXT: undefined
+# DELETED-NEXT: above
+# DELETED-NEXT: 9
+# DELETED-NEXT: exited with 0
+
+layout L0 kind=Instance name="Box" module=m0 constructor=f1 fields=[{key="w" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Other" module=m0 constructor=f2
+variable g0 name="read" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Integer integer=7
+    v7 = Construct v2, -, v6 calleeName="Box"
+    v8 = GetModuleVariable variable=g0
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="register" [isFreeName]
+    v11 = Call v10, -, v2, v5, v8, v7 calleeName="register"
+    Return v11
+}
+function f1 name="Box" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PropSet v4, v1 key="w"
+    Return v4
+}
+function f2 name="Other" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="read" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="w"
+    Return v1
+}

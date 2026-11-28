@@ -53,6 +53,7 @@
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
+#include "NameValidation.h"
 #include "NodeName.h"
 #include "NotImplemented.h"
 #include "ProcessingInstruction.h"
@@ -85,7 +86,7 @@ static inline void setAttributes(Element& element, AtomHTMLToken& token, OptionS
     setAttributes(element, token.attributes(), token.hasDuplicateAttribute() ? HasDuplicateAttribute::Yes : HasDuplicateAttribute::No, parserContentPolicy);
 }
 
-static bool LEGACY_NODELETE hasImpliedEndTag(const HTMLStackItem& item)
+NODELETE static bool hasImpliedEndTag(const HTMLStackItem& item)
 {
     switch (item.elementName()) {
     case HTML::dd:
@@ -104,7 +105,7 @@ static bool LEGACY_NODELETE hasImpliedEndTag(const HTMLStackItem& item)
     }
 }
 
-static bool LEGACY_NODELETE shouldUseLengthLimit(const ContainerNode& node)
+NODELETE static bool shouldUseLengthLimit(const ContainerNode& node)
 {
     auto* element = dynamicDowncast<Element>(node);
     if (!element)
@@ -120,7 +121,7 @@ static bool LEGACY_NODELETE shouldUseLengthLimit(const ContainerNode& node)
     }
 }
 
-static inline bool LEGACY_NODELETE causesFosterParenting(const HTMLStackItem& item)
+NODELETE static inline bool causesFosterParenting(const HTMLStackItem& item)
 {
     switch (item.elementName()) {
     case HTML::table:
@@ -521,13 +522,13 @@ void HTMLConstructionSite::insertDoctype(AtomHTMLToken&& token)
 void HTMLConstructionSite::insertProcessingInstruction(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
-    attachLater(protect(currentNode()), ProcessingInstruction::create(protect(ownerDocumentForCurrentNode()), token.processingInstructionTarget(), token.processingInstructionData()));
+    attachLater(protect(currentNode()), ProcessingInstruction::createWithoutValidation(protect(ownerDocumentForCurrentNode()), token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertProcessingInstructionOnDocument(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
-    attachLater(protect(m_attachmentRoot), ProcessingInstruction::create(protect(m_document), token.processingInstructionTarget(), token.processingInstructionData()));
+    attachLater(protect(m_attachmentRoot), ProcessingInstruction::createWithoutValidation(protect(m_document), token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertProcessingInstructionOnHTMLHtmlElement(AtomHTMLToken&& token)
@@ -535,7 +536,7 @@ void HTMLConstructionSite::insertProcessingInstructionOnHTMLHtmlElement(AtomHTML
     ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
     Ref root = m_openElements.rootNode();
     Ref rootDocument = root->document();
-    attachLater(WTF::move(root), ProcessingInstruction::create(rootDocument, token.processingInstructionTarget(), token.processingInstructionData()));
+    attachLater(WTF::move(root), ProcessingInstruction::createWithoutValidation(rootDocument, token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertComment(AtomHTMLToken&& token)
@@ -840,6 +841,8 @@ static inline QualifiedName qualifiedNameForHTMLTag(const AtomHTMLToken& token)
 Ref<Element> HTMLConstructionSite::createElement(AtomHTMLToken& token, const AtomString& namespaceURI)
 {
     SUPPRESS_UNCOUNTED_ARG auto element = ownerDocumentForCurrentNode().createElement(qualifiedNameForTag(token, namespaceURI), true);
+    if (containerForCurrentNode().usesNullCustomElementRegistry() && element->document().customElementRegistry()) [[unlikely]]
+        element->setUsesNullCustomElementRegistry();
     setAttributes(element, token, m_parserContentPolicy);
     return element;
 }
@@ -902,7 +905,9 @@ std::tuple<RefPtr<HTMLElement>, RefPtr<JSCustomElementInterface>, RefPtr<CustomE
         }
         if (!element) {
             auto qualifiedName = qualifiedNameForHTMLTag(token);
-            if (Document::validateCustomElementName(token.name()) == CustomElementNameValidationStatus::Valid) {
+            // HTMLTagNames.in lists builtin SVG/MathML elements with "-" in their names explicitly as HTMLUnknownElement.
+            ASSERT(NameValidation::validateCustomElementName(token.name()) != CustomElementNameValidationStatus::ConflictsWithStandardElementName);
+            if (NameValidation::classifyElementName(token.name()) == NameValidation::ElementNameKind::CustomElementName) {
                 element = HTMLMaybeFormAssociatedCustomElement::create(qualifiedName, ownerDocument);
                 element->setIsCustomElementUpgradeCandidate();
             } else
@@ -910,7 +915,7 @@ std::tuple<RefPtr<HTMLElement>, RefPtr<JSCustomElementInterface>, RefPtr<CustomE
         }
     }
     ASSERT(element);
-    if (!registry && containerForCurrentNode().usesNullCustomElementRegistry())
+    if (!registry && ownerDocument->customElementRegistry() && containerForCurrentNode().usesNullCustomElementRegistry())
         element->setUsesNullCustomElementRegistry();
     if (registry && registry->isScoped() && registry != treeScope->customElementRegistry()) [[unlikely]]
         CustomElementRegistry::addToScopedCustomElementRegistryMap(*element, *registry);

@@ -542,7 +542,7 @@ static void addMessageToConsole(WKPageRef, WKStringRef message, const void*)
     if (!invocation || invocation->gotFinalMessage())
         return;
     if (invocation->shouldDumpJSConsoleLogInStdErr()) {
-        if (auto string = messageString.tryGetUTF8())
+        if (auto string = tryMakeUTF8CString(messageString))
             SAFE_FPRINTF(stderr, "%s", *string);
         else
             SAFE_FPRINTF(stderr, "Out of memory\n");
@@ -611,6 +611,8 @@ void TestController::Callbacks::notifyListeners()
 void TestController::closeOtherPage(WKPageRef page, PlatformWebView* view)
 {
     WKPageClose(page);
+    if (m_targetView == view)
+        m_targetView = nullptr;
     auto index = m_auxiliaryWebViews.findIf([view](auto& auxiliaryWebView) { return auxiliaryWebView.ptr() == view; });
     if (index != notFound)
         m_auxiliaryWebViews.removeAt(index);
@@ -980,6 +982,7 @@ void TestController::initialize(int argc, const char* argv[])
     m_forceComplexText = options.forceComplexText;
     m_paths = options.paths;
     m_allowedHosts = options.allowedHosts;
+    m_disabledKeys = options.disabledKeys;
     m_localhostAliases = options.localhostAliases;
     m_checkForWorldLeaks = options.checkForWorldLeaks;
     m_allowAnyHTTPSCertificateForAllowedHosts = options.allowAnyHTTPSCertificateForAllowedHosts;
@@ -1250,6 +1253,13 @@ bool TestController::denyNotificationPermissionOnPrompt(WKStringRef originString
     return true;
 }
 
+#if !PLATFORM(MAC)
+void TestController::setScrollbarStyleOverride(const String&, CompletionHandler<void(WKTypeRef)>&& completionHandler)
+{
+    completionHandler(nullptr);
+}
+#endif
+
 #if !PLATFORM(COCOA)
 void TestController::updatePresentation(CompletionHandler<void(WKTypeRef)>&& completionHandler)
 {
@@ -1270,6 +1280,10 @@ void TestController::pauseBackgroundFetch(WKStringRef)
 }
 
 void TestController::resumeBackgroundFetch(WKStringRef)
+{
+}
+
+void TestController::setStatisticsLinkDecorationFilteringData(WKStringRef)
 {
 }
 
@@ -1475,6 +1489,7 @@ void TestController::ensureViewSupportsOptionsForTest(const TestInvocation& test
         WKPageSetPageNavigationClient(m_mainWebView->page(), nullptr);
         WKPageClose(m_mainWebView->page());
 
+        m_targetView = nullptr;
         m_mainWebView = nullptr;
         m_createdOtherPage = false;
     }
@@ -1542,8 +1557,10 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
 #if PLATFORM(MAC)
     handleAXRemoveNotificationListener();
+    resetAXAuthenticationModeForTesting();
 #endif
 
+    m_targetView = nullptr;
     for (auto& auxiliaryWebView : std::exchange(m_auxiliaryWebViews, { }))
         WKPageClose(auxiliaryWebView->page());
 
@@ -1591,6 +1608,8 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     resetMockMediaDevices();
     WKPageSetMediaCaptureReportingDelayForTesting(m_mainWebView->page(), 0);
 
+    WKPageSetVirtualWalletBehaviorForTesting(m_mainWebView->page(), toWK("clear").get(), nullptr, nullptr);
+
     WKWebsiteDataStoreResetResourceMonitorThrottler(websiteDataStore(), nullptr, nullptr);
 
     WKURLRequestSetDefaultTimeoutInterval((60_s).value());
@@ -1635,6 +1654,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     m_isGeolocationPermissionSet = false;
     m_isGeolocationPermissionAllowed = false;
     m_geolocationPermissionQueryOrigins.clear();
+    m_geolocationProvider->reset();
 
     // Reset Screen Wake Lock permission.
     m_screenWakeLockPermission = std::nullopt;
@@ -2008,7 +2028,7 @@ void TestController::dumpResponse(const String& result)
     unsigned resultLength = result.length();
     printf("Content-Type: text/plain\n");
     printf("Content-Length: %u\n", resultLength);
-    fwrite(result.utf8().legacyCStringPointer(), 1, resultLength, stdout);
+    fwrite(makeUTF8CString(result).legacyCStringPointer(), 1, resultLength, stdout);
     printf("#EOF\n");
     fprintf(stderr, "#EOF\n");
     fflush(stdout);
@@ -2195,34 +2215,38 @@ WKURLRef TestController::createTestURL(std::span<const char> pathOrURL)
         auto path = testPath(url.get());
         auto pathString = String::fromUTF8(std::span { path });
         if (!m_usingServerMode && !WTF::FileSystemImpl::fileExists(pathString)) {
-            SAFE_PRINTF("Failed: File for URL ‘%s’ was not found or is inaccessible\n", pathString.utf8());
+            SAFE_PRINTF("Failed: File for URL ‘%s’ was not found or is inaccessible\n", makeUTF8CString(pathString));
             return nullptr;
         }
         return url.leakRef();
     }
 
     // Creating from filesytem path.
-    auto urlString = makeString("file://"_s, FileSystem::realPath(String::fromUTF8(pathOrURL))).utf8();
+    auto urlString = makeUTF8CString(makeString("file://"_s, FileSystem::realPath(String::fromUTF8(pathOrURL))));
     auto url = toWKURL(urlString);
     auto path = testPath(url.get());
     auto pathString = String::fromUTF8(std::span { path });
     if (!m_usingServerMode && !FileSystem::fileExists(pathString)) {
-        SAFE_PRINTF("Failed: File ‘%s’ was not found or is inaccessible\n", pathString.utf8());
+        SAFE_PRINTF("Failed: File ‘%s’ was not found or is inaccessible\n", makeUTF8CString(pathString));
         return nullptr;
     }
     return url.leakRef();
 }
 
-TestOptions TestController::testOptionsForTest(const TestCommand& command) const
+TestOptions TestController::testOptionsForTest(const TestCommand& command, TestFeatures testHeaderFeatures) const
 {
     TestFeatures features = TestOptions::defaults();
     merge(features, m_globalFeatures);
     merge(features, hardcodedFeaturesBasedOnPathForTest(command));
     merge(features, platformSpecificFeatureDefaultsForTest(command));
     merge(features, featureDefaultsFromSelfComparisonHeader(command, TestOptions::keyTypeMapping()));
-    merge(features, featureDefaultsFromTestHeaderForTest(command, TestOptions::keyTypeMapping()));
+    merge(features, WTF::move(testHeaderFeatures));
     merge(features, featureFromAdditionalHeaderOption(command, TestOptions::keyTypeMapping()));
     merge(features, platformSpecificFeatureOverridesDefaultsForTest(command));
+
+    if (features.boolTestRunnerFeatures["dumpCSSPageBoxes"])
+        features.boolWebPreferenceFeatures.insert_or_assign("ShouldPrintBackgrounds", true);
+
     return TestOptions { features };
 }
 
@@ -2528,6 +2552,7 @@ if (window.testRunner) {
     testRunner.updatePresentation = () => post(['UpdatePresentation']);
     testRunner.setPageScaleFactor = (scaleFactor, x, y) => post(['SetPageScaleFactor', { scaleFactor: scaleFactor, x: x, y: y }]);
     testRunner.setObscuredContentInsets = (top, right, bottom, left) => post(['SetObscuredContentInsets', [top, right, bottom, left]]);
+    testRunner.setScrollbarStyleOverride = style => post(['SetScrollbarStyleOverride', style ?? '']);
     testRunner.setResourceMonitorList = (rulesText) => post(['SetResourceMonitorList', rulesText]);
     testRunner.findStringMatchesInPage = (target, options) => post(['FindStringMatches', { String: target, FindOptions: options }]);
     testRunner.setAuthenticationUsername = username => post(['SetAuthenticationUsername', username]);
@@ -2713,6 +2738,9 @@ void TestController::didReceiveScriptMessage(WKScriptMessageRef message, Complet
         auto left = static_cast<float>(doubleValue(WKArrayGetItemAtIndex(insetValues, 3)));
         return WKPageSetObscuredContentInsetsForTesting(TestController::singleton().mainWebView()->page(), top, right, bottom, left, completionHandler.leak(), adoptAndCallCompletionHandler);
     }
+
+    if (WKStringIsEqualToUTF8CString(command, "SetScrollbarStyleOverride"))
+        return setScrollbarStyleOverride(toWTFString(stringValue(argument)), WTF::move(completionHandler));
 
     if (WKStringIsEqualToUTF8CString(command, "UpdatePresentation"))
         return updatePresentation(WTF::move(completionHandler));
@@ -3115,8 +3143,7 @@ void TestController::didReceiveScriptMessage(WKScriptMessageRef message, Complet
     if (WKStringIsEqualToUTF8CString(command, "SetAllowedMenuActions")) {
         auto argumentArray = dynamic_wk_cast<WKArrayRef>(argument);
         auto size = WKArrayGetSize(argumentArray);
-        Vector<String> actions;
-        actions.reserveInitialCapacity(size);
+        Vector<String> actions(ReserveCapacityTag { }, size);
         for (size_t index = 0; index < size; ++index)
             actions.append(toWTFString(stringValue(WKArrayGetItemAtIndex(argumentArray, index))));
         TestController::singleton().setAllowedMenuActions(actions);
@@ -3383,10 +3410,16 @@ bool TestController::runTest(const char* inputLine)
     WKTextCheckerSetTestingMode(true);
     
     auto command = parseInputLine(std::string(inputLine));
+    auto testHeader = testHeaderForTest(command, TestOptions::keyTypeMapping());
+
+    if (auto disabledKey = firstDisabledKeyForTest(command, testHeader, m_disabledKeys)) {
+        dumpSkippedTestReply(*disabledKey);
+        return true;
+    }
 
     m_state = RunningTest;
 
-    TestOptions options = testOptionsForTest(command);
+    TestOptions options = testOptionsForTest(command, WTF::move(testHeader.features));
 
     m_mainResourceURL = adoptWK(createTestURL(command.pathOrURL));
     if (!m_mainResourceURL)
@@ -4162,7 +4195,7 @@ void TestController::didFailProvisionalNavigation(WKPageRef page, WKErrorRef err
     auto errorDescription = toWTFString(adoptWK(WKErrorCopyLocalizedDescription(error)));
     int errorCode = WKErrorGetErrorCode(error);
     auto errorMessage = makeString("Failed: "_s, errorDescription, " (errorDomain="_s, errorDomain, ", code="_s, errorCode, ") for URL "_s, failingURLString);
-    SAFE_PRINTF("%s\n", errorMessage.utf8());
+    SAFE_PRINTF("%s\n", makeUTF8CString(errorMessage));
 }
 
 WKRetainPtr<WKStringRef> TestController::lastProvisionalNavigationFailureURL() const
@@ -4700,7 +4733,7 @@ void TestController::decidePolicyForNavigationAction(WKPageRef page, WKNavigatio
                     auto blockedURL = sanitizeExternalURL(urlString.get());
                     auto message = makeString("CONSOLE MESSAGE: Blocked access to external URL "_s, blockedURL, '\n');
                     if (protectedCurrentInvocation()->shouldDumpJSConsoleLogInStdErr()) {
-                        if (auto string = message.tryGetUTF8())
+                        if (auto string = tryMakeUTF8CString(message))
                             SAFE_FPRINTF(stderr, "%s", *string);
                         else
                             SAFE_FPRINTF(stderr, "Out of memory\n");
@@ -5176,6 +5209,11 @@ unsigned long long TestController::decideStorageQuota(unsigned long long current
 }
 
 bool TestController::isDoingMediaCapture() const
+{
+    return false;
+}
+
+bool TestController::isEnhancedSecurity() const
 {
     return false;
 }
@@ -5751,6 +5789,25 @@ static void privateClickMeasurementStringResultCallback(WKStringRef privateClick
     context->testController.notifyDone();
 }
 
+String TestController::dumpBackForwardListsForAllPages()
+{
+    auto dumpPage = [](WKPageRef page) {
+        auto history = adoptWK(WKPageCopyBackForwardListDumpForTesting(page, toWK("/LayoutTests/").get()));
+        return makeString(
+            "\n============== Back Forward List ==============\n"_s,
+            toWTFString(history.get()),
+            "===============================================\n"_s
+        );
+    };
+
+    StringBuilder builder;
+    if (m_mainWebView)
+        builder.append(dumpPage(m_mainWebView->page()));
+    for (auto& auxiliaryWebView : m_auxiliaryWebViews)
+        builder.append(dumpPage(auxiliaryWebView->page()));
+    return builder.toString();
+}
+
 String TestController::dumpPrivateClickMeasurement()
 {
     PrivateClickMeasurementStringResultCallbackContext callbackContext(*this);
@@ -5892,6 +5949,12 @@ void TestController::setResourceMonitorList(WKStringRef rulesText, CompletionHan
 
 #if !PLATFORM(IOS_FAMILY)
 void TestController::setHasMouseDeviceForTesting(bool)
+{
+}
+#endif
+
+#if !PLATFORM(MAC)
+void TestController::setHasFakePaymentUIForTesting(bool)
 {
 }
 #endif
@@ -6130,8 +6193,7 @@ WKRetainPtr<WKTypeRef> TestController::handleAXCopyAttributeValueAsElementArray(
     CFArrayRef elementArray = static_cast<CFArrayRef>(value.get());
     CFIndex count = CFArrayGetCount(elementArray);
 
-    Vector<WKTypeRef> tokens;
-    tokens.reserveInitialCapacity(count);
+    Vector<WKTypeRef> tokens(ReserveCapacityTag { }, count);
 
     for (CFIndex i = 0; i < count; i++) {
         CFTypeRef childElement = CFArrayGetValueAtIndex(elementArray, i);

@@ -58,7 +58,7 @@ public:
     explicit WebLoaderStrategy(WebProcess&);
     ~WebLoaderStrategy() final;
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
     
     void loadResource(WebCore::LocalFrame&, WebCore::CachedResource&, WebCore::ResourceRequest&&, const WebCore::ResourceLoaderOptions&, CompletionHandler<void(RefPtr<WebCore::SubresourceLoader>&&)>&&) final;
@@ -74,6 +74,13 @@ public:
 
     void suspendPendingRequests() final;
     void resumePendingRequests() final;
+
+    std::pair<std::optional<WebCore::DeferredFetchIdentifier>, uint64_t> reserveDeferredFetchQuota(WebCore::LocalFrame&, WebCore::FrameIdentifier controlFrameIdentifier, const WebCore::SecurityOriginData& reportingOrigin, uint64_t maximumQuota, bool isTopLevelControlFrame, uint64_t requestedBytes) final;
+    void releaseDeferredFetchQuota(WebCore::DeferredFetchIdentifier) final;
+
+    bool addDeferredFetch(WebCore::LocalFrame&, WebCore::DeferredFetchIdentifier, const WebCore::ResourceRequest&, const WebCore::ResourceLoaderOptions&) final;
+    void sendDeferredFetch(WebCore::DeferredFetchIdentifier) final;
+    void removeDeferredFetch(WebCore::DeferredFetchIdentifier) final;
 
     void preconnectTo(WebCore::ResourceRequest&&, WebPage&, WebFrame&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&& = nullptr);
     void preconnectTo(WebCore::FrameLoader&, WebCore::ResourceRequest&&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final;
@@ -140,6 +147,7 @@ private:
 
     bool shouldPerformSecurityChecks() const final;
     bool havePerformedSecurityChecks(const WebCore::ResourceResponse&) const final;
+    bool hasExistingNetworkLoadToResume() const final { return !!m_existingNetworkResourceLoadIdentifierToResume; }
 
     void isResourceLoadFinished(WebCore::CachedResource&, CompletionHandler<void(bool)>&&) final;
 

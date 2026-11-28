@@ -83,15 +83,24 @@ WI.HARBuilder = class HARBuilder
 
     static pageTimings()
     {
+        // Both timings are milliseconds since the page started, which is when the main resource was requested.
+        let requestSentTimestamp = WI.networkManager.mainFrame.mainResource.requestSentTimestamp;
+
         let result = {};
 
         let domContentReadyEventTimestamp = WI.networkManager.mainFrame.domContentReadyEventTimestamp;
-        if (!isNaN(domContentReadyEventTimestamp))
-            result.onContentLoad = domContentReadyEventTimestamp * 1000;
+        if (!isNaN(domContentReadyEventTimestamp)) {
+            let onContentLoad = (domContentReadyEventTimestamp - requestSentTimestamp) * 1000;
+            if (!isNaN(onContentLoad) && onContentLoad >= 0)
+                result.onContentLoad = onContentLoad;
+        }
 
         let loadEventTimestamp = WI.networkManager.mainFrame.loadEventTimestamp;
-        if (!isNaN(loadEventTimestamp))
-            result.onLoad = loadEventTimestamp * 1000;
+        if (!isNaN(loadEventTimestamp)) {
+            let onLoad = (loadEventTimestamp - requestSentTimestamp) * 1000;
+            if (!isNaN(onLoad) && onLoad >= 0)
+                result.onLoad = onLoad;
+        }
 
         return result;
     }
@@ -103,9 +112,15 @@ WI.HARBuilder = class HARBuilder
             let redirect = entryOrResource.redirect;
             let parentResource = entryOrResource.parentResource;
 
+            // A redirect entry starts when its own request was sent: at the page start for the
+            // first hop, and when the previous redirect's response arrived for later hops. The
+            // walltime stored on the redirect is the end of its hop, not the start.
+            let redirectIndex = parentResource.redirects.indexOf(redirect);
+            let startWalltime = redirectIndex > 0 ? parentResource.redirects[redirectIndex - 1].walltime : parentResource.requestSentWalltime;
+
             return {
                 pageref: "page_0",
-                startedDateTime: HARBuilder.date(new Date(redirect.timestamp * 1000)),
+                startedDateTime: HARBuilder.date(startWalltime ? new Date(startWalltime * 1000) : parentResource.requestSentDate),
                 time: 0, // Redirects don't have detailed timing
                 request: HARBuilder.requestForRedirect(redirect, parentResource),
                 response: HARBuilder.responseForRedirect(redirect),

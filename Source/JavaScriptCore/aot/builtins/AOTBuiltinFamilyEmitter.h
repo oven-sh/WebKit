@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIRProgram.h"
 #include "AOTInlineCall.h"
 #include "AOTOperationEmitter.h"
 #include "AOTSchemaInlineBuiltins.h"
@@ -43,7 +44,6 @@ protected:
     void finish(const InlineCall&, CellPointer);
     void finish(const InlineCall&, Boxed);
     void finishWithUndefined(const InlineCall&);
-    void finishWithResults(const InlineCall&, std::span<const Operand>);
 
     TypedPointer inlineProperty(CellPointer object, PropertyOffset);
 

@@ -24,15 +24,12 @@
 
 #pragma once
 
+#include <WebCore/CSSCoordinatePair.h>
 #include <WebCore/CSSFillRule.h>
 #include <WebCore/CSSPosition.h>
 #include <WebCore/CSSPrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace CSS {
-
-// <coordinate-pair> = <length-percentage>{2}
-using CoordinatePair = SpaceSeparatedPoint<LengthPercentage<>>;
+namespace WebCore::CSS {
 
 // <by-to> = by | to
 // https://drafts.csswg.org/css-shapes-2/#typedef-shape-by-to
@@ -370,8 +367,7 @@ template<size_t I> const auto& get(const Shape& value)
 
 template<> struct Serialize<Shape> { void operator()(StringBuilder&, const SerializationContext&, const Shape&); };
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS
 
 DEFINE_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::ToPosition, 1)
 DEFINE_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::ByCoordinatePair, 1)

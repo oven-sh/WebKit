@@ -26,8 +26,7 @@
 
 #include <WebCore/CSSPrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 using namespace Literals;
 
@@ -49,9 +48,8 @@ template<size_t I> const auto& get(const Ratio& value)
 }
 
 // `Ratio` is special-cased to return a `CSSRatioValue`.
-template<> struct CSSValueCreation<Ratio> { Ref<CSSValue> LEGACY_NODELETE operator()(CSSValuePool&, const Ratio&); };
+template<> struct CSSValueCreation<Ratio> { NODELETE Ref<CSSValue> operator()(CSSValuePool&, const Ratio&); };
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS
 
 DEFINE_SLASH_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::Ratio, 2)

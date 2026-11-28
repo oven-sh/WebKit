@@ -1,0 +1,14 @@
+# the next call of `total` takes the cell that the last one has handed back, and fills it anew: each call counts from nothing
+# RUN(SHELL): run-in-shell globalThis.sink = total => { print(total()); print(total()); print(total()); };
+# SHELL: 3
+# SHELL-NEXT: 3
+# SHELL-NEXT: 3
+# SHELL-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining globalThis.sink = total => { print(total()); print(total()); print(total()); };
+# CALLED: 3
+# CALLED-NEXT: 3
+# CALLED-NEXT: 3
+# CALLED-NEXT: exited with 0
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM: ReleaseEnvironment
+# PROGRAM-OF: ../walk/escape-analysis/environment-that-only-direct-callees-are-handed-is-handed-back.ir

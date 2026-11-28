@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "CoordinatedBackingStoreProxy.h"
 #include "FloatRect.h"
 #include "IntRect.h"
@@ -40,6 +40,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 namespace WebCore {
 class BitmapTexture;
 class CoordinatedTileBuffer;
+class Damage;
 
 class SkiaBackingStore {
     WTF_MAKE_TZONE_ALLOCATED(SkiaBackingStore);
@@ -55,7 +56,9 @@ public:
     bool requiresStrictSourceConstraint(SkSamplingOptions sampling) const { return sampling.filter == SkFilterMode::kLinear && m_hasPaddedTiles; }
 
     void update(const FloatSize&, float scale, CoordinatedBackingStoreProxy::Update&&);
-    void processPendingTileUpdates();
+
+    enum class ProcessHiddenTiles : bool { No, Yes };
+    bool processPendingTileUpdates(ProcessHiddenTiles, std::optional<Damage>&, const Function<bool()>& shouldStopProcessingTiles = nullptr);
 
     void paintToCanvas(SkCanvas&, const SkPaint&, const SkiaDamageRegion* = nullptr);
     void appendImageSetEntries(SkCanvas&, const SkMatrix& ctm, size_t matrixIndex, float opacity, bool enableAntialias, Vector<SkCanvas::ImageSetEntry>& images, const SkiaDamageRegion* = nullptr) const;
@@ -77,12 +80,15 @@ private:
 
         ~Tile() = default;
 
-        void scheduleUpdate(const IntRect& dirtyRect, const IntRect& tileRect, CoordinatedTileBuffer&);
-        void processPendingUpdateIfNeeded();
+        void setIsVisible(bool isVisible) { m_isVisible = isVisible; }
+
+        void scheduleUpdate(const IntRect& dirtyRect, Vector<IntRect, 1>&& damageRects, const IntRect& tileRect, Ref<CoordinatedTileBuffer>&&);
+        bool processPendingUpdateIfNeeded(ProcessHiddenTiles, std::optional<Damage>&, const Function<bool()>& shouldStopProcessingTiles);
 
         const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
         sk_sp<SkImage> image() const;
         bool isPadded() const;
+        bool hasPendingUpdates() const;
 
         // Logical region to sample from image() - smaller than the image for padded super-tiled textures.
         SkRect imageSourceRect() const;
@@ -94,10 +100,12 @@ private:
         struct Update {
             IntRect tileRect;
             IntRect dirtyRect;
+            Vector<IntRect, 1> damageRects;
             Ref<CoordinatedTileBuffer> buffer;
         };
 
         float m_scale { 1. };
+        bool m_isVisible { false };
         FloatRect m_rect;
         Vector<Update> m_pendingUpdates;
         sk_sp<SkSurface> m_surface;
@@ -114,4 +122,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

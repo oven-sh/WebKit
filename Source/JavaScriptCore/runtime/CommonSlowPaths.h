@@ -75,7 +75,7 @@ inline JSValue opEnumeratorGetByVal(JSGlobalObject* globalObject, JSValue baseVa
     }
     case JSPropertyNameEnumerator::OwnStructureMode: {
         if (baseValue.isCell()) [[likely]] {
-            if (baseValue.asCell()->structureID() == enumerator->cachedStructureID()) {
+            if (baseValue.asCell()->structureID() == enumerator->cachedStructureIDForNamesAndOffsets()) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());
                 RELEASE_AND_RETURN(scope, baseValue.getObject()->getDirect(index < enumerator->cachedInlineCapacity() ? index : index - enumerator->cachedInlineCapacity() + firstOutOfLineOffset));
@@ -168,6 +168,12 @@ static ALWAYS_INLINE bool canPutDirectFast(VM& vm, Structure* structure, Propert
     structure->get(vm, propertyName, currentAttributes);
     if (currentAttributes & PropertyAttribute::DontDelete)
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun: a definition hands its value to the setter of a custom value (validateAndApplyPropertyDescriptor()), and
+    // putDirect() puts the value in the custom value's place. A class field on a returned object is such a definition.
+    if (currentAttributes & PropertyAttribute::CustomValue)
+        return false;
+#endif
 
     if (!isJSFunction) {
         if (structure->hasNonReifiedStaticProperties())
@@ -245,6 +251,11 @@ inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButte
         ASSERT(hasSlowPutArrayStorage(structure->indexingMode()));
         ASSERT(globalObject->isHavingABadTime());
 
+        // DFG StoreBarrierInsertionPhase requires that a node does not run any GC safepoints
+        // after the node result is allocated (so that GC cannot yet see the result). So
+        // skip GC across switchToSlowPutArrayStorage allocations. The ForAWhile means the
+        // scope exit will not run the GC even if it was deferred during the scope.
+        DeferGCForAWhile deferGC(vm);
         result->switchToSlowPutArrayStorage(vm);
         ASSERT(result->butterfly() != immutableButterfly->toButterfly());
         ASSERT(!result->butterfly()->arrayStorage()->m_sparseMap.get());

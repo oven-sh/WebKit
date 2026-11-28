@@ -1,0 +1,25 @@
+# The stand-in library registers a function that returns undefined for every built-in that is written in JavaScript. While the whole library counted as reached, the build compiled it for all of them,
+# and `map`, `Array.from` and `new Promise` answered undefined in the statements of the shell too: 41 tests had to bring a library of their own.
+# show();
+# The program reaches none of them, so the engine's own functions run.
+# RUN: run-in-shell globalThis.show = () => { print([1, 2].map(x => x + 1).join()); print(Array.from("ab").length); print(Object.fromEntries([["a", 5]]).a); };
+# CHECK: 2,3
+# CHECK-NEXT: 2
+# CHECK-NEXT: 5
+# CHECK-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none globalThis.show = () => { print([1, 2].map(x => x + 1).join()); print(Array.from("ab").length); print(Object.fromEntries([["a", 5]]).a); };
+# CLOSED: 2,3
+# CLOSED-NEXT: 2
+# CLOSED-NEXT: 5
+# CLOSED-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = Call v1 calleeName="show"
+    v3 = Undefined
+    Return v3
+}

@@ -41,7 +41,7 @@ enum class NodeCloneStatus {
     Unsupported // Not yet supported, future work
 };
 
-NodeCloneStatus LEGACY_NODELETE nodeCloneStatusFor(NodeType op)
+NODELETE NodeCloneStatus nodeCloneStatusFor(NodeType op)
 {
     switch (op) {
 #define HANDLE_CASE(op, kind) \
@@ -56,13 +56,13 @@ NodeCloneStatus LEGACY_NODELETE nodeCloneStatusFor(NodeType op)
 
 } // anonymous namespace
 
-bool CloneHelper::isNodeCloneable(Graph& graph, UncheckedKeyHashSet<Node*>& cloneableCache, Node* node)
+bool CloneHelper::isNodeCloneable(Graph& graph, HashSet<Node*>& cloneableCache, Node* node)
 {
     if (cloneableCache.contains(node))
         return true;
 
 #if ASSERT_ENABLED
-    UncheckedKeyHashSet<Node*>& visiting = CloneHelper::debugVisitingSet();
+    HashSet<Node*>& visiting = CloneHelper::debugVisitingSet();
     ASSERT(visiting.add(node).isNewEntry);
     auto exitScope = makeScopeExit([&] {
         visiting.remove(node);
@@ -171,6 +171,7 @@ Node* CloneHelper::cloneNodeImpl(BasicBlock* into, Node* node)
             return cloneEdges(node, clone);
         }
         case CallVarargs:
+        case CallVarargsWithSpread:
         case ConstructVarargs:
         case TailCallVarargsInlinedCaller:
         case TailCallForwardVarargsInlinedCaller: {
@@ -181,7 +182,9 @@ Node* CloneHelper::cloneNodeImpl(BasicBlock* into, Node* node)
             return cloneEdges(node, clone);
         }
         case LoadVarargs:
-        case VarargsLength: {
+        case VarargsLength:
+        case LoadVarargsWithSpread:
+        case VarargsLengthWithSpread: {
             Node* clone = into->cloneAndAppend(m_graph, node);
             LoadVarargsData& cloneData = *m_graph.m_loadVarargsData.add();
             cloneData = *node->loadVarargsData();

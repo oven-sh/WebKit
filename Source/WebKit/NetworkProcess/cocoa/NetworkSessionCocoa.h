@@ -83,9 +83,13 @@ struct IsolatedSession {
 public:
     IsolatedSession()
         : sessionWithCredentialStorage(makeUniqueRef<SessionWrapper>())
+        , sessionWithoutCredentialStorage(makeUniqueRef<SessionWrapper>())
     { }
 
+    SessionWrapper& initializeSessionWithoutCredentialStorageIfNeeded(NavigatingToAppBoundDomain, NetworkSessionCocoa&);
+
     UniqueRef<SessionWrapper> sessionWithCredentialStorage;
+    UniqueRef<SessionWrapper> sessionWithoutCredentialStorage;
     WallTime lastUsed;
 };
 
@@ -97,6 +101,7 @@ public:
     }
 
     SessionWrapper& initializeEphemeralStatelessSessionIfNeeded(NavigatingToAppBoundDomain, NetworkSessionCocoa&);
+    SessionWrapper& initializeSessionWithoutCredentialStorageIfNeeded(NavigatingToAppBoundDomain, NetworkSessionCocoa&);
 
     CheckedRef<SessionWrapper> isolatedSession(WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain, NetworkSessionCocoa&);
     HashMap<WebCore::RegistrableDomain, std::unique_ptr<IsolatedSession>> isolatedSessions;
@@ -104,12 +109,14 @@ public:
     std::unique_ptr<IsolatedSession> appBoundSession;
 
     UniqueRef<SessionWrapper> sessionWithCredentialStorage;
+    UniqueRef<SessionWrapper> sessionWithoutCredentialStorage;
     UniqueRef<SessionWrapper> ephemeralStatelessSession;
 
 private:
 
     SessionSet()
         : sessionWithCredentialStorage(makeUniqueRef<SessionWrapper>())
+        , sessionWithoutCredentialStorage(makeUniqueRef<SessionWrapper>())
         , ephemeralStatelessSession(makeUniqueRef<SessionWrapper>())
     { }
 };
@@ -118,9 +125,9 @@ class NetworkSessionCocoa final : public NetworkSession {
     WTF_MAKE_TZONE_ALLOCATED(NetworkSessionCocoa);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(NetworkSessionCocoa);
 public:
-    static std::unique_ptr<NetworkSession> create(NetworkProcess&, const NetworkSessionCreationParameters&);
+    static std::unique_ptr<NetworkSession> create(const NetworkSessionCreationParameters&);
 
-    NetworkSessionCocoa(NetworkProcess&, const NetworkSessionCreationParameters&);
+    NetworkSessionCocoa(const NetworkSessionCreationParameters&);
     ~NetworkSessionCocoa();
 
     SessionWrapper& initializeEphemeralStatelessSessionIfNeeded(std::optional<WebPageProxyIdentifier>, NavigatingToAppBoundDomain);
@@ -134,6 +141,9 @@ public:
 
     void setClientAuditToken(const WebCore::AuthenticationChallenge&);
 
+    bool canPrefetchDNS() const final;
+    bool hasCompressionDictionarySupport() const final;
+
     void continueDidReceiveChallenge(SessionWrapper&, const WebCore::AuthenticationChallenge&, NegotiatedLegacyTLS, NetworkDataTaskCocoa::TaskIdentifier, RefPtr<NetworkDataTaskCocoa>, CompletionHandler<void(WebKit::AuthenticationChallengeDisposition, const WebCore::Credential&)>&&);
 
     SessionWrapper& sessionWrapperForDownloadResume() { return m_defaultSessionSet->sessionWithCredentialStorage; }
@@ -142,7 +152,7 @@ public:
     bool deviceManagementRestrictionsEnabled() const { return m_deviceManagementRestrictionsEnabled; }
     bool allLoadsBlockedByDeviceManagementRestrictionsForTesting() const { return m_allLoadsBlockedByDeviceManagementRestrictionsForTesting; }
 
-    DMFWebsitePolicyMonitor *LEGACY_NODELETE deviceManagementPolicyMonitor();
+    NODELETE DMFWebsitePolicyMonitor *deviceManagementPolicyMonitor();
 
     CFDictionaryRef proxyConfiguration() const { return m_proxyConfiguration.get(); }
 
@@ -174,7 +184,11 @@ public:
     void applyProxyConfigurationToSessionConfiguration(NSURLSessionConfiguration *);
     void replacedSessionDidBecomeInvalid(NSURLSession *);
 
+    void applyProxyConfigurationToNWParametersForWebTransport(nw_parameters_t);
+    bool proxyConfigurationRequiresTCPProtocols() const;
     bool isLegacyTLSAllowed() const { return m_isLegacyTLSAllowed; }
+
+    static bool allowsLegacyCookieAccessFromFileURL(const WebCore::ResourceRequest&);
 
 private:
     void invalidateAndCancel() override;

@@ -1,0 +1,36 @@
+# If a copy only stored into the target, the target would go on standing below Object.prototype. The copy ASSIGNS, and under `__proto__` an assignment lays what is copied above the target:
+# a setter or a getter up there then gets the target as `this` and does to it what Link does not see.
+# function mix(t, s) { Object.assign(t, s); }  mix({ x: "a" }, { ["__proto__"]: { y: 1 } });
+# The source lists a property of its own under that name, so the target is let go as at any other change of its prototype. A source that lists none leaves the target as it was: object-assign.ir.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "x"
+# CHECK-NOT: writers-known
+# CHECK: layout L0 {{*}}changes=[{{*}}ChangesPrototype
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="__proto__" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewClosure function=f1
+    v9 = Call v8, -, v2, v7 calleeName="mix"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="mix" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
+    v3 = Call v2, -, v0, v1
+    v4 = Undefined
+    Return v4
+}

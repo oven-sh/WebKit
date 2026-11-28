@@ -1,0 +1,48 @@
+# Five strangers meet, one more than a set takes. If what met were any object, the read would look the name up though every layout that can arrive is known and none has left compiled code.
+# What the flow has united is named as one set and is a family behind the flow: the walk's join finds it, and the read goes by the slots of the three that have the name.
+# const o = which ? { a: 7, b: 7 } : which1 ? { b: 7, c: 7 } : which2 ? { c: 7, d: 7 } : which3 ? { b: 7, e: 7 } : { f: 7, g: 7 };  return o.b;
+# RUN: walk f0 mechanisms=all-EscapeAnalysis
+# CHECK: ([[met]]: L0|L1|L2|L3|L4 
+# CHECK: = GetSlotOrUndefined [[met]] key="b" receivers=[L0, L1, L2, L3, L4] level=Proven
+# CHECK-NOT: PropGet {{*}}key="b"
+# RUN(LINK): link families mechanisms=all
+# LINK: family F{{*}} [L0, L1, L2, L3, L4]
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L4 module=m0 fields=[{key="f" declared={type=anything} flags=[IsRequired]}, {key="g" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="which" [isFreeName]
+    v2 = Integer integer=7
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = NewObject -, v2, v2 layout=L3 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = NewObject -, v2, v2 layout=L4 fields=[0, 1]
+    v12 = FinishObject v11
+    Branch v1 -> taken b5(v4), notTaken b1()
+  b1():
+    v13 = PropGet v0 key="which1" [isFreeName]
+    Branch v13 -> taken b5(v6), notTaken b2()
+  b2():
+    v14 = PropGet v0 key="which2" [isFreeName]
+    Branch v14 -> taken b5(v8), notTaken b3()
+  b3():
+    v15 = PropGet v0 key="which3" [isFreeName]
+    Branch v15 -> taken b5(v10), notTaken b4()
+  b4():
+    Jump -> next b5(v12)
+  b5(v16):
+    v17 = PropGet v16 key="b" @10
+    Return v17
+}

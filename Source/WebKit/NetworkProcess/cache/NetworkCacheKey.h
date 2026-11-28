@@ -26,6 +26,7 @@
 #pragma once
 
 #include "NetworkCacheData.h"
+#include <WebCore/IncludesCredentials.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/SHA1.h>
 #include <wtf/StdLibExtras.h>
@@ -60,7 +61,7 @@ public:
     Key() { }
     Key(const Key&);
     Key(Key&&) = default;
-    Key(const String& partition, const String& type, const String& range, const String& identifier, const Salt&);
+    Key(const String& partition, const String& type, const String& range, const String& identifier, const Salt&, WebCore::IncludesCredentials = WebCore::IncludesCredentials::Yes);
     Key(const DataKey&, const Salt&);
 
     Key& operator=(const Key&);
@@ -79,7 +80,7 @@ public:
     const HashType& hash() const LIFETIME_BOUND { return m_hash; }
     const HashType& partitionHash() const LIFETIME_BOUND { return m_partitionHash; }
 
-    static bool LEGACY_NODELETE stringToHash(const String&, HashType&);
+    NODELETE static bool stringToHash(const String&, HashType&);
 
     static size_t hashStringLength() { return 2 * sizeof(m_hash); }
     String hashAsString() const { return hashAsString(m_hash); }
@@ -110,7 +111,7 @@ public:
 private:
     friend struct WTF::Persistence::Coder<Key>;
     static String hashAsString(const HashType&);
-    HashType computeHash(const Salt&) const;
+    HashType computeHash(const Salt&, WebCore::IncludesCredentials) const;
     HashType computePartitionHash(const Salt&) const;
     static HashType partitionToPartitionHash(const String& partition, const Salt&);
     Key(String&& partition, String&& type, String&& identifier, String&& range, HashType hash, HashType partitionHash)

@@ -27,14 +27,13 @@
 #include "ScrollView.h"
 
 #include "AccessibilityRegionContext.h"
-#include "BitmapImage.h"
 #include "CornerRadii.h"
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
 #include "HostWindow.h"
-#include "ImageAdapter.h"
 #include "Logging.h"
+#include "NativeImage.h"
 #include "PlatformMouseEvent.h"
 #include "PlatformWheelEvent.h"
 #include "ScrollAnimator.h"
@@ -558,6 +557,8 @@ void ScrollView::setScrollPosition(const ScrollPosition& scrollPosition, const S
 
     if (prohibitsScrolling())
         return;
+
+    setCurrentScrollRelativity(scrollRelativityFor(options.snapPointSelectionMethod));
 
     if (scrollAnimationStatus() == ScrollAnimationStatus::Animating) {
         scrollAnimator().cancelAnimations();
@@ -1526,9 +1527,9 @@ void ScrollView::paintScrollCorner(GraphicsContext& context, const IntRect& corn
     ScrollbarTheme::theme().paintScrollCorner(*this, context, cornerRect);
 }
 
-void ScrollView::paintScrollbar(GraphicsContext& context, Scrollbar& bar, const IntRect& rect)
+void ScrollView::paintScrollbar(GraphicsContext& context, Scrollbar& bar, const IntRect& rect, OptionSet<ScrollbarPaintBehavior> paintBehavior)
 {
-    bar.paint(context, rect);
+    bar.paint(context, rect, paintBehavior);
 }
 
 void ScrollView::invalidateScrollCornerRect(const IntRect& rect)
@@ -1536,26 +1537,27 @@ void ScrollView::invalidateScrollCornerRect(const IntRect& rect)
     invalidateRect(rect);
 }
 
-void ScrollView::paintScrollbars(GraphicsContext& context, const IntRect& rect)
+bool ScrollView::shouldPaintScrollbars(OptionSet<ScrollbarPaintBehavior> paintBehavior) const
 {
-    if (m_horizontalScrollbar && !layerForHorizontalScrollbar())
-        paintScrollbar(context, *m_horizontalScrollbar.get(), rect);
-    if (m_verticalScrollbar && !layerForVerticalScrollbar())
-        paintScrollbar(context, *m_verticalScrollbar.get(), rect);
-
-    if (layerForScrollCorner())
-        return;
-
-    paintScrollCorner(context, scrollCornerRect());
+    if (m_scrollbarsSuppressed || (!m_horizontalScrollbar && !m_verticalScrollbar))
+        return false;
+    if (paintBehavior.contains(ScrollbarPaintBehavior::IncludeComposited))
+        return true;
+    return (m_horizontalScrollbar && !layerForHorizontalScrollbar()) || (m_verticalScrollbar && !layerForVerticalScrollbar()) || !layerForScrollCorner();
 }
 
 void ScrollView::paintPanScrollIcon(GraphicsContext& context)
 {
-    static NeverDestroyed<Ref<BitmapImage>> panScrollIcon = ImageAdapter::loadPlatformResource("panIcon");
+    static NeverDestroyed<RefPtr<NativeImage>> panScrollIcon = NativeImage::createFromPlatformResource("panIcon"_s);
+    RefPtr icon = panScrollIcon.get();
+    if (!icon)
+        return;
+
     IntPoint iconGCPoint = m_panScrollIconPoint;
     if (parent())
         iconGCPoint = protect(parent())->windowToContents(iconGCPoint);
-    protect(panScrollIcon.get())->draw(context, iconGCPoint);
+
+    context.drawNativeImage(*icon, iconGCPoint);
 }
 
 void ScrollView::paint(GraphicsContext& context, const IntRect& rect, SecurityOriginPaintPolicy securityOriginPaintPolicy, RegionContext* regionContext)
@@ -1599,7 +1601,8 @@ void ScrollView::paint(GraphicsContext& context, const IntRect& rect, SecurityOr
 #endif
 
     // Now paint the scrollbars.
-    if (!m_scrollbarsSuppressed && (m_horizontalScrollbar || m_verticalScrollbar)) {
+    auto paintBehavior = scrollbarPaintBehavior();
+    if (shouldPaintScrollbars(paintBehavior)) {
         GraphicsContextStateSaver stateSaver(context);
         IntRect scrollViewDirtyRect = rect;
         IntRect visibleAreaWithScrollbars(location(), unobscuredContentRectIncludingScrollbars().size());
@@ -1608,7 +1611,13 @@ void ScrollView::paint(GraphicsContext& context, const IntRect& rect, SecurityOr
         scrollViewDirtyRect.moveBy(-location());
         context.clip(IntRect(IntPoint(), visibleAreaWithScrollbars.size()));
 
-        paintScrollbars(context, scrollViewDirtyRect);
+        bool paintCompositedScrollbars = paintBehavior.contains(ScrollbarPaintBehavior::IncludeComposited);
+        if (m_horizontalScrollbar && (paintCompositedScrollbars || !layerForHorizontalScrollbar()))
+            paintScrollbar(context, *m_horizontalScrollbar.get(), scrollViewDirtyRect, paintBehavior);
+        if (m_verticalScrollbar && (paintCompositedScrollbars || !layerForVerticalScrollbar()))
+            paintScrollbar(context, *m_verticalScrollbar.get(), scrollViewDirtyRect, paintBehavior);
+        if (paintCompositedScrollbars || !layerForScrollCorner())
+            paintScrollCorner(context, scrollCornerRect());
     }
 
     // Paint the panScroll Icon

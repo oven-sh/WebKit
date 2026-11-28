@@ -1,0 +1,18 @@
+# a tail call takes the frame away under its operands
+# RUN: verify-code
+# CHECK: {{*}}a cell of the frame is an operand of a tail call
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: Array @Cell = CreateRest firstArgument=0 storage=Frame
+#     v2: Array @JSValue = Box v1
+#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     ReturnCall v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keeps" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+entry module=m0

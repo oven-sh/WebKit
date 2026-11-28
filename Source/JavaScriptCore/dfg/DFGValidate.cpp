@@ -260,6 +260,13 @@ public:
                 case IdentityWithProfile:
                     VALIDATE((node), canonicalResultRepresentation(node->result()) == canonicalResultRepresentation(node->child1()->result()));
                     break;
+                case VarargsLength:
+                case LoadVarargs:
+                    if (node->argumentsChild().useKind() == KnownCellUse) {
+                        VALIDATE((node), node->argumentsChild()->op() == Spread);
+                        VALIDATE((node), !node->loadVarargsData()->offset);
+                    }
+                    break;
                 case SetLocal:
                 case PutStack:
                 case Upsilon:
@@ -506,7 +513,7 @@ public:
 
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
             // We expect the predecessor list to be de-duplicated.
-            UncheckedKeyHashSet<BasicBlock*> predecessors;
+            HashSet<BasicBlock*> predecessors;
             for (BasicBlock* predecessor : block->predecessors)
                 predecessors.add(predecessor);
             VALIDATE((block), predecessors.size() == block->predecessors.size());
@@ -526,8 +533,8 @@ private:
             if (!block)
                 continue;
             
-            UncheckedKeyHashSet<Node*> phisInThisBlock;
-            UncheckedKeyHashSet<Node*> nodesInThisBlock;
+            HashSet<Node*> phisInThisBlock;
+            HashSet<Node*> nodesInThisBlock;
             
             for (size_t i = 0; i < block->numNodes(); ++i) {
                 Node* node = block->node(i);
@@ -543,7 +550,7 @@ private:
             }
 
             {
-                UncheckedKeyHashSet<Node*> seenNodes;
+                HashSet<Node*> seenNodes;
                 for (size_t i = 0; i < block->size(); ++i) {
                     Node* node = block->at(i);
                     m_graph.doToChildren(node, [&] (const Edge& edge) {
@@ -810,7 +817,7 @@ private:
 
         if (m_graph.m_form == ThreadedCPS) {
             Vector<Node*> worklist;
-            UncheckedKeyHashSet<Node*> seen;
+            HashSet<Node*> seen;
             for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
                 for (Node* node : *block) {
                     if (node->op() == GetLocal || node->op() == PhantomLocal) {
@@ -880,7 +887,7 @@ private:
 
             bool isOSRExited = false;
             
-            UncheckedKeyHashSet<Node*> nodesInThisBlock;
+            HashSet<Node*> nodesInThisBlock;
 
             for (auto* node : *block) {
                 switch (node->op()) {
@@ -1007,6 +1014,34 @@ private:
                     break;
                 }
 
+                case CallVarargsWithSpread:
+                case VarargsLengthWithSpread:
+                case LoadVarargsWithSpread: {
+                    // The children are [callee, thisValue, elem0, ...] for CallVarargsWithSpread,
+                    // [argumentCountIncludingThis, elem0, ...] for LoadVarargsWithSpread, and
+                    // [elem0, ...] for VarargsLengthWithSpread. bitVector()->get(i) marks elem i as
+                    // a spread. Only spread operands may be phantoms: the backends drain everything
+                    // else as a value, and arguments elimination only ever leaves an unescaped
+                    // Spread behind (as PhantomSpread), never a bare eliminated allocation.
+                    unsigned base = 0;
+                    if (node->op() == CallVarargsWithSpread)
+                        base = 2;
+                    else if (node->op() == LoadVarargsWithSpread)
+                        base = 1;
+                    VALIDATE((node), node->numChildren() > base);
+                    BitVector* bitVector = node->bitVector();
+                    for (unsigned i = 0; i < node->numChildren(); i++) {
+                        Node* child = m_graph.varArgChild(node, i).node();
+                        if (!child->isPhantomAllocation())
+                            continue;
+                        VALIDATE((node), i >= base);
+                        VALIDATE((node), bitVector->get(i - base));
+                        VALIDATE((node), m_graph.m_form == SSA);
+                        VALIDATE((node), child->op() == PhantomSpread);
+                    }
+                    break;
+                }
+
                 case Spread:
                     VALIDATE((node), !node->child1()->isPhantomAllocation() || node->child1()->op() == PhantomCreateRest || node->child1()->op() == PhantomNewArrayBuffer);
                     break;
@@ -1073,7 +1108,7 @@ private:
             getLocalPositions.operand(operand) < setLocalPositions.operand(operand));
     }
     
-    void LEGACY_NODELETE reportValidationContext() { }
+    NODELETE void reportValidationContext() { }
 
     void reportValidationContext(Node* node)
     {
@@ -1147,9 +1182,9 @@ private:
     GraphDumpMode m_graphDumpMode;
     UTF8CString m_graphDumpBeforePhase;
 
-    UncheckedKeyHashMap<Node*, unsigned> m_myRefCounts;
+    HashMap<Node*, unsigned> m_myRefCounts;
     Vector<uint32_t> m_myTupleRefCounts;
-    UncheckedKeyHashSet<Node*> m_acceptableNodes;
+    HashSet<Node*> m_acceptableNodes;
 };
 
 } // End anonymous namespace.

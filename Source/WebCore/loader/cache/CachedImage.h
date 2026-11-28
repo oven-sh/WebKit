@@ -55,7 +55,7 @@ public:
     bool currentFrameIsComplete() const;
 
     static std::pair<WeakPtr<BitmapImage>, float> brokenImage(float deviceScaleFactor); // Returns an image and the image's resolution scale factor.
-    bool LEGACY_NODELETE willPaintBrokenImage() const;
+    NODELETE bool willPaintBrokenImage() const;
 
     bool canRender() const { return !errorOccurred() && m_image && protect(m_image)->hasSomethingToDraw(); }
 
@@ -73,9 +73,9 @@ public:
     RevalidationDecision makeRevalidationDecision(CachePolicy) const override;
     void load(CachedResourceLoader&) override;
 
-    bool LEGACY_NODELETE isOriginClean(SecurityOrigin*);
+    NODELETE bool isOriginClean(SecurityOrigin*);
 
-    bool LEGACY_NODELETE isClientWaitingForAsyncDecoding(const CachedImageClient&) const;
+    NODELETE bool isClientWaitingForAsyncDecoding(const CachedImageClient&) const;
     void addClientWaitingForAsyncDecoding(CachedImageClient&);
     void removeAllClientsWaitingForAsyncDecoding();
 
@@ -90,7 +90,9 @@ public:
 
     bool allowsAnimation(const Image&) const;
     bool isAnimated() const;
+    void startAnimation();
     void stopAnimation();
+    void clearAnimationOverride();
     void resetAnimation();
 
     String filenameExtension() const;
@@ -137,10 +139,10 @@ private:
         explicit CachedImageObserver(CachedImage&);
 
         // ImageObserver API
-        URL sourceUrl() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->url() : URL(); }
-        String mimeType() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->mimeType() : emptyString(); }
-        unsigned numberOfClients() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->numberOfClients() : 0; }
-        long long expectedContentLength() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->expectedContentLength() : 0; }
+        URL sourceUrl() const override { return !m_cachedImages.computeIsEmpty() ? protect(*m_cachedImages.begin())->url() : URL(); }
+        String mimeType() const override { return !m_cachedImages.computeIsEmpty() ? protect(*m_cachedImages.begin())->mimeType() : emptyString(); }
+        unsigned numberOfClients() const override { return !m_cachedImages.computeIsEmpty() ? protect(*m_cachedImages.begin())->numberOfClients() : 0; }
+        long long expectedContentLength() const override { return !m_cachedImages.computeIsEmpty() ? protect(*m_cachedImages.begin())->expectedContentLength() : 0; }
 
         void encodedDataStatusChanged(const Image&, EncodedDataStatus) final;
         void decodedSizeChanged(const Image&, long long delta) final;
@@ -153,8 +155,7 @@ private:
         void scheduleRenderingUpdate(const Image&) final;
 
         bool allowsAnimation(const Image&) const final;
-        const Settings* settings() final { return !m_cachedImages.isEmptyIgnoringNullReferences() ? (*m_cachedImages.begin()).m_settings.get() : nullptr; }
-        bool useSystemDarkAppearance() const final { return !m_cachedImages.isEmptyIgnoringNullReferences() && protect(*m_cachedImages.begin())->useSystemDarkAppearance(); }
+        const Settings* settings() final { return !m_cachedImages.computeIsEmpty() ? (*m_cachedImages.begin()).m_settings.get() : nullptr; }
 
         WeakHashSet<CachedImage> m_cachedImages;
     };
@@ -167,7 +168,6 @@ private:
     void changedInRect(const Image&, const IntRect*);
     void imageContentChanged(const Image&);
     void scheduleRenderingUpdate(const Image&);
-    bool useSystemDarkAppearance() const;
 
     void updateBufferInternal(const FragmentedSharedBuffer&);
 

@@ -1,0 +1,8 @@
+# the same loop with loop invariants withheld: nothing stands in front of the loop, so the counter is compared with the number in every turn
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Less {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+UnboxedNumbers
+# NEVER-NOT: IntegerBound
+# PROGRAM-OF: number-that-bounds-a-counter-is-rounded-in-front-of-the-loop.ir

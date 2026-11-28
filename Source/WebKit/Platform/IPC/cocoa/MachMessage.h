@@ -25,44 +25,80 @@
 
 #pragma once
 
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
 
-#include "MessageNames.h"
+#include "Encoder.h"
+#include "Timeout.h"
+#include <expected>
 #include <mach/message.h>
 #include <memory>
-#include <wtf/CheckedArithmetic.h>
+#include <wtf/FastMalloc.h>
+#include <wtf/MmapSpan.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/text/CString.h>
+#include <wtf/UniqueRef.h>
 
 namespace IPC {
 
+class Decoder;
+
+enum class MachMessageSendResult : uint8_t {
+    Success, // The message was sent.
+    Timeout, // The destination had no room for the message. Sending it again as it is can send it.
+    InvalidDestinationPort, // The destination does not receive messages anymore. The message is unchanged.
+};
+
+// A Mach message built from an Encoder and owning all Mach resources it references:
+// - Before send(): attachment send rights and the Encoder's out-of-line MmapSpan (if any).
+// - After a timed-out send() (pseudo-receive): a send right to the destination port, attachment
+//   send rights, and a kernel-allocated mapping of any out-of-line body.
+// Destroying an unsent or timed-out message releases everything it owns.
 class MachMessage {
+    WTF_MAKE_NONCOPYABLE(MachMessage);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MachMessage);
 public:
-    static std::unique_ptr<MachMessage> create(MessageName, size_t);
+    static constexpr size_t maxAttachmentCount = 16383;
+
+    using SendResult = MachMessageSendResult;
+
+    // Returns nullptr if the encoder has more than maxAttachmentCount attachments.
+    static std::unique_ptr<MachMessage> create(UniqueRef<Encoder>&&);
+
     ~MachMessage();
 
-    static CheckedSize LEGACY_NODELETE messageSize(size_t bodySize, size_t portDescriptorCount, size_t memoryDescriptorCount);
+    // Sends the message to `destination`. If a prior send() timed out, `destination` must match the
+    // original destination port (or the port must now be MACH_PORT_DEAD).
+    SendResult send(mach_port_t destination, Timeout = Timeout::now());
 
-    size_t size() const { return m_size; }
-    mach_msg_header_t* header() LIFETIME_BOUND { return m_messageHeader; }
+    enum class ReceiveResult : uint8_t {
+        NoMessage,
+        NoSenders,
+        Notification,
+        InvalidMessage,
+        OutOfMemory, // The message could not be received, so it is still in the queue.
+    };
 
-    std::span<uint8_t> span() LIFETIME_BOUND { return unsafeMakeSpan(reinterpret_cast<uint8_t*>(m_messageHeader), m_size); }
+    static std::expected<UniqueRef<Decoder>, ReceiveResult> receiveDecoder(mach_port_t, Timeout = Timeout::now());
 
-    void LEGACY_NODELETE leakDescriptors();
-
-    ReceiverName messageReceiverName() const { return receiverName(m_messageName); }
+    ReceiverName messageReceiverName() const { return receiverName(messageName()); }
     MessageName messageName() const { return m_messageName; }
 
+    bool wasReturnedFromSend() const { return m_state == State::TimedOut; }
+
 private:
-    MachMessage(MessageName, size_t);
+    MachMessage(MessageName, MmapSpan<uint8_t>&& outOfLineBody);
+
+    enum class State : uint8_t {
+        NotSent, // mach_msg() was not called, or it failed with MACH_SEND_INVALID_DEST.
+        TimedOut, // mach_msg() failed with MACH_SEND_TIMED_OUT and copied the message back out.
+        Sent, // mach_msg() succeeded.
+    };
 
     MessageName m_messageName;
-    size_t m_size;
-    bool m_shouldFreeDescriptors { true };
+    State m_state { State::NotSent };
+    MmapSpan<uint8_t> m_outOfLineBody;
     mach_msg_header_t m_messageHeader[];
 };
 
-}
+} // namespace IPC
 
-#endif // PLATFORM(COCOA)
+#endif // OS(DARWIN)

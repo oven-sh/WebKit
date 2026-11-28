@@ -27,10 +27,14 @@
 
 #if ENABLE(WEBDRIVER_ACTIONS_API)
 
+#include <WebCore/FloatPoint.h>
+#include <WebCore/FloatSize.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/IntPoint.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/Deque.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Seconds.h>
@@ -49,16 +53,17 @@ enum class VirtualKey;
 namespace WebKit {
 
 class AutomationCommandError;
+enum class NodeHandleKind : bool;
 using AutomationCompletionHandler = WTF::CompletionHandler<void(std::optional<AutomationCommandError>)>;
 
 class WebPageProxy;
 
 using KeyboardInteraction = Inspector::Protocol::Automation::KeyboardInteractionType;
 using VirtualKey = Inspector::Protocol::Automation::VirtualKey;
-using VirtualKeyMap = HashMap<VirtualKey, VirtualKey, WTF::IntHash<VirtualKey>, WTF::StrongEnumHashTraits<VirtualKey>>;
+using VirtualKeyMap = HashMap<VirtualKey, VirtualKey, WTF::IntHash<VirtualKey>>;
 
 // https://w3c.github.io/webdriver/#dfn-normalised-key-value
-VirtualKey LEGACY_NODELETE normalizedVirtualKey(VirtualKey);
+NODELETE VirtualKey normalizedVirtualKey(VirtualKey);
 
 #if ENABLE(WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS)
 // A CharKey must only ever represent a single unicode codepoint or a single grapheme cluster.
@@ -143,6 +148,21 @@ public:
     IsResetKeyFrame isResetKeyFrame { IsResetKeyFrame::No };
 };
 
+struct SimulatedInputViewport {
+    WebCore::FloatPoint originInMainFrameViewport;
+    WebCore::FloatSize size;
+};
+
+struct SimulatedInputRunOptions {
+    std::optional<SimulatedInputViewport> viewport;
+    bool interpolatePointerMoves { false };
+    NodeHandleKind elementOriginHandleKind { };
+    // FIXME: Classic sends each scroll's own delta too, so it shouldn't diff consecutive states either. <https://webkit.org/b/332993>
+    bool scrollDeltasArePerAction { false };
+    // FIXME: Classic should spread a scroll over its duration too. <https://webkit.org/b/333196>
+    bool interpolateScrolls { false };
+};
+
 class SimulatedInputDispatcher : public RefCountedAndCanMakeWeakPtr<SimulatedInputDispatcher> {
     WTF_MAKE_NONCOPYABLE(SimulatedInputDispatcher);
 public:
@@ -162,7 +182,7 @@ public:
 #if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
         virtual void simulateWheelInteraction(WebPageProxy&, const WebCore::IntPoint& locationInView, const WebCore::IntSize& delta, AutomationCompletionHandler&&) = 0;
 #endif
-        virtual void viewportInViewCenterPointOfElement(WebPageProxy&, std::optional<WebCore::FrameIdentifier>, const String& nodeHandle, Function<void (std::optional<WebCore::IntPoint>, std::optional<AutomationCommandError>)>&&) = 0;
+        virtual void viewportInViewCenterPointOfElement(WebPageProxy&, std::optional<WebCore::FrameIdentifier>, const String& nodeHandle, NodeHandleKind, Function<void (std::optional<WebCore::IntPoint>, std::optional<AutomationCommandError>)>&&) = 0;
     };
 
     static Ref<SimulatedInputDispatcher> create(WebPageProxy& page, SimulatedInputDispatcher::Client& client)
@@ -172,10 +192,10 @@ public:
 
     ~SimulatedInputDispatcher();
 
-    void run(std::optional<WebCore::FrameIdentifier>, Vector<SimulatedInputKeyFrame>&& keyFrames, const HashMap<String, Ref<SimulatedInputSource>>& inputSources, AutomationCompletionHandler&&);
-    void cancel();
+    void run(std::optional<WebCore::FrameIdentifier>, Vector<SimulatedInputKeyFrame>&& keyFrames, const HashMap<String, Ref<SimulatedInputSource>>& inputSources, SimulatedInputRunOptions, AutomationCompletionHandler&&);
+    void cancel(AutomationCommandError);
 
-    bool LEGACY_NODELETE isActive() const;
+    NODELETE bool isActive() const;
 
 private:
     SimulatedInputDispatcher(WebPageProxy&, SimulatedInputDispatcher::Client&);
@@ -192,8 +212,67 @@ private:
 
     void keyFrameTransitionDurationTimerFired();
     bool isKeyFrameTransitionComplete() const;
+    void finishKeyFrameTransitionIfComplete();
+    void failKeyFrameTransition(AutomationCommandError);
 
+    WebCore::IntPoint currentLocationOfSource(const SimulatedInputSourceState&) const;
     void resolveLocation(const WebCore::IntPoint& currentLocation, std::optional<WebCore::IntPoint> location, MouseMoveOrigin, std::optional<String> nodeHandle, Function<void (std::optional<WebCore::IntPoint>, std::optional<AutomationCommandError>)>&&);
+
+#if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
+    struct PointerMoveInterpolation {
+        Ref<SimulatedInputSource> inputSource;
+        WebCore::IntPoint start;
+        WebCore::IntPoint end;
+        MouseButton button;
+        String pointerType;
+        MonotonicTime startTime;
+        Seconds duration;
+        Seconds stepInterval;
+        WebCore::IntPoint lastDispatchedLocation;
+        MonotonicTime lastDispatchTime;
+        WebCore::IntPoint lastDeliveredLocation;
+    };
+
+    void startPointerMoveInterpolation(SimulatedInputSource&, const WebCore::IntPoint& start, const WebCore::IntPoint& end, MouseButton, const String& pointerType, Seconds duration);
+    void pointerMoveInterpolationTimerFired();
+
+    struct PendingMouseInteraction {
+        MouseInteraction interaction;
+        MouseButton button;
+        WebCore::IntPoint location;
+        String pointerType;
+        AutomationCompletionHandler completionHandler;
+    };
+
+    void enqueueMouseInteraction(MouseInteraction, MouseButton, const WebCore::IntPoint&, const String& pointerType, AutomationCompletionHandler&&);
+    void dispatchNextMouseInteraction();
+#endif
+
+#if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
+    struct ScrollInterpolation {
+        Ref<SimulatedInputSource> inputSource;
+        WebCore::IntPoint location;
+        WebCore::IntSize totalDelta;
+        MonotonicTime startTime;
+        Seconds duration;
+        Seconds stepInterval;
+        WebCore::IntSize dispatchedDelta;
+        MonotonicTime lastDispatchTime;
+        WebCore::IntSize deliveredDelta;
+    };
+
+    void startScrollInterpolation(SimulatedInputSource&, const WebCore::IntPoint& location, const WebCore::IntSize& totalDelta, Seconds duration);
+    void scrollInterpolationTimerFired();
+
+    struct PendingWheelInteraction {
+        WebCore::IntPoint location;
+        WebCore::IntSize delta;
+        AutomationCompletionHandler completionHandler;
+    };
+
+    void enqueueWheelInteraction(const WebCore::IntPoint&, const WebCore::IntSize& delta, AutomationCompletionHandler&&);
+    void dispatchNextWheelInteraction();
+#endif
 
     WeakRef<WebPageProxy> m_page;
     SimulatedInputDispatcher::Client& m_client;
@@ -202,8 +281,25 @@ private:
     AutomationCompletionHandler m_runCompletionHandler;
     AutomationCompletionHandler m_keyFrameTransitionCompletionHandler;
     RunLoop::Timer m_keyFrameTransitionDurationTimer;
+    MonotonicTime m_keyFrameStartTime;
+    SimulatedInputRunOptions m_options;
+
+#if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
+    RunLoop::Timer m_pointerMoveInterpolationTimer;
+    Vector<PointerMoveInterpolation> m_pointerMoveInterpolations;
+    Deque<PendingMouseInteraction> m_pendingMouseInteractions;
+    bool m_isDispatchingMouseInteraction { false };
+#endif
+
+#if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
+    RunLoop::Timer m_scrollInterpolationTimer;
+    Vector<ScrollInterpolation> m_scrollInterpolations;
+    Deque<PendingWheelInteraction> m_pendingWheelInteractions;
+    bool m_isDispatchingWheelInteraction { false };
+#endif
 
     Vector<SimulatedInputKeyFrame> m_keyframes;
+    uint64_t m_runCompletionCount { 0 };
 
     // The position within m_keyframes.
     unsigned m_keyframeIndex { 0 };

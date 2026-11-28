@@ -31,9 +31,15 @@
 #if ENABLE(WEBXR)
 
 #include "DOMPointReadOnly.h"
+#if ENABLE(WEBXR_ANCHORS)
+#include "FakeXRAnchorCreationCallback.h"
+#include "FakeXRAnchorCreationParameters.h"
+#endif
+#include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
 #include "WebFakeXRInputController.h"
 #include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -88,7 +94,7 @@ void SimulatedXRDevice::setNativeBoundsGeometry(const Vector<FakeXRBoundsPoint>&
         m_frameData.stageParameters.bounds.append({ static_cast<float>(point.x), static_cast<float>(point.z) });
 }
 
-void SimulatedXRDevice::setViewerOrigin(const std::optional<PlatformXR::FrameData::Pose>& origin)
+void SimulatedXRDevice::setViewerOrigin(const std::optional<PlatformXR::Pose>& origin)
 {
     if (origin) {
         m_frameData.origin = *origin;
@@ -97,7 +103,7 @@ void SimulatedXRDevice::setViewerOrigin(const std::optional<PlatformXR::FrameDat
         return;
     }
 
-    m_frameData.origin = PlatformXR::FrameData::Pose();
+    m_frameData.origin = PlatformXR::Pose();
     m_frameData.isPositionValid = false;
     m_frameData.isTrackingValid = false;
 }
@@ -127,11 +133,11 @@ void SimulatedXRDevice::initializeTrackingAndRendering(const WebCore::SecurityOr
         // There is no way to know how many simulateInputConnection calls will the device receive,
         // so notify the input sources have been initialized with an empty list. This is not a problem because
         // WPT tests rely on requestAnimationFrame updates to test the input sources.
-        callOnMainThread([this, weakThis = ThreadSafeWeakPtr { *this }]() {
+        callOnMainThread([weakThis = ThreadSafeWeakPtr { *this }] {
             auto protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
-            if (RefPtr client = m_trackingAndRenderingClient)
+            if (RefPtr client = protectedThis->m_trackingAndRenderingClient)
                 client->sessionDidInitializeInputSources({ });
         });
     }
@@ -153,14 +159,14 @@ void SimulatedXRDevice::stopTimer()
 }
 
 #if ENABLE(WEBXR_HIT_TEST)
-static PlatformXR::FrameData::Pose rigidTransformToPose(TransformationMatrix matrix)
+static PlatformXR::Pose rigidTransformToPose(TransformationMatrix matrix)
 {
     TransformationMatrix::Decomposed4Type decomposed;
     if (!matrix.decompose4(decomposed))
         return { { }, { } };
 
     FloatPoint3D position(decomposed.translateX, decomposed.translateY, decomposed.translateZ);
-    PlatformXR::FrameData::FloatQuaternion orientation(decomposed.quaternion.x, decomposed.quaternion.y, decomposed.quaternion.z, decomposed.quaternion.w);
+    PlatformXR::FloatQuaternion orientation(decomposed.quaternion.x, decomposed.quaternion.y, decomposed.quaternion.z, decomposed.quaternion.w);
     return { position, orientation };
 };
 #endif
@@ -194,7 +200,7 @@ void SimulatedXRDevice::frameTimerFired()
     }
 
 #if ENABLE(WEBXR_HIT_TEST)
-    auto transformFromPose = [](const PlatformXR::FrameData::Pose& pose) {
+    auto transformFromPose = [](const PlatformXR::Pose& pose) {
         TransformationMatrix translation;
         translation.translate3d(pose.position.x(), pose.position.y(), pose.position.z());
         auto rotation = TransformationMatrix::fromQuaternion({ pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w });
@@ -206,21 +212,21 @@ void SimulatedXRDevice::frameTimerFired()
         float z = m.m13() * p.x() + m.m23() * p.y() + m.m33() * p.z() + m.m43() * w;
         return FloatPoint3D { x, y, z };
     };
-    auto transformRay = [&](const PlatformXR::FrameData::Pose& origin, const PlatformXR::Ray& ray) {
+    auto transformRay = [&](const PlatformXR::Pose& origin, const PlatformXR::Ray& ray) {
         auto transform = transformFromPose(origin);
         return PlatformXR::Ray {
             .origin = mapPoint(transform, ray.origin, 1),
             .direction = mapPoint(transform, ray.direction, 0)
         };
     };
-    auto matrixFromPose = [](const PlatformXR::FrameData::Pose& pose) -> TransformationMatrix {
+    auto matrixFromPose = [](const PlatformXR::Pose& pose) -> TransformationMatrix {
         TransformationMatrix matrix;
         matrix.translate3d(pose.position.x(), pose.position.y(), pose.position.z());
         matrix.multiply(TransformationMatrix::fromQuaternion({ pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w }));
         return matrix;
     };
 
-    auto hitTestWorldToOrigin = [&matrixFromPose](const PlatformXR::FrameData::Pose& origin, Vector<PlatformXR::FrameData::HitTestResult> hitTestInWorld) -> Vector<PlatformXR::FrameData::HitTestResult> {
+    auto hitTestWorldToOrigin = [&matrixFromPose](const PlatformXR::Pose& origin, Vector<PlatformXR::FrameData::HitTestResult> hitTestInWorld) -> Vector<PlatformXR::FrameData::HitTestResult> {
         auto originTransform = matrixFromPose(origin);
         if (!originTransform.isInvertible())
             return { };
@@ -235,18 +241,18 @@ void SimulatedXRDevice::frameTimerFired()
     };
 
     auto computeOrigin = [&data](PlatformXR::NativeOriginInformation nativeOrigin) {
-        return WTF::switchOn(nativeOrigin, [&](const PlatformXR::ReferenceSpaceType& referenceSpaceType) -> std::optional<PlatformXR::FrameData::Pose> {
+        return WTF::switchOn(nativeOrigin, [&](const PlatformXR::ReferenceSpaceType& referenceSpaceType) -> std::optional<PlatformXR::Pose> {
             switch (referenceSpaceType) {
             case PlatformXR::ReferenceSpaceType::Viewer:
                 return data.origin;
             case PlatformXR::ReferenceSpaceType::Local:
-                return PlatformXR::FrameData::Pose();
+                return PlatformXR::Pose();
             case PlatformXR::ReferenceSpaceType::LocalFloor:
                 return data.floorTransform;
             default:
                 return std::nullopt;
             }
-        }, [&](const PlatformXR::InputSourceSpaceInfo& inputSource) -> std::optional<PlatformXR::FrameData::Pose> {
+        }, [&](const PlatformXR::InputSourceSpaceInfo& inputSource) -> std::optional<PlatformXR::Pose> {
             auto i = data.inputSources.findIf([&](auto& item) { return item.handle == inputSource.handle; });
             if (i == notFound)
                 return std::nullopt;
@@ -271,7 +277,7 @@ void SimulatedXRDevice::frameTimerFired()
     for (const auto& pair : m_transientInputHitTestSources) {
         Vector<PlatformXR::FrameData::TransientInputHitTestResult> results;
         for (const auto& source : data.inputSources) {
-            std::optional<PlatformXR::FrameData::Pose> origin;
+            std::optional<PlatformXR::Pose> origin;
             auto i = data.inputSources.findIf([&](auto& item) {
                 return item.handle == source.handle;
             });
@@ -288,6 +294,18 @@ void SimulatedXRDevice::frameTimerFired()
         }
         data.transientInputHitTestResults.add(pair.key, WTF::move(results));
     }
+#endif
+
+#if ENABLE(WEBXR_ANCHORS)
+    for (auto& [identifier, controller] : m_anchors)
+        data.trackedAnchors.add(identifier, controller->anchorState());
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    if (m_simulateIncompletePlaneData)
+        m_simulateIncompletePlaneData = false;
+    else
+        data.detectedPlanes = detectedPlanes();
 #endif
 
     if (m_FrameCallback)
@@ -319,7 +337,7 @@ std::optional<PlatformXR::LayerInfo> SimulatedXRDevice::createLayerProjection(ui
 }
 
 #if ENABLE(WEBXR_LAYERS)
-std::optional<PlatformXR::LayerInfo> SimulatedXRDevice::createCompositionLayer(PlatformXR::CompositionLayerType, IntSize size, PlatformXR::LayerLayout)
+std::optional<PlatformXR::LayerInfo> SimulatedXRDevice::createCompositionLayer(PlatformXR::CompositionLayerType, IntSize size, PlatformXR::LayerLayout, PlatformXR::LayerUpdateMode)
 {
     auto handle = createLayer(size);
     if (!handle)
@@ -335,6 +353,46 @@ void SimulatedXRDevice::deleteLayer(PlatformXR::LayerHandle handle)
         m_layers.remove(it);
     }
 }
+
+#if ENABLE(WEBXR_ANCHORS)
+void SimulatedXRDevice::setAnchorCreationCallback(RefPtr<FakeXRAnchorCreationCallback>&& callback)
+{
+    m_anchorCreationCallback = WTF::move(callback);
+}
+
+void SimulatedXRDevice::createAnchor(const PlatformXR::Pose& pose, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>)>&& completionHandler)
+{
+    if (!m_anchorCreationCallback) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::OperationError });
+        return;
+    }
+
+    FakeXRRigidTransformInit requestedAnchorOrigin { { pose.position.x(), pose.position.y(), pose.position.z() }, { pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w } };
+    FakeXRAnchorCreationParameters parameters { WTF::move(requestedAnchorOrigin), false };
+    auto controller = WebFakeXRAnchorController::create(pose);
+    auto result = m_anchorCreationCallback->invoke(parameters, controller.get());
+    if (result.type() != CallbackResultType::Success) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::OperationError });
+        return;
+    }
+
+    result.releaseReturnValue()->whenSettledWithResult([protectedThis = Ref { *this }, controller = WTF::move(controller), completionHandler = WTF::move(completionHandler)](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue value) mutable {
+        if (!isFulfilled || !value.toBoolean(globalObject)) {
+            completionHandler(WebCore::Exception { WebCore::ExceptionCode::OperationError });
+            return;
+        }
+        auto identifier = PlatformXR::AnchorIdentifier::generate();
+        protectedThis->m_anchors.add(identifier, WTF::move(controller));
+        completionHandler(WTF::move(identifier));
+    });
+}
+
+void SimulatedXRDevice::deleteAnchor(PlatformXR::AnchorIdentifier identifier)
+{
+    if (auto controller = m_anchors.take(identifier))
+        controller->markAsDeleted();
+}
+#endif
 
 #if ENABLE(WEBXR_HIT_TEST)
 void SimulatedXRDevice::requestHitTestSource(const PlatformXR::HitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&& completionHandler)
@@ -370,7 +428,7 @@ Vector<PlatformXR::FrameData::HitTestResult> SimulatedXRDevice::hitTestWorld(con
 {
     struct HitTestResult {
         double distance;
-        PlatformXR::FrameData::Pose pose;
+        PlatformXR::Pose pose;
     };
     Vector<HitTestResult> resultsForRegions;
     for (const auto& region : m_world.hitTestRegions) {
@@ -542,25 +600,69 @@ Vector<PlatformXR::FrameData::HitTestResult> SimulatedXRDevice::hitTestWorld(con
         // This situation is possible when a ray intersects the region through an edge shared
         // by 2 faces.
         std::ranges::sort(resultsForFaces, { }, &HitTestResult::distance);
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        for (auto it = resultsForFaces.begin(); it != resultsForFaces.end(); it++) {
-            if (it == resultsForFaces.begin() || it->distance != (it-1)->distance)
-                resultsForRegions.append(*it);
+        for (size_t i = 0; i < resultsForFaces.size(); ++i) {
+            if (!i || resultsForFaces[i].distance != resultsForFaces[i - 1].distance)
+                resultsForRegions.append(resultsForFaces[i]);
         }
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
     std::ranges::sort(resultsForRegions, { }, &HitTestResult::distance);
     return resultsForRegions.map([](auto& x) { return PlatformXR::FrameData::HitTestResult { x.pose }; });
 }
 
+#endif
+
+#if ENABLE(WEBXR_HIT_TEST) || ENABLE(WEBXR_PLANE_DETECTION)
 void SimulatedXRDevice::setWorld(const FakeXRWorldInit& world)
 {
     m_world = world;
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    // A new world replaces all its planes, so they get new ids and thus new lastChangedTime values.
+    ++m_worldGeneration;
+#endif
 }
 
 void SimulatedXRDevice::clearWorld()
 {
     m_world.hitTestRegions.clear();
+}
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+void SimulatedXRDevice::updateWorld(const FakeXRWorldInit& world)
+{
+    m_world = world;
+}
+
+Vector<PlatformXR::FrameData::Plane> SimulatedXRDevice::detectedPlanes() const
+{
+    Vector<PlatformXR::FrameData::Plane> planes;
+    for (size_t i = 0; i < m_world.hitTestRegions.size(); ++i) {
+        const auto& planeInfo = m_world.hitTestRegions[i].planeInfo;
+        if (!planeInfo)
+            continue;
+
+        auto pose = WebFakeXRDevice::parseRigidTransform(planeInfo->origin);
+        if (pose.hasException())
+            continue;
+
+        PlatformXR::FrameData::Plane plane;
+        plane.id = (static_cast<uint64_t>(m_worldGeneration) << 32) | (i + 1);
+        plane.pose = pose.releaseReturnValue();
+        plane.polygon = planeInfo->polygon.map([](auto& point) {
+            return FloatPoint(point.x, point.z);
+        });
+        plane.orientation = planeInfo->orientation == XRPlaneOrientation::Horizontal ? PlatformXR::PlaneOrientation::Horizontal : PlatformXR::PlaneOrientation::Vertical;
+        if (planeInfo->semanticLabel == "floor"_s)
+            plane.semanticLabel = PlatformXR::PlaneSemanticLabel::Floor;
+        else if (planeInfo->semanticLabel == "wall"_s)
+            plane.semanticLabel = PlatformXR::PlaneSemanticLabel::Wall;
+        else if (planeInfo->semanticLabel == "ceiling"_s)
+            plane.semanticLabel = PlatformXR::PlaneSemanticLabel::Ceiling;
+        else if (planeInfo->semanticLabel == "table"_s)
+            plane.semanticLabel = PlatformXR::PlaneSemanticLabel::Table;
+        planes.append(WTF::move(plane));
+    }
+    return planes;
 }
 #endif
 
@@ -640,12 +742,12 @@ Ref<WebFakeXRInputController> WebFakeXRDevice::simulateInputSourceConnection(con
     return input;
 }
 
-ExceptionOr<PlatformXR::FrameData::Pose> WebFakeXRDevice::parseRigidTransform(const FakeXRRigidTransformInit& init)
+ExceptionOr<PlatformXR::Pose> WebFakeXRDevice::parseRigidTransform(const FakeXRRigidTransformInit& init)
 {
     if (init.position.size() != 3 || init.orientation.size() != 4)
         return Exception { ExceptionCode::TypeError };
 
-    PlatformXR::FrameData::Pose pose;
+    PlatformXR::Pose pose;
     pose.position = { init.position[0], init.position[1], init.position[2] };
     pose.orientation = { init.orientation[0], init.orientation[1], init.orientation[2], init.orientation[3] };
 
@@ -685,7 +787,14 @@ void WebFakeXRDevice::simulateShutdown()
     m_device->simulateShutdownCompleted();
 }
 
-#if ENABLE(WEBXR_HIT_TEST)
+#if ENABLE(WEBXR_ANCHORS)
+void WebFakeXRDevice::setAnchorCreationCallback(RefPtr<FakeXRAnchorCreationCallback>&& callback)
+{
+    m_device->setAnchorCreationCallback(WTF::move(callback));
+}
+#endif
+
+#if ENABLE(WEBXR_HIT_TEST) || ENABLE(WEBXR_PLANE_DETECTION)
 void WebFakeXRDevice::setWorld(const FakeXRWorldInit& world)
 {
     m_device->setWorld(world);

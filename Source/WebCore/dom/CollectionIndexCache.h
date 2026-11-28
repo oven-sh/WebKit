@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/CheckedPtr.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -43,7 +44,10 @@ public:
     inline unsigned nodeCount(const Collection&);
     inline NodeType* nodeAt(const Collection&, unsigned index);
 
-    bool hasValidCache() const { return m_current || m_nodeCountValid || m_listValid; }
+    bool hasValidCache() const
+    {
+        return m_hasValidCache;
+    }
     inline void invalidate();
     size_t memoryCost() const
     {
@@ -57,18 +61,27 @@ private:
     inline unsigned computeNodeCountUpdatingListCache(const Collection&);
     inline NodeType* traverseBackwardTo(const Collection&, unsigned);
     inline NodeType* traverseForwardTo(const Collection&, unsigned);
+    inline void traverseCurrentForward(const Collection&, unsigned count, unsigned& traversedCount);
+    inline void traverseCurrentBackward(const Collection&, unsigned count);
 
-    Iterator m_current { };
+    // Raw pointer iterators are stored as a CheckedPtr but traversal is done on a raw
+    // pointer so that the checked pointer count is updated once per traversal, not per step.
+    static constexpr bool iteratorIsRawPointer = std::is_pointer_v<Iterator>;
+    using StoredIterator = std::conditional_t<iteratorIsRawPointer, CheckedPtr<NodeType>, Iterator>;
+
+    StoredIterator m_current { };
     unsigned m_currentIndex { 0 };
     unsigned m_nodeCount { 0 };
     Vector<WeakPtr<NodeType, WeakPtrImplWithEventTargetData>> m_cachedList;
     bool m_nodeCountValid : 1;
     bool m_listValid : 1;
+    bool m_hasValidCache : 1;
 };
 
 template<class Collection, class Iterator> CollectionIndexCache<Collection, Iterator>::CollectionIndexCache()
     : m_nodeCountValid(false)
     , m_listValid(false)
+    , m_hasValidCache(false)
 {
 }
 

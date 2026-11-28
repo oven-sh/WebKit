@@ -30,8 +30,6 @@ const symbolKeys = (...symbols: readonly string[]) =>
 
 const textEvaluators = ["Function", "%AsyncFunction%", "%GeneratorFunction%", "%AsyncGeneratorFunction%", "eval"];
 
-// No object holds these. The interpreter calls them for text that never names them: a spread without a fast path, and `using`.
-// There is text once an evaluator is called. `Function.prototype` and `x instanceof Function` evaluate none.
 const functionsCalledForEvaluatedText = [
   b.functionIn("IteratorHelpers", "performIteration"),
   b.functionIn("DisposableStackPrototype", "getDisposeMethod"),
@@ -62,18 +60,25 @@ export default b.declarations(
   b.excluded("GeneratorPrototype", "generatorResume"),
   b.excluded("ShadowRealmPrototype", "crossRealmThrow", "evaluate", "importValue", "wrapRemoteValue"),
   b.handwritten(
+    "ArrayConstructor",
     "ArrayIteratorPrototype",
+    "ArrayPrototype",
     "AsyncDisposableStackPrototype",
     "DisposableStackPrototype",
     "FunctionPrototype",
     "GeneratorPrototype",
     "IteratorOperations",
+    "JSIteratorConstructor",
     "JSIteratorHelperPrototype",
+    "JSIteratorPrototype",
+    "MapConstructor",
     "MapIteratorPrototype",
     "MapPrototype",
     "ObjectConstructor",
+    "RegExpStringIteratorPrototype",
     "SetIteratorPrototype",
     "SetPrototype",
+    "TypedArrayConstructor",
     "TypedArrayPrototype",
   ),
 
@@ -82,6 +87,16 @@ export default b.declarations(
 
   b.intrinsic("undefined", "Value", { intrinsic: "Undefined" }),
   b.intrinsic("arrayProtoValues", "Value", { intrinsic: "Builtin", path: "Array.prototype.values" }),
+  b.intrinsic("typedArrayProtoValues", "Value", { intrinsic: "Builtin", path: "%TypedArray%.prototype.values" }),
+  b.intrinsic("arrayIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%ArrayIterator%.prototype.next" }),
+  b.intrinsic("mapIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%MapIterator%.prototype.next" }),
+  b.intrinsic("setIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%SetIterator%.prototype.next" }),
+  b.intrinsic("regExpStringIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%RegExpStringIterator%.prototype.next" }),
+  b.intrinsic("setProtoValues", "Value", { intrinsic: "Builtin", path: "Set.prototype.values" }),
+  b.intrinsic("mapProtoEntries", "Value", { intrinsic: "Builtin", path: "Map.prototype.entries" }),
+  b.intrinsic("generatorProtoNext", "Value", { intrinsic: "Builtin", path: "%Generator%.prototype.next" }),
+  b.intrinsic("stringProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "String.prototype.@@iterator" }),
+  b.intrinsic("iteratorProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "Iterator.prototype.@@iterator" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",
@@ -104,6 +119,7 @@ export default b.declarations(
     "getAsyncDisposableStackInternalField",
     "getDisposableStackInternalField",
     "getIteratorHelperInternalField",
+    "getSetIteratorInternalField",
     "getWrapForValidIteratorInternalField",
   ),
   operation(
@@ -111,11 +127,12 @@ export default b.declarations(
     "putAsyncDisposableStackInternalField",
     "putDisposableStackInternalField",
   ),
+  operation("AppendElement", "appendElement"),
   operation("ArraySpeciesCreate", "newArrayWithSpecies"),
-  operation("ConstructList", "constructList"),
   operation("CreatePromise", "createPromise"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
+  operation("IsPristineArray", "isPristineArray"),
   operation("ReadsIteratorOfListUnseen", "readsIteratorOfListUnseen"),
   operation("ToObject", "toObject"),
 
@@ -129,6 +146,7 @@ export default b.declarations(
     isPromise: "JSPromiseType",
     isProxyObject: "ProxyObjectType",
     isRegExpObject: "RegExpObjectType",
+    isRegExpStringIterator: "JSRegExpStringIteratorType",
     isSet: "JSSetType",
     isWrapForValidIterator: "JSWrapForValidIteratorType",
     isMapIterator: "JSMapIteratorType",
@@ -150,6 +168,8 @@ export default b.declarations(
     disposableStackFieldCapability: [1, "Capability"],
   }),
   enumerators("JSDisposableStack::State", { DisposableStackStateDisposed: [1, "Disposed"] }),
+  enumerators("IterationKind", { iterationKindEntries: [2, "Entries"] }),
+  enumerators("JSSetIterator::Field", { setIteratorFieldKind: [3, "Kind"] }),
   enumerators("JSIteratorHelper::Field", {
     iteratorHelperFieldGenerator: [0, "Generator"],
     iteratorHelperFieldUnderlyingIterator: [1, "UnderlyingIterator"],
@@ -162,15 +182,13 @@ export default b.declarations(
 
   builtinObjects(
     "AsyncDisposableStack",
+    "Boolean",
     "DisposableStack",
     "Iterator",
     "Map",
     "Object",
     "ReferenceError",
-    "Set",
     "SuppressedError",
-    "WeakMap",
-    "WeakSet",
   ),
 
   linkTimeConstants(
@@ -201,20 +219,34 @@ export default b.declarations(
 
   intrinsics("Call", { intrinsic: "LinkedFunction" }, [
     "addDisposableResource",
+    "appendFlattened",
     "closeAllIterators",
     "createDisposableResource",
+    "everyFrom",
+    "filterFrom",
+    "filterTruthy",
+    "findFrom",
+    "findIndexFrom",
+    "findLastFrom",
+    "findLastIndexFrom",
     "flatIntoArray",
     "flatIntoArrayWithCallback",
+    "flatMapOfPristineArray",
+    "forEachFrom",
     "getAsyncDisposeMethod",
     "getDisposeMethod",
     "getIteratorFlattenable",
     "getIteratorSync",
     "getOptionsObject",
     "iteratorCloseAllNormal",
+    "iteratorStepValue",
     "iteratorZip",
+    "mapFrom",
+    "reduceFrom",
+    "reduceRightFrom",
     "removeFirstFromList",
+    "someFrom",
   ]),
-  // The engine emits these two in line, and so does the front end: the call then belongs to the built-in that makes it.
   b.intrinsic("iteratorGenericClose", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericClose" }),
   b.intrinsic("iteratorGenericNext", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericNext" }),
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [
@@ -222,14 +254,17 @@ export default b.declarations(
     "defaultAsyncFromAsyncIterator",
   ]),
 
+  operation("CollectionIteratorClosedMark", "collectionIteratorClosedMark"),
   operation("CollectionTable", "collectionTable"),
   operation("CreateIteratorResult", "makeIteratorResult"),
+  operation("IsCollectionIteratorClosedMark", "isCollectionIteratorClosedMark"),
   operation("IsGeneratorSuspendedAtStart", "isGeneratorSuspendedAtStart"),
   operation("MapNext", "mapNext"),
   operation("ResultAt", "resultAt"),
   operation("ResumeGenerator", "resumeGenerator"),
   operation("SetNext", "setNext"),
   operation("StepArrayIterator", "stepArrayIterator"),
+  operation("StepMatchIterator", "stepMatchIterator"),
   operation("StepMapIterator", "stepMapIterator"),
   operation("StepSetIterator", "stepSetIterator"),
   operation("StepGenerator", "stepGenerator"),
@@ -238,6 +273,11 @@ export default b.declarations(
     arrayStorageInt32: [1, "Int32"],
     arrayStorageDouble: [2, "Double"],
     arrayStorageContiguous: [3, "Contiguous"],
+  }),
+  b.intrinsic("mostArgumentsReservedOnStack", "Value", {
+    intrinsic: "Int",
+    value: 65535,
+    cppExpression: "defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture())",
   }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {

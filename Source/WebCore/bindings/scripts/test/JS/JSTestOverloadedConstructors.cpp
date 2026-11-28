@@ -343,14 +343,14 @@ bool JSTestOverloadedConstructorsOwner::isReachableFromOpaqueRoots(JSC::Handle<J
     return false;
 }
 
-void JSTestOverloadedConstructorsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestOverloadedConstructorsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestOverloadedConstructors = static_cast<JSTestOverloadedConstructors*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestOverloadedConstructors->wrapped(), jsTestOverloadedConstructors);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -366,7 +366,7 @@ static inline void verifyVTable(TestOverloadedConstructors* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestOverloadedConstructors@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore26TestOverloadedConstructorsE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore26TestOverloadedConstructorsE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -377,7 +377,6 @@ static inline void verifyVTable(TestOverloadedConstructors* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestOverloadedConstructors>&& impl)
 {

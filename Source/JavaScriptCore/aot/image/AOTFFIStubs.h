@@ -23,7 +23,7 @@ struct FFIStubs {
     Vector<uint8_t> directory;
 };
 
-bool mayUseFFI(const Typed::PipelineOutput&, const CompileOptions&);
+bool mayUseFFI(const Typed::Facts&, const CompileOptions&);
 JS_EXPORT_PRIVATE FFIStubs generateFFIStubs(BuildContext&);
 
 } } // namespace JSC::AOT

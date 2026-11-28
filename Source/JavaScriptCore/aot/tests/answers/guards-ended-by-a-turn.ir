@@ -1,0 +1,242 @@
+# What a turn of a loop ends is asked again in the next turn, however seldom that turn comes. Each loop is one in which the tests and reads could otherwise stand in front.
+# type Source = { text: string }
+# class Counter { total = 0; constructor(public step: number) {} add(value: number) { this.total = (this.total + value * this.step) | 0; return this.total; } }
+# Four times, function (counter: Counter, ..) { let last = 0; for (let i = 0; i < 100; i++) { last = counter.add(i); if (i === 50) .. } return last; }, with
+# in `freezes` Object.freeze(counter), so the store of turn 51 throws, and in `deletes` delete counter.step, so from there on the product is NaN and the sum 0,
+# in `replaces` proto.add = function () { return 7 }, where `proto` is Counter.prototype, and in `relinks` Object.setPrototypeOf(counter, other), where `other` has an `add` of its own.
+# function shortens(source: Source, other: Source) { let turns = 0; while (turns < source.text.length) { other.text = other.text.slice(1); turns++; } return turns; }   The two are one object.
+# function defines(source: Source, descriptor) { let turns = 0; while (turns < source.text.length) { arm(source, descriptor, turns); turns++; } return turns; }
+# function arm(source: Source, descriptor, turn: number) { if (turn === 3) Object.defineProperty(source, "text", descriptor); }   The field becomes an accessor in a callee.
+# The program evaluates text, so code that the build has not seen has the objects and calls the functions.
+# RUN: run-in-shell globalThis.register = (freezes, deletes, replaces, relinks, shortens, defines, a, b, c, d, text, other, proto) => { print(deletes(a)); print(relinks(b, { add() { return -2; } })); print(shortens(text, text)); print(defines(other, { get() { return "x"; } })); try { freezes(c); } catch (error) { print(error.name, c.total); } print(replaces(d, proto)); };
+# CHECK: 0
+# CHECK-NEXT: -2
+# CHECK-NEXT: 4
+# CHECK-NEXT: 4
+# CHECK-NEXT: TypeError 3825
+# CHECK-NEXT: 7
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key="total" declared={type=number} flags=[IsRequired]}, {key="step" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L1
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L1 key="add"
+    v4 = FinishClass v1 layout=L1
+    v5 = Integer integer=3
+    v6 = Construct v4, -, v5 calleeName="Counter"
+    v7 = Construct v4, -, v5 calleeName="Counter"
+    v8 = Construct v4, -, v5 calleeName="Counter"
+    v9 = Construct v4, -, v5 calleeName="Counter"
+    v10 = String string="abcdefgh"
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewObject -, v10 layout=L0 fields=[0]
+    v14 = FinishObject v13
+    v15 = PropGet v4 key="prototype"
+    v16 = NewClosure function=f3
+    v17 = NewClosure function=f4
+    v18 = NewClosure function=f5
+    v19 = NewClosure function=f7
+    v20 = NewClosure function=f8
+    v21 = NewClosure function=f9
+    v22 = Builtin builtin=Function
+    v23 = String string="return globalThis.register"
+    v24 = Construct v22, -, v23
+    v25 = Call v24
+    v26 = Call v25, -, v16, v17, v18, v19, v20, v21, v6, v7, v8, v9, v12, v14, v15
+    v27 = Undefined
+    Return v27
+}
+function f1 name="Counter" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1} illTypedCause=FromLooseType
+    v5 = Integer
+    PropSet v4, v5 key="total"
+    PropSet v4, v1 key="step"
+    Return v4
+}
+function f2 name="add" module=m0 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: number):
+    v2 = PropGet v0 key="total"
+    v3 = PropGet v0 key="step"
+    v4 = Mul v1, v3
+    v5 = Add v2, v4
+    v6 = Integer
+    v7 = BitOr v5, v6
+    v8 = Convert v7 declared={type=number}
+    PropSet v0, v8 key="total"
+    v10 = PropGet v0 key="total"
+    Return v10
+}
+function f3 name="freezes" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=100
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = PropGet v0 key="add"
+    v8 = Call v7, v0, v3 calleeKey="add" calleeName="counter.add"
+    v9 = Convert v8 declared={type=number}
+    v10 = Integer integer=50
+    v11 = StrictEq v3, v10
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = Builtin builtin=Object
+    v13 = Builtin builtin=ObjectFreeze
+    v14 = Call v13, v12, v0 calleeName="Object.freeze"
+    Jump -> next b4()
+  b4():
+    v15 = Increment v3
+    Jump -> next b1(v9, v15)
+  b5():
+    Return v2
+}
+function f4 name="deletes" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=100
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = PropGet v0 key="add"
+    v8 = Call v7, v0, v3 calleeKey="add" calleeName="counter.add"
+    v9 = Convert v8 declared={type=number}
+    v10 = Integer integer=50
+    v11 = StrictEq v3, v10
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = PropDelete v0 key="step"
+    Jump -> next b4()
+  b4():
+    v13 = Increment v3
+    Jump -> next b1(v9, v13)
+  b5():
+    Return v2
+}
+function f5 name="replaces" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=100
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = PropGet v0 key="add"
+    v9 = Call v8, v0, v4 calleeKey="add" calleeName="counter.add"
+    v10 = Convert v9 declared={type=number}
+    v11 = Integer integer=50
+    v12 = StrictEq v4, v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = NewClosure function=f6
+    PropSet v1, v13 key="add"
+    Jump -> next b4()
+  b4():
+    v15 = Increment v4
+    Jump -> next b1(v10, v15)
+  b5():
+    Return v3
+}
+function f6 module=m0 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f7 name="relinks" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=100
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = PropGet v0 key="add"
+    v9 = Call v8, v0, v4 calleeKey="add" calleeName="counter.add"
+    v10 = Convert v9 declared={type=number}
+    v11 = Integer integer=50
+    v12 = StrictEq v4, v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Builtin builtin=Object
+    v14 = Builtin builtin=ObjectSetPrototypeOf
+    v15 = Call v14, v13, v0, v1 calleeName="Object.setPrototypeOf"
+    Jump -> next b4()
+  b4():
+    v16 = Increment v4
+    Jump -> next b1(v10, v16)
+  b5():
+    Return v3
+}
+function f8 name="shortens" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = PropGet v0 key="text"
+    v6 = PropGet v5 key="length"
+    v7 = Less v3, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v1 key="text"
+    v9 = PropGet v8 key="slice"
+    v10 = Integer integer=1
+    v11 = Call v9, v8, v10 calleeKey="slice" calleeName="other.text.slice"
+    PropSet v1, v11 key="text"
+    v13 = Increment v3
+    Jump -> next b1(v13)
+  b3():
+    Return v3
+}
+function f9 name="defines" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = PropGet v0 key="text"
+    v6 = PropGet v5 key="length"
+    v7 = Less v3, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = NewClosure function=f10
+    v9 = Call v8, -, v0, v1, v3 calleeName="arm"
+    v10 = Increment v3
+    Jump -> next b1(v10)
+  b3():
+    Return v3
+}
+function f10 name="arm" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything, v2: number):
+    v3 = Integer integer=3
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectDefineProperty
+    v7 = String string="text"
+    v8 = Call v6, v5, v0, v7, v1 calleeName="Object.defineProperty"
+    Jump -> next b2()
+  b2():
+    v9 = Undefined
+    Return v9
+}

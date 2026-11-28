@@ -1,0 +1,142 @@
+# function find(wanted, name, tail, turns) { .. for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + "-" + tail) found = found + turn; } .. }
+# A text joined in every turn out of what no turn changes is made once, in front of the typed copy. A join fails where its parts are too long for one text, and the first turn may throw, answer or leave ahead of it,
+# so the join in front is one that cannot fail: it stands behind the question whether the lengths of its parts, or-ed, lie below a power of two that leaves room for all of them. The no leads to the closed copy,
+# where the join fails in its own place. The head's own question, asked for the values that enter, stands in front of that: a loop of no turn joins nothing.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[begins]]: boolean @Boolean = Less {{*}}form=Numbers # uses=1
+# CHECK-NEXT: Branch [[begins]] -> taken [[front]](), notTaken
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = Strcat
+# CHECK: [[front]]():
+# CHECK: = GetStringLength
+# CHECK: = GetStringLength
+# CHECK: [[lengths]]: {{*}} = BitOr
+# CHECK: [[short]]: boolean @Boolean = Less [[lengths]],
+# CHECK-NEXT: Branch [[short]] -> taken [[joined]](), notTaken
+# CHECK: [[joined]]():
+# CHECK-NEXT: = Strcat
+# function either(wanted, name, value, turns) { .. if (wanted === name + "-" + value) .. }, value a number or a text: to expect a text of it would send every turn of a run that holds numbers to the closed copy: the join stays in the turn and nothing is asked in front
+# RUN(EITHER): walk f2:Body mechanisms=all
+# EITHER-LABEL: code f2:Body
+# EITHER-NOT: form=Numbers # uses=1
+# Under the testing word the join is made again in the turn and held against the one in front
+# RUN(NET): walk f1:Body mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime
+# NET-LABEL: code f1:Body
+# NET: source=HoistedCall
+# layout L916 kind=Closure
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 305, 646, 677] quotedSources=[{position=646 end=15}, {position=657 end=29}] quotedSourceText="globalThis.sink(find, either)"} functionSource="function find(wanted, name, tail, turns) { if (typeof wanted === \x22string\x22 && typeof name === \x22string\x22 && typeof tail === \x22string\x22 && typeof turns === \x22number\x22) { let found = 0; for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + \x22-\x22 + tail) found = found + turn; } return found; } }\x0afunction either(wanted, name, value, turns) { if (typeof wanted === \x22string\x22 && typeof name === \x22string\x22 && (typeof value === \x22string\x22 || typeof value === \x22number\x22) && typeof turns === \x22number\x22) { let found = 0; for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + \x22-\x22 + value) found = found + turn; } return found; } }\x0aglobalThis.sink(find, either);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @646
+    v5 = PropGet v4 key="globalThis" [isFreeName] @646
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]} @646
+    v7 = PropGet v6 key="sink" @646
+    v8 = Call v7, v6, v1, v3 calleeKey="sink" calleeName="globalThis.sink" @657
+    v9 = Undefined @646
+    Return v9 @646
+}
+function f1 name="find" module=m0 sourceRange={end=304} flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|string, v3: anything):
+    v4 = TypeTest v0 testedType=string @47
+    Branch v4 -> taken b1(| 0), notTaken b10() @47
+  b1(v5):
+    v6 = NarrowByTest v0, v5 @47
+    v7 = TypeTest v1 testedType=string @77
+    Branch v7 -> taken b2(| 0), notTaken b10() @77
+  b2(v8):
+    v9 = NarrowByTest v1, v8 @77
+    v10 = TypeTest v2 testedType=string @105
+    Branch v10 -> taken b3(| 0), notTaken b10() @105
+  b3(v11):
+    v12 = NarrowByTest v2, v11 @105
+    v13 = TypeTest v3 testedType=number @133
+    Branch v13 -> taken b4(| 0), notTaken b10() @133
+  b4(v14):
+    v15 = NarrowByTest v3, v14 @133
+    v16 = Integer @174
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @174
+    v18 = Integer @193
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @193
+    Jump -> next b5(v17, v19) @186
+  b5(v20, v21):
+    LoopHint @186
+    v23 = Less v21, v15 @203
+    Branch v23 -> taken b6(), notTaken b9() @203
+  b6():
+    v24 = String string="-" @251
+    v25 = Add v9, v24 @251
+    v26 = Add v25, v12 @257
+    v27 = StrictEq v6, v26 @257
+    Branch v27 -> taken b7(), notTaken b8(v20) @257
+  b7():
+    v28 = Add v20, v21 @279
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @263
+    Jump -> next b8(v29) @263
+  b8(v30):
+    v31 = Integer integer=1 @224
+    v32 = Add v21, v31 @224
+    v33 = Convert v32 declared={type=number flags=[IsExpected]} @210
+    Jump -> next b5(v30, v33) @210
+  b9():
+    Return v20 @294
+  b10():
+    v34 = Undefined @294
+    Return v34 @294
+}
+function f2 name="either" module=m0 position=305 sourceRange={start=305 end=645} flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|number|string, v3: anything):
+    v4 = TypeTest v0 testedType=string @355
+    Branch v4 -> taken b1(| 0), notTaken b11() @355
+  b1(v5):
+    v6 = NarrowByTest v0, v5 @355
+    v7 = TypeTest v1 testedType=string @385
+    Branch v7 -> taken b2(| 0), notTaken b11() @385
+  b2(v8):
+    v9 = NarrowByTest v1, v8 @385
+    v10 = TypeTest v2 testedType=string @414
+    Branch v10 -> taken b4(), notTaken b3(| 0) @414
+  b3(v11):
+    v12 = NarrowByTest v2, v11 @414
+    v13 = TypeTest v12 testedType=number @443
+    Branch v13 -> taken b4(), notTaken b11() @443
+  b4():
+    v14 = TypeTest v3 testedType=number @473
+    Branch v14 -> taken b5(| 0), notTaken b11() @473
+  b5(v15):
+    v16 = NarrowByTest v3, v15 @473
+    v17 = Integer @514
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @514
+    v19 = Integer @533
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @533
+    Jump -> next b6(v18, v20) @526
+  b6(v21, v22):
+    LoopHint @526
+    v24 = Less v22, v16 @543
+    Branch v24 -> taken b7(), notTaken b10() @543
+  b7():
+    v25 = String string="-" @591
+    v26 = Add v9, v25 @591
+    v27 = Add v26, v2 @597
+    v28 = StrictEq v6, v27 @597
+    Branch v28 -> taken b8(), notTaken b9(v21) @597
+  b8():
+    v29 = Add v21, v22 @620
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @604
+    Jump -> next b9(v30) @604
+  b9(v31):
+    v32 = Integer integer=1 @564
+    v33 = Add v22, v32 @564
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @550
+    Jump -> next b6(v31, v34) @550
+  b10():
+    Return v21 @635
+  b11():
+    v35 = Undefined @635
+    Return v35 @635
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app", "stop"]}, {exportName="then"}]

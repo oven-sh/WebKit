@@ -1,0 +1,49 @@
+# type First = A | B;  type Second = B | C;  export function first(o: First) { return o.x; }  export function second(o: Second) { return o.x; }
+# The second union cuts across the first, so no declared family holds it. A set of two to four such layouts stays a set where it is proven or shown. Where it is only expected, a test for it with a closed arm behind costs more bytes than the call of a stub
+# that it spares: programs grew, and none ran faster. So of `o` in `second` an object is expected and no more, and the read stays a read by name.
+# RUN: link families functions mechanisms=all
+# CHECK: family F{{*}} [L0, L1]
+# CHECK-LABEL: function f1
+# CHECK: parameter 0 expected=L0|L1 declared
+# CHECK-LABEL: function f2
+# CHECK: parameter 0 expected=object declared
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: = PropGet {{*}}key="x"
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = ShapeTest
+# NEVER-NOT: = GetSlot
+
+layout L0 name="A" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="a" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="B" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="C" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = NewClosure function=f1
+    PropSet v7, v8 key="first"
+    v10 = NewClosure function=f2
+    PropSet v7, v10 key="second"
+    PropSet v7, v2 key="a"
+    PropSet v7, v4 key="b"
+    PropSet v7, v6 key="c"
+    Return v0
+}
+function f1 name="first" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="second" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1|L2}] results=[{type=anything}] {
+  b0(v0: L1|L2):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

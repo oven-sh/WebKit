@@ -1,0 +1,66 @@
+# function measure(flag, turns) { let total = 0; for (let i = 0; i < turns; i++) { total += flag ? text.length : text.length + 1; total += text.length; } return total; }      let text = ..
+# Each arm checks the dead zone of `text`. Behind the arms the state knows that the binding has left it, so the third read is built [isKnownInitialized]: no check, and a type without the empty word.
+# If that read left the loop, it would stand in front of both checks, and its `.length` with it: a call with no turn in front of the `let` would load through the empty word.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:
+# CHECK-NOT: [isKnownInitialized]
+# CHECK: isLoopHead=true
+# CHECK: [isKnownInitialized]
+
+variable g0 name="text" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="measure"
+    v3 = PropGet v1 key="host" [isFreeName]
+    v4 = Call v3 calleeName="host"
+    v5 = String string="abcd"
+    PutModuleVariable v5 variable=g0
+    v7 = Call v3 calleeName="host"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="measure" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean, v1: number):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v3, v5)
+  b1(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    v10 = ToBoolean v0
+    Branch v10 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v11):
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="text"
+    v14 = PropGet v13 key="length"
+    Jump -> next b5(v14)
+  b4(v15):
+    v16 = GetModuleVariable variable=g0
+    v17 = CheckInitialized v16 name="text"
+    v18 = PropGet v17 key="length"
+    v19 = Integer integer=1
+    v20 = Add v18, v19
+    Jump -> next b5(v20)
+  b5(v21):
+    v22 = Add v6, v21
+    v23 = Convert v22 declared={type=number}
+    v24 = GetModuleVariable variable=g0
+    v25 = CheckInitialized v24 name="text"
+    v26 = PropGet v25 key="length"
+    v27 = Add v23, v26
+    v28 = Convert v27 declared={type=number}
+    v29 = Increment v7
+    v30 = Convert v29 declared={type=number}
+    Jump -> next b1(v28, v30)
+  b6():
+    v31 = Convert v6 declared={type=number}
+    Return v31
+}

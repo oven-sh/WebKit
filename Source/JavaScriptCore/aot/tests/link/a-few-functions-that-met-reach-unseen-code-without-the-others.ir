@@ -1,0 +1,60 @@
+# Two to eight closures that meet at a place are still named there. If such a place that leads to unseen code counted as "lost functions have reached unseen code", the first pair of getters in one descriptor would hand out every function of the program that has ever met another.
+# function hand(f) { sink(f); }  function look(f) { return typeof f; }  hand(one); hand(two); look(three); look(four);
+# What `hand` is handed is one or two, and nothing else. They escape. three and four have met each other alone, and nobody calls them.
+# RUN: link functions mechanisms=all
+# CHECK: function f3
+# CHECK-NOT: unreached
+# CHECK: function f4
+# CHECK-NOT: unreached
+# CHECK: function f5 unreached
+# CHECK: function f6 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Call v0, -, v2 calleeName="hand"
+    v7 = Call v0, -, v3 calleeName="hand"
+    v8 = Call v1, -, v4 calleeName="look"
+    v9 = Call v1, -, v5 calleeName="look"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="hand" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    Return v1
+}
+function f3 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="two" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f5 name="three" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}
+function f6 name="four" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    Return v0
+}

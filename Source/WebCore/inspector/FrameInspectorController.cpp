@@ -2,36 +2,33 @@
  * Copyright (C) 2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "config.h"
 #include "FrameInspectorController.h"
 
 #include "CommonVM.h"
+#include "DOMWindow.h"
 #include "DocumentPage.h"
+#include "FrameAnimationAgent.h"
 #include "FrameCSSAgent.h"
 #include "FrameCanvasAgent.h"
 #include "FrameConsoleAgent.h"
@@ -42,15 +39,21 @@
 #include "FrameDebuggerAgent.h"
 #include "FrameIndexedDBAgent.h"
 #include "FrameInlines.h"
+#include "FrameLayerTreeAgent.h"
 #include "FrameRuntimeAgent.h"
+#include "FrameTimelineAgent.h"
 #include "FrameWorkerAgent.h"
 #include "InspectorBackendClient.h"
+#include "InspectorCPUProfilerAgent.h"
 #include "InspectorInstrumentation.h"
 #include "InspectorWebAgentBase.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMBindingSecurity.h"
 #include "JSDOMWindow.h"
+#include "JSDOMWindowBase.h"
 #include "JSExecState.h"
+#include "JSWindowProxy.h"
+#include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "Node.h"
 #include "NodeDocument.h"
@@ -86,7 +89,7 @@ FrameInspectorController::FrameInspectorController(LocalFrame& frame, PageInspec
     , m_executionStopwatch(Stopwatch::create())
 {
     if (frame.settings().siteIsolationEnabled())
-        createConsoleAgent();
+        siteIsolationFirstEnabled();
 }
 
 FrameInspectorController::~FrameInspectorController()
@@ -162,7 +165,10 @@ FrameAgentContext FrameInspectorController::frameAgentContext()
 // and thus this controller.
 void FrameInspectorController::siteIsolationFirstEnabled()
 {
+    m_instrumentingAgents->siteIsolationFirstEnabled();
     createConsoleAgent();
+    m_executionStopwatch->startAtMonotonicEpoch();
+    m_executionStopwatchIsShared = true;
 }
 
 void FrameInspectorController::createConsoleAgent()
@@ -191,9 +197,6 @@ void FrameInspectorController::createLazyAgents()
     // Create debugger before agents that depend on it.
     lazyInitialize(m_debugger, makeUnique<FrameDebugger>(frame.get()));
 
-    if (CheckedPtr scriptProfilerAgent = m_instrumentingAgents->persistentScriptProfilerAgent())
-        scriptProfilerAgent->installProfilingClientIfTracking(*m_debugger);
-
     auto context = frameAgentContext();
     auto debuggerAgent = makeUniqueRef<FrameDebuggerAgent>(context);
     CheckedPtr debuggerAgentPtr = debuggerAgent.ptr();
@@ -209,7 +212,19 @@ void FrameInspectorController::createLazyAgents()
     m_agents.append(makeUniqueRef<FrameRuntimeAgent>(context));
     m_agents.append(makeUniqueRef<FrameCSSAgent>(context));
     m_agents.append(makeUniqueRef<FrameCanvasAgent>(context));
+    m_agents.append(makeUniqueRef<FrameLayerTreeAgent>(context));
+
+    auto scriptProfilerAgent = makeUniqueRef<InspectorScriptProfilerAgent>(context);
+    m_instrumentingAgents->setPersistentScriptProfilerAgent(protect(scriptProfilerAgent).ptr());
+    m_agents.append(WTF::move(scriptProfilerAgent));
+
+    m_agents.append(makeUniqueRef<FrameTimelineAgent>(context));
+    m_agents.append(makeUniqueRef<FrameAnimationAgent>(context));
     m_agents.append(makeUniqueRef<FrameWorkerAgent>(context));
+
+#if ENABLE(RESOURCE_USAGE)
+    m_agents.append(makeUniqueRef<InspectorCPUProfilerAgent>(context));
+#endif
 }
 
 void FrameInspectorController::connectFrontend(Inspector::FrontendChannel& frontendChannel, bool isAutomaticInspection, bool immediatelyPause)
@@ -245,6 +260,12 @@ void FrameInspectorController::inspect(Node& node)
     }
 
     m_pendingNodeToInspect = WeakPtr<Node, WeakPtrImplWithEventTargetData> { node };
+}
+
+RefPtr<Node> FrameInspectorController::nodeForId(int nodeId) const
+{
+    CheckedPtr domAgent = m_domAgent;
+    return domAgent ? domAgent->nodeForId(nodeId) : nullptr;
 }
 
 void FrameInspectorController::disconnectFrontend(Inspector::FrontendChannel& frontendChannel)
@@ -329,6 +350,15 @@ Stopwatch& FrameInspectorController::executionStopwatch() const
 JSC::Debugger* FrameInspectorController::debugger()
 {
     return m_debugger.get();
+}
+
+bool FrameInspectorController::coversGlobalObjectForSampling(JSC::JSGlobalObject& globalObject) const
+{
+    // A DOMWindow loses its frame when its document is detached, but its window proxy stays with the frame, so this
+    // also covers documents that the frame navigated away from, in every world. It is based on ownership rather than
+    // on the frame's debugger, which is detached while nothing observes it.
+    auto* window = dynamicDowncast<JSDOMWindowBase>(globalObject);
+    return window && protect(window->proxy().wrapped())->frame() == m_frame.ptr();
 }
 
 JSC::Debugger* FrameInspectorController::attachedDebugger() const

@@ -1,0 +1,59 @@
+# The functions that the code calls are gone through with what they are handed: tests, the rest of the arguments, a function that a built-in calls back.
+# function source(re) { if (typeof re === "string") return re; return re.source; }
+# function either(...all) { return "(?:" + all.map(one => source(one)).join("|") + ")"; }
+# export const word = new RegExp(either("ab+", /cd*/));
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /(?:ab+|cd*)/
+# CHECK-NOT: text /
+# The image holds code for it, beside the code of the literal.
+# RUN(CODE): compile RegExpsCompiled mechanisms=all
+# CODE: statistic RegExpsCompiled 2
+# RUN(WITHOUT): compile RegExpsCompiled mechanisms=all-BuiltinCalls
+# WITHOUT: statistic RegExpsCompiled 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="source" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="word" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Builtin builtin=RegExp
+    v2 = String string="ab+"
+    v3 = NewRegExp pattern="cd*"
+    v4 = Call v0, -, v2, v3
+    v5 = Construct v1, -, v4
+    PutModuleVariable v5 variable=g1
+    v7 = Undefined
+    Return v7
+}
+function f1 name="source" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: string):
+    Return v2
+  b2(v3: anything):
+    v4 = PropGet v3 key="source"
+    Return v4
+}
+function f2 name="either" module=m0 position=20 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = String string="(?:"
+    v2 = PropGet v0 key="map"
+    v3 = NewClosure function=f3
+    v4 = Call v2, v0, v3 calleeKey="map"
+    v5 = PropGet v4 key="join"
+    v6 = String string="|"
+    v7 = Call v5, v4, v6 calleeKey="join"
+    v8 = Add v1, v7
+    v9 = String string=")"
+    v10 = Add v8, v9
+    Return v10
+}
+function f3 module=m0 position=30 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    ReturnCall v2
+}

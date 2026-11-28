@@ -227,7 +227,7 @@ SWRegistrationDatabase::~SWRegistrationDatabase()
 
 void SWRegistrationDatabase::close()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_ownerQueue);
 
     for (size_t i = 0; i < static_cast<size_t>(StatementType::Invalid); ++i)
         m_cachedStatements[i] = nullptr;
@@ -269,7 +269,7 @@ bool SWRegistrationDatabase::prepareDatabase(ShouldCreateIfNotExists shouldCreat
     }
 
     if (!openResult) {
-        RELEASE_LOG_ERROR(ServiceWorker, "SWRegistrationDatabase::prepareDatabase failed to open database at '%s'", m_directory.utf8());
+        RELEASE_LOG_ERROR(ServiceWorker, "SWRegistrationDatabase::prepareDatabase failed to open database at '%s'", makeUTF8CString(m_directory));
         m_database = nullptr;
         return false;
     }
@@ -284,7 +284,7 @@ bool SWRegistrationDatabase::prepareDatabase(ShouldCreateIfNotExists shouldCreat
     }
 
     if (version < 0 || version > currentSWRegistrationVersion) {
-        RELEASE_LOG_ERROR(ServiceWorker, "Found unexpected SWRegistrationDatabase version: %d (expected: %d) at path: %s", version, currentSWRegistrationVersion, databasePath.utf8());
+        RELEASE_LOG_ERROR(ServiceWorker, "Found unexpected SWRegistrationDatabase version: %d (expected: %d) at path: %s", version, currentSWRegistrationVersion, makeUTF8CString(databasePath));
         m_database = nullptr;
         return false;
     }

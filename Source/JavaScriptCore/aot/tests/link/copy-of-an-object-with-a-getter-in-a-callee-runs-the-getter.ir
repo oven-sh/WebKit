@@ -1,0 +1,33 @@
+# the same callee, and a getter is laid on the source: the copy reads the property, which runs the getter
+# function clone(s) { return { ...s }; }  const o = { a: 1, b: 2 };  Object.defineProperty(o, "a", { get() { return 3; } });  clone(o);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}mayCallUnknownCode
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f2
+    DefineGetter v3, v4 key="a"
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v3
+    v8 = Undefined
+    Return v8
+}
+function f1 name="clone" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+}
+function f2 name="a" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}

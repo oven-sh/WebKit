@@ -1,0 +1,3 @@
+runtime StraightStepArrayIterator : UGPRPair (JSCell* iterator) ; unknownCode
+runtime StraightStepMapIterator : UGPRPair (JSCell* iterator) ; unknownCode
+runtime StraightStepSetIterator : UGPRPair (JSCell* iterator) ; unknownCode

@@ -10,6 +10,9 @@ interface EffectsDeclaration {
 
 const effectFlags = ["throws", "collects", "suspends", "terminates"] as const;
 
+const operationTemplateHead = "template<HoldsOpcode Operation, typename Sink>";
+const terminatorTemplateHead = "template<HoldsTerminatorKind Terminator, typename Sink>";
+
 function locationStatements(verb: "reads" | "writes", reference: HeapReference, subject: string | null): string[] {
   const heap = `AbstractHeap::${reference.heap.name}`;
   const wholeHeap = `sink.${verb}(MemoryLocation(${heap}));`;
@@ -49,6 +52,7 @@ function effectStatements(effects: Effects, subject: string | null): string[] {
 }
 
 function effectFunction(
+  templateHead: string,
   parameter: string,
   selector: string,
   enumName: string,
@@ -56,7 +60,7 @@ function effectFunction(
   subject: string | null,
 ): string[] {
   return [
-    "template<typename Sink>",
+    templateHead,
     `constexpr void forEachDeclaredEffect(${parameter}, Sink& sink)`,
     "{",
     `${indentation}switch (${selector}) {`,
@@ -78,40 +82,47 @@ function effectsHeaders(schema: Schema): OutputFile[] {
     name,
     lines: cppHeader(includes, inNamespace("Typed", blocks(...functions))),
   });
+  const byEnumerator = (enumName: string, parameter: string, declarations: readonly EffectsDeclaration[]): string[] =>
+    effectFunction("template<typename Sink>", `${enumName} ${parameter}`, parameter, enumName, declarations, null);
   const enumIncludes = ['"AOTMemoryLocation.h"', '"AOTSchemaEnums.h"'];
+  const holderIncludes = ['"AOTMemoryLocation.h"', '"AOTOpcode.h"'];
   const parts = [
     header(
       "AOTSchemaValueEffects.h",
-      ['"AOTBlock.h"', '"AOTMemoryLocation.h"'],
-      effectFunction("const Value& value", "value.opcode", "Opcode", schema.operations, "value"),
+      holderIncludes,
+      effectFunction(
+        operationTemplateHead,
+        "const Operation& operation",
+        "opcodeOf(operation)",
+        "Opcode",
+        schema.operations,
+        "operation",
+      ),
     ),
-    header(
-      "AOTSchemaEntryEffects.h",
-      enumIncludes,
-      effectFunction("Opcode opcode", "opcode", "Opcode", schema.operations, null),
-    ),
+    header("AOTSchemaEntryEffects.h", enumIncludes, byEnumerator("Opcode", "opcode", schema.operations)),
     header(
       "AOTSchemaTerminatorEffects.h",
-      ['"AOTBlock.h"', ...enumIncludes],
+      holderIncludes,
       effectFunction(
+        terminatorTemplateHead,
         "const Terminator& terminator",
-        "terminator.kind",
+        "terminatorKindOf(terminator)",
         "TerminatorKind",
         schema.terminators,
         "terminator",
       ),
-      effectFunction("TerminatorKind kind", "kind", "TerminatorKind", schema.terminators, null),
+      byEnumerator("TerminatorKind", "kind", schema.terminators),
     ),
     header(
       "AOTSchemaInlineBuiltinEffects.h",
       enumIncludes,
-      effectFunction("InlineBuiltin builtin", "builtin", "InlineBuiltin", schema.inlineBuiltins, null),
-      effectFunction("NamedEffectSet set", "set", "NamedEffectSet", schema.namedEffects, null),
+      byEnumerator("InlineBuiltin", "builtin", schema.inlineBuiltins),
+      byEnumerator("NamedEffectSet", "set", schema.namedEffects),
     ),
     header(
       "AOTSchemaRuntimeOperationEffects.h",
       enumIncludes,
-      effectFunction("RuntimeOperation operation", "operation", "RuntimeOperation", schema.runtimeOperations, null),
+      byEnumerator("RuntimeOperation", "operation", schema.runtimeOperations),
     ),
   ];
   const partIncludes = parts.map(part => `"${part.name}"`);

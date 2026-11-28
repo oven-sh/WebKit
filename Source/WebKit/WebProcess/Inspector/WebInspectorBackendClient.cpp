@@ -189,7 +189,7 @@ void WebInspectorBackendClient::highlight()
     }
 #else
     InspectorOverlay::Highlight highlight;
-    page->corePage()->inspectorController().getHighlight(highlight, InspectorOverlay::CoordinateSystem::Document);
+    protect(page->corePage()->inspectorController())->getHighlight(highlight, InspectorOverlay::CoordinateSystem::Document);
     page->showInspectorHighlight(highlight);
 #endif
 }
@@ -230,7 +230,7 @@ RefPtr<PageOverlay> WebInspectorBackendClient::ensureHighlightOverlayForFrame(Lo
         // root layer and attachViewOverlayGraphicsLayer() to stop hardcoding the main frame.
         // DoNotFade matches hideHighlightForFrame(): a Fade uninstall defers the real uninstall.
         Ref newOverlay = PageOverlay::create(*this, PageOverlay::OverlayType::Document);
-        newOverlay->setAssociatedFrame(&frame);
+        newOverlay->setAssociatedFrame(frame);
         corePage->pageOverlayController().installPageOverlay(newOverlay.copyRef(), PageOverlay::FadeMode::DoNotFade);
         return newOverlay.ptr();
     }).iterator->value;
@@ -246,7 +246,8 @@ void WebInspectorBackendClient::highlightFrame(LocalFrame& frame)
         return;
 
     // Only a local root hosts its own compositing tree; a local subframe draws via the page overlay.
-    // FIXME: a nested local subframe's state lives on its own overlay, which nothing consults.
+    // FIXME: <https://webkit.org/b/331841> A nested local subframe's state lives on its own overlay,
+    // which nothing consults.
     if (!frame.isRootFrame()) {
         highlight();
         return;
@@ -321,7 +322,7 @@ auto WebInspectorBackendClient::ensurePaintRectOverlayForFrame(LocalFrame& frame
         Ref overlay = PageOverlay::create(*this, PageOverlay::OverlayType::Document);
         // Scope the overlay to this local root so the controller hosts it in that frame's own
         // compositing tree; sibling local roots in one process each flash in the right place.
-        overlay->setAssociatedFrame(&frame);
+        overlay->setAssociatedFrame(frame);
         newBucket.overlay = overlay.copyRef();
         newBucket.layerClient = makeUnique<RepaintIndicatorLayerClient>(*this, frame);
         page->corePage()->pageOverlayController().installPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
@@ -415,6 +416,12 @@ void WebInspectorBackendClient::frameDebuggerDidPause(WebCore::FrameIdentifier f
         page->send(Messages::WebPageProxy::FrameDidPauseForDebugger(frameID));
 }
 
+void WebInspectorBackendClient::debuggerDidPause()
+{
+    if (RefPtr page = m_page)
+        page->send(Messages::WebPageProxy::DebuggerDidPause());
+}
+
 void WebInspectorBackendClient::frameDebuggerDidContinue(WebCore::FrameIdentifier frameID)
 {
     if (RefPtr page = m_page.get())
@@ -428,8 +435,7 @@ void WebInspectorBackendClient::willDestroyFrameOverlays(LocalFrame& frame)
     RefPtr page = m_page.get();
     RefPtr corePage = page ? page->corePage() : nullptr;
 
-    // Tear the highlight overlay down too, or a stale one re-parents under the main frame.
-    // Erase it first: uninstalling re-enters willMoveToPage(), which mutates this map.
+    // Erase the highlight overlay first: uninstalling re-enters willMoveToPage(), which mutates this map.
     if (auto highlightOverlay = m_frameHighlightOverlays.takeOptional(frame); highlightOverlay && corePage) {
         if (RefPtr overlay = *highlightOverlay)
             corePage->pageOverlayController().uninstallPageOverlay(*overlay, PageOverlay::FadeMode::DoNotFade);
@@ -514,6 +520,18 @@ void WebInspectorBackendClient::timelineRecordingChanged(bool active)
 
     if (RefPtr inspector = page->inspector())
         inspector->timelineRecordingChanged(active);
+}
+
+void WebInspectorBackendClient::takeTimelineScreenshot(const WebCore::IntRect& rect, double timestamp, CompletionHandler<void()>&& completionHandler)
+{
+    RefPtr page = m_page;
+    RefPtr inspector = page ? page->inspector() : nullptr;
+    if (!inspector) {
+        completionHandler();
+        return;
+    }
+
+    inspector->takeTimelineScreenshot(rect, timestamp, WTF::move(completionHandler));
 }
 
 void WebInspectorBackendClient::setShowPaintRects(bool show)

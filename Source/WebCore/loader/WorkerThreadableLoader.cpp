@@ -139,11 +139,9 @@ WorkerThreadableLoader::MainThreadBridge::MainThreadBridge(ThreadableLoaderClien
     ASSERT(contentSecurityPolicy);
 
     Ref securityOriginCopy = securityOrigin->isolatedCopy();
-    ReportingClient* reportingClient = nullptr;
-    if (auto* client = m_loaderProxy ? protect(m_loaderProxy)->reportingClient() : nullptr)
-        reportingClient = client;
-    else if (auto* workerScope = dynamicDowncast<WorkerGlobalScope>(globalScope))
-        reportingClient = workerScope;
+    auto* reportingClient = m_loaderProxy ? protect(m_loaderProxy)->reportingClient() : nullptr;
+    if (!reportingClient)
+        reportingClient = globalScope.reportingClient();
     auto contentSecurityPolicyIsolatedCopy = makeUnique<ContentSecurityPolicy>(globalScope.url().isolatedCopy(), nullptr, reportingClient);
     contentSecurityPolicyIsolatedCopy->copyStateFrom(contentSecurityPolicy.get(), ContentSecurityPolicy::ShouldMakeIsolatedCopy::Yes);
     contentSecurityPolicyIsolatedCopy->copyUpgradeInsecureRequestStateFrom(*contentSecurityPolicy, ContentSecurityPolicy::ShouldMakeIsolatedCopy::Yes);
@@ -182,7 +180,7 @@ WorkerThreadableLoader::MainThreadBridge::MainThreadBridge(ThreadableLoaderClien
 
     // Can we benefit from request being an r-value to create more efficiently its isolated copy?
     protect(m_loaderProxy)->postTaskToLoader([this, protectedThis = Ref { *this }, request = WTF::move(request).isolatedCopy(), options = WTF::move(optionsCopy), contentSecurityPolicyIsolatedCopy = WTF::move(contentSecurityPolicyIsolatedCopy), crossOriginEmbedderPolicyCopy = WTF::move(crossOriginEmbedderPolicyCopy)](ScriptExecutionContext& context) mutable {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
         Ref document = downcast<Document>(context);
 
         // FIXME: If the site requests a local resource, then this will return a non-zero value but the sync path will return a 0 value.
@@ -202,7 +200,7 @@ void WorkerThreadableLoader::MainThreadBridge::cancel()
 {
     if (m_loaderProxy) {
         protect(m_loaderProxy)->postTaskToLoader([this, protectedThis = Ref { *this }] (ScriptExecutionContext& context) {
-            ASSERT(isMainThread());
+            RELEASE_ASSERT(isMainThread());
             ASSERT_UNUSED(context, context.isDocument());
 
             if (RefPtr mainThreadLoader = std::exchange(m_mainThreadLoader, nullptr))

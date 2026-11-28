@@ -26,8 +26,7 @@
 
 #include <WebCore/StylePrimitiveNumeric.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'baseline-shift'> = baseline | sub | super | <length-percentage>
 struct SVGBaselineShift {
@@ -79,12 +78,11 @@ template<> struct CSSValueConversion<SVGBaselineShift> { auto operator()(Builder
 // MARK: - Blending
 
 template<> struct Blending<SVGBaselineShift> {
-    bool LEGACY_NODELETE canBlend(const SVGBaselineShift&, const SVGBaselineShift&);
+    NODELETE bool canBlend(const SVGBaselineShift&, const SVGBaselineShift&);
     auto requiresInterpolationForAccumulativeIteration(const SVGBaselineShift&, const SVGBaselineShift&) -> bool;
     auto blend(const SVGBaselineShift&, const SVGBaselineShift&, const BlendingContext&) -> SVGBaselineShift;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::SVGBaselineShift)

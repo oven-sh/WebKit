@@ -93,7 +93,7 @@ inline bool MarkedBlock::staleMarksStillRecordSurvivors(HeapVersion myMarkingVer
 
 inline bool MarkedBlock::Handle::isAllocated()
 {
-    m_directory->assertIsMutatorOrMutatorIsStopped();
+    m_directory->assertMayAccessBitsUnlocked();
     return m_directory->isAllocated(this);
 }
 
@@ -114,7 +114,9 @@ inline bool MarkedBlock::Handle::isRedZoneCell(const void* cell)
 
 ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
 {
-    m_directory->assertIsMutatorOrMutatorIsStopped();
+    // Besides the bits, isLive() relies on no allocator having the block free-listed, which holds only while the caller
+    // is the one thread with access or the world is stopped.
+    m_directory->assertMayAccessBitsUnlocked();
 #if ASAN_ENABLED
     if (isRedZoneCell(cell))
         return false;
@@ -615,7 +617,7 @@ inline MarkedBlock::Handle::SweepDestructionMode MarkedBlock::Handle::sweepDestr
 
 inline bool MarkedBlock::Handle::isEmpty()
 {
-    m_directory->assertIsMutatorOrMutatorIsStopped();
+    m_directory->assertMayAccessBitsUnlocked();
     return m_directory->isEmpty(index());
 }
 

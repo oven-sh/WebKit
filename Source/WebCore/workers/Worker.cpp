@@ -63,7 +63,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 static Lock allWorkersLock;
-static HashSet<ScriptExecutionContextIdentifier>& LEGACY_NODELETE allWorkerContexts() WTF_REQUIRES_LOCK(allWorkersLock)
+NODELETE static HashSet<ScriptExecutionContextIdentifier>& allWorkerContexts() WTF_REQUIRES_LOCK(allWorkersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> map;
     return map;
@@ -132,6 +132,10 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::Ru
     Ref scriptLoader = WorkerScriptLoader::create();
     worker->m_scriptLoader = scriptLoader.copyRef();
     auto contentSecurityPolicyEnforcement = shouldBypassMainWorldContentSecurityPolicy ? ContentSecurityPolicyEnforcement::DoNotEnforce : ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
+
+    // Keep a blob URL alive until the worker has finished loading, since the worker takes its origin from it.
+    if (scriptURL.protocolIsBlob())
+        worker->m_blobURLExtension = { scriptURL, context.topOrigin().data() };
 
     ResourceRequest request { WTF::move(scriptURL) };
     request.setInitiatorIdentifier(worker->m_identifier);
@@ -221,6 +225,7 @@ void Worker::notifyFinished(std::optional<ScriptExecutionContextIdentifier> main
 {
     auto clearLoader = makeScopeExit([this] {
         m_scriptLoader = nullptr;
+        m_blobURLExtension.clear();
     });
 
     RefPtr context = scriptExecutionContext();
@@ -248,6 +253,7 @@ void Worker::notifyFinished(std::optional<ScriptExecutionContextIdentifier> main
         m_clientIdentifier,
         scriptLoader->advancedPrivacyProtections(),
         context->userAgent(scriptLoader->responseURL()),
+        context->navigatorPlatform(),
         scriptLoader->globalPrivacyControlEnabled()
     };
     m_contextProxy.startWorkerGlobalScope(scriptLoader->responseURL(), *sessionID, m_options.name, WTF::move(initializationData), scriptLoader->script(), contentSecurityPolicyResponseHeaders, m_shouldBypassMainWorldContentSecurityPolicy, scriptLoader->crossOriginEmbedderPolicy(), m_workerCreationTime, referrerPolicy, m_options.type, m_options.credentials, m_runtimeFlags);

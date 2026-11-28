@@ -1,0 +1,104 @@
+# import() of a graph with a CommonJS file on its first level and one on its second, while jobs of the program wait. A file runs in the step in which the loader makes it, and what it queues runs among the steps
+# that follow. So the loader is asked for the files of a level with the one ES module of that level that lies on its way down, and for no other ES module.
+# RUN: run-in-shell --aotCountsPath=/dev/null let job = 0; let isImported = false; globalThis.report = (label, value) => print(label + ": " + value + " behind job " + job); globalThis.later = name => { Promise.resolve().then(() => report("job of", name)); }; globalThis.register = closure => { globalThis.registered = closure; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => { const next = () => { if (isImported) return; ++job; Promise.resolve().then(next); }; Promise.resolve().then(next); registered().then(() => { isImported = true; print("imported behind job " + job); print("walked " + aotRuntimeCounters().match(/^(\d+)\tcounter:CompiledModulesWalkedByLoader$/m)[1]); }); }); return result; };
+# CHECK: runs: first.cjs behind job 6
+# CHECK-NEXT: job of: first.cjs behind job 7
+# CHECK-NEXT: runs: deep.cjs behind job 10
+# CHECK-NEXT: job of: deep.cjs behind job 11
+# CHECK-NEXT: runs: z.js behind job 21
+# CHECK-NEXT: runs: y.js behind job 21
+# CHECK-NEXT: runs: x.js behind job 21
+# CHECK-NEXT: runs: root.js behind job 21
+# CHECK-NEXT: imported behind job 28
+# CHECK-NEXT: walked 0
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m7 completes=true}, {target=m2 completes=true}]
+module m2 path="/x.js" displayPath="x.js" body=f2 requests=[{target=m3 completes=true}, {target=m8 completes=true}]
+module m3 path="/y.js" displayPath="y.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/z.js" displayPath="z.js" body=f4
+module m5 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g0
+module m6 path="/deep.cjs" displayPath="deep.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g1
+module m7 path="#7" displayPath="first.cjs" exportRule=CommonJs body=f7 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+module m8 path="#8" displayPath="deep.cjs" exportRule=CommonJs body=f8 requests=[{target=m6 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}]
+entry module=m0
+variable g0 name="exports" module=m5 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m6 declared={type=anything} initialization=Undefined
+variable g2 name="default" module=m7 declared={type=anything}
+variable g3 name="default" module=m8 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f9
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="x" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="x.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="y" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="y.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="z" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="z.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="first" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="first.cjs"
+    v4 = Call v1, -, v2, v3
+    v5 = PropGet v0 key="later" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = NewDictionary
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f6 name="deep" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="deep.cjs"
+    v4 = Call v1, -, v2, v3
+    v5 = PropGet v0 key="later" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = NewDictionary
+    PutModuleVariable v7 variable=g1
+    Return
+}
+function f7 name="facadeOfFirst" module=m5 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m7 [isBare]
+    Return
+}
+function f8 name="facadeOfDeep" module=m6 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m6 referrer=m8 [isBare]
+    Return
+}
+function f9 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}

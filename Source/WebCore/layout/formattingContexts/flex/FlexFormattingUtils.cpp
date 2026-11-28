@@ -376,16 +376,17 @@ bool FlexFormattingUtils::canResolveFullyConstrainedLogicalHeight(const RenderFl
     // stretched yet - its height is 0 at that point and computeLogicalHeight would give
     // a wrong answer. This happens when the nested out-of-flow flex is laid out as part of the
     // anector flex's main-axis sizing, before the stretch phase sets the final cross size.
-    CheckedPtr containingBlock = flexBox.containingBlock();
-    return flexBox.hasFullyConstrainedLogicalHeight() && containingBlock->hasDefiniteLogicalHeight();
+    if (!flexBox.hasFullyConstrainedLogicalHeight())
+        return false;
+    CheckedRef<const RenderBoxModelObject> containingBlock = *flexBox.containingBlock();
+    return containingBlock->hasDefiniteLogicalHeight();
 }
 
-bool FlexFormattingUtils::flexItemHasComputableAspectRatio(const FlexLayoutItem& flexLayoutItem) const
+bool FlexFormattingUtils::flexItemHasComputableAspectRatio(const RenderBox& flexItem)
 {
-    CheckedRef flexItem = flexLayoutItem.renderer;
     if (!flexItemHasAspectRatio(flexItem))
         return false;
-    return flexItem->preferredAspectRatioAsSize().aspectRatioDouble() > 0;
+    return flexItem.preferredAspectRatioAsSize().aspectRatioDouble() > 0;
 }
 
 bool FlexFormattingUtils::needToStretchFlexItemLogicalHeight(const FlexLayoutItem& flexLayoutItem) const
@@ -428,7 +429,7 @@ LayoutUnit FlexFormattingUtils::innerCrossSizeForFlexItem(const RenderBox& flexI
         auto size = isHorizontal ? flexBox->style().height() : flexBox->style().width();
         auto innerCrossSize = LayoutUnit { };
         if (auto fixedSize = size.tryFixed())
-            innerCrossSize = flexBox->adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedSize->resolveZoom(flexBox->style().usedZoomForLength()) });
+            innerCrossSize = flexBox->adjustContentBoxLogicalHeightForBoxSizing(size, LayoutUnit { fixedSize->resolveZoom(flexBox->style().usedZoomForLength()) }, flexBox->containingBlockLogicalWidthForBoxSizing(size));
         else if (size.isPercent())
             innerCrossSize = flexBox->availableLogicalHeightForPercentageComputation().value_or(0_lu);
         else if (canResolveFullyConstrainedLogicalHeight(flexBox) || hasDefiniteLogicalWidthForAspectRatioCrossSize(flexBox))
@@ -440,11 +441,11 @@ LayoutUnit FlexFormattingUtils::innerCrossSizeForFlexItem(const RenderBox& flexI
 
         auto maximumSize = isHorizontal ? flexBox->style().maxHeight() : flexBox->style().maxWidth();
         if (auto fixedMaximumSize = maximumSize.tryFixed())
-            innerCrossSize = std::min(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedMaximumSize->resolveZoom(flexBox->style().usedZoomForLength()) }));
+            innerCrossSize = std::min(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(maximumSize, LayoutUnit { fixedMaximumSize->resolveZoom(flexBox->style().usedZoomForLength()) }, flexBox->containingBlockLogicalWidthForBoxSizing(maximumSize)));
 
         auto minimumSize = isHorizontal ? flexBox->style().minHeight() : flexBox->style().minWidth();
         if (auto fixedMinimumSize = minimumSize.tryFixed())
-            innerCrossSize = std::max(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedMinimumSize->resolveZoom(flexBox->style().usedZoomForLength()) }));
+            innerCrossSize = std::max(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(minimumSize, LayoutUnit { fixedMinimumSize->resolveZoom(flexBox->style().usedZoomForLength()) }, flexBox->containingBlockLogicalWidthForBoxSizing(minimumSize)));
 
         return innerCrossSize;
     };
@@ -716,15 +717,20 @@ LayoutUnit FlexFormattingUtils::initialJustifyContentOffset(const Style::Compute
     return initialContentAlignmentOffset(availableFreeSpace, position, distribution, resolvedJustifyContent.overflow(), numberOfFlexItems, isReversed);
 }
 
-LayoutUnit FlexFormattingUtils::justifyContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution justifyContentDistribution, unsigned numberOfFlexItems)
+LayoutUnit FlexFormattingUtils::justifyContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution justifyContentDistribution, unsigned numberOfFlexItems, unsigned gapIndex)
 {
+    // The free space is evenly distributed over spaces and each gap gets its spaces: space-between has one space per
+    // gap, space-evenly also has one before the first and one after the last item, and space-around has two half-size
+    // spaces per item, one on each side. initialContentAlignmentOffset is the space before the first item, so the
+    // offset and the gaps add up to exactly the free space.
+    ASSERT(gapIndex + 1 < numberOfFlexItems);
     if (availableFreeSpace > 0 && numberOfFlexItems > 1) {
         if (justifyContentDistribution == ContentDistribution::SpaceBetween)
-            return availableFreeSpace / (numberOfFlexItems - 1);
+            return evenlyDistributedFreeSpace(availableFreeSpace, numberOfFlexItems - 1, gapIndex);
         if (justifyContentDistribution == ContentDistribution::SpaceAround)
-            return availableFreeSpace / numberOfFlexItems;
+            return evenlyDistributedFreeSpace(availableFreeSpace, 2 * numberOfFlexItems, 2 * gapIndex + 1) + evenlyDistributedFreeSpace(availableFreeSpace, 2 * numberOfFlexItems, 2 * gapIndex + 2);
         if (justifyContentDistribution == ContentDistribution::SpaceEvenly)
-            return availableFreeSpace / (numberOfFlexItems + 1);
+            return evenlyDistributedFreeSpace(availableFreeSpace, numberOfFlexItems + 1, gapIndex + 1);
     }
     return 0;
 }
@@ -827,17 +833,31 @@ LayoutUnit FlexFormattingUtils::initialContentAlignmentOffset(LayoutUnit availab
     return 0_lu;
 }
 
-LayoutUnit FlexFormattingUtils::alignContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution alignContentDistribution, unsigned numberOfLines)
+LayoutUnit FlexFormattingUtils::alignContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution alignContentDistribution, unsigned numberOfLines, unsigned gapIndex)
 {
+    // As with justifyContentSpaceBetweenFlexItems, each gap gets its spaces of the evenly distributed free space. With
+    // stretch, there is one space per line, which the line grows by, and the gap after a line is that space.
+    ASSERT(gapIndex + 1 < numberOfLines);
     if (availableFreeSpace > 0 && numberOfLines > 1) {
         if (alignContentDistribution == ContentDistribution::SpaceBetween)
-            return availableFreeSpace / (numberOfLines - 1);
-        if (alignContentDistribution == ContentDistribution::SpaceAround || alignContentDistribution == ContentDistribution::Stretch)
-            return availableFreeSpace / numberOfLines;
+            return evenlyDistributedFreeSpace(availableFreeSpace, numberOfLines - 1, gapIndex);
+        if (alignContentDistribution == ContentDistribution::SpaceAround)
+            return evenlyDistributedFreeSpace(availableFreeSpace, 2 * numberOfLines, 2 * gapIndex + 1) + evenlyDistributedFreeSpace(availableFreeSpace, 2 * numberOfLines, 2 * gapIndex + 2);
+        if (alignContentDistribution == ContentDistribution::Stretch)
+            return evenlyDistributedFreeSpace(availableFreeSpace, numberOfLines, gapIndex);
         if (alignContentDistribution == ContentDistribution::SpaceEvenly)
-            return availableFreeSpace / (numberOfLines + 1);
+            return evenlyDistributedFreeSpace(availableFreeSpace, numberOfLines + 1, gapIndex + 1);
     }
     return 0_lu;
+}
+
+LayoutUnit FlexFormattingUtils::evenlyDistributedFreeSpace(LayoutUnit freeSpace, unsigned numberOfItems, unsigned itemIndex)
+{
+    ASSERT(itemIndex < numberOfItems);
+    auto rawFreeSpace = static_cast<int64_t>(freeSpace.rawValue());
+    auto freeSpaceUpToAndIncludingItem = LayoutUnit::fromRawValue(static_cast<int>(rawFreeSpace * (itemIndex + 1) / numberOfItems));
+    auto freeSpaceBeforeItem = LayoutUnit::fromRawValue(static_cast<int>(rawFreeSpace * itemIndex / numberOfItems));
+    return freeSpaceUpToAndIncludingItem - freeSpaceBeforeItem;
 }
 
 // Instance forwarders for the formatting context, which holds a FlexFormattingUtils and so need not re-pass the container.

@@ -34,15 +34,16 @@
 #include <WebCore/InlineTextItem.h>
 #include <optional>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineContentConstrainer {
 public:
     InlineContentConstrainer(InlineFormattingContext&, const InlineItemList&, HorizontalConstraints);
     std::optional<Vector<LayoutUnit>> computeParagraphLevelConstraints(TextWrapStyle);
+    // With line-clamp: the content fits on the clamped line without the block ellipsis.
+    bool contentFitsWithinMaximumLines() const { return m_contentFitsWithinMaximumLines; }
 
-    static bool LEGACY_NODELETE constrainsContent(const Style::ComputedStyle&);
+    NODELETE static bool constrainsContent(const Style::ComputedStyle&);
 
 private:
     friend struct SlidingWidth;
@@ -63,11 +64,12 @@ private:
 
     void initialize();
     void updateCachedWidths();
-    void LEGACY_NODELETE checkCanConstrainInlineItems();
+    NODELETE void checkCanConstrainInlineItems();
     EntryPretty layoutSingleLineForPretty(InlineItemRange layoutRange, InlineLayoutUnit idealLineWidth, EntryPretty lastValidEntry, size_t previousBreakIndex);
 
-    std::optional<Vector<LayoutUnit>> balanceRangeWithLineRequirement(InlineItemRange, InlineLayoutUnit idealLineWidth, size_t numberOfLines, bool isFirstChunk);
-    std::optional<Vector<LayoutUnit>> balanceRangeWithNoLineRequirement(InlineItemRange, InlineLayoutUnit idealLineWidth, bool isFirstChunk);
+    // trailingWidth is the width that follows the content of the last line of the range on that line (i.e. the block ellipsis).
+    std::optional<Vector<LayoutUnit>> balanceRangeWithLineRequirement(InlineItemRange, InlineLayoutUnit idealLineWidth, size_t numberOfLines, bool isFirstChunk, InlineLayoutUnit trailingWidth);
+    std::optional<Vector<LayoutUnit>> balanceRangeWithNoLineRequirement(InlineItemRange, InlineLayoutUnit idealLineWidth, bool isFirstChunk, InlineLayoutUnit trailingWidth);
     std::optional<Vector<LayoutUnit>> prettifyRange(InlineItemRange, InlineLayoutUnit idealLineWidth, bool isFirstChunk);
 
     InlineLayoutUnit inlineItemWidth(size_t inlineItemIndex, bool useFirstLineStyle) const;
@@ -91,6 +93,9 @@ private:
     Vector<InlineLayoutUnit> m_inlineItemWidths;
     Vector<InlineLayoutUnit> m_firstLineStyleInlineItemWidths;
     size_t m_numberOfLinesInOriginalLayout { 0 };
+    // The width of the block ellipsis on the clamped line, which is the last line of the original layout when line-clamp applies.
+    InlineLayoutUnit m_clampedLineBlockEllipsisWidth { 0 };
+    bool m_contentFitsWithinMaximumLines { false };
     size_t m_numberOfInlineItems { 0 };
     bool m_cannotConstrainContent { false };
     bool m_hasSingleLineVisibleContent { false };
@@ -99,7 +104,7 @@ private:
 
 struct SlidingWidth {
     SlidingWidth(const InlineContentConstrainer&, const InlineItemList&, size_t start, size_t end, bool useFirstLineStyle, bool isFirstLineInChunk);
-    InlineLayoutUnit LEGACY_NODELETE width();
+    NODELETE InlineLayoutUnit width();
     void advanceStart();
     void advanceStartTo(size_t newStart);
     void advanceEnd();
@@ -120,5 +125,4 @@ private:
     std::optional<size_t> m_firstLeadingNonTrimmedItem;
 };
 
-}
 }

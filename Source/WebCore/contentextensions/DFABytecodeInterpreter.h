@@ -41,7 +41,7 @@ public:
     enum class EnableResumeCache : bool { No, Yes };
     WEBCORE_EXPORT DFABytecodeInterpreter(std::span<const uint8_t> bytecode, EnableResumeCache = EnableResumeCache::No);
 
-    using Actions = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using Actions = HashSet<uint64_t>;
 
     struct DFACheckpoint {
         static constexpr uint32_t terminatedBeforeCheckpoint = std::numeric_limits<uint32_t>::max();
@@ -63,7 +63,7 @@ private:
     void interpretTestFlagsAndAppendAction(unsigned& programCounter, ResourceFlags, Actions&);
 
     template<bool caseSensitive>
-    void LEGACY_NODELETE interpretJumpTable(std::span<const Latin1Character> url, uint32_t& urlIndex, uint32_t& programCounter);
+    NODELETE void interpretJumpTable(std::span<const Latin1Character> url, uint32_t& urlIndex, uint32_t& programCounter);
 
     const std::span<const uint8_t> m_bytecode;
     const std::unique_ptr<ResumeSlots> m_resumeCache;

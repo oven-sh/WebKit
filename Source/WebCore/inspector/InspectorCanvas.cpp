@@ -56,6 +56,7 @@
 #include "InspectorCanvasAgent.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorInstrumentation.h"
+#include "InspectorObjectIdentifier.h"
 #include "JSCanvasDirection.h"
 #include "JSCanvasFillRule.h"
 #include "JSCanvasLineCap.h"
@@ -74,7 +75,6 @@
 #include "Path2D.h"
 #include "SVGPathUtilities.h"
 #include "StringAdaptors.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include <ranges>
@@ -109,7 +109,7 @@ Ref<InspectorCanvas> InspectorCanvas::create(GPUDevice& device)
 InspectorCanvas::~InspectorCanvas() = default;
 
 InspectorCanvas::InspectorCanvas(CanvasRenderingContext& context)
-    : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
+    : m_identifier(makeString("canvas:"_s, generateInspectorObjectIdentifierString()))
     , m_context(context)
 {
 }
@@ -121,7 +121,7 @@ CanvasRenderingContext* InspectorCanvas::canvasContext() const
 }
 
 InspectorCanvas::InspectorCanvas(GPUDevice& device)
-    : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
+    : m_identifier(makeString("canvas:"_s, generateInspectorObjectIdentifierString()))
     , m_context(device)
 {
 }
@@ -889,7 +889,7 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
             String dataURL = "data:,"_s;
 
             if (RefPtr image = imageElement->sourceImage())
-                dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
+                dataURL = encodeDataURL(image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }), "image/png"_s);
 
             index = indexForData(dataURL);
         },
@@ -957,7 +957,7 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             if (RefPtr cachedImage = cssImageValue->image()) {
                 if (RefPtr image = cachedImage->image())
-                    dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
+                    dataURL = encodeDataURL(image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }), "image/png"_s);
             }
 
             index = indexForData(dataURL);
@@ -1139,9 +1139,10 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildAction(String&& name, Insp
 
 Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasGradient(const CanvasGradient& canvasGradient)
 {
+    Ref gradient = canvasGradient.gradient();
     ASCIILiteral type = "linear-gradient"_s;
     auto parameters = JSON::ArrayOf<double>::create();
-    WTF::switchOn(canvasGradient.gradient().data(),
+    WTF::switchOn(gradient->data(),
         [&] (const Gradient::LinearData& data) {
             parameters->addItem(data.point0.x());
             parameters->addItem(data.point0.y());
@@ -1166,7 +1167,7 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasGradient(con
     );
 
     auto stops = JSON::ArrayOf<JSON::Value>::create();
-    for (auto& colorStop : canvasGradient.gradient().stops()) {
+    for (auto& colorStop : gradient->stops()) {
         auto stop = JSON::ArrayOf<JSON::Value>::create();
         stop->addItem(colorStop.offset);
         stop->addItem(indexForData(serializationForCSS(colorStop.color)));
@@ -1183,8 +1184,8 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasGradient(con
 Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasPattern(const CanvasPattern& canvasPattern)
 {
     String repeat;
-    bool repeatX = canvasPattern.pattern().repeatX();
-    bool repeatY = canvasPattern.pattern().repeatY();
+    bool repeatX = canvasPattern.repeatX();
+    bool repeatY = canvasPattern.repeatY();
     if (repeatX && repeatY)
         repeat = "repeat"_s;
     else if (repeatX && !repeatY)
@@ -1194,8 +1195,15 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasPattern(cons
     else
         repeat = "no-repeat"_s;
 
+    auto& tileImage = canvasPattern.tileImage();
+    auto tileDataURL = [&] {
+        if (RefPtr imageBuffer = tileImage.imageBufferIfExists())
+            return encodeDataURL(WTF::move(imageBuffer), "image/png"_s);
+        return encodeDataURL(RefPtr { tileImage.nativeImageIfExists() }, "image/png"_s);
+    }();
+
     auto array = JSON::ArrayOf<JSON::Value>::create();
-    array->addItem(indexForData(encodeDataURL(canvasPattern.pattern().tileImageBuffer(), "image/png"_s)));
+    array->addItem(indexForData(tileDataURL));
     array->addItem(indexForData(repeat));
     return array;
 }

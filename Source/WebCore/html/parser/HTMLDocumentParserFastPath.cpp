@@ -98,7 +98,7 @@ namespace WebCore {
 
 static constexpr unsigned s_maxCachedStringSize = 40000;
 
-unsigned LEGACY_NODELETE maxCachedSetInnerHTMLStringSize()
+NODELETE unsigned maxCachedSetInnerHTMLStringSize()
 {
     return s_maxCachedStringSize;
 }
@@ -119,7 +119,7 @@ ALWAYS_INLINE static bool isCachedSubtreeValid(Node& cachedContainer)
 }
 
 template<typename CharacterType>
-static bool LEGACY_NODELETE isCachedPrefixMatch(const CachedSetInnerHTML& cache, std::span<const CharacterType> source, const ElementName& elementName)
+NODELETE static bool isCachedPrefixMatch(const CachedSetInnerHTML& cache, std::span<const CharacterType> source, const ElementName& elementName)
 {
     if (cache.source.length() > source.size())
         return false;
@@ -221,33 +221,39 @@ enum class HTMLFastPathResult : uint8_t {
     FailedOnAttribute,
     FailedMaxDepth,
     FailedBigText,
-    FailedCssPseudoDirEnabledAndDirAttributeDirty
+    FailedCssPseudoDirEnabledAndDirAttributeDirty,
+    FailedCustomElementRegistryAttribute
 };
 
-template<typename CharacterType> static inline bool LEGACY_NODELETE isQuoteCharacter(CharacterType character)
+template<typename CharacterType> NODELETE static inline bool isQuoteCharacter(CharacterType character)
 {
     return character == '"' || character == '\'';
 }
 
-template<typename CharacterType> static inline bool LEGACY_NODELETE isValidUnquotedAttributeValueChar(CharacterType character)
+template<typename CharacterType> NODELETE static inline bool isValidUnquotedAttributeValueChar(CharacterType character)
 {
     return isASCIIAlphanumeric(character) || character == '_' || character == '-';
 }
 
 // https://html.spec.whatwg.org/#syntax-attribute-name
-template<typename CharacterType> static inline bool LEGACY_NODELETE isValidAttributeNameChar(CharacterType character)
+template<typename CharacterType> NODELETE static inline bool isValidAttributeNameChar(CharacterType character)
 {
     if (character == '=') // Early return for the most common way to end an attribute.
         return false;
     return isASCIIAlphanumeric(character) || character == '-' || character == '_';
 }
 
-template<typename CharacterType> static inline bool LEGACY_NODELETE isCharAfterTagNameOrAttribute(CharacterType character)
+template<typename CharacterType> NODELETE static inline bool isNonUppercaseAttributeNameChar(CharacterType character)
+{
+    return isASCIILower(character) || isASCIIDigit(character) || character == '-' || character == '_';
+}
+
+template<typename CharacterType> NODELETE static inline bool isCharAfterTagNameOrAttribute(CharacterType character)
 {
     return character == ' ' || character == '>' || isASCIIWhitespace(character) || character == '/';
 }
 
-template<typename CharacterType> static inline bool LEGACY_NODELETE isCharAfterUnquotedAttribute(CharacterType character)
+template<typename CharacterType> NODELETE static inline bool isCharAfterUnquotedAttribute(CharacterType character)
 {
     return character == ' ' || character == '>' || isASCIIWhitespace(character);
 }
@@ -345,7 +351,7 @@ public:
         return false;
     }
 
-    HTMLFastPathResult LEGACY_NODELETE parseResult() const { return m_parseResult; }
+    NODELETE HTMLFastPathResult parseResult() const { return m_parseResult; }
 
 private:
     const Ref<Document> m_document;
@@ -398,11 +404,11 @@ private:
             {
                 return HTMLElementClass::create(document);
             }
-            static constexpr bool LEGACY_NODELETE allowedInPhrasingOrFlowContent()
+            NODELETE static constexpr bool allowedInPhrasingOrFlowContent()
             {
                 return permittedParents == PermittedParents::PhrasingOrFlowContent;
             }
-            static constexpr bool LEGACY_NODELETE allowedInFlowContent()
+            NODELETE static constexpr bool allowedInFlowContent()
             {
                 return permittedParents == PermittedParents::PhrasingOrFlowContent || permittedParents == PermittedParents::FlowContent;
             }
@@ -467,7 +473,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::b;
             static constexpr std::array<CharacterType, 1> tagNameCharacters { 'b' };
 
-            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
+            NODELETE static Ref<HTMLElement> create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::bTag, document);
             }
@@ -497,7 +503,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::footer;
             static constexpr std::array<CharacterType, 6> tagNameCharacters { 'f', 'o', 'o', 't', 'e', 'r' };
 
-            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
+            NODELETE static Ref<HTMLElement> create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::footerTag, document);
             }
@@ -507,7 +513,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::i;
             static constexpr std::array<CharacterType, 1> tagNameCharacters { 'i' };
 
-            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
+            NODELETE static Ref<HTMLElement> create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::iTag, document);
             }
@@ -546,7 +552,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::option;
             static constexpr std::array<CharacterType, 6> tagNameCharacters { 'o', 'p', 't', 'i', 'o', 'n' };
 
-            static RefPtr<HTMLElement> LEGACY_NODELETE parseChild(ContainerNode&, HTMLFastPathParser& self)
+            NODELETE static RefPtr<HTMLElement> parseChild(ContainerNode&, HTMLFastPathParser& self)
             {
                 // <option> can only contain a text content.
                 return self.didFail(HTMLFastPathResult::FailedOptionWithChild, nullptr);
@@ -587,7 +593,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::strong;
             static constexpr std::array<CharacterType, 6> tagNameCharacters { 's', 't', 'r', 'o', 'n', 'g' };
 
-            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
+            NODELETE static Ref<HTMLElement> create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::strongTag, document);
             }
@@ -624,12 +630,10 @@ private:
             auto* it = SIMD::find(span, vectorMatch, scalarMatch);
             return span.subspan(it - span.data());
         } else {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
                 constexpr simde_uint8x16_t zeros = SIMD::splat8(0);
                 return SIMD::findFirstNonZeroIndex(SIMD::bitAnd(vectorEquals8Bit(input.val[0]), SIMD::equal(input.val[1], zeros)));
             };
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             auto* it = SIMD::findInterleaved(span, vectorMatch, scalarMatch);
             return span.subspan(it - span.data());
         }
@@ -750,18 +754,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     QualifiedName scanAttributeName()
     {
-        // First look for all lower case. This path doesn't require any mapping of
-        // input. This path could handle other valid attribute name chars, but they
-        // are not as common, so it only looks for lowercase.
+        // First look for a name without upper case. This path doesn't require any mapping of input.
         auto start = m_parsingBuffer.span();
-        skipWhile<isASCIILower>(m_parsingBuffer);
+        skipWhile<isNonUppercaseAttributeNameChar>(m_parsingBuffer);
         if (m_parsingBuffer.atEnd()) [[unlikely]]
             return didFail(HTMLFastPathResult::FailedEndOfInputReached, nullQName());
 
         CharacterSpan attributeName;
-        if (isValidAttributeNameChar(*m_parsingBuffer)) [[unlikely]] {
-            // At this point name does not contain lowercase. It may contain upper-case,
-            // which requires mapping. Assume it does.
+        if (isASCIIUpper(*m_parsingBuffer)) [[unlikely]] {
             m_parsingBuffer.setPosition(start);
             m_charBuffer.shrink(0);
             // isValidAttributeNameChar() returns false if end of input is reached.
@@ -893,9 +893,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         out.append('&');
     }
 
-    bool LEGACY_NODELETE parsingFailed() const { return m_parseResult != HTMLFastPathResult::Succeeded; }
+    NODELETE bool parsingFailed() const { return m_parseResult != HTMLFastPathResult::Succeeded; }
 
-    void LEGACY_NODELETE didFail(HTMLFastPathResult result)
+    NODELETE void didFail(HTMLFastPathResult result)
     {
         if (m_parseResult == HTMLFastPathResult::Succeeded)
             m_parseResult = result;
@@ -914,17 +914,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             if (parsingFailed())
                 return;
 
-            if (!result.text.empty()) {
-                if (!parent.isConnected())
-                    parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, result.tryUseWhitespaceCache()));
-                else
-                    parent.parserAppendChild(Text::create(m_document, result.tryUseWhitespaceCache()));
-            } else if (!result.escapedText.isEmpty()) {
-                if (!parent.isConnected())
-                    parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, WTF::move(result.escapedText)));
-                else
-                    parent.parserAppendChild(Text::create(m_document, WTF::move(result.escapedText)));
-            }
+            if (!result.text.empty())
+                parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, result.tryUseWhitespaceCache()));
+            else if (!result.escapedText.isEmpty())
+                parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, WTF::move(result.escapedText)));
 
             if (m_parsingBuffer.atEnd())
                 return;
@@ -968,6 +961,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 }
                 return didFail(HTMLFastPathResult::FailedParsingAttributes);
             }
+            if (attributeName == HTMLNames::customelementregistryAttr) [[unlikely]]
+                return didFail(HTMLFastPathResult::FailedCustomElementRegistryAttribute);
             skipWhile<isASCIIWhitespace>(m_parsingBuffer);
             AtomString attributeValue;
             if (skipExactly(m_parsingBuffer, '=')) {
@@ -992,7 +987,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return parseSpecificElements<Tags...>(tagName, parent);
     }
 
-    template<void* = nullptr> RefPtr<HTMLElement> LEGACY_NODELETE parseSpecificElements(ElementName, ContainerNode&)
+    template<void* = nullptr> NODELETE RefPtr<HTMLElement> parseSpecificElements(ElementName, ContainerNode&)
     {
         return didFail(HTMLFastPathResult::FailedParsingSpecificElements, nullptr);
     }
@@ -1076,10 +1071,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         parseAttributes(element);
         if (parsingFailed())
             return WTF::move(element);
-        if (!parent.isConnected())
-            parent.parserAppendChildIntoIsolatedTree(element);
-        else
-            parent.parserAppendChild(element);
+        parent.parserAppendChildIntoIsolatedTree(element);
         element->beginParsingChildren();
         parseChildren<Tag>(element);
         if (parsingFailed() || m_parsingBuffer.atEnd()) [[unlikely]]
@@ -1108,10 +1100,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         parseAttributes(element);
         if (parsingFailed())
             return WTF::move(element);
-        if (!parent.isConnected())
-            parent.parserAppendChildIntoIsolatedTree(element);
-        else
-            parent.parserAppendChild(element);
+        parent.parserAppendChildIntoIsolatedTree(element);
         element->beginParsingChildren();
         element->finishParsingChildren();
         return WTF::move(element);
@@ -1148,6 +1137,7 @@ static bool tryFastParsingHTMLFragmentImpl(std::span<const CharacterType> source
 
 bool tryFastParsingHTMLFragment(StringView source, Document& document, ContainerNode& destinationParent, Element& contextElement, OptionSet<ParserContentPolicy> policy)
 {
+    ASSERT(!destinationParent.isConnected());
     if (!canUseFastPath(contextElement, policy))
         return false;
 

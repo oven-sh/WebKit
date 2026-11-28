@@ -46,6 +46,7 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use File::stat;
 use List::Util qw(first);
+use MIME::Base64 qw(encode_base64);
 use POSIX;
 use Time::HiRes qw(usleep);
 use Text::ParseWords;
@@ -70,6 +71,7 @@ BEGIN {
        &XcodeOptions
        &XcodeSDKPath
        &XcodeStaticAnalyzerOption
+       &androidDependenciesPath
        &appDisplayNameFromBundle
        &appendToEnvironmentVariableList
        &architecture
@@ -122,6 +124,7 @@ BEGIN {
        &inCrossTargetEnvironment
        &iosVersion
        &isARM64
+       &isAndroid
        &isAnyWindows
        &isAppleCocoaWebKit
        &isAppleMacWebKit
@@ -206,6 +209,7 @@ BEGIN {
        &splitVersionString
        &tsanIsEnabled
        &ubsanIsEnabled
+       &updateAndroidDependencies
        &updateGtkOrWpeLibs
        &usesCryptexPath
        &vcpkgArgsFromFeatures
@@ -295,6 +299,7 @@ my $shouldNotUseNinja;
 my $xcodeVersion;
 my $configuredXcodeWorkspace;
 my $crossTarget;
+my $isAndroid;
 my $defaultCompilerDetermined;
 
 my $unknownPortProhibited = 0;
@@ -310,6 +315,8 @@ my $winVersion;
 
 # Defined in VCSUtils.
 sub exitStatus($);
+
+sub formatBuildTime($);
 
 sub findMatchingArguments($$);
 sub hasArgument($$);
@@ -485,6 +492,51 @@ sub systemVerbose {
     return system(@_);
 }
 
+my $programStatusOwner;
+my $programStatusStartTime;
+my $programStatusFailure;
+my $programStatusInterrupted = 0;
+
+sub reportProgramStatus
+{
+    my ($state, $message) = @_;
+    my $body = "state=$state:app=" . basename($0);
+    $body .= ":msg=" . encode_base64($message, "") if defined $message;
+    print STDERR "\e]7501;$body\e\\";
+}
+
+sub runReportingProgramStatus
+{
+    my ($description, $run) = @_;
+    if (!defined $programStatusOwner && !$ENV{WEBKIT_PROGRAM_STATUS_OWNER} && -t STDERR) {
+        $ENV{WEBKIT_PROGRAM_STATUS_OWNER} = basename($0);
+        $programStatusOwner = $$;
+        $programStatusStartTime = time;
+    }
+    reportProgramStatus("working", $description) if defined $programStatusOwner;
+
+    my $result = $run->();
+    if (($result & 127) == SIGINT || exitStatus($result) == 128 + SIGINT) {
+        $programStatusInterrupted = 1;
+    } elsif ($result) {
+        $programStatusFailure = "$description failed (exit " . exitStatus($result) . ")";
+    }
+    return $result;
+}
+
+END {
+    if (defined $programStatusOwner && $programStatusOwner == $$) {
+        my $exitCode = $?;
+        if ($programStatusInterrupted) {
+            reportProgramStatus("idle");
+        } elsif ($exitCode) {
+            reportProgramStatus("error", $programStatusFailure // "Build failed with exit status $exitCode");
+        } else {
+            reportProgramStatus("done", "Build succeeded in " . formatBuildTime(time - $programStatusStartTime));
+        }
+    }
+}
+
 sub setBaseProductDir($)
 {
     ($baseProductDir) = @_;
@@ -570,6 +622,12 @@ sub determineArchitecture
     # The user explicitly specified the architecture, don't assume anything
     if (checkForArgumentAndRemoveFromARGVGettingValue("--architecture", \$architecture)) {
         $didUserSpecifyArchitecture = 1;
+        return;
+    }
+
+    # The architecture of an Android build is the one of the device, not the host.
+    if (isAndroid()) {
+        $architecture = "arm64";
         return;
     }
 
@@ -922,6 +980,10 @@ sub argumentsForConfiguration()
     push(@args, isCMakeBuild() ? '--cmake' : '--xcode') if (isAppleCocoaWebKit() && passedBuildSystem());
     push(@args, '--gtk') if isGtk();
     push(@args, '--wpe') if isWPE();
+    if (isAndroid()) {
+        push(@args, '--android');
+        push(@args, "--architecture=$architecture");
+    }
     push(@args, '--jsc-only') if isJSCOnly();
     push(@args, '--win') if isWin();
     push(@args, '--playstation') if isPlayStation();
@@ -1041,6 +1103,8 @@ sub determineCrossTarget {
 
     my $crossTargetCandidate;
     if (checkForArgumentAndRemoveFromARGVGettingValue("--cross-target", \$crossTargetCandidate)) {
+        # The cross-target toolchains are not the one of the Android NDK.
+        die "Argument '--android' conflicts with cross-target builds\n" if isAndroid();
         my $crossToolchainHelperPath = File::Spec->catfile(sourceDir(), "Tools", "Scripts", "cross-toolchain-helper");
         my $availableTargets = `'$crossToolchainHelperPath' --print-available-targets`;
         die "Failed to get available cross-targets from cross-toolchain-helper: $!" if exitStatus($?);
@@ -1258,7 +1322,8 @@ sub usesPerConfigurationBuildDirectory
 }
 
 # The CMake tree of the platform being built, matching the binaryDir of the
-# presets in CMakePresets.json: cmake-mac, cmake-iphoneos, cmake-iphonesimulator.
+# presets in CMakePresets.json: cmake-mac, cmake-maccatalyst, cmake-iphoneos,
+# cmake-iphonesimulator.
 sub cmakeCocoaTreeName
 {
     determineXcodeSDKPlatformName();
@@ -1300,6 +1365,8 @@ sub determineConfigurationProductDir
         $configurationProductDir = File::Spec->catdir($baseProductDir, $configuration);
     } elsif (usesPerConfigurationBuildDirectory()) {
         $configurationProductDir = "$baseProductDir";
+    } elsif (isAndroid()) {
+        $configurationProductDir = "$baseProductDir/Android-" . architecture() . "/$configuration";
     } elsif (isGtk() or isWPE() or isJSCOnly() or shouldBuildForCrossTarget() or inCrossTargetEnvironment()) {
         $configurationProductDir = "$baseProductDir/$portName/$configuration";
     } elsif (isAppleCocoaWebKit() && isCMakeBuild()) {
@@ -1398,16 +1465,25 @@ sub jscProductDir
     return executableProductDir();
 }
 
+sub machOArchitectures($)
+{
+    my ($path) = @_;
+    return () unless -f $path;
+    open(my $lipo, "-|", "/usr/bin/lipo", "-archs", $path) or return ();
+    my $output = <$lipo>;
+    close($lipo);
+    return () unless $? == 0 && defined($output);
+    chomp $output;
+    return split(' ', $output);
+}
+
 sub architecturesForProducts
 {
     # Most ports don't have emulation, assume that the user gave us an accurate architecture
     if (!isAppleCocoaWebKit()) {
         return architecture();
     }
-    my $webkitBinary = File::Spec->catdir(executableProductDir(), "JavaScriptCore.framework", "JavaScriptCore");
-    my $architectures = `/usr/bin/lipo -archs $webkitBinary`;
-    chomp($architectures);
-    return $architectures;
+    return join(" ", machOArchitectures(File::Spec->catdir(executableProductDir(), "JavaScriptCore.framework", "JavaScriptCore")));
 }
 
 sub configuration()
@@ -1794,7 +1870,7 @@ sub builtDylibPathForName
 
         return "";
     }
-    if (isIOSWebKit()) {
+    if (isEmbeddedWebKit()) {
         return "$configurationProductDir/$libraryName.framework/$libraryName";
     }
     if (isAppleCocoaWebKit()) {
@@ -1961,6 +2037,17 @@ sub determinePortName()
         }
     }
 
+    if (isAndroid()) {
+        die "Argument '--android' conflicts with selected port '$portName'\n"
+            if defined $portName and $portName ne WPE;
+        # The cross-target toolchains are not the one of the Android NDK. determineCrossTarget()
+        # checks --cross-target, which build-webkit looks for before the port.
+        die "Argument '--android' conflicts with cross-target builds\n"
+            if inCrossTargetEnvironment() or defined $crossTarget or grep(/^--cross-target(=|$)/, @ARGV);
+
+        $portName = WPE;
+    }
+
     return if defined $portName;
 
     # Port was not selected via command line, use appropriate default value
@@ -1975,6 +2062,7 @@ sub determinePortName()
     } else {
         if ($unknownPortProhibited) {
             my $portsChoice = join "\n\t", qw(
+                --android
                 --gtk
                 --jsc-only
                 --wpe
@@ -2008,6 +2096,20 @@ sub isJSCOnly()
 sub isWPE()
 {
     return portName() eq WPE;
+}
+
+# Android is not a port of its own: --android builds the WPE port with the
+# toolchain of the Android NDK.
+sub determineIsAndroid()
+{
+    return if defined $isAndroid;
+    $isAndroid = checkForArgumentAndRemoveFromARGV("--android");
+}
+
+sub isAndroid()
+{
+    determineIsAndroid();
+    return $isAndroid;
 }
 
 sub isPlayStation()
@@ -2125,7 +2227,7 @@ sub isARM64()
 
 sub isCrossCompilation()
 {
-    if (isPlayStation()) {
+    if (isPlayStation() || isAndroid()) {
         return 1;
     }
 
@@ -2181,6 +2283,12 @@ sub isVisionOSWebKit()
 sub isEmbeddedWebKit()
 {
     return isIOSWebKit() || isTVOSWebKit() || isWatchOSWebKit() || isVisionOSWebKit();
+}
+
+# The embedded platforms whose apps runIOSWebKitApp() can launch in the simulator.
+sub canRunWebKitAppInSimulator()
+{
+    return isIOSWebKit() || isVisionOSWebKit();
 }
 
 sub isAppleWebKit()
@@ -2575,7 +2683,7 @@ sub buildXCodeProject($$@)
 
     chomp($ENV{DSYMUTIL_NUM_THREADS} = `sysctl -n hw.activecpu`);
 
-    return system "xcodebuild", "-project", "$project.xcodeproj", @extraOptions;
+    return runReportingProgramStatus(($clean ? "Cleaning" : "Building") . " $project with xcodebuild", sub { system "xcodebuild", "-project", "$project.xcodeproj", @extraOptions });
 }
 
 sub buildXcodeScheme($$@)
@@ -2585,7 +2693,7 @@ sub buildXcodeScheme($$@)
         push @extraOptions, "clean";
     }
 
-    return system "xcodebuild", "-scheme", $scheme, @extraOptions;
+    return runReportingProgramStatus(($clean ? "Cleaning" : "Building") . " $scheme with xcodebuild", sub { system "xcodebuild", "-scheme", $scheme, @extraOptions });
 }
 
 sub getVisualStudioToolset()
@@ -2824,7 +2932,7 @@ sub wrapperPrefixIfNeeded()
         # Use tools from the active SDK and platform directory.
         return ("xcrun", "--sdk", xcodeSDK());
     }
-    if (shouldBuildForCrossTarget() or inCrossTargetEnvironment()) {
+    if (shouldBuildForCrossTarget() or inCrossTargetEnvironment() or isAndroid()) {
         return ();
     }
 
@@ -2842,6 +2950,87 @@ sub shouldUseVcpkg()
 sub winCrossCompileVcpkgRoot()
 {
     return File::Spec->catdir(sourceDir(), "WebKitLibraries", "windows", "vcpkg");
+}
+
+# Where update-webkit-android-libs downloads the NDK and the dependencies built for Android,
+# and links to the ones the build uses.
+sub androidDependenciesDirectory()
+{
+    return File::Spec->catdir(baseProductDir(), "DependenciesAndroid");
+}
+
+# What a link of update-webkit-android-libs points to. The CMake arguments have that path
+# instead of the link, so the build is configured again when another version is used.
+sub androidLinkedPath($)
+{
+    my ($name) = @_;
+    my $path = File::Spec->catdir(androidDependenciesDirectory(), $name);
+    return -e $path ? realpath($path) : $path;
+}
+
+sub androidNDKPath()
+{
+    return androidLinkedPath("ndk");
+}
+
+sub androidToolchainFile()
+{
+    return File::Spec->catfile(androidNDKPath(), "build", "cmake", "android.toolchain.cmake");
+}
+
+sub androidABI()
+{
+    my %architectureToABI = (
+        arm64 => "arm64-v8a",
+        x86_64 => "x86_64",
+    );
+    my $abi = $architectureToABI{architecture()};
+    die "Error: Android builds support the arm64 and x86_64 architectures, not '" . architecture() . "'.\n" unless $abi;
+    return $abi;
+}
+
+# A prefix with the libraries that WebKit needs, built for Android, and their pkg-config files.
+sub androidDependenciesPath()
+{
+    return androidLinkedPath("dependencies-" . androidABI());
+}
+
+# Gets the NDK and the dependencies, downloading the ones that are not given in the environment.
+sub androidDependenciesCommand()
+{
+    return (File::Spec->catfile(sourceDir(), "Tools", "Scripts", "update-webkit-android-libs"),
+        "--architecture=" . architecture(), "--directory=" . androidDependenciesDirectory());
+}
+
+sub updateAndroidDependencies()
+{
+    system(androidDependenciesCommand()) == 0 or die "Error: could not get the Android NDK and the dependencies built for Android.\n";
+}
+
+sub androidCMakeArguments()
+{
+    my $toolchainFile = androidToolchainFile();
+
+    my $dependencies = androidDependenciesPath();
+    my @args = (
+        "-DCMAKE_TOOLCHAIN_FILE=\"$toolchainFile\"",
+        "-DANDROID_ABI=" . androidABI(),
+        # The minimum API level of wpe-android, which the dependencies are built for.
+        "-DANDROID_PLATFORM=android-31",
+        "-DANDROID_STL=c++_shared",
+        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+        "-DCMAKE_FIND_ROOT_PATH=\"$dependencies\"",
+    );
+
+    # wpe-android builds WebXR, which is experimental, and no other experimental feature;
+    # build-webkit disables those for Android.
+    push @args, map { "-DENABLE_$_=ON" } qw(WEBXR WEBXR_HIT_TEST WEBXR_LAYERS);
+
+    # The tests do not run on Android yet, and neither do the MiniBrowser, the JavaScript
+    # shell and the tests of JavaScriptCore, which ENABLE_JAVASCRIPT_SHELL builds.
+    push @args, "-DENABLE_API_TESTS=OFF", "-DENABLE_JAVASCRIPT_SHELL=OFF", "-DENABLE_LAYOUT_TESTS=OFF", "-DENABLE_MINIBROWSER=OFF";
+
+    return @args;
 }
 
 sub cmakeCachePath()
@@ -2922,6 +3111,10 @@ sub shouldRemoveCMakeCache(@)
 
     push @buildArgs, parse_line('\s+', 0, $ENV{'BUILD_WEBKIT_ARGS'}) if ($ENV{'BUILD_WEBKIT_ARGS'});
 
+    # These change with the NDK and the dependencies in use, and with the features
+    # that the Android build enables or disables.
+    push @buildArgs, androidCMakeArguments() if isAndroid();
+
     # We check this first, because we always want to create this file for a fresh build.
     my $productDir = productDir();
     my $optionsCache = File::Spec->catdir($productDir, "build-webkit-options.txt");
@@ -2983,7 +3176,7 @@ sub shouldRemoveCMakeCache(@)
     }
 
     # If a change on the JHBuild moduleset has been done, we need to clean the cache as well.
-    if (isGtk() || isWPE()) {
+    if ((isGtk() || isWPE()) && !isAndroid()) {
         my $jhbuildRootDirectory = File::Spec->catdir(getJhbuildPath(), "Root");
         # The script update-webkit-libs-jhbuild shall re-generate $jhbuildRootDirectory if the moduleset changed.
         if (-d $jhbuildRootDirectory && $cacheFileModifiedTime < stat($jhbuildRootDirectory)->mtime) {
@@ -3085,6 +3278,9 @@ sub generateBuildSystemFromCMakeProject
     my @args;
     push @args, "-DPORT=\"$port\"";
     push @args, "-DCMAKE_OSX_SYSROOT=\"" . xcodeSDK() . "\"" if isAppleCocoaWebKit();
+    push @args, "-DWEBKIT_SDK_VARIANT=iosmac" if isMacCatalystWebKit();
+    # Multi-arch builds are handed in buildUniversalCMakeProject() below.
+    push @args, "-DCMAKE_OSX_ARCHITECTURES=" . architecture() if isAppleCocoaWebKit() && $didUserSpecifyArchitecture && !universalArchitectures();
     push @args, "-DCMAKE_INSTALL_PREFIX=\"$prefixPath\"" if $prefixPath;
     if ($config =~ /release/i) {
         push @args, "-DCMAKE_BUILD_TYPE=Release";
@@ -3153,6 +3349,8 @@ sub generateBuildSystemFromCMakeProject
     } elsif (isPlayStation()) {
         my $toolChainFile = $ENV{'CMAKE_TOOLCHAIN_FILE'} || "Platform/PlayStation5";
         push @args, '-DCMAKE_TOOLCHAIN_FILE=' . $toolChainFile;
+    } elsif (isAndroid()) {
+        push @args, androidCMakeArguments();
     }
 
     if ($willUseNinja) {
@@ -3162,7 +3360,7 @@ sub generateBuildSystemFromCMakeProject
         } else {
             push @args, "Ninja";
         }
-        push @args, "-DCMAKE_MAKE_PROGRAM=\"" . File::Spec->catfile(sourceDir(), "Source", "cmake", "ninja-wrapper") . "\"" if isAppleCocoaWebKit();
+        push @args, "-DCMAKE_MAKE_PROGRAM=\"" . File::Spec->catfile(sourceDir(), "Source", "cmake", "ninja-wrapper") . "\"" if isAppleCocoaWebKit() || isGtk() || isWPE();
         push @args, "-DUSE_THIN_ARCHIVES=OFF" if isPlayStation();
     } else {
         if (isAnyWindows()) {
@@ -3174,8 +3372,8 @@ sub generateBuildSystemFromCMakeProject
         }
     }
 
-    # Do not show progress of generating bindings in interactive Ninja build not to leave noisy lines on tty
-    push @args, '-DSHOW_BINDINGS_GENERATION_PROGRESS=1' unless ($willUseNinja && -t STDOUT);
+    # Ninja buffers the output of each job, so bindings progress can only be shown by other generators.
+    push @args, '-DSHOW_BINDINGS_GENERATION_PROGRESS=1' unless $willUseNinja;
 
     # Some ports have production mode, but build-webkit should always use developer mode.
     push @args, "-DDEVELOPER_MODE=ON" if isCMakeBuild();
@@ -3232,7 +3430,7 @@ sub generateBuildSystemFromCMakeProject
     # We call system("cmake @args") instead of system("cmake", @args) so that @args is
     # parsed for shell metacharacters.
     my $wrapper = join(" ", wrapperPrefixIfNeeded()) . " ";
-    my $returnCode = systemVerbose($wrapper . "cmake @args");
+    my $returnCode = runReportingProgramStatus("Configuring $config with cmake", sub { systemVerbose($wrapper . "cmake @args") });
 
     chdir($originalWorkingDirectory);
     return $returnCode;
@@ -3266,7 +3464,7 @@ sub buildCMakeGeneratedProject($)
     # We call system("cmake @args") instead of system("cmake", @args) so that @args is
     # parsed for shell metacharacters. In particular, @makeArgs may contain such metacharacters.
     my $wrapper = join(" ", wrapperPrefixIfNeeded()) . " ";
-    return systemVerbose($wrapper . "$command @args");
+    return runReportingProgramStatus("Building $config with cmake", sub { systemVerbose($wrapper . "$command @args") });
 }
 
 sub cleanCMakeGeneratedProject()
@@ -3671,6 +3869,9 @@ Options specific to macOS:
 Options specific to iOS:
   --iphone-simulator                Run the app in an iPhone Simulator
   --ipad-simulator                  Run the app in an iPad Simulator
+
+Options specific to visionOS:
+  --visionos-simulator              Run the app in an Apple Vision Pro Simulator
 EOF
 
     exit(1);
@@ -3744,13 +3945,8 @@ sub setupIOSWebKitEnvironment($)
 
 sub iosSimulatorApplicationsPath()
 {
-    my $output = `xcrun simctl list runtimes iOS --json`;
-    my $runtimes = decode_json($output)->{runtimes};
-    if (!$runtimes) {
-        die "No iOS simulator runtimes found";
-    }
-    my $runtimePath = @$runtimes[0]->{runtimeRoot};
-    return File::Spec->catdir($runtimePath, "Applications");
+    # Use the runtime the simulator device is created on, so system apps come from the runtime that boots.
+    return File::Spec->catdir(simulatorRuntimeRecord()->{runtimeRoot}, "Applications");
 }
 
 sub installedMobileSafariBundle()
@@ -3768,7 +3964,7 @@ sub mobileSafariBundle()
     determineConfigurationProductDir();
 
     # Use MobileSafari.app in product directory if present.
-    if (isIOSWebKit() && -d "$configurationProductDir/MobileSafari.app") {
+    if (-d "$configurationProductDir/MobileSafari.app") {
         return "$configurationProductDir/MobileSafari.app";
     }
     return installedMobileSafariBundle();
@@ -3778,7 +3974,7 @@ sub mobileMiniBrowserBundle()
 {
     determineConfigurationProductDir();
 
-    if (isIOSWebKit() && -d "$configurationProductDir/MobileMiniBrowser.app") {
+    if (-d "$configurationProductDir/MobileMiniBrowser.app") {
         return "$configurationProductDir/MobileMiniBrowser.app";
     }
     return installedMobileMiniBrowserBundle();
@@ -3793,7 +3989,7 @@ sub swiftBrowserBundle()
 {
     determineConfigurationProductDir();
 
-    if (isIOSWebKit() && -d "$configurationProductDir/SwiftBrowser.app") {
+    if (-d "$configurationProductDir/SwiftBrowser.app") {
         return "$configurationProductDir/SwiftBrowser.app";
     }
     return installedSwiftBrowserBundle();
@@ -3822,6 +4018,14 @@ sub appDisplayNameFromBundle($)
     my $plistPath = File::Spec->rel2abs(plistPathFromBundle($appBundle)); # defaults(1) will complain if the specified path is not absolute.
     chomp(my $bundleDisplayName = `defaults read '$plistPath' CFBundleDisplayName 2> /dev/null`);
     return $bundleDisplayName;
+}
+
+sub appExecutablePathFromBundle($)
+{
+    my ($appBundle) = @_;
+    my $plistPath = File::Spec->rel2abs(plistPathFromBundle($appBundle)); # defaults(1) will complain if the specified path is not absolute.
+    chomp(my $executableName = `defaults read '$plistPath' CFBundleExecutable 2> /dev/null`);
+    return File::Spec->catfile($appBundle, "Contents", "MacOS", $executableName);
 }
 
 sub waitUntilIOSSimulatorDeviceIsInState($$)
@@ -3908,7 +4112,7 @@ sub iosSimulatorDeviceByUDID($)
     return undef;
 }
 
-sub simulatorRuntime()
+sub simulatorRuntimeRecord()
 {
     die "Can't find a simulator runtime because the selected SDK isn't a simulator SDK" if !willUseSimulatorSDK();
     my $platformName = sdkPlatformOSName();
@@ -3918,17 +4122,33 @@ sub simulatorRuntime()
     my $output = `xcrun --sdk $sdk simctl list runtimes $platformName --json` or die "Failed to run find simulator runtime";
     for my $runtime (@{decode_json($output)->{runtimes}}) {
         if ($runtime->{version} eq $xcodeSDKVersion) {
-            return $runtime->{identifier};
+            return $runtime;
         }
         if ($runtime->{version} =~ /^$xcodeSDKVersion/) {
             my $runtime_version = $runtime->{version};
             my $runtime_id = $runtime->{identifier};
             warn "WARNING: Fuzzy-matched $platformName SDK version $xcodeSDKVersion to runtime $runtime_id with version $runtime_version.";
-            return $runtime_id;
+            return $runtime;
         }
     }
 
     die "No $platformName simulator runtime matches SDK version $xcodeSDKVersion";
+}
+
+sub simulatorRuntime()
+{
+    return simulatorRuntimeRecord()->{identifier};
+}
+
+sub simulatorDeviceTypeForName($$)
+{
+    my ($deviceTypeName, $runtime) = @_;
+
+    for my $deviceType (@{$runtime->{supportedDeviceTypes}}) {
+        return $deviceType->{identifier} if $deviceType->{name} eq $deviceTypeName;
+    }
+
+    die "Simulator runtime $runtime->{identifier} doesn't support a device type named \"$deviceTypeName\"";
 }
 
 sub findOrCreateSimulatorForIOSDevice($)
@@ -3937,8 +4157,10 @@ sub findOrCreateSimulatorForIOSDevice($)
     my $simulatorName;
     my $simulatorDeviceType;
 
-    # These should match the DEFAULT_DEVICE_TYPES in webkitpy/port/ios_simulator.py.
-    if (simulatorIdiom() eq "iPad") {
+    # These should match the DEFAULT_DEVICE_TYPES in webkitpy/port/ios_simulator.py and webkitpy/port/visionos_simulator.py.
+    if (willUseVisionSimulatorSDK()) {
+        $simulatorName = "Apple Vision Pro " . $simulatorNameSuffix;
+    } elsif (simulatorIdiom() eq "iPad") {
         $simulatorName = "iPad (9th generation) " . $simulatorNameSuffix;
         $simulatorDeviceType = "com.apple.CoreSimulator.SimDeviceType.iPad-9th-generation";
     } else {
@@ -3948,7 +4170,10 @@ sub findOrCreateSimulatorForIOSDevice($)
 
     my $simulatedDevice = iosSimulatorDeviceByName($simulatorName);
     return $simulatedDevice if $simulatedDevice;
-    return createiOSSimulatorDevice($simulatorName, $simulatorDeviceType, simulatorRuntime());
+    my $runtime = simulatorRuntimeRecord();
+    # The identifier behind this name differs between visionOS runtimes (e.g. Apple-Vision-Pro, Apple-Vision-Pro-4K).
+    $simulatorDeviceType //= simulatorDeviceTypeForName("Apple Vision Pro", $runtime);
+    return createiOSSimulatorDevice($simulatorName, $simulatorDeviceType, $runtime->{identifier});
 }
 
 sub isIOSSimulatorSystemInstalledApp($)
@@ -4010,7 +4235,7 @@ sub runIOSWebKitAppInSimulator($;$)
             # Restore the system-installed app in the simulator device corresponding to $appBundle as it
             # was previously overwritten with a custom built version of the app.
             # FIXME: Only restore the system-installed version of the app instead of erasing all contents and settings.
-            print "Quitting iOS Simulator...\n";
+            print "Quitting Simulator...\n";
             shutDownIOSSimulatorDevice($simulatedDevice);
             print "Erasing contents and settings for simulator device \"$simulatedDevice->{name}\".\n";
             exitStatus(system("xcrun", "--sdk", "iphonesimulator", "simctl", "erase", $simulatedDeviceUDID)) == 0 or die;
@@ -4019,14 +4244,14 @@ sub runIOSWebKitAppInSimulator($;$)
         #        $simulatedDeviceUDID may have been booted using the simctl command line tool. If $simulatedDeviceUDID
         #        was booted using simctl then we should shutdown the device and launch iOS Simulator to boot it again.
         if (!isSimulatorDeviceBooted($simulatedDeviceUDID)) {
-            print "Launching iOS Simulator...\n";
+            print "Launching Simulator...\n";
             relaunchIOSSimulator($simulatedDevice);
         }
     } else {
         # FIXME: We should killall(1) any running instances of $appBundle before installing it to ensure
         #        that simctl launch opens the latest installed version of the app. For now we quit and
         #        launch the iOS Simulator again to ensure there are no running instances of $appBundle.
-        print "Quitting and launching iOS Simulator...\n";
+        print "Quitting and launching Simulator...\n";
         relaunchIOSSimulator($simulatedDevice);
 
         print "Installing $appBundle.\n";
@@ -4059,13 +4284,9 @@ sub runIOSWebKitAppInSimulator($;$)
 sub runIOSWebKitApp($)
 {
     my ($appBundle) = @_;
-    if (willUseIOSDeviceSDK()) {
-        die "Only running Safari in iOS Simulator is supported now.";
-    }
-    if (willUseIOSSimulatorSDK()) {
-        return runIOSWebKitAppInSimulator($appBundle);
-    }
-    die "Not using an iOS SDK."
+    die "Not using an iOS or visionOS SDK." if !canRunWebKitAppInSimulator();
+    die "Only running apps in the simulator is supported now." if !willUseSimulatorSDK();
+    return runIOSWebKitAppInSimulator($appBundle);
 }
 
 sub commandLineArgumentsForRestrictedEnvironmentVariables($)
@@ -4092,9 +4313,44 @@ sub dyldFrameworkPathsForMacWebKitApp($)
     return @paths;
 }
 
+# architecture() assumes an arm64e slice whenever an internal SDK is detected,
+# even if WebKit was built against the public SDK. This method instead picks a
+# slice of the app to be launched that can load the built WebKit.framework.
+sub architectureForMacWebKitApp($@)
+{
+    my ($appPath, @frameworkPaths) = @_;
+    my $defaultArchitecture = architecture();
+    return $defaultArchitecture if $didUserSpecifyArchitecture;
+
+    my @webKitArchitectures;
+    foreach my $frameworkPath (@frameworkPaths) {
+        @webKitArchitectures = machOArchitectures("$frameworkPath/WebKit.framework/WebKit");
+        last if @webKitArchitectures;
+    }
+    my @appArchitectures = machOArchitectures($appPath);
+    return $defaultArchitecture unless @webKitArchitectures && @appArchitectures;
+
+    my %canLoadWebKit = map { $_ => 1 } @webKitArchitectures;
+    # An arm64 process loads arm64e code too, as it does the arm64e shared cache.
+    $canLoadWebKit{"arm64"} = 1 if $canLoadWebKit{"arm64e"};
+    my %isAppArchitecture = map { $_ => 1 } @appArchitectures;
+    my @candidates = grep { defined($_) } ($defaultArchitecture, "arm64e", "arm64", "x86_64");
+    foreach my $candidate (@candidates) {
+        return $candidate if $canLoadWebKit{$candidate} && $isAppArchitecture{$candidate};
+    }
+
+    # dyld would silently skip the built WebKit and load the system one.
+    die "No slice of @{[basename($appPath)]} (@appArchitectures) can load the built WebKit (@webKitArchitectures).\n";
+}
+
 sub runMacWebKitApp($;$$)
 {
     my ($appPath, $useOpenCommand, $openDocumentPath) = @_;
+    # A Mac Catalyst system app that open(1) launches doesn't take the DYLD_* overrides.
+    if (isMacCatalystWebKit() && defined($useOpenCommand) && $useOpenCommand == USE_OPEN_COMMAND && !defined($openDocumentPath) && -d $appPath) {
+        $appPath = appExecutablePathFromBundle($appPath);
+        $useOpenCommand = DO_NOT_USE_OPEN_COMMAND;
+    }
     my @frameworkPaths = dyldFrameworkPathsForMacWebKitApp($appPath);
     print "Starting @{[basename($appPath)]} with DYLD_FRAMEWORK_PATH set to point to built WebKit in @{[join(', ', @frameworkPaths)]}.\n";
 
@@ -4112,10 +4368,33 @@ sub runMacWebKitApp($;$$)
         push(@openCommand, commandLineArgumentsForRestrictedEnvironmentVariables("--env"), "--args", argumentsForRunAndDebugMacWebKitApp());
         return system(@openCommand);
     }
-    if (architecture()) {
-        return system "arch", "-" . architecture(), commandLineArgumentsForRestrictedEnvironmentVariables("-e"), $appPath, argumentsForRunAndDebugMacWebKitApp();
+    my $result;
+    my $launchArchitecture = architectureForMacWebKitApp($appPath, @frameworkPaths);
+    if ($launchArchitecture) {
+        $result = system "arch", "-" . $launchArchitecture, commandLineArgumentsForRestrictedEnvironmentVariables("-e"), $appPath, argumentsForRunAndDebugMacWebKitApp();
+    } else {
+        $result = system { $appPath } $appPath, argumentsForRunAndDebugMacWebKitApp();
     }
-    return system { $appPath } $appPath, argumentsForRunAndDebugMacWebKitApp();
+    reportMacWebKitAppLaunchFailure($appPath, $result);
+    return $result;
+}
+
+# A process killed by a signal right at launch (typically SIGKILL from AMFI rejecting the code signature)
+# produces no output at all, so explain what probably happened.
+sub reportMacWebKitAppLaunchFailure($$)
+{
+    my ($appPath, $status) = @_;
+    return unless $status > 0;
+
+    my $signal = $status & 127;
+    return unless $signal;
+
+    print STDERR "\n@{[basename($appPath)]} was terminated by signal $signal.\n";
+    if ($signal == 9) {
+        print STDERR "SIGKILL at launch usually means the system rejected the app's code signature, e.g. it is ad-hoc signed but has restricted entitlements.\n";
+        print STDERR "Check the reason with: log show --last 1m --predicate 'process == \"amfid\" OR process == \"kernel\"' | grep -i " . basename($appPath) . "\n";
+        print STDERR "and verify the signature with: codesign -dvv --entitlements - " . ($appPath =~ s#/Contents/MacOS/[^/]+$##r) . "\n";
+    }
 }
 
 sub runUnixWebKitApp($)
@@ -4143,7 +4422,7 @@ sub execMacWebKitAppForDebugging($)
     my @frameworkPaths = dyldFrameworkPathsForMacWebKitApp($appPath);
     setupMacWebKitEnvironment(@frameworkPaths);
 
-    my @architectureFlags = ($architectureSwitch, architecture());
+    my @architectureFlags = ($architectureSwitch, architectureForMacWebKitApp($appPath, @frameworkPaths));
     print "Starting @{[basename($appPath)]} under lldb with DYLD_FRAMEWORK_PATH set to point to built WebKit in @{[join(', ', @frameworkPaths)]}.\n";
     exec { $debuggerPath } $debuggerPath, @architectureFlags, $argumentsSeparator, $appPath, argumentsForRunAndDebugMacWebKitApp() or die;
 }
@@ -4178,7 +4457,7 @@ sub debugSafari
 
 sub runSafari
 {
-    if (isIOSWebKit()) {
+    if (canRunWebKitAppInSimulator()) {
         return runIOSWebKitApp(mobileSafariBundle());
     }
 
@@ -4198,7 +4477,11 @@ sub runMiniBrowser
     if (isAppleMacWebKit()) {
         return runMacWebKitApp(File::Spec->catfile(productDir(), "MiniBrowser.app", "Contents", "MacOS", "MiniBrowser"));
     }
-    if (isIOSWebKit()) {
+    # Only the CMake build makes MobileMiniBrowser for Mac Catalyst.
+    if (isMacCatalystWebKit() && isCMakeBuild()) {
+        return runMacWebKitApp(File::Spec->catfile(productDir(), "MobileMiniBrowser.app", "Contents", "MacOS", "MobileMiniBrowser"));
+    }
+    if (canRunWebKitAppInSimulator()) {
         return runIOSWebKitApp(mobileMiniBrowserBundle());
     }
     return 1;
@@ -4209,6 +4492,9 @@ sub debugMiniBrowser
     if (isAppleMacWebKit()) {
         execMacWebKitAppForDebugging(File::Spec->catfile(productDir(), "MiniBrowser.app", "Contents", "MacOS", "MiniBrowser"));
     }
+    if (isMacCatalystWebKit() && isCMakeBuild()) {
+        execMacWebKitAppForDebugging(File::Spec->catfile(productDir(), "MobileMiniBrowser.app", "Contents", "MacOS", "MobileMiniBrowser"));
+    }
 
     return 1;
 }
@@ -4218,7 +4504,7 @@ sub runSwiftBrowser
     if (isAppleMacWebKit()) {
         return runMacWebKitApp(File::Spec->catfile(productDir(), "SwiftBrowser.app", "Contents", "MacOS", "SwiftBrowser"));
     }
-    if (isIOSWebKit()) {
+    if (canRunWebKitAppInSimulator()) {
         return runIOSWebKitApp(swiftBrowserBundle());
     }
     return 1;
@@ -4301,6 +4587,9 @@ sub runGitUpdate()
 sub updateGtkOrWpeLibs
 {
     my ($port) = @_;
+    if ($port eq "wpe" and isAndroid()) {
+        exec(androidDependenciesCommand()) or die "Failed to exec update-webkit-android-libs: $!";
+    }
     my $scriptsDir = relativeScriptsDir();
     if (defined $ENV{'WEBKIT_JHBUILD'} and $ENV{'WEBKIT_JHBUILD'}) {
         exec("perl", "$scriptsDir/update-webkit-libs-jhbuild", "--$port", @ARGV)

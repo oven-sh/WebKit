@@ -578,7 +578,7 @@ bool PathCG::contains(const FloatPoint &point, WindRule rule) const
     return CGPathContainsPoint(path.get(), nullptr, point, rule == WindRule::EvenOdd);
 }
 
-static size_t LEGACY_NODELETE putBytesNowhere(void*, const void*, size_t count)
+NODELETE static size_t putBytesNowhere(void*, const void*, size_t count)
 {
     return count;
 }
@@ -644,13 +644,13 @@ FloatRect PathCG::boundingRect() const
     return zeroRectIfNull(CGPathGetPathBoundingBox(m_platformPath));
 }
 
-FloatRect PathCG::strokeBoundingRect(NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const
+FloatRect PathCG::strokeBoundingRect(const Path& path, NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier)
 {
     RetainPtr context = scratchContext();
 
     CGContextSaveGState(context);
     CGContextBeginPath(context);
-    CGContextAddPath(context, m_platformPath);
+    addToCGContextPath(context.get(), path);
 
     if (strokeStyleApplier) {
         GraphicsContextCG graphicsContext(context);

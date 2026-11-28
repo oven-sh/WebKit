@@ -7,19 +7,17 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTCallSiteCache.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
 #include "AOTCompiledCaller.h"
 #include "AOTCompiledFrame.h"
-#include "AOTIRParser.h"
+#include "AOTDriver.h"
 #include "AOTNativeTest.h"
-#include "AOTProgramFile.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTShellProcess.h"
+#include "AOTShellProgramTestSupport.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -93,7 +91,7 @@ function f8 name="tailCaller" parameters=[{type=anything}, {type=anything}] resu
     ReturnCall v2
 }
 function f9 name="outerOfInlinedTail" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = CallDirect v0, v1 function=f8 [isAlwaysInlined] @100
+    v2 = CallDirect v0, v1 function=f8 @100
     Return v2
 }
 function f10 name="tailCallerOfMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -102,7 +100,7 @@ function f10 name="tailCallerOfMethod" parameters=[{type=anything}, {type=anythi
     ReturnCall v3
 }
 function f11 name="outerOfInlinedMethodTail" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = CallDirect v0, v1 function=f10 [isAlwaysInlined] @120
+    v2 = CallDirect v0, v1 function=f10 @120
     Return v2
 }
 function f12 name="tailCallerOfKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
@@ -110,7 +108,7 @@ function f12 name="tailCallerOfKnownFunction" parameters=[{type=anything}] resul
     ReturnCall v1
 }
 function f13 name="outerOfInlinedDirectTail" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = CallDirect v0 function=f12 [isAlwaysInlined] @140
+    v1 = CallDirect v0 function=f12 @140
     Return v1
 }
 function f14 name="tailCallerOfBuiltin" parameters=[{type=anything}] results=[{type=anything}] {
@@ -154,36 +152,20 @@ function driver(run) {
 globalThis.leaf = function leaf() { return names(new Error().stack); };
 )js"_s;
 
-static std::unique_ptr<CompileOutput> compileWithValidation(ASCIILiteral referencesWord)
+static String runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
-        AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-        if (!program) {
-            build.diagnostics().finish(nullptr);
-            Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-        }
-        AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = compileForShellOnThisThread(programText, { referencesWord }, way);
     });
-    return output;
-}
+    std::span<const uint32_t> entryModules = output->records<uint32_t>(Wire::ResultSection::EntryModuleIds);
+    AOT_TEST_CHECK(entryModules.size() == 1);
 
-static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
-{
-    std::unique_ptr<CompileOutput> output = compileWithValidation(referencesWord);
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(() => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
+        makeString(scriptStart, "runCompiledEntryPoint("_s, entryModules[0], ").then(() => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -195,11 +177,13 @@ static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
 
 static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        String output = runInShell(referencesWord, statements);
-        if (output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            String output = runInShell(way, referencesWord, statements);
+            if (output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(output == expectedOutput);
+        }
     }
 }
 
@@ -359,9 +343,14 @@ static void testWhichFramesAreShown()
 
     ShownFrameFilter belowShownFrame(true);
     AOT_TEST_CHECK(!belowShownFrame.shows(TraceVisibility::VisibleOnlyOnTop, false) && belowShownFrame.shows(TraceVisibility::Visible, false));
+
+    ShownFrameFilter withWhateverIsOnTop = ShownFrameFilter::showingWhateverIsOnTop(false);
+    AOT_TEST_CHECK(!withWhateverIsOnTop.shows(TraceVisibility::Hidden, true) && !withWhateverIsOnTop.hasShownFrame());
+    AOT_TEST_CHECK(withWhateverIsOnTop.shows(TraceVisibility::Hidden, false) && withWhateverIsOnTop.hasShownFrame());
+    AOT_TEST_CHECK(!withWhateverIsOnTop.shows(TraceVisibility::Hidden, false) && withWhateverIsOnTop.shows(TraceVisibility::Visible, false));
+    AOT_TEST_CHECK(!ShownFrameFilter::showingWhateverIsOnTop(true).shows(TraceVisibility::Hidden, false));
 }
 
-// The table without an image: what resolve() does with an address that it does not find.
 struct CallSiteCacheSlots {
     static constexpr uintptr_t firstAddress = 0x100000000000;
 
@@ -396,7 +385,6 @@ struct CallSiteCacheSlots {
 
 static void testCallSiteCacheMakesRoomInTheOtherSlot()
 {
-    // The first has one slot. The third shares it, and its other slot is held by the second, which has a free one.
     CallSiteCacheSlots slots;
     const void* addresses[] = { slots.addressWith(5, { 5 }), slots.addressWith(9, { 70 }), slots.addressWith(9, { 5 }) };
     for (unsigned turn = 0; turn < 8; ++turn)
@@ -407,7 +395,6 @@ static void testCallSiteCacheMakesRoomInTheOtherSlot()
 
 static void testCallSiteCacheGrowsWhereEntriesPushEachOtherOut()
 {
-    // Three addresses with two slots between them.
     CallSiteCacheSlots slots;
     const void* addresses[] = { slots.addressWith(5, { 9 }), slots.addressWith(9, { 5 }), slots.addressWith(5, { 9 }) };
     AOT_TEST_CHECK(slots.askForAll(addresses) == 3);

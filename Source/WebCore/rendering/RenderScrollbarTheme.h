@@ -37,7 +37,7 @@ class RenderScrollbarTheme final : public ScrollbarThemeComposite {
 public:
     virtual ~RenderScrollbarTheme() = default;
     
-    int scrollbarThickness(ScrollbarWidth scrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy overlayRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override { return ScrollbarTheme::theme().scrollbarThickness(scrollbarWidth, overlayRelevancy); }
+    int scrollbarThickness(ScrollbarStyle scrollbarStyle, ScrollbarWidth scrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy overlayRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override { return ScrollbarTheme::theme().scrollbarThickness(scrollbarStyle, scrollbarWidth, overlayRelevancy); }
 
     ScrollbarButtonsPlacement buttonsPlacement() const override { return ScrollbarTheme::theme().buttonsPlacement(); }
 
@@ -57,7 +57,7 @@ public:
 
     void buttonSizesAlongTrackAxis(Scrollbar&, int& beforeSize, int& afterSize);
     
-    static RenderScrollbarTheme* LEGACY_NODELETE renderScrollbarTheme();
+    NODELETE static RenderScrollbarTheme* renderScrollbarTheme();
 
 private:
     bool hasButtons(Scrollbar&) override;

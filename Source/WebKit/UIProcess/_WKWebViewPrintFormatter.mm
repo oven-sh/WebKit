@@ -29,6 +29,7 @@
 #if HAVE(UIKIT_PRINTING)
 
 #import "UIKitSPI.h"
+#import "WKContentView.h"
 #import "WKWebViewInternal.h"
 #import "_WKFrameHandle.h"
 #import <wtf/Condition.h>
@@ -48,12 +49,13 @@
     Lock _printLock;
     Condition _printCompletionCondition;
     RetainPtr<CGPDFDocumentRef> _printedDocument;
+    std::optional<UIEdgeInsets> _explicitPageMargin;
     RetainPtr<CGImageRef> _printPreviewImage;
 }
 
 - (BOOL)requiresMainThread
 {
-    return self._webView._printProvider._wk_printFormatterRequiresMainThread;
+    return NO;
 }
 
 - (_WKFrameHandle *)frameToPrint
@@ -71,12 +73,16 @@
     return checked_objc_cast<WKWebView>(self.view);
 }
 
+// The content view is never replaced after init, so this is safe off the main thread.
+- (WKContentView *)_contentView
+{
+    WKWebView *webView = self._webView;
+    return webView->_contentView.get();
+}
+
 - (BOOL)_shouldDrawUsingBitmap
 {
     if (self.snapshotFirstPage)
-        return NO;
-
-    if (![self._webView._printProvider respondsToSelector:@selector(_wk_requestImageForPrintFormatter:)])
         return NO;
 
     if (self.printPageRenderer.requestedRenderingQuality == UIPrintRenderingQualityBest)
@@ -87,41 +93,37 @@
 
 - (CGPDFDocumentRef)_printedDocument
 {
-    if (self.requiresMainThread)
-        return _printedDocument.get();
-
     Locker locker { _printLock };
     return _printedDocument.get();
 }
 
 - (void)_setPrintedDocument:(CGPDFDocumentRef)printedDocument
 {
-    if (self.requiresMainThread) {
-        _printedDocument = printedDocument;
-        return;
-    }
-
     Locker locker { _printLock };
     _printedDocument = printedDocument;
     _printCompletionCondition.notifyOne();
 }
 
+- (std::optional<UIEdgeInsets>)_explicitPageMargin
+{
+    Locker locker { _printLock };
+    return _explicitPageMargin;
+}
+
+- (void)_setExplicitPageMargin:(std::optional<UIEdgeInsets>)explicitPageMargin
+{
+    Locker locker { _printLock };
+    _explicitPageMargin = explicitPageMargin;
+}
+
 - (CGImageRef)_printPreviewImage
 {
-    if (self.requiresMainThread)
-        return _printPreviewImage.get();
-
     Locker locker { _printLock };
     return _printPreviewImage.get();
 }
 
 - (void)_setPrintPreviewImage:(CGImageRef)printPreviewImage
 {
-    if (self.requiresMainThread) {
-        _printPreviewImage = printPreviewImage;
-        return;
-    }
-
     Locker locker { _printLock };
     _printPreviewImage = printPreviewImage;
     _printCompletionCondition.notifyOne();
@@ -145,12 +147,13 @@
 {
     [self _setPrintPreviewImage:nullptr];
     [self _setPrintedDocument:nullptr];
+    [self _setExplicitPageMargin:std::nullopt];
 }
 
 - (NSInteger)_recalcPageCount
 {
     [self _invalidatePrintRenderingState];
-    NSUInteger pageCount = [self._webView._printProvider _wk_pageCountForPrintFormatter:self];
+    NSUInteger pageCount = [self._contentView _wk_pageCountForPrintFormatter:self];
     RELEASE_LOG(Printing, "Recalculated page count. Page count = %zu", static_cast<size_t>(pageCount));
     return std::min<NSUInteger>(pageCount, NSIntegerMax);
 }
@@ -163,8 +166,15 @@
 
 - (CGRect)rectForPageAtIndex:(NSInteger)pageIndex
 {
+    CGRect paperRect = self.printPageRenderer.paperRect;
     if (self.snapshotFirstPage)
-        return self.printPageRenderer.paperRect;
+        return paperRect;
+    if (auto explicitPageMargin = [self _explicitPageMargin]; explicitPageMargin && !CGRectIsEmpty(paperRect)) {
+        // Negative margins are shrunk to fit the paper. Margins that leave no page area fall back to UIKit's content rect.
+        CGRect pageAreaRect = UIEdgeInsetsInsetRect(paperRect, *explicitPageMargin);
+        if (pageAreaRect.size.width > 0 && pageAreaRect.size.height > 0)
+            return CGRectIntersection(paperRect, pageAreaRect);
+    }
     return [self _pageContentRect:pageIndex == self.startPage];
 }
 
@@ -180,7 +190,7 @@
 {
     RetainPtr printPreviewImage = [self _printPreviewImage];
     if (!printPreviewImage) {
-        [self._webView._printProvider _wk_requestImageForPrintFormatter:self];
+        [self._contentView _wk_requestImageForPrintFormatter:self];
         printPreviewImage = [self _printPreviewImage];
         if (!printPreviewImage)
             return;
@@ -192,21 +202,19 @@
     RetainPtr context = UIGraphicsGetCurrentContext();
     CGContextSaveGState(context.get());
 
-    RetainPtr documentImage = _printPreviewImage.get();
-
-    CGFloat pageImageWidth = CGImageGetWidth(documentImage.get());
-    CGFloat pageImageHeight = CGImageGetHeight(documentImage.get()) / self.pageCount;
+    CGFloat pageImageWidth = CGImageGetWidth(printPreviewImage.get());
+    CGFloat pageImageHeight = CGImageGetHeight(printPreviewImage.get()) / self.pageCount;
 
     if (!pageImageWidth || !pageImageHeight) {
         CGContextRestoreGState(context.get());
         return;
     }
 
-    RetainPtr pageImage = adoptCF(CGImageCreateWithImageInRect(documentImage.get(), CGRectMake(0, pageIndex * pageImageHeight, pageImageWidth, pageImageHeight)));
+    RetainPtr pageImage = adoptCF(CGImageCreateWithImageInRect(printPreviewImage.get(), CGRectMake(0, pageIndex * pageImageHeight, pageImageWidth, pageImageHeight)));
 
-    CGContextTranslateCTM(context.get(), CGRectGetMinX(rect), CGRectGetMaxY(rect));
-    CGContextScaleCTM(context.get(), 1, -1);
-    CGContextScaleCTM(context.get(), CGRectGetWidth(rect) / pageImageWidth, CGRectGetHeight(rect) / pageImageHeight);
+    CGFloat scale = std::min(CGRectGetWidth(rect) / pageImageWidth, CGRectGetHeight(rect) / pageImageHeight);
+    CGContextTranslateCTM(context.get(), CGRectGetMinX(rect), CGRectGetMinY(rect) + scale * pageImageHeight);
+    CGContextScaleCTM(context.get(), scale, -scale);
     CGContextDrawImage(context.get(), CGRectMake(0, 0, pageImageWidth, pageImageHeight), pageImage.get());
 
     CGContextRestoreGState(context.get());
@@ -216,7 +224,7 @@
 {
     RetainPtr<CGPDFDocumentRef> printedDocument = [self _printedDocument];
     if (!printedDocument) {
-        [self._webView._printProvider _wk_requestDocumentForPrintFormatter:self];
+        [self._contentView _wk_requestDocumentForPrintFormatter:self];
         printedDocument = [self _printedDocument];
         if (!printedDocument)
             return;
@@ -230,13 +238,20 @@
     if (!page)
         return;
 
+    CGRect pageRect = CGPDFPageGetBoxRect(page.get(), kCGPDFCropBox);
+    if (CGRectIsEmpty(pageRect))
+        return;
+
+    // Pages are in points, so only shrink pages that don't fit.
+    CGFloat scale = std::min<CGFloat>({ 1, CGRectGetWidth(rect) / CGRectGetWidth(pageRect), CGRectGetHeight(rect) / CGRectGetHeight(pageRect) });
+
     RetainPtr context = UIGraphicsGetCurrentContext();
     CGContextSaveGState(context.get());
 
-    CGContextTranslateCTM(context.get(), CGRectGetMinX(rect), CGRectGetMaxY(rect));
-    CGContextScaleCTM(context.get(), 1, -1);
-    CGContextConcatCTM(context.get(), CGPDFPageGetDrawingTransform(page.get(), kCGPDFCropBox, CGRectMake(0, 0, CGRectGetWidth(rect), CGRectGetHeight(rect)), 0, true));
-    CGContextClipToRect(context.get(), CGPDFPageGetBoxRect(page.get(), kCGPDFCropBox));
+    CGContextTranslateCTM(context.get(), CGRectGetMinX(rect), CGRectGetMinY(rect) + scale * CGRectGetHeight(pageRect));
+    CGContextScaleCTM(context.get(), scale, -scale);
+    CGContextTranslateCTM(context.get(), -CGRectGetMinX(pageRect), -CGRectGetMinY(pageRect));
+    CGContextClipToRect(context.get(), pageRect);
     CGContextDrawPDFPage(context.get(), page.get());
 
     CGContextRestoreGState(context.get());

@@ -1,0 +1,41 @@
+# what is called comes round in a parameter of the head: each turn may call another value, so nothing is asked in front of the loop
+# function chain(cb, n) { if (typeof n !== "number") return; for (let i = 0; i < n; i++) cb = cb(i); return cb; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NEVER-NOT: ResolveCallTarget
+# NEVER-NOT: CallResolved
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="chain" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=i32
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = Integer
+    Jump -> next b2(v4, v0)
+  b2(v5, v6):
+    LoopHint
+    v8 = Less v5, v3
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v6, -, v5
+    v10 = Increment v5
+    Jump -> next b2(v10, v9)
+  b4():
+    Return v6
+  b5():
+    v11 = Undefined
+    Return v11
+}

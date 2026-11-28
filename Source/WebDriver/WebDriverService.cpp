@@ -31,6 +31,7 @@
 #include "Logging.h"
 #include "SessionHost.h"
 #include <cmath>
+#include <numbers>
 #include <ranges>
 #include <wtf/Compiler.h>
 #include <wtf/FileSystem.h>
@@ -59,9 +60,6 @@
 namespace WebDriver {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebDriverService);
-
-// https://w3c.github.io/webdriver/webdriver-spec.html#dfn-maximum-safe-integer
-static const double maxSafeInteger = 9007199254740991.0; // 2 ^ 53 - 1
 
 WebDriverService::WebDriverService()
     : m_server(*this)
@@ -93,11 +91,15 @@ WebDriverService::~WebDriverService()
 
 static void printUsageStatement(const char* programName)
 {
-    SAFE_PRINTF("Usage: %s options\n", String::fromLatin1(programName).utf8());
+    SAFE_PRINTF("Usage: %s options\n", makeUTF8CString(String::fromLatin1(programName)));
     SAFE_PRINTF("  -h,          --help             Prints this help message\n");
     SAFE_PRINTF("  -p <port>,   --port=<port>      Port number the driver will use\n");
     SAFE_PRINTF("               --host=<host>      Host IP the driver will use, or either 'local' or 'all' (default: 'local')\n");
+#if !PLATFORM(COCOA)
+    SAFE_PRINTF("               --allow-hosts=<host>[,<host>...]       Additional hostnames, without port, to accept in the Host header (localhost and IP addresses are always accepted)\n");
+    SAFE_PRINTF("               --allow-origins=<origin>[,<origin>...] Origins, as <scheme>://<host>[:<port>], to accept in the Origin header (requests with any other Origin are rejected)\n");
     SAFE_PRINTF("  -t <ip:port> --target=<ip:port> Target IP and port\n");
+#endif
 #if ENABLE(WEBDRIVER_BIDI)
     SAFE_PRINTF("               --bidi-port=<port>        Port number to use for BiDi's WebSocket connections\n");
 #endif
@@ -111,6 +113,11 @@ int WebDriverService::run(int argc, char** argv)
 {
     String portString;
     std::optional<String> host;
+#if !PLATFORM(COCOA)
+    // minidriver has its own loopback-only checks of the Host and Origin headers.
+    Vector<String> allowedHosts;
+    Vector<URL> allowedOrigins;
+#endif
 #if ENABLE(WEBDRIVER_BIDI)
     String bidiPortString;
 #endif
@@ -144,6 +151,29 @@ int WebDriverService::run(int argc, char** argv)
             host = String::fromLatin1(arg.subspan(hostArgument.size()));
             continue;
         }
+
+#if !PLATFORM(COCOA)
+        static constexpr auto allowHostsArgument = "--allow-hosts="_span;
+        if (spanHasPrefix(arg, allowHostsArgument)) {
+            allowedHosts.appendVector(String::fromLatin1(arg.subspan(allowHostsArgument.size())).split(','));
+            continue;
+        }
+
+        static constexpr auto allowOriginsArgument = "--allow-origins="_span;
+        if (spanHasPrefix(arg, allowOriginsArgument)) {
+            for (auto& originString : String::fromLatin1(arg.subspan(allowOriginsArgument.size())).split(',')) {
+                URL origin { originString };
+                bool isOrigin = origin.isValid() && origin.protocolIsInHTTPFamily() && origin.path() == "/"_s
+                    && !origin.hasQuery() && !origin.hasFragmentIdentifier() && !origin.hasCredentials();
+                if (!isOrigin) {
+                    SAFE_FPRINTF(stderr, "Invalid origin %s in --allow-origins, expected <scheme>://<host>[:<port>]\n", makeUTF8CString(originString));
+                    return EXIT_FAILURE;
+                }
+                allowedOrigins.append(WTF::move(origin));
+            }
+            continue;
+        }
+#endif
 
 #if ENABLE(WEBDRIVER_BIDI)
         static constexpr auto bidiPortArgument = "--bidi-port="_span;
@@ -189,8 +219,8 @@ int WebDriverService::run(int argc, char** argv)
 
     auto port = parseInteger<uint16_t>(portString);
     if (!port) {
-        RELEASE_LOG_ERROR(WebDriverClassic, "Invalid port %s provided", portString.utf8());
-        SAFE_FPRINTF(stderr, "Invalid port %s provided\n", portString.utf8());
+        RELEASE_LOG_ERROR(WebDriverClassic, "Invalid port %s provided", makeUTF8CString(portString));
+        SAFE_FPRINTF(stderr, "Invalid port %s provided\n", makeUTF8CString(portString));
         return EXIT_FAILURE;
     }
 
@@ -199,8 +229,8 @@ int WebDriverService::run(int argc, char** argv)
     if (!bidiPortString.isNull()) {
         bidiPort = parseInteger<uint16_t>(bidiPortString);
         if (!bidiPort) {
-            RELEASE_LOG_ERROR(WebDriverBiDi, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.", bidiPortString.utf8());
-            SAFE_FPRINTF(stderr, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.\n", bidiPortString.utf8());
+            RELEASE_LOG_ERROR(WebDriverBiDi, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.", makeUTF8CString(bidiPortString));
+            SAFE_FPRINTF(stderr, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.\n", makeUTF8CString(bidiPortString));
             return EXIT_FAILURE;
         }
     } else {
@@ -211,22 +241,27 @@ int WebDriverService::run(int argc, char** argv)
 
     WTF::initializeMainThread();
 
-    auto hostStr = host && !host->isNull() ? host->utf8() : "local"_s;
+    auto hostStr = host && !host->isNull() ? makeUTF8CString(*host) : "local"_s;
     auto programName = FileSystem::lastComponentOfPathIgnoringTrailingSlash(String::fromLatin1(argv[0]));
     if (programName.isEmpty())
         programName = "WebDriver"_s;
-    auto programNameStr = programName.utf8();
+    auto programNameStr = makeUTF8CString(programName);
 
 #if ENABLE(WEBDRIVER_BIDI)
     if (m_targetAddress.isEmpty())
         RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d bidi=%d", programNameStr, hostStr, *port, *bidiPort);
     else
-        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d bidi=%d target=%s:%d", programNameStr, hostStr, *port, *bidiPort, m_targetAddress.utf8(), m_targetPort);
+        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d bidi=%d target=%s:%d", programNameStr, hostStr, *port, *bidiPort, makeUTF8CString(m_targetAddress), m_targetPort);
 #else
     if (m_targetAddress.isEmpty())
         RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d", programNameStr, hostStr, *port);
     else
-        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d target=%s:%d", programNameStr, hostStr, *port, m_targetAddress.utf8(), m_targetPort);
+        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d target=%s:%d", programNameStr, hostStr, *port, makeUTF8CString(m_targetAddress), m_targetPort);
+#endif
+
+#if !PLATFORM(COCOA)
+    setAllowedHosts(WTF::move(allowedHosts));
+    setAllowedOrigins(WTF::move(allowedOrigins));
 #endif
 
     if (!m_server.listen(host, *port)) {
@@ -242,7 +277,7 @@ int WebDriverService::run(int argc, char** argv)
         SAFE_FPRINTF(stderr, "FATAL: Unable to listen for WebSocket BiDi server at host %s and port %d.\n", hostStr, *bidiPort);
         return EXIT_FAILURE;
     }
-    RELEASE_LOG_INFO(WebDriverBiDi, "Started WebSocket BiDi server at %s", bidiServerURL->utf8());
+    RELEASE_LOG_INFO(WebDriverBiDi, "Started WebSocket BiDi server at %s", makeUTF8CString(*bidiServerURL));
 #endif // ENABLE(WEBDRIVER_BIDI)
 
     RunLoop::run();
@@ -389,7 +424,7 @@ void WebDriverService::handleRequest(HTTPRequestHandler::Request&& request, Func
 
 #if !RELEASE_LOG_DISABLED
     if (LOG_CHANNEL(WebDriverClassic).state != WTFLogChannelState::Off) {
-        RELEASE_LOG_INFO(WebDriverClassic, "HTTP request %s %s (body=%zu bytes)", request.method.utf8(), request.path.utf8(), request.dataLength);
+        RELEASE_LOG_INFO(WebDriverClassic, "HTTP request %s %s (body=%zu bytes)", makeUTF8CString(request.method), makeUTF8CString(request.path), request.dataLength);
         actualReplyHandler = [startTime = MonotonicTime::now(), replyHandler = WTF::move(actualReplyHandler)](HTTPRequestHandler::Response&& response) mutable {
             RELEASE_LOG_INFO(WebDriverClassic, "HTTP response %u in %.0fms", response.statusCode, (MonotonicTime::now() - startTime).milliseconds());
             replyHandler(WTF::move(response));
@@ -523,7 +558,7 @@ void WebDriverService::sendResponse(Function<void (HTTPRequestHandler::Response&
     // https://w3c.github.io/webdriver/webdriver-spec.html#dfn-send-a-response
     auto responseObject = JSON::Object::create();
     responseObject->setValue("value"_s, resultValue.releaseNonNull());
-    replyHandler({ result.httpStatusCode(), responseObject->toJSONString().utf8(), "application/json; charset=utf-8"_s });
+    replyHandler({ result.httpStatusCode(), makeUTF8CString(responseObject->toJSONString()), "application/json; charset=utf-8"_s });
 }
 
 #if ENABLE(WEBDRIVER_BIDI)
@@ -536,7 +571,7 @@ bool WebDriverService::acceptHandshake(HTTPRequestHandler::Request&& request)
     auto& resources = m_bidiServer->listener()->resources;
     auto foundResource = std::ranges::find(resources, resourceName);
     if (foundResource == resources.end()) {
-        RELEASE_LOG(WebDriverBiDi, "Resource name %s not found in listener's list of WebSocket resources. Rejecting handshake.", resourceName.utf8());
+        RELEASE_LOG(WebDriverBiDi, "Resource name %s not found in listener's list of WebSocket resources. Rejecting handshake.", makeUTF8CString(resourceName));
         return false;
     }
 
@@ -548,13 +583,13 @@ bool WebDriverService::acceptHandshake(HTTPRequestHandler::Request&& request)
 
     auto sessionID = m_bidiServer->getSessionID(resourceName);
     if (sessionID.isNull()) {
-        RELEASE_LOG(WebDriverBiDi, "No session ID found for resource name %s. Rejecting handshake.", resourceName.utf8());
+        RELEASE_LOG(WebDriverBiDi, "No session ID found for resource name %s. Rejecting handshake.", makeUTF8CString(resourceName));
         return false;
     }
 
     // FIXME Properly support multiple sessions in the future
     if (sessionID != m_session->id()) {
-        RELEASE_LOG(WebDriverBiDi, "No active session found for session ID %s. Rejecting handshake.", sessionID.utf8());
+        RELEASE_LOG(WebDriverBiDi, "No active session found for session ID %s. Rejecting handshake.", makeUTF8CString(sessionID));
         return false;
     }
 
@@ -609,7 +644,7 @@ void WebDriverService::handleMessage(WebSocketMessageHandler::Message&& message,
         m_session->relayBidiCommand(makeString(message.payload), *commandId, [completionHandler = WTF::move(completionHandler), sessionID, this](WebSocketMessageHandler::Message&& resultMessage) {
             auto connection = m_bidiServer->connection(sessionID);
             if (!connection) {
-                RELEASE_LOG(WebDriverBiDi, "Failed to find connection for session ID %s. Ignoring message.", sessionID.utf8());
+                RELEASE_LOG(WebDriverBiDi, "Failed to find connection for session ID %s. Ignoring message.", makeUTF8CString(sessionID));
                 return;
             }
             resultMessage.connection = *connection;
@@ -683,15 +718,28 @@ enum class IgnoreUnknownTimeout : bool { No, Yes };
 static std::optional<Timeouts> deserializeTimeouts(JSON::Object& timeoutsObject, IgnoreUnknownTimeout ignoreUnknownTimeout)
 {
     // §8.5 Set Timeouts.
-    // https://w3c.github.io/webdriver/webdriver-spec.html#dfn-deserialize-as-a-timeout
+    // https://w3c.github.io/webdriver/#dfn-deserialize-as-timeouts-configuration
     Timeouts timeouts;
     auto end = timeoutsObject.end();
     for (auto it = timeoutsObject.begin(); it != end; ++it) {
         if (it->key == "sessionId"_s)
             continue;
 
-        if (it->key == "script"_s && it->value->isNull()) {
-            timeouts.script = std::numeric_limits<double>::infinity();
+        std::optional<double>* timeout = nullptr;
+        if (it->key == "script"_s)
+            timeout = &timeouts.script;
+        else if (it->key == "pageLoad"_s)
+            timeout = &timeouts.pageLoad;
+        else if (it->key == "implicit"_s)
+            timeout = &timeouts.implicit;
+        else if (ignoreUnknownTimeout == IgnoreUnknownTimeout::No)
+            return std::nullopt;
+        else
+            continue;
+
+        // If value is null, there is no timeout.
+        if (it->value->isNull()) {
+            *timeout = std::numeric_limits<double>::infinity();
             continue;
         }
 
@@ -700,14 +748,7 @@ static std::optional<Timeouts> deserializeTimeouts(JSON::Object& timeoutsObject,
         if (!timeoutMS)
             return std::nullopt;
 
-        if (it->key == "script"_s)
-            timeouts.script = timeoutMS.value();
-        else if (it->key == "pageLoad"_s)
-            timeouts.pageLoad = timeoutMS.value();
-        else if (it->key == "implicit"_s)
-            timeouts.implicit = timeoutMS.value();
-        else if (ignoreUnknownTimeout == IgnoreUnknownTimeout::No)
-            return std::nullopt;
+        *timeout = timeoutMS.value();
     }
     return timeouts;
 }
@@ -814,19 +855,102 @@ static std::optional<PageLoadStrategy> deserializePageLoadStrategy(const String&
     return std::nullopt;
 }
 
-static std::optional<UnhandledPromptBehavior> deserializeUnhandledPromptBehavior(const String& unhandledPromptBehavior)
+static std::optional<PromptHandlerConfiguration> deserializePromptHandlerConfiguration(const String& handler)
 {
-    if (unhandledPromptBehavior == "dismiss"_s)
-        return UnhandledPromptBehavior::Dismiss;
-    if (unhandledPromptBehavior == "accept"_s)
-        return UnhandledPromptBehavior::Accept;
-    if (unhandledPromptBehavior == "dismiss and notify"_s)
-        return UnhandledPromptBehavior::DismissAndNotify;
-    if (unhandledPromptBehavior == "accept and notify"_s)
-        return UnhandledPromptBehavior::AcceptAndNotify;
-    if (unhandledPromptBehavior == "ignore"_s)
-        return UnhandledPromptBehavior::Ignore;
+    // https://w3c.github.io/webdriver/#dfn-known-prompt-handlers
+    if (handler == "dismiss"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Dismiss, false };
+    if (handler == "accept"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Accept, false };
+    if (handler == "dismiss and notify"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Dismiss, true };
+    if (handler == "accept and notify"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Accept, true };
+    if (handler == "ignore"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Ignore, true };
     return std::nullopt;
+}
+
+static std::optional<UserPromptHandler> deserializeUnhandledPromptBehavior(const JSON::Value& value)
+{
+    // https://w3c.github.io/webdriver/#dfn-deserialize-as-an-unhandled-prompt-behavior
+    UserPromptHandler userPromptHandler;
+
+    if (auto handler = value.asString(); !!handler) {
+        userPromptHandler.fallbackDefault = deserializePromptHandlerConfiguration(handler);
+        if (!userPromptHandler.fallbackDefault)
+            return std::nullopt;
+        return userPromptHandler;
+    }
+
+    auto handlers = value.asObject();
+    if (!handlers)
+        return std::nullopt;
+
+    for (auto& [promptType, handlerValue] : *handlers) {
+        auto handler = handlerValue->asString();
+        if (!handler)
+            return std::nullopt;
+        auto configuration = deserializePromptHandlerConfiguration(handler);
+        if (!configuration)
+            return std::nullopt;
+
+        if (promptType == "alert"_s)
+            userPromptHandler.alert = configuration;
+        else if (promptType == "beforeUnload"_s)
+            userPromptHandler.beforeUnload = configuration;
+        else if (promptType == "confirm"_s)
+            userPromptHandler.confirm = configuration;
+        else if (promptType == "default"_s)
+            userPromptHandler.defaultHandler = configuration;
+        else if (promptType == "file"_s)
+            userPromptHandler.file = configuration;
+        else if (promptType == "prompt"_s)
+            userPromptHandler.prompt = configuration;
+        else
+            return std::nullopt;
+    }
+
+    return userPromptHandler;
+}
+
+static String serializePromptHandlerConfiguration(const PromptHandlerConfiguration& configuration)
+{
+    // https://w3c.github.io/webdriver/#dfn-serialize-a-prompt-handler-configuration
+    switch (configuration.handler) {
+    case PromptHandlerType::Accept:
+        return configuration.notify ? "accept and notify"_s : "accept"_s;
+    case PromptHandlerType::Dismiss:
+        return configuration.notify ? "dismiss and notify"_s : "dismiss"_s;
+    case PromptHandlerType::Ignore:
+        return "ignore"_s;
+    }
+
+    ASSERT_NOT_REACHED();
+    return "ignore"_s;
+}
+
+static Ref<JSON::Value> serializeUserPromptHandler(const std::optional<UserPromptHandler>& userPromptHandler)
+{
+    // https://w3c.github.io/webdriver/#dfn-serialize-the-user-prompt-handler
+    if (!userPromptHandler)
+        return JSON::Value::create(String("dismiss and notify"_s));
+
+    if (userPromptHandler->fallbackDefault)
+        return JSON::Value::create(serializePromptHandlerConfiguration(*userPromptHandler->fallbackDefault));
+
+    auto serialized = JSON::Object::create();
+    auto serializeIfPresent = [&](ASCIILiteral promptType, const std::optional<PromptHandlerConfiguration>& configuration) {
+        if (configuration)
+            serialized->setString(promptType, serializePromptHandlerConfiguration(*configuration));
+    };
+    serializeIfPresent("alert"_s, userPromptHandler->alert);
+    serializeIfPresent("beforeUnload"_s, userPromptHandler->beforeUnload);
+    serializeIfPresent("confirm"_s, userPromptHandler->confirm);
+    serializeIfPresent("default"_s, userPromptHandler->defaultHandler);
+    serializeIfPresent("file"_s, userPromptHandler->file);
+    serializeIfPresent("prompt"_s, userPromptHandler->prompt);
+    return serialized;
 }
 
 void WebDriverService::parseCapabilities(const JSON::Object& matchedCapabilities, Capabilities& capabilities) const
@@ -868,9 +992,8 @@ void WebDriverService::parseCapabilities(const JSON::Object& matchedCapabilities
     if (!!pageLoadStrategy)
         capabilities.pageLoadStrategy = deserializePageLoadStrategy(pageLoadStrategy);
 
-    auto unhandledPromptBehavior = matchedCapabilities.getString("unhandledPromptBehavior"_s);
-    if (!!unhandledPromptBehavior)
-        capabilities.unhandledPromptBehavior = deserializeUnhandledPromptBehavior(unhandledPromptBehavior);
+    if (auto unhandledPromptBehavior = matchedCapabilities.getValue("unhandledPromptBehavior"_s))
+        capabilities.unhandledPromptBehavior = deserializeUnhandledPromptBehavior(*unhandledPromptBehavior);
 
     if (auto webSocketURL = matchedCapabilities.getBoolean("webSocketUrl"_s))
         capabilities.webSocketURL = *webSocketURL;
@@ -892,12 +1015,27 @@ bool WebDriverService::findSessionOrCompleteWithError(JSON::Object& parameters, 
     }
 
     if (!m_session->isConnected()) {
-        m_session = nullptr;
+        discardSessionIfDisconnected();
         completionHandler(CommandResult::fail(CommandResult::ErrorCode::InvalidSessionID, String("session deleted because of page crash or hang."_s)));
         return false;
     }
 
     return true;
+}
+
+void WebDriverService::discardSessionIfDisconnected()
+{
+    // The browser can go away without the session being deleted, for example when it crashes or
+    // when the user quits it. Such a session must not prevent creating a new one.
+    if (!m_session || m_session->isConnected())
+        return;
+
+#if ENABLE(WEBDRIVER_BIDI)
+    // Close the session's BiDi connection first, as when the browser terminates. The handlers of
+    // BiDi messages and of closed connections expect every connection to belong to the session.
+    onBrowserTerminated(m_session->id());
+#endif
+    m_session = nullptr;
 }
 
 RefPtr<JSON::Object> WebDriverService::validatedCapabilities(const JSON::Object& capabilities) const
@@ -940,10 +1078,9 @@ RefPtr<JSON::Object> WebDriverService::validatedCapabilities(const JSON::Object&
                 return nullptr;
             result->setValue(it->key, *timeouts);
         } else if (it->key == "unhandledPromptBehavior"_s) {
-            auto unhandledPromptBehavior = it->value->asString();
-            if (!unhandledPromptBehavior || !deserializeUnhandledPromptBehavior(unhandledPromptBehavior))
+            if (!deserializeUnhandledPromptBehavior(it->value))
                 return nullptr;
-            result->setString(it->key, unhandledPromptBehavior);
+            result->setValue(it->key, it->value.copyRef());
         } else if (it->key.find(':') != notFound) {
             if (!platformValidateCapability(it->key, it->value))
                 return nullptr;
@@ -1078,9 +1215,8 @@ Vector<Capabilities> WebDriverService::processCapabilities(const JSON::Object& p
     }
 
     // 4. Let validated first match capabilities be an empty JSON List.
-    Vector<RefPtr<JSON::Object>> validatedFirstMatchCapabilitiesList;
     auto firstMatchCapabilitiesListLength = firstMatchCapabilitiesList->length();
-    validatedFirstMatchCapabilitiesList.reserveInitialCapacity(firstMatchCapabilitiesListLength);
+    Vector<RefPtr<JSON::Object>> validatedFirstMatchCapabilitiesList(ReserveCapacityTag { }, firstMatchCapabilitiesListLength);
     // 5. For each first match capabilities corresponding to an indexed property in all first match capabilities.
     for (unsigned i = 0; i < firstMatchCapabilitiesListLength; ++i) {
         auto firstMatchCapabilities = firstMatchCapabilitiesList->get(i)->asObject();
@@ -1111,8 +1247,7 @@ Vector<Capabilities> WebDriverService::processCapabilities(const JSON::Object& p
     }
 
     // 6. For each first match capabilities corresponding to an indexed property in validated first match capabilities.
-    Vector<Capabilities> matchedCapabilitiesList;
-    matchedCapabilitiesList.reserveInitialCapacity(validatedFirstMatchCapabilitiesList.size());
+    Vector<Capabilities> matchedCapabilitiesList(ReserveCapacityTag { }, validatedFirstMatchCapabilitiesList.size());
     for (auto& validatedFirstMatchCapabilies : validatedFirstMatchCapabilitiesList) {
         // 6.1. Let merged capabilities be the result of trying to merge capabilities with required capabilities and first match capabilities as arguments.
         auto mergedCapabilities = mergeCapabilities(*requiredCapabilities, *validatedFirstMatchCapabilies);
@@ -1142,6 +1277,7 @@ void WebDriverService::newSession(RefPtr<JSON::Object>&& parameters, Function<vo
     if (matchedCapabilitiesList.isEmpty())
         return;
 
+    discardSessionIfDisconnected();
     if (!m_session) {
         // Reverse the vector to always take last item.
         matchedCapabilitiesList.reverse();
@@ -1225,23 +1361,7 @@ void WebDriverService::createSession(Vector<Capabilities>&& capabilitiesList, Re
             capabilitiesObject->setBoolean("strictFileInteractability"_s, capabilities.strictFileInteractability.value_or(false));
             capabilitiesObject->setBoolean("setWindowRect"_s, capabilities.setWindowRect.value_or(true));
             capabilitiesObject->setInteger("webkit:processID"_s, capabilities.processID.value_or(0));
-            switch (capabilities.unhandledPromptBehavior.value_or(UnhandledPromptBehavior::DismissAndNotify)) {
-            case UnhandledPromptBehavior::Dismiss:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "dismiss"_s);
-                break;
-            case UnhandledPromptBehavior::Accept:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "accept"_s);
-                break;
-            case UnhandledPromptBehavior::DismissAndNotify:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "dismiss and notify"_s);
-                break;
-            case UnhandledPromptBehavior::AcceptAndNotify:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "accept and notify"_s);
-                break;
-            case UnhandledPromptBehavior::Ignore:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "ignore"_s);
-                break;
-            }
+            capabilitiesObject->setValue("unhandledPromptBehavior"_s, serializeUserPromptHandler(capabilities.unhandledPromptBehavior));
             switch (capabilities.pageLoadStrategy.value_or(PageLoadStrategy::Normal)) {
             case PageLoadStrategy::None:
                 capabilitiesObject->setString("pageLoadStrategy"_s, "none"_s);
@@ -1255,14 +1375,7 @@ void WebDriverService::createSession(Vector<Capabilities>&& capabilitiesList, Re
             }
             if (!capabilities.proxy)
                 capabilitiesObject->setObject("proxy"_s, JSON::Object::create());
-            auto timeoutsObject = JSON::Object::create();
-            if (m_session->scriptTimeout() == std::numeric_limits<double>::infinity())
-                timeoutsObject->setValue("script"_s, JSON::Value::null());
-            else
-                timeoutsObject->setDouble("script"_s, m_session->scriptTimeout());
-            timeoutsObject->setDouble("pageLoad"_s, m_session->pageLoadTimeout());
-            timeoutsObject->setDouble("implicit"_s, m_session->implicitWaitTimeout());
-            capabilitiesObject->setObject("timeouts"_s, WTF::move(timeoutsObject));
+            capabilitiesObject->setObject("timeouts"_s, m_session->timeoutsObject());
 
 #if ENABLE(WEBDRIVER_BIDI)
             // Extension steps defined by BiDi spec: https://w3c.github.io/webdriver-bidi/#establishing
@@ -1275,11 +1388,11 @@ void WebDriverService::createSession(Vector<Capabilities>&& capabilitiesList, Re
                 capabilitiesObject->setString("webSocketUrl"_s, webSocketURL);
                 m_session->setHasBiDiEnabled(true);
             } else {
-                RELEASE_LOG(WebDriverBiDi, "BiDi support not enabled for session %s", m_session->id().utf8());
+                RELEASE_LOG(WebDriverBiDi, "BiDi support not enabled for session %s", makeUTF8CString(m_session->id()));
                 if (!m_session->hasBiDiEnabled())
-                    RELEASE_LOG(WebDriverBiDi, "BiDi flag not set for session %s", m_session->id().utf8());
+                    RELEASE_LOG(WebDriverBiDi, "BiDi flag not set for session %s", makeUTF8CString(m_session->id()));
                 if (!capabilities.webSocketURL || !*capabilities.webSocketURL)
-                    RELEASE_LOG(WebDriverBiDi, "webSocketURL not set for session %s", m_session->id().utf8());
+                    RELEASE_LOG(WebDriverBiDi, "webSocketURL not set for session %s", makeUTF8CString(m_session->id()));
             }
 #endif
 
@@ -1322,6 +1435,7 @@ void WebDriverService::status(RefPtr<JSON::Object>&&, Function<void (CommandResu
 {
     // §8.3 Status
     // https://w3c.github.io/webdriver/webdriver-spec.html#status
+    discardSessionIfDisconnected();
     auto body = JSON::Object::create();
     body->setBoolean("ready"_s, !m_session);
     body->setString("message"_s, m_session ? "A session already exists"_s : "No sessions"_s);
@@ -2486,6 +2600,44 @@ static bool processPointerMoveAction(JSON::Object& actionItem, Action& action, s
     return true;
 }
 
+static bool processPointerProperties(JSON::Object& actionItem, std::optional<String>& errorMessage)
+{
+    // https://www.w3.org/TR/webdriver2/#dfn-process-a-pointer-up-or-pointer-down-action
+    // https://www.w3.org/TR/webdriver2/#dfn-process-a-pointer-move-action
+    // FIXME: Store these in the action and dispatch them with the events, https://bugs.webkit.org/show_bug.cgi?id=270895
+    struct Property {
+        ASCIILiteral name;
+        double minAllowed;
+        double maxAllowed;
+        bool isInteger;
+    };
+    static const std::array properties {
+        Property { "width"_s, 0, std::numeric_limits<double>::max(), false },
+        Property { "height"_s, 0, std::numeric_limits<double>::max(), false },
+        Property { "pressure"_s, 0, 1, false },
+        Property { "tangentialPressure"_s, -1, 1, false },
+        Property { "tiltX"_s, -90, 90, true },
+        Property { "tiltY"_s, -90, 90, true },
+        Property { "twist"_s, 0, 359, true },
+        Property { "altitudeAngle"_s, 0, std::numbers::pi / 2, false },
+        Property { "azimuthAngle"_s, 0, 2 * std::numbers::pi, false },
+    };
+
+    for (auto& property : properties) {
+        auto value = actionItem.getValue(property.name);
+        if (!value)
+            continue;
+
+        auto number = valueAsNumberInRange(*value, property.minAllowed, property.maxAllowed);
+        if (!number || (property.isInteger && number.value() != std::floor(number.value()))) {
+            errorMessage = makeString("The '"_s, property.name, "' parameter for the pointer action is invalid"_s);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static std::optional<Action> processPointerAction(const String& id, PointerParameters& parameters, JSON::Object& actionItem, std::optional<String>& errorMessage)
 {
     Action::Subtype actionSubtype;
@@ -2526,10 +2678,14 @@ static std::optional<Action> processPointerAction(const String& id, PointerParam
             return std::nullopt;
         }
         action.button = actionMouseButton(button.value());
+        if (!processPointerProperties(actionItem, errorMessage))
+            return std::nullopt;
         break;
     }
     case Action::Subtype::PointerMove:
         if (!processPointerMoveAction(actionItem, action, errorMessage))
+            return std::nullopt;
+        if (!processPointerProperties(actionItem, errorMessage))
             return std::nullopt;
         break;
     case Action::Subtype::PointerCancel:
@@ -2617,10 +2773,11 @@ static std::optional<PointerParameters> processPointerParameters(JSON::Object& a
         return std::nullopt;
     }
 
-    auto pointerType = parametersData->getString("pointerType"_s);
-    if (!pointerType)
+    auto pointerTypeValue = parametersData->getValue("pointerType"_s);
+    if (!pointerTypeValue)
         return parameters;
 
+    auto& pointerType = pointerTypeValue->asString();
     if (pointerType == "mouse"_s)
         parameters.pointerType = PointerType::Mouse;
     else if (pointerType == "pen"_s)
@@ -2876,6 +3033,7 @@ void WebDriverService::takeElementScreenshot(RefPtr<JSON::Object>&& parameters, 
 #if ENABLE(WEBDRIVER_BIDI)
 void WebDriverService::bidiSessionStatus(unsigned id, RefPtr<JSON::Object>&&, Function<void(WebSocketMessageHandler::Message&&)>&& completionHandler)
 {
+    discardSessionIfDisconnected();
     auto result = JSON::Object::create();
     bool ready = !m_session;
     result->setBoolean("ready"_s, ready);

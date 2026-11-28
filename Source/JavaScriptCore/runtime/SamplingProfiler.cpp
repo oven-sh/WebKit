@@ -65,7 +65,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static double sNumTotalStackTraces = 0;
 static double sNumTotalWalks = 0;
 static double sNumFailedWalks = 0;
 static const uint32_t sNumWalkReportingFrequency = 50;
@@ -116,7 +115,7 @@ public:
         return m_depth;
     }
 
-    bool LEGACY_NODELETE wasValidWalk() const
+    NODELETE bool wasValidWalk() const
     {
         return !m_bailingOut;
     }
@@ -179,7 +178,7 @@ protected:
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
     }
 
-    bool LEGACY_NODELETE isAtTop() const
+    NODELETE bool isAtTop() const
     {
         return !m_callFrame;
     }
@@ -210,7 +209,7 @@ protected:
         }
     }
 
-    bool LEGACY_NODELETE isValidFramePointer(void* callFrame)
+    NODELETE bool isValidFramePointer(void* callFrame)
     {
         uint8_t* fpCast = std::bit_cast<uint8_t*>(callFrame);
         for (auto& thread : m_vm.heap.machineThreads().threads(m_machineThreadsLocker)) {
@@ -289,7 +288,7 @@ public:
 
 private:
 
-    bool LEGACY_NODELETE isCFrame()
+    NODELETE bool isCFrame()
     {
         return frame()->callerFrame != m_callFrame;
     }
@@ -313,7 +312,7 @@ private:
         Base::resetAtMachineFrame();
     }
 
-    CallerFrameAndPC* LEGACY_NODELETE frame()
+    NODELETE CallerFrameAndPC* frame()
     {
         return reinterpret_cast<CallerFrameAndPC*>(m_machineFrame);
     }
@@ -331,8 +330,8 @@ public:
         , m_image(image)
         , m_stack { stackBounds }
         , m_pc(top.pc)
-        , m_callerPCOfFramelessTop(top.callerPCOfFramelessTop)
-        , m_framePointerOfFrameWithoutRecord(top.framePointer)
+        , m_framelessTopCallerPC(top.framelessTopCallerPC)
+        , m_unrecordedFramePointer(top.framePointer)
     {
     }
 
@@ -374,7 +373,7 @@ protected:
     SUPPRESS_ASAN
     void advanceToParentFrame()
     {
-        if (const void* callerPC = std::exchange(m_callerPCOfFramelessTop, nullptr)) {
+        if (const void* callerPC = std::exchange(m_framelessTopCallerPC, nullptr)) {
             m_pc = callerPC;
             m_compiledFrames.reset();
             return;
@@ -388,7 +387,7 @@ protected:
             }
             m_compiledFrames.reset();
         }
-        m_framePointerOfFrameWithoutRecord = nullptr;
+        m_unrecordedFramePointer = nullptr;
         CallFrame* calleeFrame = m_callFrame;
         EntryFrame* calleeEntryFrame = m_entryFrame;
         m_pc = removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
@@ -399,7 +398,7 @@ protected:
             if (auto resumedFrame = AOT::findSampledTop(m_image, { calleeEntryFrame, nullptr, nullptr, calleeEntryFrame }, m_callFrame, m_stack.bounds)) {
                 m_callFrame = resumedFrame->callFrame;
                 m_pc = resumedFrame->pc;
-                m_framePointerOfFrameWithoutRecord = resumedFrame->framePointer;
+                m_unrecordedFramePointer = resumedFrame->framePointer;
             } else
                 m_pc = nullptr;
         }
@@ -416,7 +415,7 @@ protected:
     {
         if (!isAtTop() && isValidFramePointer(m_callFrame)) {
             if (!m_compiledFrames)
-                m_compiledFrames.emplace(m_image, m_callFrame, m_pc, m_stack, m_framePointerOfFrameWithoutRecord);
+                m_compiledFrames.emplace(m_image, m_callFrame, m_pc, m_stack, m_unrecordedFramePointer);
             if (*m_compiledFrames && (**m_compiledFrames).code.runsCompiledCode())
                 return;
             m_compiledFrames.reset();
@@ -427,8 +426,8 @@ protected:
     const AOT::Image& m_image;
     AOT::SuspendedThreadStack m_stack;
     const void* m_pc;
-    const void* m_callerPCOfFramelessTop;
-    CallFrame* m_framePointerOfFrameWithoutRecord;
+    const void* m_framelessTopCallerPC;
+    CallFrame* m_unrecordedFramePointer;
     std::optional<AOT::MachineFrameIterator<AOT::SuspendedThreadStack>> m_compiledFrames;
 };
 
@@ -551,9 +550,9 @@ void SamplingProfiler::createThreadIfNecessary()
         return;
 
     RefPtr<SamplingProfiler> profiler = this;
-    m_thread = Thread::create("jsc.sampling-profiler.thread"_s, [profiler] {
+    lazyInitialize(m_thread, Thread::create("jsc.sampling-profiler.thread"_s, [profiler] {
         profiler->timerLoop();
-    });
+    }));
 }
 
 void SamplingProfiler::timerLoop()
@@ -697,10 +696,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             // FIXME: It'd be interesting to take data about the program's state when
             // we fail to take a stack trace: https://bugs.webkit.org/show_bug.cgi?id=152758
             if (wasValidWalk && walkSize) {
-                if (sReportStats)
-                    sNumTotalStackTraces++;
-                Vector<UnprocessedStackFrame> stackTrace;
-                stackTrace.reserveInitialCapacity(walkSize + !!shouldAppendTopFrameAsCCode);
+                Vector<UnprocessedStackFrame> stackTrace(ReserveCapacityTag { }, walkSize + !!shouldAppendTopFrameAsCCode);
                 if (shouldAppendTopFrameAsCCode)
                     stackTrace.append(UnprocessedStackFrame { machinePC });
                 stackTrace.appendRange(m_currentFrames.begin(), m_currentFrames.begin() + walkSize);
@@ -717,7 +713,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
     }
 }
 
-static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
+NODELETE static ALWAYS_INLINE BytecodeIndex tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
 {
 #if ENABLE(DFG_JIT)
     RELEASE_ASSERT(!codeBlock->hasCodeOrigins());
@@ -730,9 +726,9 @@ static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned 
 }
 
 #if ENABLE(AOT)
-using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
+using CompiledSitePositions = HashMap<uint64_t, std::optional<AOT::SourcePosition>>;
 
-static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, std::optional<AOT::Typed::FunctionID> innerEntry, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
+static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
 {
     AOT::CompiledFunctionID code = machineFrame.compiledCode;
     auto append = [&](const AOT::TraceFrame& compiledFrame) -> SamplingProfiler::StackFrame& {
@@ -740,12 +736,6 @@ static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStack
         frames.last().compiledFrame = compiledFrame;
         return frames.last();
     };
-
-    if (innerEntry) {
-        append({ code, *innerEntry, CallSiteIndex(), false, false });
-        shownFrames = AOT::ShownFrameFilter(true);
-        return;
-    }
 
     if (auto site = image.callSiteAt(code.index(), machineFrame.compiledCodeOffset)) {
         AOT::forEachShownFrame(code, *site, shownFrames, [&](const AOT::TraceFrame& compiledFrame) {
@@ -1005,8 +995,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 #endif
 #if ENABLE(AOT)
             } else if (unprocessedStackFrame.compiledCode) {
-                const AOT::Image& image = *m_vm.aotState().image;
-                appendCompiledFrames(image, unprocessedStackFrame, i ? std::nullopt : image.innerEntryContaining(unprocessedStackTrace.topPC), shownFrames, compiledSitePositions, stackTrace.frames);
+                appendCompiledFrames(*m_vm.aotState().image, unprocessedStackFrame, shownFrames, compiledSitePositions, stackTrace.frames);
                 continue;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
@@ -1142,7 +1131,7 @@ String SamplingProfiler::StackFrame::displayName(VM& vm)
         AOT::FunctionDescription description(compiledFrame.function);
         if (description.codeType() == ModuleCode)
             return "(module)"_s;
-        return description.nameInFrames(vm);
+        return description.stackTraceName(vm);
     }
 #endif
     {
@@ -1443,7 +1432,7 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
         processUnverifiedStackTraces();
     }
 
-    UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
+    HashMap<SourceID, Ref<SourceProvider>> sources;
 
     auto stackFrameAsJSON = [&](StackFrame& stackFrame) {
         auto [provider, sourceID] = stackFrame.sourceProviderAndID();
@@ -1544,12 +1533,12 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
 void SamplingProfiler::registerForReportAtExit()
 {
     static Lock registrationLock;
-    static UncheckedKeyHashSet<RefPtr<SamplingProfiler>>* profilesToReport;
+    static HashSet<RefPtr<SamplingProfiler>>* profilesToReport;
 
     Locker locker { registrationLock };
 
     if (!profilesToReport) {
-        profilesToReport = new UncheckedKeyHashSet<RefPtr<SamplingProfiler>>();
+        profilesToReport = new HashSet<RefPtr<SamplingProfiler>>();
         atexit([]() {
             for (const auto& profile : *profilesToReport)
                 profile->reportDataToOptionFile();
@@ -1591,7 +1580,7 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
     }
 
     size_t totalSamples = 0;
-    UncheckedKeyHashMap<String, size_t> functionCounts;
+    HashMap<String, size_t> functionCounts;
     for (StackTrace& stackTrace : m_stackTraces) {
         if (!stackTrace.frames.size())
             continue;
@@ -1657,8 +1646,8 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
     }
 
     size_t totalSamples = 0;
-    UncheckedKeyHashMap<String, size_t> bytecodeCounts;
-    UncheckedKeyHashMap<String, size_t> tierCounts;
+    HashMap<String, size_t> bytecodeCounts;
+    HashMap<String, size_t> tierCounts;
 
     auto forEachTier = [&] (auto func) {
         func(Tiers::llint);

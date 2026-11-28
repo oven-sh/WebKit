@@ -88,19 +88,19 @@ void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebEx
     if (storage) {
         storage->createSavepoint([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storage, storageType, apiName, rulesToAdd, ruleIDsToRemove](Markable<WTF::UUID> savepointIdentifier, const String& errorMessage) mutable {
             if (!savepointIdentifier || !errorMessage.isEmpty()) {
-                RELEASE_LOG_ERROR(Extensions, "Unable to create %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), errorMessage.utf8());
+                RELEASE_LOG_ERROR(Extensions, "Unable to create %s rules savepoint for extension %s. Error: %s", makeUTF8CString(storageType), makeUTF8CString(uniqueIdentifier()), makeUTF8CString(errorMessage));
                 completionHandler(toWebExtensionError(apiName, nullString(), errorMessage));
                 return;
             }
 
             storage->updateRulesByRemovingIDs(ruleIDsToRemove, rulesToAdd, [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storage, storageType, apiName, savepointIdentifier = WTF::move(savepointIdentifier)](const String& errorMessage) mutable {
                 if (!errorMessage.isEmpty()) {
-                    RELEASE_LOG_ERROR(Extensions, "Unable to update %s rules for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), errorMessage.utf8());
+                    RELEASE_LOG_ERROR(Extensions, "Unable to update %s rules for extension %s. Error: %s", makeUTF8CString(storageType), makeUTF8CString(uniqueIdentifier()), makeUTF8CString(errorMessage));
 
                     // Update was unsucessful, rollback the changes to the database.
-                    storage->rollbackToSavepoint(savepointIdentifier.value(), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType, apiName, errorMessage](const String& savepointErrorMessage) mutable {
+                    storage->rollbackToSavepoint(savepointIdentifier.value(), [protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType, apiName, errorMessage](const String& savepointErrorMessage) mutable {
                         if (!savepointErrorMessage.isEmpty())
-                            RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), savepointErrorMessage.utf8());
+                            RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", makeUTF8CString(storageType), makeUTF8CString(protectedThis->uniqueIdentifier()), makeUTF8CString(savepointErrorMessage));
 
                         completionHandler(toWebExtensionError(apiName, nullString(), errorMessage));
                     });
@@ -114,7 +114,7 @@ void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebEx
                         // Load was unsucessful, rollback the changes to the database.
                         storage->rollbackToSavepoint(savepointIdentifier.value(), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType, apiName, errorMessage](const String& savepointErrorMessage) mutable {
                             if (!savepointErrorMessage.isEmpty())
-                                RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), savepointErrorMessage.utf8());
+                                RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", makeUTF8CString(storageType), makeUTF8CString(uniqueIdentifier()), makeUTF8CString(savepointErrorMessage));
 
                             // Load the declarativeNetRequest rules again after rolling back the dynamic update.
                             loadDeclarativeNetRequestRules([completionHandler = WTF::move(completionHandler), apiName](bool success) mutable {
@@ -131,9 +131,9 @@ void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebEx
                     }
 
                     // Load was successful, commit the changes to the database.
-                    storage->commitSavepoint(savepointIdentifier.value(), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType](const String& savepointErrorMessage) mutable {
+                    storage->commitSavepoint(savepointIdentifier.value(), [protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType](const String& savepointErrorMessage) mutable {
                         if (!savepointErrorMessage.isEmpty())
-                            RELEASE_LOG_ERROR(Extensions, "Unable to commit %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), savepointErrorMessage.utf8());
+                            RELEASE_LOG_ERROR(Extensions, "Unable to commit %s rules savepoint for extension %s. Error: %s", makeUTF8CString(storageType), makeUTF8CString(protectedThis->uniqueIdentifier()), makeUTF8CString(savepointErrorMessage));
 
                         completionHandler({ });
                     });
@@ -166,11 +166,11 @@ void WebExtensionContext::declarativeNetRequestUpdateDynamicRules(String&& rules
 {
     static constexpr auto apiName = "declarativeNetRequest.updateDynamicRules()"_s;
 
-    auto ruleIDsToDelete = compactMap(ruleIDsToDeleteVector, [&](auto& ruleID) -> std::optional<double> {
-        if (!m_dynamicRulesIDs.contains(ruleID))
-            return std::nullopt;
-        return ruleID;
-    });
+    HashSet<double> ruleIDsToDelete;
+    for (auto ruleID : ruleIDsToDeleteVector) {
+        if (m_dynamicRulesIDs.contains(ruleID))
+            ruleIDsToDelete.add(ruleID);
+    }
 
     Ref rulesToAdd = JSON::Array::create();
     if (!rulesToAddJSON.isEmpty()) {
@@ -180,18 +180,18 @@ void WebExtensionContext::declarativeNetRequestUpdateDynamicRules(String&& rules
         }
     }
 
-    if (!ruleIDsToDelete.size() && !rulesToAdd->length()) {
+    if (ruleIDsToDelete.isEmpty() && !rulesToAdd->length()) {
         completionHandler({ });
         return;
     }
 
     auto updatedDynamicRulesCount = m_dynamicRulesIDs.size() + rulesToAdd->length() - ruleIDsToDelete.size();
-    if (updatedDynamicRulesCount + m_dynamicRulesIDs.size() > webExtensionDeclarativeNetRequestMaximumNumberOfDynamicAndSessionRules) {
+    if (updatedDynamicRulesCount + m_sessionRulesIDs.size() > webExtensionDeclarativeNetRequestMaximumNumberOfDynamicAndSessionRules) {
         completionHandler(toWebExtensionError(apiName, nullString(), "Failed to add dynamic rules. Maximum number of dynamic and session rules exceeded."_s));
         return;
     }
 
-    updateDeclarativeNetRequestRulesInStorage(declarativeNetRequestDynamicRulesStore(), "dynamic"_s, apiName, rulesToAdd, ruleIDsToDelete, WTF::move(completionHandler));
+    updateDeclarativeNetRequestRulesInStorage(declarativeNetRequestDynamicRulesStore(), "dynamic"_s, apiName, rulesToAdd, copyToVector(ruleIDsToDelete), WTF::move(completionHandler));
 }
 
 void WebExtensionContext::declarativeNetRequestGetSessionRules(Vector<double>&& filter, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&& completionHandler)
@@ -217,11 +217,11 @@ void WebExtensionContext::declarativeNetRequestUpdateSessionRules(String&& rules
 {
     static constexpr auto apiName = "declarativeNetRequest.updateSessionRules()"_s;
 
-    auto ruleIDsToDelete = compactMap(ruleIDsToDeleteVector, [&](auto& ruleID) -> std::optional<double> {
-        if (!m_sessionRulesIDs.contains(ruleID))
-            return std::nullopt;
-        return ruleID;
-    });
+    HashSet<double> ruleIDsToDelete;
+    for (auto ruleID : ruleIDsToDeleteVector) {
+        if (m_sessionRulesIDs.contains(ruleID))
+            ruleIDsToDelete.add(ruleID);
+    }
 
     Ref rulesToAdd = JSON::Array::create();
     if (!rulesToAddJSON.isEmpty()) {
@@ -231,18 +231,18 @@ void WebExtensionContext::declarativeNetRequestUpdateSessionRules(String&& rules
         }
     }
 
-    if (!ruleIDsToDelete.size() && !rulesToAdd->length()) {
+    if (ruleIDsToDelete.isEmpty() && !rulesToAdd->length()) {
         completionHandler({ });
         return;
     }
 
     auto updatedSessionRulesCount = m_sessionRulesIDs.size() + rulesToAdd->length() - ruleIDsToDelete.size();
-    if (updatedSessionRulesCount + m_sessionRulesIDs.size() > webExtensionDeclarativeNetRequestMaximumNumberOfDynamicAndSessionRules) {
+    if (updatedSessionRulesCount + m_dynamicRulesIDs.size() > webExtensionDeclarativeNetRequestMaximumNumberOfDynamicAndSessionRules) {
         completionHandler(toWebExtensionError(apiName, nullString(), "Failed to add session rules. Maximum number of dynamic and session rules exceeded."_s));
         return;
     }
 
-    updateDeclarativeNetRequestRulesInStorage(declarativeNetRequestSessionRulesStore(), "session"_s, apiName, rulesToAdd, ruleIDsToDelete, WTF::move(completionHandler));
+    updateDeclarativeNetRequestRulesInStorage(declarativeNetRequestSessionRulesStore(), "session"_s, apiName, rulesToAdd, copyToVector(ruleIDsToDelete), WTF::move(completionHandler));
 }
 
 } // namespace WebKit

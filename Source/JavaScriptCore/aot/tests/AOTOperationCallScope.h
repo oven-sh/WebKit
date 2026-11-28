@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-// An operation takes its caller for compiled code, which has an entry frame above it.
 class OperationCallScope {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(OperationCallScope);

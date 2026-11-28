@@ -28,6 +28,7 @@
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/WebTransportSession.h>
 #include <WebCore/WebTransportSessionClient.h>
+#include <wtf/ThreadAssertions.h>
 
 namespace WebCore {
 
@@ -35,12 +36,12 @@ class WebTransport;
 
 class WorkerWebTransportSession : public WebTransportSession, public WebTransportSessionClient {
 public:
-    WEBCORE_EXPORT static Ref<WorkerWebTransportSession> LEGACY_NODELETE create(ScriptExecutionContextIdentifier, WebTransportSessionClient&);
+    NODELETE WEBCORE_EXPORT static Ref<WorkerWebTransportSession> create(ScriptExecutionContextIdentifier, WebTransportSessionClient&);
     ~WorkerWebTransportSession();
 
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
-    WEBCORE_EXPORT void LEGACY_NODELETE attachSession(Ref<WebTransportSession>&&);
+    NODELETE WEBCORE_EXPORT void attachSession(Ref<WebTransportSession>&&);
 
 private:
     WorkerWebTransportSession(ScriptExecutionContextIdentifier, WebTransportSessionClient&);
@@ -77,6 +78,7 @@ private:
     const ScriptExecutionContextIdentifier m_contextID;
     ThreadSafeWeakPtr<WebTransportSessionClient> m_client;
     const RefPtr<WebTransportSession> m_session;
+    NO_UNIQUE_ADDRESS ThreadLikeAssertion m_workerThread;
 };
 
 }

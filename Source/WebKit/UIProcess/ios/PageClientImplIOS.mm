@@ -137,7 +137,7 @@ void PageClientImpl::setViewNeedsDisplay(const Region&)
 
 void PageClientImpl::requestScroll(const FloatPoint& scrollPosition, const IntPoint& scrollOrigin, ScrollIsAnimated animated, InterruptScrollAnimation interrupt)
 {
-    [webView() _scrollToContentScrollPosition:scrollPosition scrollOrigin:scrollOrigin animated:animated == ScrollIsAnimated::Yes interruptAnimation:interrupt == InterruptScrollAnimation::Yes];
+    [webView() _scrollToContentScrollPosition:scrollPosition scrollOrigin:scrollOrigin animated:animated == ScrollIsAnimated::Yes interruptAnimation:interrupt];
 }
 
 WebCore::FloatPoint PageClientImpl::viewScrollPosition()
@@ -304,9 +304,9 @@ void PageClientImpl::didCreateContextInModelProcessForVisibilityPropagation(Laye
     [m_contentView _modelProcessDidCreateContextForVisibilityPropagation];
 }
 
-void PageClientImpl::didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier> nodeID)
+void PageClientImpl::didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID)
 {
-    [m_contentView didReceiveInteractiveModelElement:nodeID];
+    [m_contentView didReceiveInteractiveModelElement:nodeID frameID:frameID];
 }
 #endif // ENABLE(MODEL_PROCESS)
 
@@ -376,7 +376,7 @@ void PageClientImpl::decidePolicyForGeolocationPermissionRequest(WebFrameProxy& 
         return std::exchange(completionHandler, nullptr)(false);
     if (auto webView = this->webView()) {
         RetainPtr geolocationProvider = [protect(wrapper(webView->_page->configuration().processPool())) _geolocationProvider];
-        [geolocationProvider decidePolicyForGeolocationRequestFromOrigin:FrameInfoData { frameInfo } topOrigin:mainFrame->documentSecurityOriginData() completionHandler:std::exchange(completionHandler, nullptr) view:webView.get()];
+        [geolocationProvider decidePolicyForGeolocationRequestFromOrigin:FrameInfoData { frameInfo } frameOrigin:frame.documentSecurityOriginData() topOrigin:mainFrame->documentSecurityOriginData() completionHandler:std::exchange(completionHandler, nullptr) view:webView.get()];
     }
 }
 
@@ -694,10 +694,6 @@ CALayer* PageClientImpl::textIndicatorInstallationLayer()
     return [contentView() textIndicatorInstallationLayer];
 }
 
-void PageClientImpl::enterAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-}
-
 void PageClientImpl::makeViewBlank(bool makeBlank)
 {
     [contentView() layer].opacity = makeBlank ? 0 : 1;
@@ -724,15 +720,6 @@ void PageClientImpl::clearBrowsingWarningIfForMainFrameNavigation()
 bool PageClientImpl::hasBrowsingWarning() const
 {
     return !![webView() _safeBrowsingWarning];
-}
-
-void PageClientImpl::exitAcceleratedCompositingMode()
-{
-    notImplemented();
-}
-
-void PageClientImpl::updateAcceleratedCompositingMode(const LayerTreeContext&)
-{
 }
 
 void PageClientImpl::didPerformDictionaryLookup(const DictionaryPopupInfo& dictionaryPopupInfo)
@@ -780,11 +767,6 @@ void PageClientImpl::didCommitLayerTree(const RemoteLayerTreeTransaction& layerT
     PageClientImplCocoa::didCommitLayerTree(layerTreeTransaction, mainFrameData, pageData, transactionID);
 
     [contentView() _didCommitLayerTree:layerTreeTransaction mainFrameData:mainFrameData pageData:pageData transactionID:transactionID];
-}
-
-void PageClientImpl::didCommitMainFrameData(const MainFrameData& mainFrameData)
-{
-    PageClientImplCocoa::didCommitMainFrameData(mainFrameData);
 }
 
 void PageClientImpl::layerTreeCommitComplete()
@@ -1004,6 +986,17 @@ bool PageClientImpl::lockFullscreenOrientation(WebCore::ScreenOrientationType or
 void PageClientImpl::unlockFullscreenOrientation()
 {
     [[webView() fullScreenWindowController] resetSupportedOrientations];
+}
+
+void PageClientImpl::beginRequestFullscreen()
+{
+    [[webView() fullScreenWindowController] installPlaceholderSnapshot];
+}
+
+void PageClientImpl::endRequestFullscreen()
+{
+    if ([webView() hasFullScreenWindowController])
+        [[webView() fullScreenWindowController] discardPlaceholderSnapshot];
 }
 
 void PageClientImpl::beganEnterFullScreen(const IntRect& initialFrame, const IntRect& finalFrame, CompletionHandler<void(bool)>&& completionHandler)

@@ -127,7 +127,7 @@ void JSDOMGlobalObject::destroy(JSCell* cell)
 JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
+    RELEASE_ASSERT(callFrame->argumentCount() == 2);
     VM& vm = globalObject->vm();
     DeferTermination deferScope(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -142,7 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject* globalOb
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
+    RELEASE_ASSERT(callFrame->argumentCount() == 2);
     VM& vm = globalObject->vm();
     DeferTermination deferScope(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -160,7 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject* global
 JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
+    RELEASE_ASSERT(callFrame->argumentCount() == 2);
 
     auto& vm = globalObject->vm();
     DeferTermination deferScope(vm);
@@ -185,7 +185,7 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject* globalObj
 JSC_DEFINE_HOST_FUNCTION(getInternalWritableStream, (JSGlobalObject*, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 1);
+    RELEASE_ASSERT(callFrame->argumentCount() == 1);
 
     auto* writableStream = dynamicDowncast<JSWritableStream>(callFrame->uncheckedArgument(0));
     if (!writableStream) [[unlikely]]
@@ -201,7 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(getGlobalObject, (JSGlobalObject* globalObject, CallFra
 JSC_DEFINE_HOST_FUNCTION(getInternalReadableStream, (JSGlobalObject*, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 1);
+    RELEASE_ASSERT(callFrame->argumentCount() == 1);
 
     auto* readableStream = dynamicDowncast<JSReadableStream>(callFrame->uncheckedArgument(0));
     if (!readableStream) [[unlikely]]
@@ -215,7 +215,7 @@ JSC_DEFINE_HOST_FUNCTION(getInternalReadableStream, (JSGlobalObject*, CallFrame*
 JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 1);
+    RELEASE_ASSERT(callFrame->argumentCount() == 1);
     ASSERT(callFrame->uncheckedArgument(0).isObject());
 
     auto* jsDOMGlobalObject = downcast<JSDOMGlobalObject>(globalObject);
@@ -226,7 +226,7 @@ JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject* glob
 JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
+    RELEASE_ASSERT(callFrame->argumentCount() == 2);
 
     auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
     if (!abortSignal) [[unlikely]]
@@ -242,7 +242,7 @@ JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject* globalObjec
 JSC_DEFINE_HOST_FUNCTION(removeAbortAlgorithmFromSignal, (JSGlobalObject*, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
+    RELEASE_ASSERT(callFrame->argumentCount() == 2);
 
     auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
     if (!abortSignal) [[unlikely]]
@@ -254,7 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(removeAbortAlgorithmFromSignal, (JSGlobalObject*, CallF
 
 JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
 {
-    ASSERT(callFrame->argumentCount() == 1);
+    RELEASE_ASSERT(callFrame->argumentCount() == 1);
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
 
@@ -267,7 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(createAbortSignal, (JSGlobalObject* globalObject, CallF
 JSC_DEFINE_HOST_FUNCTION(signalAbort, (JSGlobalObject*, CallFrame* callFrame))
 {
     ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
+    RELEASE_ASSERT(callFrame->argumentCount() == 2);
 
     auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
     if (abortSignal) [[unlikely]]
@@ -417,7 +417,9 @@ bool JSDOMGlobalObject::canCompileStrings(JSGlobalObject* globalObject, Compilat
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto& thisObject = *downcast<JSDOMGlobalObject>(globalObject);
-    CheckedPtr scriptExecutionContext = thisObject.scriptExecutionContext();
+    RefPtr scriptExecutionContext = thisObject.scriptExecutionContext();
+    if (!scriptExecutionContext) [[unlikely]]
+        return false;
 
     auto result = canCompile(*scriptExecutionContext, compilationType, codeString, args);
 
@@ -471,14 +473,18 @@ void JSDOMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSDOMGlobalObject);
 
-void JSDOMGlobalObject::addJSHandle(JSHandleIdentifier identifier, JSObject& object)
+JSHandleIdentifier JSDOMGlobalObject::addJSHandle(JSObject& object)
 {
     Locker locker { m_gcLock };
     auto& vm = this->vm();
+    auto identifier = m_jsHandleIdentifiers.ensure(&object, [] {
+        return JSHandleIdentifier { WebProcessJSHandleIdentifier::generate(), Process::identifier() };
+    }).iterator->value;
     auto result = m_jsHandles.ensure(identifier, [&] {
         return JSHandleSlot { WriteBarrier<JSObject> { vm, this, &object }, 0 };
     });
     ++result.iterator->value.refCount;
+    return identifier;
 }
 
 void JSDOMGlobalObject::refJSHandle(JSHandleIdentifier identifier)
@@ -498,6 +504,7 @@ bool JSDOMGlobalObject::derefJSHandle(JSHandleIdentifier identifier)
         return false;
     if (--it->value.refCount)
         return false;
+    m_jsHandleIdentifiers.remove(it->value.object.get());
     m_jsHandles.remove(it);
     return true;
 }
@@ -507,7 +514,7 @@ JSObject* JSDOMGlobalObject::jsHandle(JSHandleIdentifier identifier) const WTF_I
     // We don't need to grab m_gcLock here because m_jsHandles is only mutated on the main thread.
     // m_gcLock is only used to protect against the main thread mutating m_jsHandles at the same
     // time as the GC thread reading from m_jsHandles.
-    ASSERT(!Thread::mayBeGCThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(!Thread::mayBeGCThread());
     auto it = m_jsHandles.find(identifier);
     return it == m_jsHandles.end() ? nullptr : it->value.object.get();
 }
@@ -829,7 +836,7 @@ static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalO
                 : m_skipFirstFrame(skipFirstFrame)
             { }
 
-            IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
+            NODELETE IterationStatus operator()(StackVisitor& visitor) const
             {
                 if (m_skipFirstFrame) {
                     if (!m_hasSkippedFirstFrame) {
@@ -851,7 +858,7 @@ static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalO
                 return IterationStatus::Done;
             }
 
-            JSC::JSGlobalObject* LEGACY_NODELETE globalObject() const { return m_globalObject; }
+            NODELETE JSC::JSGlobalObject* globalObject() const { return m_globalObject; }
 
         private:
             bool m_skipFirstFrame { false };

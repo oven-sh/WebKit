@@ -1,0 +1,48 @@
+# the slot of the field holds the functions of an accessor, and whichever setter lies there is the one that the store would call, with the object as `this` and what is stored as its argument
+# function make() { let kept = 0; return { set s(v) { kept = v; }, c: 1 }; }   function put(o: Box, v) { o.s = v; }
+# `put` is handed to sink, so the type of `o` is what is written. An empty slot and another shape take the store as written
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsSlotFilled {{*}}key="s"
+# CHECK: = GetSlotSetter {{*}}key="s"
+# RUN(WRITTEN): walk f2 mechanisms=all
+# WRITTEN: frequency=Rare
+# WRITTEN: PropSet {{*}}key="s"
+# RUN(LINK): link accesses mechanisms=all
+# LINK: accessors L0.0 "s" setter=f3
+# RUN(WITHHELD): walk f2 mechanisms=all-Guesses
+# WITHHELD-NOT: GetSlotSetter
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="s" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v0, -
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v1, v2
+    Return v5
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f3
+    DefineSetter v0, v1 key="s"
+    v3 = Integer integer=1
+    PropDefine v0, v3 key="c"
+    v5 = FinishObject v0
+    Return v5
+}
+function f2 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0, v1: anything):
+    PropSet v0, v1 key="s"
+    Return v1
+}
+function f3 name="s" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

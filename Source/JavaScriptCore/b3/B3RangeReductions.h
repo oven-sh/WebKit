@@ -22,6 +22,7 @@ struct RangeReduction {
         Value,
         ZeroExtension,
         Comparison,
+        ComparisonWithConstant,
     };
 
     Kind kind { Kind::None };

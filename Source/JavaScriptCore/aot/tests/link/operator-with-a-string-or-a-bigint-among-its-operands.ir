@@ -1,0 +1,49 @@
+# If an operator gave a number as soon as a number had arrived at its operands, and took no notice of what arrives later, `add("a", 1)` would hand a string to code that was compiled for numbers
+# function add(a, b) { return a + b; }  function less(a, b) { return a - b; }  function big(a, b) { return a * b; }  add(1, 2);  add("a", 1);  less(1, 2);  less("7", 1);  big(2n, 3n);  big(2, 3);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=number|string returns
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
+# CHECK-NEXT: parameter 1 {{*}}proven=int[0, 2147483647]
+# CHECK: function f2 {{*}}result=number returns
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
+# CHECK: function f3 {{*}}result=number|bigint returns
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|bigint
+
+variable g0 name="add" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="less" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="big" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = String string="a"
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0, v1 calleeName="add"
+    v5 = Call v3, -, v2, v0 calleeName="add"
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v0, v1 calleeName="less"
+    v8 = Call v6, -, v2, v0 calleeName="less"
+    v9 = GetModuleVariable variable=g2
+    v10 = BigInt digits="2"
+    v11 = Call v9, -, v10, v10 calleeName="big"
+    v12 = Call v9, -, v1, v1 calleeName="big"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="add" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="less" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    Return v2
+}
+function f3 name="big" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Mul v0, v1
+    Return v2
+}

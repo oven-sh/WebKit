@@ -1,0 +1,57 @@
+# function added() { let total = 0; for (let j = 0; j < 100; j++) total = (total + j * j) | 0; return total; }   as the walk leaves a loop whose head read something that has left the loop:
+# the test of the counter stands in the head behind the poll, the head ends in a jump, and the branch stands alone in the block behind.
+# So ends the typed build of `for (let i = 0; i < this.values.length; i++) s += this.values[i]`: the read of the length has gone in front, and what is left of its stretch is the jump.
+# The turns are laid out all the same: the product stands there once for each of the eight turns laid out and once in the loop as written.
+# A head that ends in a jump was taken for a counted loop only where the block behind holds the test: 11.1 instructions a turn for the 7.4 of a list that is a parameter.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# CHECK: = Mul(
+# -- code
+# code f1:Body {
+#   constants:
+#     v0: 0 @Int32 = Integer
+#     v1: 100 @Int32 = Integer integer=100
+#   b0() entry=0:
+#     Jump -> next b1(v0, v0)
+#   b1(v2: i32 @Int32, v3: int[0, 100] @Int32) isInLoop=true isLoopHead=true:
+#     v4 @Void = LoopHint traits=[mayThrow, mayCollect, mayBeTerminated, mayTouchMemory]
+#     v5: boolean @Boolean = Less v3, v1 form=Integers
+#     Jump -> next b2()
+#   b2() isInLoop=true:
+#     Branch v5 -> taken b3(), notTaken b4()
+#   b3() isInLoop=true:
+#     v6: int[0, 99] @Int32 = Narrowed v3, v5 [isOnTakenEdge]
+#     v7: int[0, 9801] @Int32 = Mul v6, v6 form=Integers
+#     v8: i32 @Int64 = WidenInteger v2
+#     v9: int[0, 9801] @Int64 = WidenInteger v7
+#     v10: int[-2147483648, 2147493448] @Int64 = Add v8, v9 form=Integers
+#     v11: i32 @Int32 = ToInt32 v10
+#     v12: int[1, 100] @Int32 = Increment v6 form=Integers
+#     Jump -> next b1(v11, v12)
+#   b4():
+#     v13: i32 @JSValue = Box v2
+#     Return v13
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="added" results=[{type=anything}] {
+    v0 = Integer
+    Return v0
+}

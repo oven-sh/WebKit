@@ -35,10 +35,10 @@ class RenderIFrame final : public RenderFrameBase {
     WTF_MAKE_TZONE_ALLOCATED(RenderIFrame);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderIFrame);
 public:
-    RenderIFrame(HTMLIFrameElement&, Style::ComputedStyle&&);
+    RenderIFrame(HTMLIFrameElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderIFrame();
 
-    HTMLIFrameElement& LEGACY_NODELETE iframeElement() const;
+    NODELETE HTMLIFrameElement& iframeElement() const;
 
 private:
     void frameOwnerElement() const = delete;
@@ -49,7 +49,7 @@ private:
 
     bool requiresLayer() const override;
 
-    bool LEGACY_NODELETE isFullScreenIFrame() const;
+    NODELETE bool isFullScreenIFrame() const;
 };
 
 } // namespace WebCore

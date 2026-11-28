@@ -1,0 +1,31 @@
+# function first() {} Object.defineProperty(first, "limit", { get() { return this; } })
+# As function-on-which-a-getter-that-has-this-is-laid-is-reached.ir, by one descriptor.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+layout L0 fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="value" declared={type=anything}}]
+layout L1 fields=[{key="limit" declared={type=anything}}, {key="mark" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = NewClosure function=f2
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = String string="limit"
+    v7 = Call v2, v1, v0, v6, v5 calleeName="Object.defineProperty"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,47 +1,113 @@
 # The engine half of `bun build --compile --aot`
 
-This folder reads a program as IR, analyzes and optimizes it, generates machine code through B3 and Air, writes the image, and holds the runtime that compiled programs call.
-The front end (resolve, parse, check types, lower to IR) is in oven-sh/bun, `src/aot`.
+This folder reads a program as IR, compiles it to machine code and writes the image that goes into the executable. It also holds the runtime that compiled programs call. The front end (resolve, parse, check types, lower to IR) is in oven-sh/bun, `src/aot`.
 
-- How the compiler works: `docs/compiler/internals.mdx` in oven-sh/bun.
-- The design rules, how to measure, and what was tried and did not work: `src/aot/CLAUDE.md` in oven-sh/bun. They hold for this folder too: the two repositories are one product.
-- The tests of this folder: [`tests/README.md`](tests/README.md). Checking tools: `Tools/Scripts/aot/README.md`. How to build, and what CI does: `CLAUDE.md` at the root.
+## Pipeline
 
-## The fast loop
+`driver/` runs these in order. Each stage prints what it made as text, through a command of `testaot`.
 
-| Step | Command | Time |
-| --- | --- | --- |
-| Build the test program | `cmake --build <build> --target testaot` | a minute after a small change |
-| Run the tests of what you changed | `<build>/bin/testaot passes/sink-allocations`, `testaot <file>.ir` | seconds |
-| Run everything | `testaot all` | a minute on eight cores |
-| Print the IR of a program behind a pass | `testaot print <program> --until=<pass> --function=f12`; `testaot list passes` | |
-| Whole JavaScript and TypeScript programs | need the front end: `test/aot/shell/quick.py` in oven-sh/bun takes this `testaot` and `jsc` | seconds a program |
+| Stage | Folder | What it does | Command |
+| --- | --- | --- | --- |
+| Scan | `facts/` | By function, in parallel. Leaves a short summary of each function, with nothing about locals | `summary` |
+| Link | `facts/` | Reads the summaries only: what is reached, who calls whom, what fields and results hold | `link` |
+| Plan | `plan/` | The layout of objects, the calling convention of each function, the units to compile | `plan` |
+| Walk | `walk/` | By function, callers before callees. Reads the body again, optimizes it and builds `Code` (`walk/AOTCode.h`). The sweep then removes what is dead | `walk` |
+| Emit | `codegen/`, `machine/` | The emitters turn `Code` into operations. The back end orders blocks, allocates registers and writes bytes | `emit`, `allocate`, `bytes` |
+| Image | `image/` | Links the code and writes the tables that the runtime reads | `image` |
 
-A pass gets an IR text test for what it does **and** for what it must leave alone.
+A value's type is proven by its origin in the function, by a check that dominates the use, by Link, or by what a caller had proven. A TypeScript type is a speculation. It never removes a check.
+
+JavaScript does not go through B3 or Air: `machine/` is the back end. Only WebAssembly modules do (`image/AOTWasmModules.cpp`).
+
+The compiler takes no profile, runs none of the program's code during the build (macros are refused), keeps no cache between builds and adds no syntax.
+
+## Other folders
+
+| Folder | What it holds |
+| --- | --- |
+| `ir/` | the IR: its schema (`ir/AOTSchema.def`, `ir/schema/*.def`), the generator of its C++, the reader and the verifier |
+| `object/`, `runtime/`, `stubs/` | the runtime: objects and classes, the operations that compiled code calls, shared stubs |
+| `builtins/` | the table of built-ins (`*.builtins.ts`) and the emitters of calls to them |
+| `support/` | options, diagnostics, threads |
+| `tests/` | `testaot` and its tests. See [`tests/README.md`](tests/README.md) |
+
+`Tools/Scripts/aot/README.md` has the checking tools. `CLAUDE.md` at the root says how to build and what CI does.
+
+## Build and test
+
+| Step | Command |
+| --- | --- |
+| Build the test program | `cmake --build <build> --target testaot`, or `bun run build:local --target=testaot` in oven-sh/bun |
+| Run the tests of what you changed | `testaot run <file or folder>` |
+| Run everything | `testaot all aot/tests` |
+| Print what a stage makes of a function | `testaot walk f.ir f3`. `testaot list commands` prints the others |
+| Fuzz register allocation | `testaot fuzz-allocation`, then `--show=<seed>` for a seed that failed |
+
+`f.ir` is IR text, or what `bun build --compile --aot --aot-out=<file>` writes.
+
+Whole programs need the front end, so they are in oven-sh/bun, under `test/aot`. Each one runs under `bun <file>` and as an executable built four ways: as written, with its types erased, with speculations that fail on purpose, and with proof checks. Every run must print the same. `test/aot/other-suites` there does the same, by hand, with test262, JSTests, Node's tests and Bun's.
 
 ## What CI catches that a local build does not
 
-A plain local build is one compiler, one C++ library, assertions on or off. CI has some eighty lanes. Four cheap local builds catch nearly everything the others have ever caught, and each takes
-minutes where a round of CI takes 35. `node .github/scripts/lanes.mjs build <label> --output <dir>` reproduces any lane exactly, in Docker; the forms below are quicker because they skip optimization.
+`node .github/scripts/lanes.mjs build <label> --output <dir>` reproduces any lane, in Docker. These local builds are quicker, because they skip optimization:
 
 | Build | What it catches | How |
 | --- | --- | --- |
-| musl with assertions, `-O0`, `ninja -k 0` | What libstdc++ on Alpine does not accept (a `std::atomic` member without an initializer, a missing `#include` that glibc's headers pull in), and code inside `ASSERT` that no longer compiles | `--target=x86_64-alpine-linux-musl --sysroot=<an Alpine root>`, `-DENABLE_ASSERTS=ON` |
-| The hardened lanes' defines, syntax only | Code under `BUN_HARDENED`, `ENABLE_AOT_POSITION_INDEPENDENT_IMAGE`, `ENABLE_AOT_GUARDED_PAGES` | the flags are `HARDENING` in `.github/scripts/lanes.mjs`; `clang -fsyntax-only` over the sources of `aot/` |
-| `-DENABLE_AOT=0` among the compiler's flags, `-O0` | Every lane without `-aot` in its label. What the rest of JavaScriptCore calls outside `ENABLE(AOT)` has to be in `JavaScriptCore_AOT_SOURCES_WITHOUT_AOT` (`AOT.cmake`), or twenty lanes fail at the link | three minutes from nothing |
-| x64 glibc with ThinLTO, then the checks behind the link | `Tools/Scripts/check-classinfo-uniqueness.py`, `Tools/Scripts/aot/find-structures-decoded-behind-calls.py`, symbols newer than `GLIBC_2.31` | four minutes with a warm ThinLTO cache |
+| musl with assertions, `-O0`, `ninja -k 0` | What libstdc++ on Alpine does not accept, and code inside `ASSERT` that no longer compiles | `--target=x86_64-alpine-linux-musl --sysroot=<an Alpine root>`, `-DENABLE_ASSERTS=ON` |
+| The hardened lanes' defines, syntax only | Code under `BUN_HARDENED`, `ENABLE_AOT_POSITION_INDEPENDENT_IMAGE`, `ENABLE_AOT_GUARDED_PAGES`, and on ARM64 `ENABLE_RETURN_ADDRESS_SIGNING` | the flags are `HARDENING` and `SIGNED_RETURN_ADDRESSES` in `.github/scripts/lanes.mjs`; `clang -fsyntax-only` over the sources of `aot/` |
+| `-DENABLE_AOT=0` among the compiler's flags, `-O0` | Every lane without `-aot` in its label. What the rest of JavaScriptCore calls outside `ENABLE(AOT)` has to be in `JavaScriptCore_AOT_SOURCES_WITHOUT_AOT` (`AOT.cmake`) | |
+| x64 glibc with ThinLTO, then the checks after the link | `Tools/Scripts/check-classinfo-uniqueness.py`, `Tools/Scripts/aot/find-structures-decoded-behind-calls.py` | |
 
-Without a whole build, in about a minute: `Tools/Scripts/aot/check-includes.py`.
+`Tools/Scripts/aot/check-includes.py` needs no whole build.
 
-## Things that have bitten
+## Signed return addresses
 
-- **`aot/` is compiled in unified bundles.** A `static` function, a type, or anything in an unnamed namespace needs a name that no other source of `aot/` uses.
-- **A new source goes into `Sources.txt`** (or, if builds spend no time in it, `SourcesCompiledForSize.txt` or `SourcesCompiledForMinimumSize.txt`: `AOT.cmake` says which). Bun reads the same lists when it builds this folder itself.
-- **Nothing that a generator writes is checked in.** A new generated header that Bun's build reads must also be copied into the release by every Dockerfile's pack step, or Bun cannot be built against the prebuilt engine.
-- **No static initializers.**
-- **A change to the IR's schema (`ir/schema/*.def`) changes both repositories.** They land together.
-- **A switch over an enum of the compiler names every enumerator**, with no `default`. A test in oven-sh/bun reads the sources and checks it.
-- **A `Structure*` decoded from its id must not be the only thing that keeps a structure alive across a call that may collect.** `find-structures-decoded-behind-calls.py` reads the finished binary for that.
-- **An operation that compiled code calls says in its declaration whether it may collect, throw or enter the VM.** The checking builds hold it to that at run time.
-- **B3 and Air are shared with the JIT.** A change there is judged by plain JavaScriptCore too (`testb3`, `testair`, JSTests), and by how it scales on very large functions.
-- **Files that upstream owns are not split or moved.** It makes every later merge harder.
+With `ENABLE(RETURN_ADDRESS_SIGNING)` (ARM64 Linux, on with `BUN_HARDENED`) an image signs the addresses that its code returns to or resumes at. There is no option: such an engine writes no other images, and the description of the run time makes it refuse them. Every instruction is a hint, so an image still runs on a processor without pointer authentication, unprotected.
+
+No generator of code does this. The assembler does, at the one place where it emits an instruction (`ARM64Assembler::putSigningLinkRegister()`), and an image takes code from `ImageAssembler` alone, which cannot be told to stop. So write what you would write without signing: Machine, the stubs, B3, BBQ, Yarr and FFI all do.
+
+| An instruction that | is emitted |
+| --- | --- |
+| copies the link register to memory or to another register | with the address signed |
+| overwrites the link register from memory or from another register | with an authentication behind it |
+| compares it, jumps to it, reads through it, or makes it of itself, constants and the program counter | as it is |
+| names it in a way that `ARM64LinkRegisterUse.h` does not know | as if it did the first two |
+| signs, authenticates or strips (`tagReturnAddress()`, `tagPtr()`, `removePtrTag()` and the like) | not at all |
+
+An address is therefore plain in the link register and signed anywhere else. Code that never saves the link register has no instruction for this, and a jump may leave for anything that a call may enter. Without `FEAT_FPAC` a failed authentication only makes the address unusable, and whoever signs it again gives away most of the right signature. So a load through the address follows, and a jump to the address takes its place where it comes next and no label lies in between. What asks for a place only where a map or a report is wanted takes `AssemblerBuffer::placeToDescribe()`, or the image depends on who looks.
+
+| Word | Signed with the B key and |
+| --- | --- |
+| a word of memory that the link register is stored in | the address behind the word. In a frame record LLInt and the JITs save the same, so their frames and compiled ones mix |
+| a copy in another register, and what an ordered or atomic instruction stores | the stack pointer |
+| the resume address of a `SavedFrame` | `SavedFrame::modifierOfResumeAddress()`, which is made of the address of the word |
+| what the unwinder hands to `RejectAwaitedCall`, and the handler of faults to code without a frame | the address behind the record that is about to hold it |
+
+What this asks of new code:
+
+- Move a return address through the link register. A frame record that is copied as bytes keeps a signature for its old place, and the return ends the process.
+- Do not jump to, read through or compare what was loaded into another register: it has its signature. `stubs/AOTSavedCodeAddresses.h` has the ways to do these.
+- The upper word of a pushed pair costs two more instructions, any other word about six (`emitPushLinkRegister()`).
+- The link register is no scratch register.
+- The unwinder authenticates each return address by which it looks for a handler in a compiled function (`AuthenticatedReturnAddress`, without which a `HandlerRecord` does not say where its code is). C++ that only looks at one takes the signature off (`removeReturnAddressSignature()`, or `removeCodePtrTag()`), and C++ that moves one uses `resignReturnAddress()`.
+
+A mistake in these ends the process or misses a comparison on a processor with pointer authentication. It does not leave an address unsigned.
+
+`llint/LowLevelInterpreterAOT.asm` is included between `beginSigningLinkRegister` and `endSigningLinkRegister`, where offlineasm keeps the same rules (`Tools/Scripts/aot/test-offlineasm-signing.rb`). The rest of LLInt and the JITs sign by hand, as for ARM64E. All of them enter each other with a plain link register.
+
+Not signed: the targets of calls and jumps through memory (the words of closures, the table of the run time, slot handlers, leaf steps of generators, the places that Yarr backtracks to, the handler that the unwinder hands to `Catch`, and any other label whose address is kept without going through the link register), what the unwinder remembers of call sites (`CallSiteCache`), the mark in the place of a return address in the frame that a stub lays out for a host function (nothing returns to it), saved frame pointers and other saved registers, and the registers that the kernel saves for a signal. A signed word can be used again at the same address. The assembler does not look at words that are put in its buffer or in a `RelocatableCode` as data. Nor does it keep anyone from taking the signature off a copy by arithmetic, as keeping only 32 bits of it does, and jumping through that register.
+
+## Rules
+
+- `aot/` is compiled in unified bundles. A `static` function, a type, or anything in an unnamed namespace needs a name that no other source of `aot/` uses.
+- After you add a source, run `bun scripts/build/aot-source-lists.ts --webkit=<checkout>` in oven-sh/bun. It writes `Sources.txt` and the lists in `AOT.cmake`. `SourcesCompiledForSize.txt` and `SourcesCompiledForMinimumSize.txt` are kept by hand.
+- Nothing that a generator writes is checked in.
+- No static initializers.
+- A change to the IR's schema changes both repositories. They land together.
+- A switch over an enum of the compiler names every enumerator, with no `default`.
+- Nothing compares the text of a name of the program with a literal. `name == "eval"` says yes to a local that somebody called `eval`, and no to `const e = eval`. Compare ids. `test/aot/compiler/names-compared-as-text.test.ts` in oven-sh/bun checks it.
+- The walk never merges or removes a call of a host function or getter. `url.href` twice with nothing between stays two calls.
+- A `Structure*` decoded from its id must not be the only thing that keeps a structure alive across a call that may collect.
+- An operation that compiled code calls says in its declaration whether it may collect, throw or enter the VM.
+- An address that code returns to or resumes at goes through the link register, as "Signed return addresses" says. Only `linux-arm64-lto-hardened-aot` runs that code: look at its tests after a change to frames, calls, stubs, coroutines or unwinding.
+- Files that upstream owns are not split or moved. It makes every later merge harder.

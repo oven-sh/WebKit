@@ -1,0 +1,29 @@
+# Every instance of a class of functions is callable, so it lies in `function`: a slot that is laid out for `function` takes what bind() makes. A proxy need not be callable.
+# RUN(SUBSET): subset
+# RUN(INTERSECT): intersect
+# SUBSET: t0 <= t1: no overlaps: yes
+# SUBSET-NEXT: t0 <= t2: yes overlaps: yes
+# SUBSET-NEXT: t0 <= t3: no overlaps: no
+# SUBSET: t1 <= t2: yes overlaps: yes
+# SUBSET: t2 <= t0: no overlaps: yes
+# SUBSET-NEXT: t2 <= t1: no overlaps: yes
+# SUBSET: t3 <= t2: no overlaps: yes
+# SUBSET: t4 <= t2: no overlaps: yes
+# SUBSET: laws hold
+# INTERSECT: t0 & t2 = BoundFunction
+# INTERSECT-NEXT: t0 - t2 = never
+# INTERSECT: t1 & t2 = Function
+# INTERSECT-NEXT: t1 - t2 = never
+# INTERSECT: t2 - t0 = function
+# INTERSECT: t3 & t2 = Proxy
+# INTERSECT-NEXT: t3 - t2 = Proxy
+# INTERSECT: t4 & t2 = BoundFunction
+# INTERSECT-NEXT: t4 - t2 = undefined
+# INTERSECT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=BoundFunction}, {type=Function}, {type=function}, {type=Proxy}, {type=undefined|BoundFunction}] results=[{type=undefined}]
+function f1 name="callee" results=[{type=undefined}] {
+    Return
+}
+entry module=m0

@@ -65,6 +65,7 @@
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StyleFontPaletteInlines.h"
 #include "StyleExtractorState.h"
+#include "StyleFontSizeFunctions.h"
 #include "StyleInterpolation.h"
 #include "StyleKeyword+CSSValueConversion.h"
 #include "StyleKeyword+CSSValueCreation.h"
@@ -305,6 +306,10 @@ public:
     static void extractWebkitMaskBoxImageShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractWebkitMaskPositionShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractMarkerShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
+
+    // MARK: Custom Initial Value Conditions
+
+    static bool hidesThemeBorderRadius(ExtractorState&);
 };
 
 template<typename T, typename U> auto unzoomed(ExtractorState& state, U value) -> T
@@ -324,7 +329,7 @@ template<CSSPropertyID propertyID> struct InsetEdgeSharedAdaptor {
         if (!box)
             return functor(value);
 
-        auto* containingBlock = dynamicDowncast<RenderBoxModelObject>(box->container());
+        CheckedPtr containingBlock = dynamicDowncast<RenderBoxModelObject>(box->container());
 
         // Resolve a "computed value" percentage if the element is positioned.
         if (containingBlock && value.isPercentOrCalculated() && box->isPositioned()) {
@@ -332,11 +337,11 @@ template<CSSPropertyID propertyID> struct InsetEdgeSharedAdaptor {
 
             LayoutUnit containingBlockSize;
             if (box->isStickilyPositioned()) {
-                auto& enclosingClippingBox = box->enclosingClippingBoxForStickyPosition().first;
-                if (isVerticalProperty == enclosingClippingBox.isHorizontalWritingMode())
-                    containingBlockSize = enclosingClippingBox.contentBoxLogicalHeight();
+                CheckedRef enclosingClippingBox = box->enclosingClippingBoxForStickyPosition().first;
+                if (isVerticalProperty == enclosingClippingBox->isHorizontalWritingMode())
+                    containingBlockSize = enclosingClippingBox->contentBoxLogicalHeight();
                 else
-                    containingBlockSize = enclosingClippingBox.contentBoxLogicalWidth();
+                    containingBlockSize = enclosingClippingBox->contentBoxLogicalWidth();
             } else {
                 if (box->isOutOfFlowPositioned()) {
                     if (isVerticalProperty)
@@ -483,7 +488,7 @@ template<CSSPropertyID propertyID> struct MarginEdgeSharedAdaptor {
 template<CSSPropertyID propertyID> struct PaddingEdgeSharedAdaptor {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, const PaddingEdge& value, NOESCAPE const F& functor) const
     {
-        auto* box = dynamicDowncast<RenderBox>(state.renderer);
+        CheckedPtr box = dynamicDowncast<RenderBox>(state.renderer);
         if (!box || value.value.isFixed())
             return functor(value);
 
@@ -570,7 +575,7 @@ template<CSSPropertyID> struct MaximumSizeSharedAdaptor {
 template<CSSPropertyID> struct MinimumSizeSharedAdaptor {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, const MinimumSize& value, NOESCAPE const F& functor) const
     {
-        auto isFlexOrGridItem = [](auto renderer) {
+        auto isFlexOrGridItem = [](const RenderElement* renderer) {
             auto* box = dynamicDowncast<RenderBox>(renderer);
             return box && (box->isFlexItem() || box->isGridItem());
         };
@@ -655,6 +660,15 @@ template<CSSPropertyID> struct WebkitColumnBreakSharedAdaptor {
     }
 };
 
+// Text zoom is part of the exposed font size. Pages read it to detect text zoom.
+inline float fontSizeIncludingTextZoom(const ExtractorState& state)
+{
+    auto size = state.style->fontDescription().unzoomedUsedSize();
+    if (is<SVGElement>(state.element))
+        return size;
+    return size * textZoomFactorForFontSize(state.style, state.element->document());
+}
+
 // MARK: - Adaptors
 
 // Adaptors are used to implement the logic for extracting a value from a ComputedStyle and performing some operation of the CSS value equivalent. This allows the same code to be used for CSS creation and serialization.
@@ -732,7 +746,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyID::LineHeight> {
                 if (state.valueType == ExtractorState::PropertyValueType::Computed)
                     return functor(number);
 
-                return functor(LineHeight::Length { number.value * state.style->fontDescription().unzoomedUsedSize() });
+                return functor(LineHeight::Length { number.value * fontSizeIncludingTextZoom(state) });
             }
         );
     }
@@ -751,7 +765,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyID::FontFamily> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyID::FontSize> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, NOESCAPE const F& functor) const
     {
-        return functor(Length<CSS::Nonnegative> { state.style->fontDescription().unzoomedUsedSize() });
+        return functor(Length<CSS::Nonnegative> { fontSizeIncludingTextZoom(state) });
     }
 };
 
@@ -1368,7 +1382,7 @@ template<GridTrackSizingDirection direction> Ref<CSSValue> extractGridTemplateVa
             list.append(toCSS(lineNames, state.style));
     };
 
-    auto* renderGrid = dynamicDowncast<RenderGrid>(state.renderer);
+    CheckedPtr renderGrid = dynamicDowncast<RenderGrid>(state.renderer);
 
     auto& tracks = state.style->gridTemplateList(direction);
     auto& trackSizes = tracks.sizes;
@@ -1747,9 +1761,9 @@ inline void extractCoalescingQuadShorthandSerialization(ExtractorState& state, S
 
 // MARK: - Corner / corner-* shorthand extractors
 //
-// Each "corner" output is `<border-radius-corner> <corner-shape>` (or `normal`
-// when the radius is 0px and the shape is round), per drafts.csswg.org/css-borders-4.
-// Pair and quad shorthands emit slash-separated corners with 4->1 / 2->1 collapsing.
+// The corner shorthands compose the border-radius and corner-shape
+// serializations, omitting a component that is at its initial value.
+// https://drafts.csswg.org/css-borders-4/#corner-shorthands
 
 inline bool isRoundCornerShapeValue(const CSSValue& shape)
 {
@@ -1764,97 +1778,113 @@ inline bool isRoundCornerShapeValue(const CSSValue& shape)
     return parameter && parameter->isNumber() && parameter->isOne().value_or(false);
 }
 
-inline bool isCornerNormalValue(const CSSValue* radius, const CSSValue* shape)
+// Only a zero length is the initial radius. A zero percentage is kept in the
+// computed value and must still be serialized.
+inline bool isZeroCornerRadiusValue(const CSSValue& radius)
 {
     RefPtr pair = dynamicDowncast<CSSValuePair>(radius);
-    if (!pair || !shape)
+    if (!pair)
         return false;
-    auto isZero = [](const CSSValue& value) {
+    auto isZeroLength = [](const CSSValue& value) {
         RefPtr primitive = dynamicDowncast<CSSPrimitiveValue>(value);
-        return primitive && (primitive->isLength() || primitive->isPercentage()) && primitive->isZero().value_or(false);
+        return primitive && primitive->isLength() && primitive->isZero().value_or(false);
     };
-    if (!isZero(pair->first()) || !isZero(pair->second()))
-        return false;
-    return isRoundCornerShapeValue(*shape);
+    return isZeroLength(pair->first()) && isZeroLength(pair->second());
 }
 
-inline RefPtr<CSSValue> buildCornerValue(RefPtr<CSSValue> radius, RefPtr<CSSValue> shape)
+// Drops trailing values that the corner copy rules would reconstruct.
+inline unsigned lastCornerIndexToSerialize(std::span<const RefPtr<CSSValue>> values)
 {
-    if (!radius || !shape)
-        return nullptr;
-    if (isCornerNormalValue(radius.get(), shape.get()))
-        return CSSKeywordValue::create(CSSValueID::Normal);
-    return CSSValuePair::create(radius.releaseNonNull(), shape.releaseNonNull());
+    unsigned lastIndex = values.size() - 1;
+    while (lastIndex && compareCSSValuePtr(values[lastIndex], values[lastIndex == 3 ? 1 : 0]))
+        --lastIndex;
+    return lastIndex;
 }
 
-inline RefPtr<CSSValue> extractCornerSingleShorthand(ExtractorState& state, const StylePropertyShorthand& shorthand)
+inline RefPtr<CSSValue> cornerRadiiValue(std::span<const RefPtr<CSSValue>> radii)
 {
-    auto longhands = shorthand.properties();
-    auto radius = ExtractorGenerated::extractValue(state, longhands[0]);
-    auto shape = ExtractorGenerated::extractValue(state, longhands[1]);
-    return buildCornerValue(WTF::move(radius), WTF::move(shape));
-}
+    if (radii.size() == 1)
+        return radii[0];
 
-inline void extractCornerSingleShorthandSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context, const StylePropertyShorthand& shorthand)
-{
-    if (auto value = extractCornerSingleShorthand(state, shorthand))
-        builder.append(value->cssText(context));
-}
-
-inline RefPtr<CSSValue> extractCornerPairShorthand(ExtractorState& state, const StylePropertyShorthand& shorthand)
-{
-    auto longhands = shorthand.properties();
-    ASSERT(longhands.size() == 4);
-    auto first = buildCornerValue(ExtractorGenerated::extractValue(state, longhands[0]), ExtractorGenerated::extractValue(state, longhands[1]));
-    auto second = buildCornerValue(ExtractorGenerated::extractValue(state, longhands[2]), ExtractorGenerated::extractValue(state, longhands[3]));
-    if (!first || !second)
-        return nullptr;
-
-    CSSValueListBuilder list;
-    bool collapse = compareCSSValuePtr(first, second);
-    list.append(first.releaseNonNull());
-    if (!collapse)
-        list.append(second.releaseNonNull());
-    return CSSValueList::createSlashSeparated(WTF::move(list));
-}
-
-inline void extractCornerPairShorthandSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context, const StylePropertyShorthand& shorthand)
-{
-    if (auto value = extractCornerPairShorthand(state, shorthand))
-        builder.append(value->cssText(context));
-}
-
-inline RefPtr<CSSValue> extractCornerQuadShorthand(ExtractorState& state, const StylePropertyShorthand& shorthand)
-{
-    auto longhands = shorthand.properties();
-    ASSERT(longhands.size() == 8);
-    std::array<RefPtr<CSSValue>, 4> corners;
-    for (size_t i = 0; i < 4; ++i) {
-        corners[i] = buildCornerValue(ExtractorGenerated::extractValue(state, longhands[i * 2]), ExtractorGenerated::extractValue(state, longhands[i * 2 + 1]));
-        if (!corners[i])
+    CSSValueListBuilder horizontal;
+    CSSValueListBuilder vertical;
+    Vector<RefPtr<CSSValue>> horizontalValues;
+    Vector<RefPtr<CSSValue>> verticalValues;
+    bool serializeVertical = false;
+    for (auto& radius : radii) {
+        RefPtr pair = dynamicDowncast<CSSValuePair>(radius);
+        if (!pair)
             return nullptr;
+        RefPtr first = &pair->first();
+        RefPtr second = &pair->second();
+        if (!serializeVertical && !compareCSSValuePtr(first, second))
+            serializeVertical = true;
+        horizontalValues.append(WTF::move(first));
+        verticalValues.append(WTF::move(second));
     }
 
-    // Mirror Chromium logic: collapse 4 -> 3 -> 2 -> 1.
-    // corners are [TL, TR, BR, BL].
-    bool showBL = !compareCSSValuePtr(corners[1], corners[3]);
-    bool showBR = showBL || !compareCSSValuePtr(corners[0], corners[2]);
-    bool showTR = showBR || !compareCSSValuePtr(corners[0], corners[1]);
-
-    CSSValueListBuilder list;
-    list.append(corners[0].releaseNonNull());
-    if (showTR)
-        list.append(corners[1].releaseNonNull());
-    if (showBR)
-        list.append(corners[2].releaseNonNull());
-    if (showBL)
-        list.append(corners[3].releaseNonNull());
-    return CSSValueList::createSlashSeparated(WTF::move(list));
+    auto appendAxis = [&](CSSValueListBuilder& list, const Vector<RefPtr<CSSValue>>& values) {
+        auto lastIndex = lastCornerIndexToSerialize(values.span());
+        for (unsigned i = 0; i <= lastIndex; ++i)
+            list.append(Ref { *values[i] });
+    };
+    appendAxis(horizontal, horizontalValues);
+    if (!serializeVertical)
+        return CSSValueList::createSlashSeparated(CSSValueList::createSpaceSeparated(WTF::move(horizontal)));
+    appendAxis(vertical, verticalValues);
+    return CSSValueList::createSlashSeparated(CSSValueList::createSpaceSeparated(WTF::move(horizontal)), CSSValueList::createSpaceSeparated(WTF::move(vertical)));
 }
 
-inline void extractCornerQuadShorthandSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context, const StylePropertyShorthand& shorthand)
+inline RefPtr<CSSValue> cornerShapesValue(std::span<const RefPtr<CSSValue>> shapes)
 {
-    if (auto value = extractCornerQuadShorthand(state, shorthand))
+    if (shapes.size() == 1)
+        return shapes[0];
+
+    CSSValueListBuilder list;
+    auto lastIndex = lastCornerIndexToSerialize(shapes);
+    for (unsigned i = 0; i <= lastIndex; ++i)
+        list.append(Ref { *shapes[i] });
+    return CSSValueList::createSpaceSeparated(WTF::move(list));
+}
+
+inline RefPtr<CSSValue> extractCornerShapeAndRadiusShorthand(ExtractorState& state, const StylePropertyShorthand& shorthand)
+{
+    auto longhands = shorthand.properties();
+    ASSERT(!(longhands.size() % 2));
+    auto count = longhands.size() / 2;
+
+    Vector<RefPtr<CSSValue>> radii;
+    Vector<RefPtr<CSSValue>> shapes;
+    bool radiusIsInitial = true;
+    bool shapeIsInitial = true;
+    for (size_t i = 0; i < count; ++i) {
+        auto radius = ExtractorGenerated::extractValue(state, longhands[i]);
+        auto shape = ExtractorGenerated::extractValue(state, longhands[count + i]);
+        if (!radius || !shape)
+            return nullptr;
+        if (!isZeroCornerRadiusValue(*radius))
+            radiusIsInitial = false;
+        if (!isRoundCornerShapeValue(*shape))
+            shapeIsInitial = false;
+        radii.append(WTF::move(radius));
+        shapes.append(WTF::move(shape));
+    }
+
+    auto shapeValue = cornerShapesValue(shapes.span());
+    auto radiusValue = cornerRadiiValue(radii.span());
+    if (!radiusValue || !shapeValue)
+        return nullptr;
+
+    if (shapeIsInitial)
+        return radiusValue;
+    if (radiusIsInitial)
+        return shapeValue;
+    return CSSValueList::createSpaceSeparated(shapeValue.releaseNonNull(), radiusValue.releaseNonNull());
+}
+
+inline void extractCornerShapeAndRadiusShorthandSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context, const StylePropertyShorthand& shorthand)
+{
+    if (auto value = extractCornerShapeAndRadiusShorthand(state, shorthand))
         builder.append(value->cssText(context));
 }
 
@@ -1882,30 +1912,29 @@ inline Ref<CSSValue> extractBorderRadiusShorthand(ExtractorState& state, CSSProp
         if (size != b.size())
             return false;
         for (unsigned i = 0; i < size; ++i) {
-            if (!a[i]->equals(b[i]))
+            if (!protect(a[i])->equals(b[i]))
                 return false;
         }
         return true;
     };
 
-    auto extractBorderRadiusCornerValues = [&](auto& state, const auto& radius) {
-        auto x = createCSSValue(state.pool, state.style, radius.width());
-        auto y = radius.width() == radius.height() ? x.copyRef() : createCSSValue(state.pool, state.style, radius.height());
-        return std::pair<Ref<CSSValue>, Ref<CSSValue>> { WTF::move(x), WTF::move(y) };
+    auto extractBorderRadiusCornerValues = [&](CSSPropertyID longhand) {
+        Ref value = downcast<CSSValuePair>(ExtractorGenerated::extractValue(state, longhand).releaseNonNull());
+        return std::pair<Ref<CSSValue>, Ref<CSSValue>> { value->first(), value->second() };
     };
 
-    bool showHorizontalBottomLeft = state.style->borderTopRightRadius().width() != state.style->borderBottomLeftRadius().width();
-    bool showHorizontalBottomRight = showHorizontalBottomLeft || (state.style->borderBottomRightRadius().width() != state.style->borderTopLeftRadius().width());
-    bool showHorizontalTopRight = showHorizontalBottomRight || (state.style->borderTopRightRadius().width() != state.style->borderTopLeftRadius().width());
+    auto [topLeftRadiusX, topLeftRadiusY] = extractBorderRadiusCornerValues(CSSPropertyID::BorderTopLeftRadius);
+    auto [topRightRadiusX, topRightRadiusY] = extractBorderRadiusCornerValues(CSSPropertyID::BorderTopRightRadius);
+    auto [bottomRightRadiusX, bottomRightRadiusY] = extractBorderRadiusCornerValues(CSSPropertyID::BorderBottomRightRadius);
+    auto [bottomLeftRadiusX, bottomLeftRadiusY] = extractBorderRadiusCornerValues(CSSPropertyID::BorderBottomLeftRadius);
 
-    bool showVerticalBottomLeft = state.style->borderTopRightRadius().height() != state.style->borderBottomLeftRadius().height();
-    bool showVerticalBottomRight = showVerticalBottomLeft || (state.style->borderBottomRightRadius().height() != state.style->borderTopLeftRadius().height());
-    bool showVerticalTopRight = showVerticalBottomRight || (state.style->borderTopRightRadius().height() != state.style->borderTopLeftRadius().height());
+    bool showHorizontalBottomLeft = !topRightRadiusX->equals(bottomLeftRadiusX);
+    bool showHorizontalBottomRight = showHorizontalBottomLeft || !bottomRightRadiusX->equals(topLeftRadiusX);
+    bool showHorizontalTopRight = showHorizontalBottomRight || !topRightRadiusX->equals(topLeftRadiusX);
 
-    auto [topLeftRadiusX, topLeftRadiusY] = extractBorderRadiusCornerValues(state, state.style->borderTopLeftRadius());
-    auto [topRightRadiusX, topRightRadiusY] = extractBorderRadiusCornerValues(state, state.style->borderTopRightRadius());
-    auto [bottomRightRadiusX, bottomRightRadiusY] = extractBorderRadiusCornerValues(state, state.style->borderBottomRightRadius());
-    auto [bottomLeftRadiusX, bottomLeftRadiusY] = extractBorderRadiusCornerValues(state, state.style->borderBottomLeftRadius());
+    bool showVerticalBottomLeft = !topRightRadiusY->equals(bottomLeftRadiusY);
+    bool showVerticalBottomRight = showVerticalBottomLeft || !bottomRightRadiusY->equals(topLeftRadiusY);
+    bool showVerticalTopRight = showVerticalBottomRight || !topRightRadiusY->equals(topLeftRadiusY);
 
     CSSValueListBuilder horizontalRadii;
     horizontalRadii.append(WTF::move(topLeftRadiusX));
@@ -1971,7 +2000,7 @@ inline RefPtr<CSSValue> extractBorderRadiusSideShorthand(ExtractorState& state, 
     bool includeVertical = horizontalRadii.size() != verticalRadii.size();
     if (!includeVertical) {
         for (unsigned i = 0; i < horizontalRadii.size(); ++i) {
-            if (!horizontalRadii[i]->equals(verticalRadii[i])) {
+            if (!protect(horizontalRadii[i])->equals(verticalRadii[i])) {
                 includeVertical = true;
                 break;
             }
@@ -1994,7 +2023,7 @@ template<CSSPropertyID property> inline Ref<CSSValue> extractFillLayerPropertySh
     static_assert(property == CSSPropertyID::Background || property == CSSPropertyID::Mask);
 
     auto computeRenderStyle = [&](std::unique_ptr<ComputedStyle>& ownedStyle) -> const ComputedStyle* {
-        if (auto renderer = state.element->renderer(); renderer && renderer->isComposited() && Interpolation::isAccelerated(property, state.element->document().settings())) {
+        if (CheckedPtr renderer = state.element->renderer(); renderer && renderer->isComposited() && Interpolation::isAccelerated(property, protect(state.element->document().settings()))) {
             ownedStyle = renderer->animatedStyle();
             if (state.pseudoElementIdentifier) {
                 // FIXME: This cached pseudo style will only exist if the animation has been run at least once.
@@ -2010,7 +2039,7 @@ template<CSSPropertyID property> inline Ref<CSSValue> extractFillLayerPropertySh
         // FIXME: Why does this not use state.style?
 
         std::unique_ptr<ComputedStyle> ownedStyle;
-        auto style = computeRenderStyle(ownedStyle);
+        CheckedPtr style = computeRenderStyle(ownedStyle);
         if (!style)
             return 0;
 
@@ -2056,10 +2085,10 @@ template<CSSPropertyID property> inline Ref<CSSValue> extractFillLayerPropertySh
         if (i == layerCount - 1 && lastValue)
             beforeList.append(*lastValue);
         for (size_t j = 0; j < propertiesBeforeSlashSeparator.length(); j++)
-            beforeList.append(valueForLayer(*before->item(j), i));
+            beforeList.append(Ref { valueForLayer(*before->item(j), i) });
         CSSValueListBuilder afterList;
         for (size_t j = 0; j < propertiesAfterSlashSeparator.length(); j++)
-            afterList.append(valueForLayer(*after->item(j), i));
+            afterList.append(Ref { valueForLayer(*after->item(j), i) });
         auto list = CSSValueList::createSlashSeparated(CSSValueList::createSpaceSeparated(WTF::move(beforeList)), CSSValueList::createSpaceSeparated(WTF::move(afterList)));
         if (layerCount == 1)
             return list;
@@ -3190,7 +3219,7 @@ inline RefPtr<CSSValue> ExtractorCustom::extractFontShorthand(ExtractorState& st
     if (!propertiesResetByShorthandAreExpressible())
         return computedFont;
 
-    computedFont->size = createCSSValue(state.pool, state.style, Length<> { description.unzoomedUsedSize() });
+    computedFont->size = createCSSValue(state.pool, state.style, Length<> { fontSizeIncludingTextZoom(state) });
 
     auto computedLineHeight = ExtractorGenerated::extractValue(state, CSSPropertyID::LineHeight);
     if (computedLineHeight && !isValueID(*computedLineHeight, CSSValueID::Normal))
@@ -3884,6 +3913,32 @@ inline RefPtr<CSSValue> ExtractorCustom::extractMarkerShorthand(ExtractorState& 
     if (markerStart == markerMid && markerMid == markerEnd)
         return createCSSValue(state.pool, state.style, markerStart);
     return nullptr;
+}
+
+// MARK: - Custom Initial Value Conditions
+
+inline bool ExtractorCustom::hidesThemeBorderRadius(ExtractorState& state)
+{
+#if PLATFORM(IOS_FAMILY)
+    if (state.style->nativeAppearanceDisabled())
+        return false;
+
+    switch (state.style->usedAppearance()) {
+    case StyleAppearance::Button:
+    case StyleAppearance::DefaultButton:
+    case StyleAppearance::PushButton:
+    case StyleAppearance::SquareButton:
+    case StyleAppearance::Menulist:
+        return true;
+    case StyleAppearance::MenulistButton:
+        return !state.style->hasExplicitlySetBorderRadius();
+    default:
+        return false;
+    }
+#else
+    UNUSED_PARAM(state);
+    return false;
+#endif
 }
 
 } // namespace Style

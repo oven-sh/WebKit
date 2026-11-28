@@ -33,6 +33,10 @@
 
 namespace WebDriver {
 
+// https://w3c.github.io/webdriver/#dfn-maximum-safe-integer
+// Also the value Session sends to the browser for a null (infinite) page load timeout.
+inline constexpr double maxSafeInteger = 9007199254740991.0; // 2 ^ 53 - 1
+
 struct Timeouts {
     std::optional<double> script;
     std::optional<double> pageLoad;
@@ -45,12 +49,36 @@ enum class PageLoadStrategy {
     Eager
 };
 
-enum class UnhandledPromptBehavior {
-    Dismiss,
+enum class PromptHandlerType {
     Accept,
-    DismissAndNotify,
-    AcceptAndNotify,
+    Dismiss,
     Ignore
+};
+
+// https://w3c.github.io/webdriver/#dfn-prompt-handler-configuration
+struct PromptHandlerConfiguration {
+    PromptHandlerType handler;
+    bool notify { false };
+};
+
+enum class UserPromptType {
+    Alert,
+    BeforeUnload,
+    Confirm,
+    Default,
+    Prompt
+};
+
+// https://w3c.github.io/webdriver/#dfn-user-prompt-handler
+struct UserPromptHandler {
+    std::optional<PromptHandlerConfiguration> alert;
+    std::optional<PromptHandlerConfiguration> beforeUnload;
+    std::optional<PromptHandlerConfiguration> confirm;
+    std::optional<PromptHandlerConfiguration> defaultHandler;
+    std::optional<PromptHandlerConfiguration> file;
+    std::optional<PromptHandlerConfiguration> prompt;
+    // Set when the capability is given as a string; not used for beforeunload prompts.
+    std::optional<PromptHandlerConfiguration> fallbackDefault;
 };
 
 struct Proxy {
@@ -73,14 +101,18 @@ struct Capabilities {
     std::optional<bool> setWindowRect;
     std::optional<Timeouts> timeouts;
     std::optional<PageLoadStrategy> pageLoadStrategy;
-    std::optional<UnhandledPromptBehavior> unhandledPromptBehavior;
+    std::optional<UserPromptHandler> unhandledPromptBehavior;
     std::optional<Proxy> proxy;
     std::optional<String> targetAddr;
     std::optional<int> targetPort;
     std::optional<uint64_t> processID;
 #if PLATFORM(GTK) || PLATFORM(WPE)
     std::optional<String> browserBinary;
+#endif
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(COCOA)
     std::optional<Vector<String>> browserArguments;
+#endif
+#if PLATFORM(GTK) || PLATFORM(WPE)
     std::optional<Vector<std::pair<String, String>>> certificates;
 #endif
 #if PLATFORM(GTK)

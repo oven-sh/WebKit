@@ -33,8 +33,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/unicode/CharacterNames.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 namespace {
 
@@ -49,8 +48,8 @@ struct SVGTextRun {
     bool isWordSeparator { false };
     bool hasContent { false };
 
-    bool LEGACY_NODELETE isText() const { return is<InlineTextBox>(layoutBox.get()); }
-    bool LEGACY_NODELETE hasCollapsibleTrailingWhitespace() const { return trailingWhitespace == TrailingWhitespace::Collapsible || trailingWhitespace == TrailingWhitespace::Collapsed; }
+    NODELETE bool isText() const { return is<InlineTextBox>(layoutBox.get()); }
+    NODELETE bool hasCollapsibleTrailingWhitespace() const { return trailingWhitespace == TrailingWhitespace::Collapsible || trailingWhitespace == TrailingWhitespace::Collapsed; }
 };
 
 }
@@ -267,7 +266,7 @@ std::optional<InlineDisplay::Content> buildSVGTextDisplayContent(const ElementBo
     CheckedRef rootStyle = root.style();
     auto hasInflowBox = boxes.size() > 1;
     auto baseline = rootStyle->metricsOfPrimaryFont().ascent(FontBaseline::Alphabetic);
-    auto line = InlineDisplay::Line { hasInflowBox, hasContentfulText, false, { }, { }, { }, { }, baseline, FontBaseline::Alphabetic, 0, 0, 0, true, rootStyle->writingMode().isHorizontal(), false };
+    auto line = InlineDisplay::Line { hasInflowBox, hasContentfulText, false, { }, { }, { }, { }, { }, baseline, FontBaseline::Alphabetic, 0, 0, 0, true, rootStyle->writingMode().isHorizontal(), false };
     line.setFirstBoxIndex(0);
     line.setBoxCount(boxes.size());
     content.lines.append(WTF::move(line));
@@ -275,5 +274,4 @@ std::optional<InlineDisplay::Content> buildSVGTextDisplayContent(const ElementBo
     return content;
 }
 
-}
 }

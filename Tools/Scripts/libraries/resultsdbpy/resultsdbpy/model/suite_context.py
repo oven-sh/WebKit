@@ -26,6 +26,7 @@ import time
 
 from cassandra.cqlengine import columns
 from datetime import datetime
+from resultsdbpy.model.ci_context import CIContext
 from resultsdbpy.model.commit_context import CommitContext
 from resultsdbpy.model.configuration_context import ClusteredByConfiguration
 from resultsdbpy.model.test_context import Expectations
@@ -35,6 +36,11 @@ from webkitscmpy import Commit
 
 class SuiteContext(UploadCallbackContext):
     DEFAULT_LIMIT = 100
+    MILDEST_RESULT_COUNTED_AS = dict(
+        failed=Expectations.STRING_TO_STATE_ID[Expectations.ERROR],
+        timedout=Expectations.STRING_TO_STATE_ID[Expectations.TIMEOUT],
+        crashed=Expectations.STRING_TO_STATE_ID[Expectations.CRASH],
+    )
 
     class SuiteResultsBase(ClusteredByConfiguration):
         suite = columns.Text(partition_key=True, required=True)
@@ -82,19 +88,17 @@ class SuiteContext(UploadCallbackContext):
                 timestamp = calendar.timegm(timestamp.timetuple())
 
             run_stats = test_results.get('run_stats', {})
-            failure_trigger_points = dict(
-                failed=Expectations.STRING_TO_STATE_ID[Expectations.ERROR],
-                timedout=Expectations.STRING_TO_STATE_ID[Expectations.TIMEOUT],
-                crashed=Expectations.STRING_TO_STATE_ID[Expectations.CRASH],
-            )
             run_stats['tests_run'] = 0
-            for key in failure_trigger_points.keys():
+            for key in self.MILDEST_RESULT_COUNTED_AS.keys():
                 run_stats[f'tests_{key}'] = 0
                 run_stats[f'tests_unexpected_{key}'] = 0
 
             details = {
                 'number_of_flaky_tests': 0
             }
+            number_of_links = len(CIContext.named_links(test_results.get('details', {})))
+            if number_of_links:
+                details['number_of_links'] = number_of_links
 
             def callback(test, result, details):
                 run_stats['tests_run'] += 1
@@ -114,7 +118,7 @@ class SuiteContext(UploadCallbackContext):
                 unexpected_results = set(actual_results) - expected_results
                 worst_unexpected_result = min(unexpected_results or [Expectations.STRING_TO_STATE_ID[Expectations.PASS]])
 
-                for key, point in failure_trigger_points.items():
+                for key, point in self.MILDEST_RESULT_COUNTED_AS.items():
                     if worst_result <= point:
                         run_stats[f'tests_{key}'] += 1
                     if worst_unexpected_result <= point:

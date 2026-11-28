@@ -132,6 +132,25 @@ extern PFN_vkCmdSetPatchControlPointsEXT vkCmdSetPatchControlPointsEXT;
 extern PFN_vkCmdSetPrimitiveRestartEnableEXT vkCmdSetPrimitiveRestartEnableEXT;
 extern PFN_vkCmdSetRasterizerDiscardEnableEXT vkCmdSetRasterizerDiscardEnableEXT;
 
+// VK_EXT_extended_dynamic_state3
+extern PFN_vkCmdSetColorWriteMaskEXT vkCmdSetColorWriteMaskEXT;
+extern PFN_vkCmdSetColorBlendEnableEXT vkCmdSetColorBlendEnableEXT;
+extern PFN_vkCmdSetColorBlendEquationEXT vkCmdSetColorBlendEquationEXT;
+extern PFN_vkCmdSetSampleMaskEXT vkCmdSetSampleMaskEXT;
+extern PFN_vkCmdSetAlphaToCoverageEnableEXT vkCmdSetAlphaToCoverageEnableEXT;
+extern PFN_vkCmdSetRasterizationSamplesEXT vkCmdSetRasterizationSamplesEXT;
+extern PFN_vkCmdSetAlphaToOneEnableEXT vkCmdSetAlphaToOneEnableEXT;
+extern PFN_vkCmdSetDepthClampEnableEXT vkCmdSetDepthClampEnableEXT;
+extern PFN_vkCmdSetPolygonModeEXT vkCmdSetPolygonModeEXT;
+extern PFN_vkCmdSetLogicOpEnableEXT vkCmdSetLogicOpEnableEXT;
+// + VK_EXT_depth_clip_control
+extern PFN_vkCmdSetDepthClipNegativeOneToOneEXT vkCmdSetDepthClipNegativeOneToOneEXT;
+// + VK_EXT_blend_operation_advanced
+extern PFN_vkCmdSetColorBlendAdvancedEXT vkCmdSetColorBlendAdvancedEXT;
+// + VK_EXT_line_rasterization
+extern PFN_vkCmdSetLineRasterizationModeEXT vkCmdSetLineRasterizationModeEXT;
+extern PFN_vkCmdSetLineStippleEnableEXT vkCmdSetLineStippleEnableEXT;
+
 // VK_EXT_vertex_input_dynamic_state
 extern PFN_vkCmdSetVertexInputEXT vkCmdSetVertexInputEXT;
 
@@ -153,10 +172,6 @@ extern PFN_vkGetImageSubresourceLayout2EXT vkGetImageSubresourceLayout2EXT;
 extern PFN_vkCmdBeginRenderingKHR vkCmdBeginRenderingKHR;
 extern PFN_vkCmdEndRenderingKHR vkCmdEndRenderingKHR;
 
-// VK_KHR_dynamic_rendering_local_read
-extern PFN_vkCmdSetRenderingAttachmentLocationsKHR vkCmdSetRenderingAttachmentLocationsKHR;
-extern PFN_vkCmdSetRenderingInputAttachmentIndicesKHR vkCmdSetRenderingInputAttachmentIndicesKHR;
-
 // VK_KHR_synchronization2
 extern PFN_vkCmdPipelineBarrier2KHR vkCmdPipelineBarrier2KHR;
 extern PFN_vkCmdWriteTimestamp2KHR vkCmdWriteTimestamp2KHR;
@@ -173,6 +188,13 @@ extern PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
 
 // VK_QCOM_tile_memory_heap
 extern PFN_vkCmdBindTileMemoryQCOM vkCmdBindTileMemoryQCOM;
+
+// VK_KHR_pipeline_binary
+extern PFN_vkGetPipelineKeyKHR vkGetPipelineKeyKHR;
+extern PFN_vkCreatePipelineBinariesKHR vkCreatePipelineBinariesKHR;
+extern PFN_vkDestroyPipelineBinaryKHR vkDestroyPipelineBinaryKHR;
+extern PFN_vkGetPipelineBinaryDataKHR vkGetPipelineBinaryDataKHR;
+extern PFN_vkReleaseCapturedPipelineDataKHR vkReleaseCapturedPipelineDataKHR;
 
 }  // namespace rx
 

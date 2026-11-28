@@ -1,0 +1,146 @@
+# function scan(source, i) { .. for (; i < source.length; i = i + 1) { const unit = source.charCodeAt(i); if (unit === 34) { i = skip(source, i); continue; } .. } }
+# The index comes round the loop as a number or a text: one back edge hands it back out of a call, so no test in front of the loop can hold. The call goes by one row, which would convert the index
+# by a stub each turn. It is tested for an int32 first; the conversion stands on the rare side alone.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isLoopHead=true
+# CHECK-NOT: = ToNumber
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: = GetStringCodeUnit
+# function once(source, i) { .. return [source.charCodeAt(i)]; }: outside every loop nothing is tested first
+# RUN(ONCE): walk f3:Body mechanisms=all
+# ONCE-LABEL: code f3:Body
+# ONCE: = ToNumber
+# layout L908 kind=Closure
+variable g0 name="skip" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 75, 327, 440, 553] quotedSources=[{position=58 start=127 end=140}, {position=111 start=149 end=163}, {position=144 start=180 end=189}, {position=179 start=193 end=206}, {position=220 start=206 end=223}, {position=227 start=206 end=226}, {position=265 start=230 end=245}, {position=363 start=254 end=268}, {position=396 start=285 end=294}, {position=415 start=295 end=312}, {position=422 start=295 end=315}, {position=440 end=15}, {position=451 end=111}, {position=456 start=16 end=62}, {position=461 start=21 end=38}, {position=472 start=21 end=40}, {position=482 start=42 end=59}, {position=493 start=42 end=61}, {position=504 start=64 end=110}, {position=509 start=69 end=86}, {position=520 start=69 end=88}, {position=530 start=90 end=107}, {position=541 start=90 end=109}] quotedSourceText="globalThis.sink(scan(globalThis.source(), globalThis.source()), once(globalThis.source(), globalThis.source()))i & 1 ? i + 1 : String(i + 1)source = String(source)i = i & 1 ? +i : String(i)i < source.lengthsource.charCodeAt(i)i = skip(source, i)source = String(source)i = i & 1 ? +i : String(i)[source.charCodeAt(i)]"} functionSource="function skip(source, i) { i = +i; return i & 1 ? i + 1 : String(i + 1); }\x0afunction scan(source, i) { source = String(source); i = i & 1 ? +i : String(i); let sum = 0; for (; i < source.length; i = i + 1) { const unit = source.charCodeAt(i); if (unit === 34) { i = skip(source, i); continue; } sum += unit & 7; } return sum; }\x0afunction once(source, i) { source = String(source); i = i & 1 ? +i : String(i); return [source.charCodeAt(i)]; }\x0aglobalThis.sink(scan(globalThis.source(), globalThis.source()), once(globalThis.source(), globalThis.source()));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @440
+    v5 = PropGet v4 key="globalThis" [isFreeName] @440
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]} @440
+    v7 = PropGet v6 key="sink" @440
+    v8 = Builtin builtin=GlobalThis @461
+    v9 = PropGet v8 key="globalThis" [isFreeName] @461
+    v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]} @461
+    v11 = PropGet v10 key="source" @461
+    v12 = Call v11, v10 calleeKey="source" calleeName="globalThis.source" @472
+    v13 = Builtin builtin=GlobalThis @482
+    v14 = PropGet v13 key="globalThis" [isFreeName] @482
+    v15 = Convert v14 declared={type=builtin(GlobalThis) flags=[IsExpected]} @482
+    v16 = PropGet v15 key="source" @482
+    v17 = Call v16, v15 calleeKey="source" calleeName="globalThis.source" @493
+    v18 = Call v1, -, v12, v17 calleeName="scan" @456
+    v19 = Builtin builtin=GlobalThis @509
+    v20 = PropGet v19 key="globalThis" [isFreeName] @509
+    v21 = Convert v20 declared={type=builtin(GlobalThis) flags=[IsExpected]} @509
+    v22 = PropGet v21 key="source" @509
+    v23 = Call v22, v21 calleeKey="source" calleeName="globalThis.source" @520
+    v24 = Builtin builtin=GlobalThis @530
+    v25 = PropGet v24 key="globalThis" [isFreeName] @530
+    v26 = Convert v25 declared={type=builtin(GlobalThis) flags=[IsExpected]} @530
+    v27 = PropGet v26 key="source" @530
+    v28 = Call v27, v26 calleeKey="source" calleeName="globalThis.source" @541
+    v29 = Call v3, -, v23, v28 calleeName="once" @504
+    v30 = Call v7, v6, v18, v29 calleeKey="sink" calleeName="globalThis.sink" @451
+    v31 = Undefined @440
+    Return v31 @440
+}
+function f1 name="skip" module=m0 sourceRange={end=74} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = ToNumber v1 @32
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @27
+    v4 = Integer integer=1 @46
+    v5 = BitAnd v3, v4 @46
+    v6 = ToBoolean v5 @42
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @42
+  b1(v7):
+    v8 = Integer integer=1 @54
+    v9 = Add v3, v8 @54
+    Return v9 @58
+  b2(v10):
+    v11 = Builtin builtin=String @58
+    v12 = Integer integer=1 @69
+    v13 = Add v3, v12 @69
+    v14 = Call v11, -, v13 calleeName="String" @58
+    ReturnCall v14 @58
+}
+function f2 name="scan" module=m0 position=75 sourceRange={start=75 end=326} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|number|string):
+    v2 = Builtin builtin=String @111
+    v3 = Call v2, -, v0 calleeName="String" @111
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @102
+    v5 = Integer integer=1 @135
+    v6 = BitAnd v1, v5 @135
+    v7 = ToBoolean v6 @131
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0) @131
+  b1(v8):
+    v9 = ToNumber v1 @140
+    Jump -> next b3(v9) @140
+  b2(v10):
+    v11 = Builtin builtin=String @144
+    v12 = Call v11, -, v1 calleeName="String" @144
+    Jump -> next b3(v12) @144
+  b3(v13):
+    v14 = Convert v13 declared={type=undefined|null|number|string flags=[IsExpected]} @127
+    v15 = Integer @165
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @165
+    Jump -> next b4(v14, v16) @168
+  b4(v17, v18):
+    LoopHint @168
+    v20 = PropGet v4 key="length" @179
+    v21 = Less v17, v20 @179
+    Branch v21 -> taken b5(), notTaken b9() @179
+  b5():
+    v22 = PropGet v4 key="charCodeAt" @220
+    v23 = Call v22, v4, v17 calleeKey="charCodeAt" calleeName="source.charCodeAt" @227
+    v24 = Integer integer=34 @255
+    v25 = StrictEq v23, v24 @255
+    Branch v25 -> taken b6(), notTaken b7() @255
+  b6():
+    v26 = GetModuleVariable variable=g0 @265
+    v27 = Call v26, -, v4, v17 calleeName="skip" @265
+    v28 = Convert v27 declared={type=undefined|null|number|string flags=[IsExpected]} @261
+    Jump -> next b8(v28, v18) @282
+  b7():
+    v29 = Integer integer=7 @308
+    v30 = BitAnd v23, v29 @308
+    v31 = Add v18, v30 @308
+    v32 = Convert v31 declared={type=number flags=[IsExpected]} @294
+    Jump -> next b8(v17, v32) @294
+  b8(v33, v34):
+    v35 = Integer integer=1 @202
+    v36 = Add v33, v35 @202
+    v37 = Convert v36 declared={type=undefined|null|number|string flags=[IsExpected]} @194
+    Jump -> next b4(v37, v34) @194
+  b9():
+    Return v18 @320
+}
+function f3 name="once" module=m0 position=327 sourceRange={start=327 end=439} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|number|string):
+    v2 = Builtin builtin=String @363
+    v3 = Call v2, -, v0 calleeName="String" @363
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @354
+    v5 = Integer integer=1 @387
+    v6 = BitAnd v1, v5 @387
+    v7 = ToBoolean v6 @383
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0) @383
+  b1(v8):
+    v9 = ToNumber v1 @392
+    Jump -> next b3(v9) @392
+  b2(v10):
+    v11 = Builtin builtin=String @396
+    v12 = Call v11, -, v1 calleeName="String" @396
+    Jump -> next b3(v12) @396
+  b3(v13):
+    v14 = Convert v13 declared={type=undefined|null|number|string flags=[IsExpected]} @379
+    v15 = PropGet v4 key="charCodeAt" @415
+    v16 = Call v15, v4, v14 calleeKey="charCodeAt" calleeName="source.charCodeAt" @422
+    v17 = NewArray v16 contents=anything @414
+    Return v17 @414
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app", "stop"]}, {exportName="then"}]

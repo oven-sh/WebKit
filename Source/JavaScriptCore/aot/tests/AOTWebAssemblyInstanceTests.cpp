@@ -13,36 +13,23 @@
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
 #include "AOTBuildContext.h"
-#include "AOTCodeTemplates.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTIRProgram.h"
+#include "AOTImageFormat.h"
 #include "AOTProgramFile.h"
-#include "AOTRealmTestSupport.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
-#include "AOTWasmModules.h"
-#include "JSCInlines.h"
-#include "JSWebAssemblyInstance.h"
-#include "JSWebAssemblyModule.h"
-#include "Options.h"
-#include "SourceProvider.h"
-#include "TopExceptionScope.h"
-#include "WasmCodeInImage.h"
-#include "WasmModule.h"
-#include "WasmModuleInformation.h"
-#include "WebAssemblyModuleRecord.h"
+#include "AOTTestHarness.h"
+#include "AOTWasmInterface.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
 namespace {
-
-constexpr ASCIILiteral moduleLoaderOrderTestName = "webassembly-instance/imported-memory-in-module-loader-order"_s;
 
 constexpr uint8_t importedMemoryModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -55,7 +42,6 @@ constexpr uint8_t importedMemoryModule[] = {
     0x0a, 0x08, 0x01, 0x06, 0x00, 0x41, 0x07, 0x24, 0x00, 0x0b,
 };
 
-// (type $bytes (array (mut i8))) (func (export "makeBytes") (param i32) (result (ref $bytes)) local.get 0 array.new_default $bytes)
 constexpr uint8_t moduleWithGCTypes[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x0a, 0x02, 0x5e, 0x78, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x64, 0x00,
@@ -64,7 +50,28 @@ constexpr uint8_t moduleWithGCTypes[] = {
     0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x07, 0x00, 0x0b,
 };
 
-// (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+// g and wg leave by a tail call of an import. h and wh add the imported global, k and wk add it to what g and wg return. Those with a w take ten arguments.
+constexpr uint8_t moduleWithTailCalls[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x14, 0x02, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x0a, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
+    0x02, 0x14, 0x03, 0x01, 0x6d, 0x01, 0x66, 0x00, 0x00, 0x01, 0x6d, 0x01, 0x77, 0x00, 0x01, 0x01, 0x6d, 0x01, 0x76, 0x03, 0x7f, 0x00,
+    0x03, 0x07, 0x06, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00,
+    0x07, 0x1c, 0x06, 0x01, 0x67, 0x00, 0x02, 0x01, 0x68, 0x00, 0x03, 0x01, 0x6b, 0x00, 0x04, 0x02, 0x77, 0x67, 0x00, 0x05, 0x02, 0x77, 0x68, 0x00, 0x06, 0x02, 0x77, 0x6b, 0x00, 0x07,
+    0x0a, 0x60, 0x06,
+    0x09, 0x00, 0x20, 0x00, 0x41, 0x01, 0x6a, 0x12, 0x00, 0x0b,
+    0x07, 0x00, 0x20, 0x00, 0x23, 0x00, 0x6a, 0x0b,
+    0x09, 0x00, 0x20, 0x00, 0x10, 0x02, 0x23, 0x00, 0x6a, 0x0b,
+    0x18, 0x00, 0x20, 0x01, 0x20, 0x02, 0x20, 0x03, 0x20, 0x04, 0x20, 0x05, 0x20, 0x06, 0x20, 0x07, 0x20, 0x08, 0x20, 0x09, 0x20, 0x00, 0x12, 0x01, 0x0b,
+    0x0d, 0x00, 0x20, 0x09, 0x20, 0x08, 0x41, 0x0a, 0x6c, 0x6a, 0x23, 0x00, 0x6a, 0x0b,
+    0x1b, 0x00, 0x41, 0x00, 0x41, 0x01, 0x41, 0x02, 0x41, 0x03, 0x41, 0x04, 0x41, 0x05, 0x41, 0x06, 0x41, 0x07, 0x41, 0x08, 0x41, 0x09, 0x10, 0x05, 0x23, 0x00, 0x6a, 0x0b,
+};
+
+constexpr ASCIILiteral makesTailCallsBetweenInstances =
+    "const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 20, 2, 96, 1, 127, 1, 127, 96, 10, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 1, 127, 2, 20, 3, 1, 109, 1, 102, 0, 0, 1, 109, 1, 119, 0, 1, 1, 109, 1, 118, 3, 127, 0, 3, 7, 6, 0, 0, 0, 1, 1, 0, 7, 28, 6, 1, 103, 0, 2, 1, 104, 0, 3, 1, 107, 0, 4, 2, 119, 103, 0, 5, 2, 119, 104, 0, 6, 2, 119, 107, 0, 7, 10, 96, 6, 9, 0, 32, 0, 65, 1, 106, 18, 0, 11, 7, 0, 32, 0, 35, 0, 106, 11, 9, 0, 32, 0, 16, 2, 35, 0, 106, 11, 24, 0, 32, 1, 32, 2, 32, 3, 32, 4, 32, 5, 32, 6, 32, 7, 32, 8, 32, 9, 32, 0, 18, 1, 11, 13, 0, 32, 9, 32, 8, 65, 10, 108, 106, 35, 0, 106, 11, 27, 0, 65, 0, 65, 1, 65, 2, 65, 3, 65, 4, 65, 5, 65, 6, 65, 7, 65, 8, 65, 9, 16, 5, 35, 0, 106, 11]));\n"
+    "const make = (v, f, w) => new WebAssembly.Instance(module, { m: { f, w, v } }).exports;\n"
+    "const a = make(100, () => 0, () => 0), b = make(1000, a.h, a.wh), c = make(10000, b.g, b.wg);\n"
+    "print(c.k(1), c.wk(0), c.g(1));\n"_s;
+
 constexpr ASCIILiteral callsModuleFromOtherBytes =
     "const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);\n"
     "print(new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.add(20, 22));\n"_s;
@@ -114,10 +121,25 @@ private:
 
 } // anonymous namespace
 
-static std::unique_ptr<CompileOutput> compileProgramWithModule(std::span<const uint8_t> module, uint32_t numberOfModulesWithCode = 1)
+static void checkImageHoldsCodeOfItsWebAssemblyModule(std::span<const uint8_t> image)
+{
+    AOT_TEST_CHECK(image.size() >= sizeof(ImageHeader));
+    const ImageHeader& header = reinterpretCastSpanStartTo<ImageHeader>(image);
+    AOT_TEST_CHECK(header.code.webAssemblyCodeSize);
+
+    ImageSectionRange range = std::span(header.sections)[static_cast<size_t>(ImageSection::WebAssemblyDirectory)];
+    AOT_TEST_CHECK(range.size >= sizeof(Wasm::DirectoryInImage));
+    AOT_TEST_CHECK(range.offset <= image.size() && range.size <= image.size() - range.offset);
+    Wasm::DirectoryInImage directory = reinterpretCastSpanStartTo<Wasm::DirectoryInImage>(image.subspan(range.offset, range.size));
+    AOT_TEST_CHECK(directory.numberOfModules == 1);
+    AOT_TEST_CHECK(!directory.numberOfDeclinedModules);
+    AOT_TEST_CHECK(directory.catchRunway < header.code.webAssemblyCodeSize);
+}
+
+static std::unique_ptr<CompileOutput> compileProgramWithModule(std::span<const uint8_t> module)
 {
     BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(programText, Typed::IRForm::AsRead, build);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(programText, build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
@@ -125,173 +147,60 @@ static std::unique_ptr<CompileOutput> compileProgramWithModule(std::span<const u
     AOT_TEST_CHECK(program);
     program->webAssemblyModules[0].bytes = module;
 
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
-    AOT_TEST_CHECK(output->contents.numberOfWebAssemblyModules == numberOfModulesWithCode);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        Typed::printDiagnosticsOf(*output, WTF::dataFile());
+    AOT_TEST_CHECK(output->hasImage());
+    checkImageHoldsCodeOfItsWebAssemblyModule(output->section(Wire::ResultSection::Image));
     return output;
 }
 
-static ChildProcessResult runInShellWithTripwire(std::span<const uint8_t> moduleOfProgram, uint32_t numberOfModulesWithCode, ASCIILiteral source)
+static ChildProcessResult runInShellWithTripwire(std::span<const uint8_t> moduleOfProgram, ASCIILiteral source)
 {
-    std::unique_ptr<CompileOutput> output = compileProgramWithModule(moduleOfProgram, numberOfModulesWithCode);
-    TemporaryFile image(".image"_s, output->image.span());
-    ModuleFolder folder(makeString(image.path(), ".modules"_s));
+    std::unique_ptr<CompileOutput> output = compileProgramWithModule(moduleOfProgram);
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
+    ModuleFolder folder(makeString(image.ownPath(), ".modules"_s));
     String mainPath = folder.write("main.js"_s, byteCast<uint8_t>(source.span8()));
 
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), "--useBBQJIT=false"_s, "--useOMGJIT=false"_s, "--crashIfInterpreterIsUsed=true"_s, mainPath };
     return ChildProcessLauncher(shellPath(), { }).run(arguments.span());
 }
 
-static void checkRunsModuleFromOtherBytes(std::span<const uint8_t> moduleOfProgram, uint32_t numberOfModulesWithCode)
+static void checkShellPrinted(const ChildProcessResult& result, ASCIILiteral expected)
 {
-    ChildProcessResult result = runInShellWithTripwire(moduleOfProgram, numberOfModulesWithCode, callsModuleFromOtherBytes);
-    if (!result.exitedWith(EXIT_SUCCESS))
+    String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
+    if (!result.exitedWith(EXIT_SUCCESS) || printed != expected)
         dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
     AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "42\n"_s);
+    AOT_TEST_CHECK(printed == expected);
 }
 
 static void testTripwireAcceptsBytesTheBuildNeverSaw()
 {
-    checkRunsModuleFromOtherBytes(importedMemoryModule, 1);
-    checkRunsModuleFromOtherBytes(moduleWithGCTypes, 0);
+    checkShellPrinted(runInShellWithTripwire(moduleWithGCTypes, callsModuleFromOtherBytes), "42\n"_s);
 }
 
-static void testTripwireReportsDeclinedModule()
+static void testModuleOfProgramRunsUnderTripwire()
 {
-    ChildProcessResult result = runInShellWithTripwire(moduleWithGCTypes, 0, callsModuleWithGCTypes);
-    AOT_TEST_CHECK(!result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(result.output.contains("crashIfInterpreterIsUsed: a WebAssembly function without code in the image"_s));
+    checkShellPrinted(runInShellWithTripwire(moduleWithGCTypes, callsModuleWithGCTypes), "object\n"_s);
+}
+
+static void testTailCallsBetweenInstances()
+{
+    checkShellPrinted(runInShellWithTripwire(moduleWithTailCalls, makesTailCallsBetweenInstances), "10103 10101 103\n"_s);
 }
 
 static void testImportedMemoryInShell()
 {
     std::unique_ptr<CompileOutput> output = compileProgramWithModule(importedMemoryModule);
-    TemporaryFile image(".image"_s, output->image.span());
-    ModuleFolder folder(makeString(image.path(), ".modules"_s));
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
+    ModuleFolder folder(makeString(image.ownPath(), ".modules"_s));
     folder.write("module.wasm"_s, importedMemoryModule);
     folder.write("imports.js"_s, byteCast<uint8_t>(importsSource.span8()));
     String mainPath = folder.write("main.js"_s, byteCast<uint8_t>(mainSource.span8()));
 
-    Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), "--useBBQJIT=false"_s, "--useOMGJIT=false"_s };
-    if (Options::useWasmFastMemory())
-        arguments.append("--crashIfInterpreterIsUsed=true"_s);
-    arguments.append("-m"_s);
-    arguments.append(mainPath);
-
-    ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "7\n"_s);
-}
-
-static bool canRunInThisProcess()
-{
-    return !Options::useBBQJIT() && !Options::useOMGJIT() && !Wasm::CodeInImage::isInProcess();
-}
-
-static void runInNewProcess(ASCIILiteral testName)
-{
-    ChildProcessLauncher launcher(String(programPath()), Vector<String> { "--useBBQJIT=false"_s, "--useOMGJIT=false"_s });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName) };
-    ChildProcessResult result = launcher.run(arguments.span());
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLog(result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-}
-
-static Wasm::ModuleForImage compileForImage(VM& vm, std::span<const uint8_t> source)
-{
-    BuildContext context(makeDefaultCompileOptions());
-    auto templates = CodeTemplates::create(context.assemblerPolicy(), &context);
-    AOT_TEST_CHECK(templates.has_value());
-    auto module = compileWasmModule(vm, source, *templates, context);
-    AOT_TEST_CHECK(module.has_value());
-    return WTF::move(*module);
-}
-
-static void setProcessImage(Wasm::ModuleForImage&& module)
-{
-    static NeverDestroyed<WebAssemblyImageInputs> section;
-    WasmSectionBuilder builder;
-    AOT_TEST_CHECK(builder.append(WTF::move(module)));
-    section.get() = builder.finish();
-    Wasm::CodeInImage::addImage(section->directory.span(), section->code.span());
-    AOT_TEST_CHECK(Wasm::CodeInImage::isInProcess());
-}
-
-static JSWebAssemblyInstance* instantiateAsModuleLoader(Realms& realms, JSWebAssemblyModule* module, JSObject* imports)
-{
-    constexpr Wasm::CreationMode creationMode = Wasm::CreationMode::FromModuleLoader;
-    VM& vm = realms.vm();
-    JSGlobalObject* globalObject = realms.plain();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    RefPtr<SourceProvider> provider = StringSourceProvider::create("[wasm code]"_s, SourceOrigin { }, String(), SourceTaintedOrigin::Untainted);
-    JSWebAssemblyInstance* instance = JSWebAssemblyInstance::tryCreate(vm, globalObject->webAssemblyInstanceStructure(), globalObject, globalObject->moduleLoader(), JSWebAssemblyInstance::createPrivateModuleKey(), module, nullptr, creationMode, WTF::move(provider));
-    AOT_TEST_CHECK(!scope.exception());
-    instance->initializeImports(globalObject, nullptr, creationMode);
-    AOT_TEST_CHECK(!scope.exception());
-
-    AOT_TEST_CHECK(instance->memory0Mode() == MemoryMode::BoundsChecking);
-    instance->finalizeCreation(vm, globalObject, module->module().compileSync(vm, instance->memory0Mode()), creationMode);
-    AOT_TEST_CHECK(!scope.exception());
-
-    WebAssemblyModuleRecord* record = instance->moduleRecord();
-    record->link(globalObject, nullptr);
-    record->initializeImports(globalObject, imports, Wasm::CreationMode::FromJS);
-    AOT_TEST_CHECK(!scope.exception());
-    record->initializeExports(globalObject);
-    AOT_TEST_CHECK(!scope.exception());
-    return instance;
-}
-
-static void testImportedMemoryInModuleLoaderOrder()
-{
-    if (!canRunInThisProcess()) {
-        runInNewProcess(moduleLoaderOrderTestName);
-        return;
-    }
-
-    Realms realms;
-    VM& vm = realms.vm();
-    JSGlobalObject* globalObject = realms.plain();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    Wasm::ModuleForImage moduleForImage = compileForImage(vm, importedMemoryModule);
-    AOT_TEST_CHECK(moduleForImage.isForSignalingMemory);
-    AOT_TEST_CHECK(moduleForImage.functions.size() == 1);
-    AOT_TEST_CHECK(moduleForImage.functions[0].hasCode);
-    setProcessImage(WTF::move(moduleForImage));
-
-    auto validated = Wasm::Module::validateSync(vm, Vector<uint8_t>(std::span<const uint8_t>(importedMemoryModule)));
-    AOT_TEST_CHECK(validated.has_value());
-    JSWebAssemblyModule* module = JSWebAssemblyModule::create(vm, globalObject->webAssemblyModuleStructure(), WTF::move(*validated));
-    const Wasm::ModuleInformation& info = module->moduleInformation();
-    AOT_TEST_CHECK(info.moduleWithSkippedFunctions);
-
-    JSObject* fastImports = realms.object(globalObject, "({ './imports.js': { memory: new WebAssembly.Memory({ initial: 1 }), result: new WebAssembly.Global({ value: 'i32', mutable: true }, 0) } })"_s);
-    JSWebAssemblyInstance* compiled = instantiateAsModuleLoader(realms, module, fastImports);
-    void* const* pointers = compiled->calleeGroup()->imageCodePointers();
-    if (compiled->memory0Mode() == MemoryMode::Signaling) {
-        AOT_TEST_CHECK(pointers);
-        AOT_TEST_CHECK(info.moduleWithSkippedFunctions);
-    }
-    AOT_TEST_CHECK(compiled->imageCodePointers() == pointers);
-
-    JSObject* boundsCheckedImports = realms.object(globalObject, "globalThis.boundsCheckedImports = { './imports.js': { memory: new WebAssembly.Memory({ initial: 0, maximum: 0 }), result: new WebAssembly.Global({ value: 'i32', mutable: true }, 0) } }"_s);
-    JSWebAssemblyInstance* interpreted = instantiateAsModuleLoader(realms, module, boundsCheckedImports);
-    AOT_TEST_CHECK(interpreted->memory0Mode() == MemoryMode::BoundsChecking);
-    AOT_TEST_CHECK(!interpreted->imageCodePointers());
-    AOT_TEST_CHECK(!info.moduleWithSkippedFunctions);
-    AOT_TEST_CHECK(compiled->imageCodePointers() == pointers);
-
-    interpreted->moduleRecord()->evaluate(globalObject);
-    AOT_TEST_CHECK(!scope.exception());
-    AOT_TEST_CHECK(realms.evaluate(globalObject, "boundsCheckedImports['./imports.js'].result.value"_s) == jsNumber(7));
+    Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), "--useBBQJIT=false"_s, "--useOMGJIT=false"_s, "-m"_s, mainPath };
+    checkShellPrinted(ChildProcessLauncher(shellPath(), { }).run(arguments.span()), "7\n"_s);
 }
 
 } } // namespace JSC::AOT
@@ -306,8 +215,8 @@ std::span<const NativeTest> webAssemblyInstanceTests()
     static constexpr NativeTest tests[] = {
         { "webassembly-instance/imported-memory-in-shell"_s, testImportedMemoryInShell },
         { "webassembly-instance/tripwire-accepts-bytes-the-build-never-saw"_s, testTripwireAcceptsBytesTheBuildNeverSaw },
-        { "webassembly-instance/tripwire-reports-declined-module"_s, testTripwireReportsDeclinedModule },
-        { moduleLoaderOrderTestName, testImportedMemoryInModuleLoaderOrder },
+        { "webassembly-instance/module-of-program-runs-under-tripwire"_s, testModuleOfProgramRunsUnderTripwire },
+        { "webassembly-instance/tail-calls-between-instances"_s, testTailCallsBetweenInstances },
     };
     return tests;
 #else

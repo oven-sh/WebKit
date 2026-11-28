@@ -71,6 +71,27 @@ public:
     PFN_xrRaycastANDROID xrRaycastANDROID { nullptr };
     PFN_xrEnumerateRaycastSupportedTrackableTypesANDROID xrEnumerateRaycastSupportedTrackableTypesANDROID { nullptr };
 #endif
+#if defined(XR_EXT_future)
+    PFN_xrPollFutureEXT xrPollFutureEXT { nullptr };
+    PFN_xrCancelFutureEXT xrCancelFutureEXT { nullptr };
+#endif
+#if defined(XR_EXT_spatial_entity)
+    PFN_xrEnumerateSpatialCapabilitiesEXT xrEnumerateSpatialCapabilitiesEXT { nullptr };
+    PFN_xrEnumerateSpatialCapabilityComponentTypesEXT xrEnumerateSpatialCapabilityComponentTypesEXT { nullptr };
+    PFN_xrCreateSpatialContextAsyncEXT xrCreateSpatialContextAsyncEXT { nullptr };
+    PFN_xrCreateSpatialContextCompleteEXT xrCreateSpatialContextCompleteEXT { nullptr };
+    PFN_xrDestroySpatialContextEXT xrDestroySpatialContextEXT { nullptr };
+    PFN_xrCreateSpatialDiscoverySnapshotAsyncEXT xrCreateSpatialDiscoverySnapshotAsyncEXT { nullptr };
+    PFN_xrCreateSpatialDiscoverySnapshotCompleteEXT xrCreateSpatialDiscoverySnapshotCompleteEXT { nullptr };
+    PFN_xrQuerySpatialComponentDataEXT xrQuerySpatialComponentDataEXT { nullptr };
+    PFN_xrDestroySpatialSnapshotEXT xrDestroySpatialSnapshotEXT { nullptr };
+    PFN_xrGetSpatialBufferVector2fEXT xrGetSpatialBufferVector2fEXT { nullptr };
+    PFN_xrCreateSpatialUpdateSnapshotEXT xrCreateSpatialUpdateSnapshotEXT { nullptr };
+    PFN_xrDestroySpatialEntityEXT xrDestroySpatialEntityEXT { nullptr };
+#endif
+#if defined(XR_EXT_spatial_anchor)
+    PFN_xrCreateSpatialAnchorEXT xrCreateSpatialAnchorEXT { nullptr };
+#endif
 };
 
 class OpenXRExtensions final {
@@ -83,6 +104,7 @@ public:
 
     bool loadMethods(XrInstance);
     bool isExtensionSupported(std::span<const char>) const;
+    bool areAnchorExtensionsSupported() const;
     const OpenXRExtensionMethods& methods() const { return *m_methods; }
 
 private:

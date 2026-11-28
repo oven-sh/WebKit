@@ -62,6 +62,8 @@ static WPEInputHints toWPEInputHints(WebKitInputHints hints)
     unsigned wpeHints = 0;
     if (hints & WEBKIT_INPUT_HINT_SPELLCHECK)
         wpeHints |= WPE_INPUT_HINT_SPELLCHECK;
+    else
+        wpeHints |= WPE_INPUT_HINT_NO_SPELLCHECK;
     if (hints & WEBKIT_INPUT_HINT_LOWERCASE)
         wpeHints |= WPE_INPUT_HINT_LOWERCASE;
     if (hints & WEBKIT_INPUT_HINT_UPPERCASE_CHARS)
@@ -77,6 +79,30 @@ static WPEInputHints toWPEInputHints(WebKitInputHints hints)
     return static_cast<WPEInputHints>(wpeHints);
 }
 
+static WPEInputEnterKeyHint toWPEInputEnterKeyHint(WebKitInputEnterKeyHint hint)
+{
+    switch (hint) {
+    case WEBKIT_INPUT_ENTER_KEY_HINT_UNSPECIFIED:
+        return WPE_INPUT_ENTER_KEY_HINT_UNSPECIFIED;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_ENTER:
+        return WPE_INPUT_ENTER_KEY_HINT_ENTER;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_DONE:
+        return WPE_INPUT_ENTER_KEY_HINT_DONE;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_GO:
+        return WPE_INPUT_ENTER_KEY_HINT_GO;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_NEXT:
+        return WPE_INPUT_ENTER_KEY_HINT_NEXT;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_PREVIOUS:
+        return WPE_INPUT_ENTER_KEY_HINT_PREVIOUS;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_SEARCH:
+        return WPE_INPUT_ENTER_KEY_HINT_SEARCH;
+    case WEBKIT_INPUT_ENTER_KEY_HINT_SEND:
+        return WPE_INPUT_ENTER_KEY_HINT_SEND;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static void inputPurposeChangedCallback(WebKitInputMethodContextImplWPE* context)
 {
     wpe_input_method_context_set_input_purpose(context->priv->context.get(), toWPEInputPurpose(webkit_input_method_context_get_input_purpose(WEBKIT_INPUT_METHOD_CONTEXT(context))));
@@ -85,6 +111,11 @@ static void inputPurposeChangedCallback(WebKitInputMethodContextImplWPE* context
 static void inputHintsChangedCallback(WebKitInputMethodContextImplWPE* context)
 {
     wpe_input_method_context_set_input_hints(context->priv->context.get(), toWPEInputHints(webkit_input_method_context_get_input_hints(WEBKIT_INPUT_METHOD_CONTEXT(context))));
+}
+
+static void enterKeyHintChangedCallback(WebKitInputMethodContextImplWPE* context)
+{
+    wpe_input_method_context_set_enter_key_hint(context->priv->context.get(), toWPEInputEnterKeyHint(webkit_input_method_context_get_enter_key_hint(WEBKIT_INPUT_METHOD_CONTEXT(context))));
 }
 
 static void wpeIMContextPreeditStartCallback(WebKitInputMethodContextImplWPE* context)
@@ -197,9 +228,13 @@ WebKitInputMethodContext* webkitInputMethodContextImplWPENew(WPEView *view)
 
     g_signal_connect_swapped(context, "notify::input-purpose", G_CALLBACK(inputPurposeChangedCallback), context);
     g_signal_connect_swapped(context, "notify::input-hints", G_CALLBACK(inputHintsChangedCallback), context);
+    g_signal_connect_swapped(context, "notify::enter-key-hint", G_CALLBACK(enterKeyHintChangedCallback), context);
 
     auto* priv = WEBKIT_INPUT_METHOD_CONTEXT_IMPL_WPE(context)->priv;
     priv->context = adoptGRef(wpe_input_method_context_new(view) );
+
+    // Push the current hints so that the platform context starts with spell checking off.
+    inputHintsChangedCallback(WEBKIT_INPUT_METHOD_CONTEXT_IMPL_WPE(context));
 
     g_signal_connect_object(priv->context.get(), "preedit-started", G_CALLBACK(wpeIMContextPreeditStartCallback), context, G_CONNECT_SWAPPED);
     g_signal_connect_object(priv->context.get(), "preedit-changed", G_CALLBACK(wpeIMContextPreeditChangedCallback), context, G_CONNECT_SWAPPED);

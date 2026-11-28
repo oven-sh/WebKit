@@ -32,9 +32,6 @@ using Typed::ExternalKind;
 using Typed::GeneratorStepCheck;
 using Typed::GeneratorStepStatus;
 using Typed::ImportPhase;
-using Typed::JSONMemberSearch;
-using Typed::JSONOutcome;
-using Typed::JSONPosition;
 using Typed::LayoutKind;
 using Typed::MethodKind;
 using Typed::ModuleExportKind;
@@ -57,7 +54,6 @@ using Typed::TypeSiteKind;
 template<typename T>
 inline constexpr bool isImageRecord = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T> && std::has_unique_object_representations_v<T>;
 
-// A number under 2^24 in a table of the image.
 struct Number24 {
     static constexpr uint32_t max = (1u << 24) - 1;
 
@@ -75,7 +71,6 @@ struct Number24 {
 static_assert(sizeof(Number24) == 3 && alignof(Number24) == 1 && isImageRecord<Number24>);
 static_assert(Number24(0xabcdef) == 0xabcdefu && Number24(Number24::max) == Number24::max && !Number24());
 
-// Lies at any address, so a record of these and of Number24 has no padding.
 struct Number32 {
     constexpr Number32() = default;
     explicit constexpr Number32(uint32_t number)
@@ -98,7 +93,7 @@ static_assert(sizeof(SlotRepresentation) == sizeof(uint8_t));
 static_assert(sizeof(MethodKind) == sizeof(uint8_t));
 static_assert(sizeof(CellTestKind) == sizeof(uint8_t));
 static_assert(sizeof(PrimitiveSet) == sizeof(uint16_t));
-static_assert(sizeof(ObjectMutation) == sizeof(uint16_t));
+static_assert(sizeof(ObjectMutation) == sizeof(uint8_t));
 static_assert(EvaluationState { } == EvaluationState::SeenTwice);
 
 } } // namespace JSC::AOT

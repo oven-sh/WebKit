@@ -1,0 +1,20 @@
+# Object.defineProperty(Number.prototype, "name", descriptor); sink(typeof given.constructor): the getter would get the answer's prototype as `this`, and nobody follows it there.
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "constructor"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v0 key="descriptor" [isFreeName]
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Builtin builtin=NumberPrototype
+    v6 = String string="name"
+    v7 = Call v4, v3, v5, v6, v2 calleeName="Object.defineProperty"
+    v8 = PropGet v1 key="constructor"
+    v9 = TypeOf v8
+    Return v9
+}

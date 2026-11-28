@@ -1,0 +1,292 @@
+# A true result of `$isPlainHeirOf` makes a promise about the subclasses of the queried class:
+# none of their prototypes holds an accessor under a name that is a field of both the object and the queried class.
+# With testing=CheckWalkAtRunTime the true result is checked against the objects themselves.
+# The run-time check of what is between an object and the first class prototype continues up to the prototype of the queried class.
+# A class prototype on the way is queried only for an accessor, under the names of the object's own fields that the queried class also has.
+# An object that belongs to no class is queried in the same way as the objects below the first class prototype.
+# The check must not fail for a correct program. The cases: a field of a subclass that shadows an accessor of the library above it (`listening`); a method of a subclass under the name of a field;
+# an accessor under another name; an accessor of a subclass under a name that a store has appended to the queried class alone (`extra`: every group of results queries `grown`);
+# an object that the queried class itself has constructed (the result that is printed on a line by itself).
+# Fault injection, testing=AssumeGuardsAndFacts: the entry check assumes that its guards hold. With that fault alone it silently returns true (BITES).
+# The objects are created before the mutation. A store in a constructor after it has a run-time check of its own (for a store by name that is emitted as a store into a slot), which would fail first.
+# What the check does not see: an accessor that a class declares in its body while its prototype has not reified its members yet. The check verifies the guards' half, not the walk's list.
+# The proof-checks option (--aot-harden=proof-checks) ships in the hardened flavor and does not pay for this traversal.
+# function Base() { this.state = 1; }
+# Base.prototype.end = function () { return 1; };
+# Object.defineProperty(Base.prototype, "listening", { get: function () { return 0; }, configurable: true });
+# class Heir extends Base { listening = 5; }
+# class Lower extends Heir { }
+# class Grown extends Base { get extra() { return 3; } }
+# function stamp(object) { object.extra = 5; return object; }
+# function ask(object) { return $isPlainHeirOf(object, Base) ? "yes " + object.state : "no " + object.state; }            in a file of the library
+# const Bases = keep(Base), Heirs = keep(Heir), Lowers = keep(Lower), Growns = keep(Grown), asks = keep(ask);
+# const base = stamp(new Base()), heir = new Heirs(), lower = new Lowers(), grown = new Growns();
+# print(asks(base), "|", asks(heir), "|", asks(lower), "|", asks(grown));
+# lay(Heirs.prototype, Lowers.prototype, Bases.prototype, Growns.prototype);
+# print(asks(base));
+# print(asks(base), "|", asks(heir), "|", asks(lower), "|", asks(grown));
+# RUN(QUIET): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; lay = function () { };
+# QUIET: yes 1 | yes 1 | yes 1 | yes 1
+# QUIET-NEXT: yes 1
+# QUIET-NEXT: yes 1 | yes 1 | yes 1 | yes 1
+# QUIET-NEXT: exited with 0
+# RUN(APPENDEDANDITSPROTOTYPEHASMADEITSPARTS): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; lay = function (heir, lower, base, grown) { Object.getOwnPropertyNames(grown); grown.touched = 1; delete grown.touched; };
+# APPENDEDANDITSPROTOTYPEHASMADEITSPARTS: yes 1 | yes 1 | yes 1 | yes 1
+# APPENDEDANDITSPROTOTYPEHASMADEITSPARTS-NEXT: yes 1
+# APPENDEDANDITSPROTOTYPEHASMADEITSPARTS-NEXT: yes 1 | yes 1 | yes 1 | yes 1
+# APPENDEDANDITSPROTOTYPEHASMADEITSPARTS-NEXT: exited with 0
+# RUN(HEARD): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# HEARD: yes 1 | yes 1 | yes 1 | yes 1
+# HEARD-NEXT: yes 1
+# HEARD-NEXT: yes 1 | no 1 | no 1 | yes 1
+# HEARD-NEXT: exited with 0
+# RUN(METHODUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { heir.state = function () { }; };
+# METHODUNDERTHELIE: yes 1 | yes 1 | yes 1 | yes 1
+# METHODUNDERTHELIE-NEXT: yes 1
+# METHODUNDERTHELIE-NEXT: yes 1 | yes 1 | yes 1 | yes 1
+# METHODUNDERTHELIE-NEXT: exited with 0
+# RUN(OTHERNAMEUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "other", { get() { return 7; }, set(value) { }, configurable: true }); };
+# OTHERNAMEUNDERTHELIE: yes 1 | yes 1 | yes 1 | yes 1
+# OTHERNAMEUNDERTHELIE-NEXT: yes 1
+# OTHERNAMEUNDERTHELIE-NEXT: yes 1 | yes 1 | yes 1 | yes 1
+# OTHERNAMEUNDERTHELIE-NEXT: exited with 0
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# BITES: yes 1 | yes 1 | yes 1 | yes 1
+# BITES-NEXT: yes 1
+# BITES-NEXT: yes 1 | yes 1 | yes 1 | yes 1
+# BITES-NEXT: exited with 0
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# ASKEDLIE: yes 1 | yes 1 | yes 1 | yes 1
+# ASKEDLIE-NEXT: yes 1
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: the plain instance check passed, but the prototype of a subclass has an accessor for the field 'state'
+# RUN(ASKEDLIEONELEVELDOWN): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(lower, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# ASKEDLIEONELEVELDOWN: yes 1 | yes 1 | yes 1 | yes 1
+# ASKEDLIEONELEVELDOWN-NEXT: yes 1
+# ASKEDLIEONELEVELDOWN-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIEONELEVELDOWN-NEXT: the plain instance check passed, but the prototype of a subclass has an accessor for the field 'state'
+# RUN(BETWEENCLASSESUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.setPrototypeOf(heir, { state: 9, __proto__: base }); };
+# BETWEENCLASSESUNDERTHELIE: yes 1 | yes 1 | yes 1 | yes 1
+# BETWEENCLASSESUNDERTHELIE-NEXT: yes 1
+# BETWEENCLASSESUNDERTHELIE-NEXT: bun: internal AOT error: property lookup check failed
+# BETWEENCLASSESUNDERTHELIE-NEXT: the plain instance check passed, but an object between the instance and the prototype of its class has a value for the field 'state'
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="state" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+layout L1 kind=Instance name="Heir" module=m0 position=198 base=L0 constructor=f6 fields=[{key="listening" declared={type=anything} flags=[IsRequired]}, {key="state" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] place=198 ownFieldCount=1
+layout L2 kind=Instance name="Lower" module=m0 position=241 base=L1 constructor=f7 fields=[{key="listening" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L1 originField=0}, {key="state" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L1] flags=[HasHeritage] place=241
+layout L3 kind=Instance name="Grown" module=m0 position=270 base=L0 constructor=f8 fields=[{key="state" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] place=270
+layout L4 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=44
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=52
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=60
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = GetModuleVariable variable=g0 @36
+    v5 = PropGet v4 key="prototype" @36
+    v6 = NewClosure function=f4 @57
+    PropSet v5, v6 key="end" @41
+    v8 = Builtin builtin=Object @84
+    v9 = Builtin builtin=ObjectDefineProperty @84
+    v10 = GetModuleVariable variable=g0 @106
+    v11 = PropGet v10 key="prototype" @106
+    v12 = String string="listening" @122
+    v13 = NewClosure function=f5 @142
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @142
+    v15 = NewObject layout=L4 @137
+    PropDefine v15, v14 key="get" @137
+    v17 = Boolean boolean=true @183
+    v18 = Convert v17 declared={type=undefined|boolean flags=[IsExpected]} @183
+    PropDefine v15, v18 key="configurable" @169
+    v20 = FinishObject v15 @135
+    v21 = Call v9, v8, v11, v12, v20 calleeName="Object.defineProperty" @91
+    v22 = GetModuleVariable variable=g0 @211
+    v23 = ResolveHeritage v22 @211
+    v24 = NewClosure function=f6 @192
+    v25 = NewClass v24, v22, v23 layout=L1 @192
+    PutModuleVariable v25 variable=g1 @192
+    v27 = FinishClass v25 layout=L1 @192
+    v28 = Convert v27 declared={type=f6 flags=[IsFromCompiler]} @192
+    v29 = Convert v27 declared={type=f6 flags=[IsFromCompiler]} @192
+    v30 = ResolveHeritage v29 @255
+    v31 = NewClosure function=f7 @235
+    v32 = NewClass v31, v29, v30 layout=L2 @235
+    PutModuleVariable v32 variable=g2 @235
+    v34 = FinishClass v32 layout=L2 @235
+    v35 = Convert v34 declared={type=f7 flags=[IsFromCompiler]} @235
+    v36 = Convert v34 declared={type=f7 flags=[IsFromCompiler]} @235
+    v37 = GetModuleVariable variable=g0 @284
+    v38 = ResolveHeritage v37 @284
+    v39 = NewClosure function=f8 @264
+    v40 = NewClass v39, v37, v38 layout=L3 @264
+    PutModuleVariable v40 variable=g3 @264
+    v42 = NewClosure function=f9 @295
+    DefineMethod v40, v42 layout=L3 methodKind=Getter key="extra" @295
+    v44 = FinishClass v40 layout=L3 @264
+    v45 = Convert v44 declared={type=f8 flags=[IsFromCompiler]} @264
+    v46 = Convert v44 declared={type=f8 flags=[IsFromCompiler]} @264
+    v47 = Builtin builtin=GlobalThis @502
+    v48 = PropGet v47 key="keep" [isFreeName] @502
+    v49 = GetModuleVariable variable=g0 @507
+    v50 = Call v48, -, v49 calleeName="keep" @502
+    v51 = Builtin builtin=GlobalThis @522
+    v52 = PropGet v51 key="keep" [isFreeName] @522
+    v53 = Call v52, -, v29 calleeName="keep" @522
+    v54 = Builtin builtin=GlobalThis @543
+    v55 = PropGet v54 key="keep" [isFreeName] @543
+    v56 = Call v55, -, v36 calleeName="keep" @543
+    v57 = Builtin builtin=GlobalThis @565
+    v58 = PropGet v57 key="keep" [isFreeName] @565
+    v59 = Call v58, -, v46 calleeName="keep" @565
+    v60 = Builtin builtin=GlobalThis @585
+    v61 = PropGet v60 key="keep" [isFreeName] @585
+    v62 = Call v61, -, v3 calleeName="keep" @585
+    v63 = GetModuleVariable variable=g0 @619
+    v64 = Construct v63 calleeName="Base" @619
+    v65 = Call v1, -, v64 calleeName="stamp" @609
+    v66 = Construct v53 calleeName="Heirs" @639
+    v67 = Construct v56 calleeName="Lowers" @660
+    v68 = Construct v59 calleeName="Growns" @682
+    v69 = Builtin builtin=GlobalThis @692
+    v70 = PropGet v69 key="print" [isFreeName] @692
+    v71 = Call v62, -, v65 calleeName="asks" @698
+    v72 = String string="|" @710
+    v73 = Call v62, -, v66 calleeName="asks" @715
+    v74 = String string="|" @727
+    v75 = Call v62, -, v67 calleeName="asks" @732
+    v76 = String string="|" @745
+    v77 = Call v62, -, v68 calleeName="asks" @750
+    v78 = Call v70, -, v71, v72, v73, v74, v75, v76, v77 calleeName="print" @692
+    v79 = Builtin builtin=GlobalThis @764
+    v80 = PropGet v79 key="lay" [isFreeName] @764
+    v81 = PropGet v53 key="prototype" @768
+    v82 = PropGet v56 key="prototype" @785
+    v83 = PropGet v50 key="prototype" @803
+    v84 = PropGet v59 key="prototype" @820
+    v85 = Call v80, -, v81, v82, v83, v84 calleeName="lay" @764
+    v86 = Builtin builtin=GlobalThis @839
+    v87 = PropGet v86 key="print" [isFreeName] @839
+    v88 = Call v62, -, v65 calleeName="asks" @845
+    v89 = Call v87, -, v88 calleeName="print" @839
+    v90 = Builtin builtin=GlobalThis @858
+    v91 = PropGet v90 key="print" [isFreeName] @858
+    v92 = Call v62, -, v65 calleeName="asks" @864
+    v93 = String string="|" @876
+    v94 = Call v62, -, v66 calleeName="asks" @881
+    v95 = String string="|" @893
+    v96 = Call v62, -, v67 calleeName="asks" @898
+    v97 = String string="|" @911
+    v98 = Call v62, -, v68 calleeName="asks" @916
+    v99 = Call v91, -, v92, v93, v94, v95, v96, v97, v98 calleeName="print" @858
+    v100 = Undefined @858
+    Return v100 @858
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @31
+    PropSet v0, v1 key="state" @18
+    v3 = Undefined @18
+    Return v3 @18
+}
+function f2 name="stamp" module=m0 position=319 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=5 @359
+    PropSet v0, v1 key="extra" @344
+    Return v0 @369
+}
+function f3 name="ask" module=m2 position=379 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @409
+    v2 = Undefined @409
+    v3 = GetModuleVariable variable=g0 @432
+    v4 = IsPlainHeirOf v0, v3 @409
+    v5 = ToBoolean v4 @409
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @409
+  b1(v6):
+    v7 = String string="yes " @440
+    v8 = PropGet v0 key="state" @449
+    v9 = Add v7, v8 @449
+    Jump -> next b3(v9) @449
+  b2(v10):
+    v11 = String string="no " @464
+    v12 = PropGet v0 key="state" @472
+    v13 = Add v11, v12 @472
+    Jump -> next b3(v13) @472
+  b3(v14):
+    Return v14 @472
+}
+function f4 module=m2 position=57 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @78
+    Return v0 @78
+}
+function f5 name="get" module=m2 position=142 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer @163
+    Return v0 @163
+}
+function f6 name="Heir" module=m0 position=198 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @198
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @198
+    v5 = Convert v4 declared={type=L1} @198
+    v6 = CallDirect v5 function=f10 @198
+    Return v5 @198
+}
+function f7 name="Lower" module=m0 position=241 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @241
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @241
+    v5 = Convert v4 declared={type=L2} @241
+    Return v5 @241
+}
+function f8 name="Grown" module=m0 position=270 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @270
+    v4 = SuperConstructList v3, v1, v2 layout=L3 @270
+    v5 = Convert v4 declared={type=L3} @270
+    Return v5 @270
+}
+function f9 name="extra" module=m0 position=291 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=3 @312
+    Return v0 @312
+}
+function f10 module=m2 position=198 kind=Initializer role=Library flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @198
+    v2 = Integer integer=5 @230
+    PropDefine v1, v2 key="listening" @218
+    v4 = Undefined @198
+    Return v4 @198
+}
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f13]
+function f15 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f15 visibility=Private

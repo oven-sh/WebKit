@@ -1,0 +1,25 @@
+# A key that nobody knows may lay any name on the global object.
+# OPTIONS: exclude=CodeOutsideImage,UnlistedGlobals
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 callers-known
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="key" [isFreeName]
+    v3 = PropGet v1 key="print" [isFreeName]
+    v4 = Call v3, - calleeName="print"
+    ElemSet v1, v4, v4 mode=Strict
+    v6 = PropGet v1 key="define" [isFreeName]
+    v7 = Call v6, -, v0 calleeName="define"
+    v8 = Integer integer=1
+    v9 = Call v0, -, v8 calleeName="factory"
+    Return
+}
+function f1 name="factory" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

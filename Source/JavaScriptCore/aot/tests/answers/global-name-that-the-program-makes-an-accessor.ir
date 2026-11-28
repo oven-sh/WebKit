@@ -1,0 +1,37 @@
+# shared = 1; Object.defineProperty(globalThis, "shared", { get() { return 2; }, configurable: true });
+# function read() { return shared }  publish(read)
+# RUN(SHELL): run-in-shell globalThis.publish = read => { print(read()); };
+# SHELL: 2
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    PropSet v0, v1 key="shared" mode=Sloppy [isFreeName]
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = String string="shared"
+    v6 = NewObject layout=L0
+    v7 = NewClosure function=f2
+    PropDefine v6, v7 key="get"
+    v9 = Boolean boolean=true
+    PropDefine v6, v9 key="configurable"
+    v11 = FinishObject v6
+    v12 = Call v4, v3, v0, v5, v11 calleeName="Object.defineProperty"
+    v13 = PropGet v0 key="publish" [isFreeName]
+    v14 = NewClosure function=f1
+    v15 = Call v13, -, v14
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="shared" [isFreeName]
+    Return v1
+}
+function f2 name="get" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

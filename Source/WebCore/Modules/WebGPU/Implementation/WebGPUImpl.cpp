@@ -34,7 +34,6 @@
 #include "WebGPUImageCopyTextureTagged.h"
 #include "WebGPUPresentationContextDescriptor.h"
 #include <WebCore/ColorSpace.h>
-#include <WebCore/GraphicsContext.h>
 #include <WebCore/IOSurface.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/IntSize.h>
@@ -54,6 +53,11 @@ WebGPUIntegrationImpl::WebGPUIntegrationImpl(Ref<::WebGPU::Instance>&& instance)
 
 WebGPUIntegrationImpl::~WebGPUIntegrationImpl() = default;
 
+void WebGPUIntegrationImpl::destroy()
+{
+    m_backing->destroy();
+}
+
 void WebGPUIntegrationImpl::requestAdapter(const WebGPU::RequestAdapterOptions& options, CompletionHandler<void(RefPtr<WebGPU::Adapter>&&)>&& callback)
 {
     auto backingOptions = options;
@@ -69,8 +73,8 @@ RefPtr<WebGPU::PresentationContext> WebGPUIntegrationImpl::createPresentationCon
     Ref compositorIntegration = downcast<WebGPUCompositorIntegrationImpl>(presentationContextDescriptor.compositorIntegration);
 
     RefPtr result = m_backing->createPresentationContext({
-        .registerCompositorIntegration = [&](auto&& renderBuffersWereRecreated, auto&& onSubmittedWorkScheduled) {
-            compositorIntegration->registerCallbacks(WTF::move(renderBuffersWereRecreated), WTF::move(onSubmittedWorkScheduled));
+        .registerCompositorIntegration = [&](auto&& renderBuffersWereRecreated, auto&& onSubmittedWorkScheduled, auto&& renderBufferWasReplaced) {
+            compositorIntegration->registerCallbacks(WTF::move(renderBuffersWereRecreated), WTF::move(onSubmittedWorkScheduled), WTF::move(renderBufferWasReplaced));
         },
     });
     if (result)
@@ -84,7 +88,7 @@ RefPtr<WebGPUCompositorIntegration> WebGPUIntegrationImpl::createCompositorInteg
 }
 
 #if ENABLE(VIDEO)
-static ::WebGPU::VideoFrameRotation LEGACY_NODELETE convertToAPI(VideoFrameRotation rotation)
+NODELETE static ::WebGPU::VideoFrameRotation convertToAPI(VideoFrameRotation rotation)
 {
     switch (rotation) {
     case VideoFrameRotation::None:
@@ -110,7 +114,7 @@ struct SourceTextureFormat {
     bool hasAlpha;
 };
 
-static std::optional<SourceTextureFormat> LEGACY_NODELETE sourceTextureFormat(PixelFormat pixelFormat)
+NODELETE static std::optional<SourceTextureFormat> sourceTextureFormat(PixelFormat pixelFormat)
 {
     switch (pixelFormat) {
     case PixelFormat::RGBA8:
@@ -159,15 +163,19 @@ void WebGPUIntegrationImpl::copyExternalImageToTexture(WebGPU::Queue& queue, con
 
 #if ENABLE(VIDEO)
     if (source.videoSource) {
-        // The decoded frame the GPU process resolved for us. Its extent, its crop and its primaries
-        // all travel with the frame, so the backing queue reads them off it rather than being told
-        // here; and a decoded frame is opaque, so its alpha is replaced with 1 the way an external
+        // The decoded frame the GPU process resolved for us. Its crop and its primaries travel
+        // with the frame, so the backing queue reads them off it rather than being told here;
+        // and a decoded frame is opaque, so its alpha is replaced with 1 the way an external
         // texture's is.
         auto* pixelBuffer = std::get_if<RetainPtr<CVPixelBufferRef>>(&*source.videoSource);
         if (!pixelBuffer || !*pixelBuffer)
             return;
 
         backingSource.pixelBuffer = *pixelBuffer;
+        backingSource.sourceSize = {
+            .width = static_cast<uint32_t>(std::max(0, source.videoSourceSize.width())),
+            .height = static_cast<uint32_t>(std::max(0, source.videoSourceSize.height())),
+        };
         // The display transform is the one thing about the frame its pixel buffer does not carry.
         backingSource.pixelBufferRotation = convertToAPI(source.videoSourceRotation);
         backingSource.pixelBufferIsMirrored = source.videoSourceIsMirrored;
@@ -237,150 +245,6 @@ void WebGPUIntegrationImpl::updateExternalTexture(WebGPU::Device&, const WebGPU:
     RELEASE_ASSERT_NOT_REACHED();
 }
 #endif
-
-void WebGPUIntegrationImpl::paintToCanvas(WebCore::NativeImage& image, const WebCore::IntSize& canvasSize, WebCore::GraphicsContext& context)
-{
-    auto imageSize = image.size();
-    FloatRect canvasRect(FloatPoint(), canvasSize);
-    GraphicsContextStateSaver stateSaver(context);
-    context.setImageInterpolationQuality(InterpolationQuality::DoNotInterpolate);
-    context.drawNativeImage(image, canvasRect, FloatRect(FloatPoint(), imageSize), { CompositeOperator::Copy });
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPUCompositorIntegration&) const
-{
-    return true;
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::Buffer& buffer) const
-{
-    return buffer.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::Adapter& adapter) const
-{
-    return adapter.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::BindGroup& bindGroup) const
-{
-    return bindGroup.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::BindGroupLayout& bindGroupLayout) const
-{
-    return bindGroupLayout.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::CommandBuffer& commandBuffer) const
-{
-    return commandBuffer.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::CommandEncoder& commandEncoder) const
-{
-    return commandEncoder.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::ComputePassEncoder& computePassEncoder) const
-{
-    return computePassEncoder.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::ComputePipeline& computePipeline) const
-{
-    return computePipeline.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::Device& device) const
-{
-    return device.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::ExternalTexture& externalTexture) const
-{
-    return externalTexture.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::PipelineLayout& pipelineLayout) const
-{
-    return pipelineLayout.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::PresentationContext& presentationContext) const
-{
-    return presentationContext.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::QuerySet& querySet) const
-{
-    return querySet.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::Queue& queue) const
-{
-    return queue.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::RenderBundleEncoder& renderBundleEncoder) const
-{
-    return renderBundleEncoder.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::RenderBundle& renderBundle) const
-{
-    return renderBundle.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::RenderPassEncoder& renderPassEncoder) const
-{
-    return renderPassEncoder.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::RenderPipeline& renderPipeline) const
-{
-    return renderPipeline.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::Sampler& sampler) const
-{
-    return sampler.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::ShaderModule& shaderModule) const
-{
-    return shaderModule.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::Texture& texture) const
-{
-    return texture.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::TextureView& textureView) const
-{
-    return textureView.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::XRBinding& binding) const
-{
-    return binding.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::XRSubImage& subImage) const
-{
-    return subImage.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::XRProjectionLayer& layer) const
-{
-    return layer.isValid();
-}
-
-bool WebGPUIntegrationImpl::isValid(const WebGPU::XRView& view) const
-{
-    return view.isValid();
-}
 
 } // namespace WebCore
 

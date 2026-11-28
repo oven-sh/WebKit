@@ -34,7 +34,7 @@ class LegacyRenderSVGEllipse final : public LegacyRenderSVGShape {
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGEllipse);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGEllipse);
 public:
-    LegacyRenderSVGEllipse(SVGGraphicsElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGEllipse(SVGGraphicsElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGEllipse();
 
 private:
@@ -50,7 +50,7 @@ private:
     void calculateRadiiAndCenter();
 
 private:
-    bool LEGACY_NODELETE canUseStrokeHitTestFastPath() const;
+    NODELETE bool canUseStrokeHitTestFastPath() const;
 
     FloatPoint m_center;
     FloatSize m_radii;

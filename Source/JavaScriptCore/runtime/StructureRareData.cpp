@@ -163,7 +163,7 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
             giveUpOnSpecialPropertyCache(key);
         return;
     }
-    // A class makes its static members when one of them is first asked for. Until then it shares a Structure that lists none of them with other classes.
+    // A class creates its static members the first time one of them is requested. Until then it shares a Structure that lists none of them with other classes.
     if (ownStructure->typeInfo().type() == CompiledClosureType) [[unlikely]] {
         giveUpOnSpecialPropertyCache(key);
         return;
@@ -205,6 +205,12 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
 
         auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, nullptr);
         if (!cacheStatus) {
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && (key == CachedSpecialPropertyKey::ToPrimitive || key == CachedSpecialPropertyKey::ValueOf || key == CachedSpecialPropertyKey::ToString) && ownStructure->isDictionary() && !ownStructure->hasBeenFlattenedBefore() && slot.thisValue().isObject() && asObject(slot.thisValue())->structure() == ownStructure) {
+                ownStructure->flattenDictionaryStructure(vm, asObject(slot.thisValue()));
+                return;
+            }
+#endif
             giveUpOnSpecialPropertyCache(key);
             return;
         }

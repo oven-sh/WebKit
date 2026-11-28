@@ -9,7 +9,7 @@ function xfo_simple_tests({ headerValue, headerValue2, cspValue, sameOriginAllow
   });
 
   simpleXFOTestsInner({
-    urlPrefix: "http://{{hosts[alt][]}}:{{ports[http][0]}}",
+    urlPrefix: "http://{{domains[www]}}:{{ports[http][0]}}",
     allowed: crossOriginAllowed,
     headerValue,
     headerValue2,
@@ -89,7 +89,6 @@ function xfo_test({ url, check, message }) {
     }
 
     document.body.append(i);
-    t.add_cleanup(() => i.remove());
   }, message);
 }
 

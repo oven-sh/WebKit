@@ -125,8 +125,8 @@ struct CSSCounterStyleDescriptors {
             && m_explicitlySetDescriptors == other.m_explicitlySetDescriptors;
     }
     void setExplicitlySetDescriptors(const StyleProperties&);
-    bool LEGACY_NODELETE isValid() const;
-    WEBCORE_EXPORT static bool LEGACY_NODELETE areSymbolsValidForSystem(System, size_t symbolsCount, size_t additiveSymbolsCount);
+    NODELETE bool isValid() const;
+    NODELETE WEBCORE_EXPORT static bool areSymbolsValidForSystem(System, size_t symbolsCount, size_t additiveSymbolsCount);
 
     void setName(Name);
     void setSystem(System);
@@ -140,7 +140,6 @@ struct CSSCounterStyleDescriptors {
     void setSymbols(Vector<Symbol>);
     void setAdditiveSymbols(AdditiveSymbols);
 
-    String LEGACY_NODELETE nameCSSText() const;
     String systemCSSText() const;
     String negativeCSSText() const;
     String prefixCSSText() const;
@@ -152,7 +151,7 @@ struct CSSCounterStyleDescriptors {
     String additiveSymbolsCSSText() const;
 
     Name m_name;
-    System m_system;
+    System m_system { System::Symbolic };
     NegativeSymbols m_negativeSymbols;
     Symbol m_prefix;
     Symbol m_suffix;
@@ -161,9 +160,9 @@ struct CSSCounterStyleDescriptors {
     Name m_fallbackName;
     Vector<Symbol> m_symbols;
     AdditiveSymbols m_additiveSymbols;
-    SpeakAs m_speakAs;
+    SpeakAs m_speakAs { SpeakAs::Auto };
     Name m_extendsName;
-    int m_fixedSystemFirstSymbolValue;
+    int m_fixedSystemFirstSymbolValue { 1 };
     OptionSet<ExplicitlySetDescriptors> m_explicitlySetDescriptors;
     bool m_isExtendedResolved { false };
 };

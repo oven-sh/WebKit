@@ -32,11 +32,11 @@
 
 namespace WebCore {
 
+class Color;
 class Document;
 class Element;
 class EventTarget;
 class SVGElement;
-class Settings;
 
 enum class AnimationImpact : uint8_t;
 enum class PaginationMode : uint8_t;
@@ -56,13 +56,14 @@ public:
     void adjustUsedUserSelect(Style::ComputedStyle&) const;
 
     static void adjustVisibilityForPseudoElement(Style::ComputedStyle&, const Element& host);
-    static void LEGACY_NODELETE adjustFirstLetterStyle(Style::ComputedStyle&);
-    static void LEGACY_NODELETE adjustFirstLineStyle(Style::ComputedStyle&);
+    NODELETE static void adjustFirstLetterStyle(Style::ComputedStyle&);
+    NODELETE static void adjustFirstLineStyle(Style::ComputedStyle&);
     static void adjustSVGElementStyle(Style::ComputedStyle&, const SVGElement&);
     static bool adjustEventListenerRegionTypesForRootStyle(Style::ComputedStyle&, const Document&);
     static void adjustColumnStylesForPaginationMode(Style::ComputedStyle&, PaginationMode);
     static void propagateToDocumentElementAndInitialContainingBlock(Update&, const Document&);
     static std::unique_ptr<Style::ComputedStyle> restoreUsedDocumentElementStyleToComputed(const Style::ComputedStyle&);
+    static bool shouldTreatAutoZIndexAsZero(const Style::ComputedStyle&);
 
     struct AdjustmentForTextAutosizing {
         std::optional<float> newFontSize;
@@ -74,8 +75,10 @@ public:
     static bool adjustForTextAutosizing(Style::ComputedStyle&, AdjustmentForTextAutosizing);
     static bool adjustForTextAutosizing(Style::ComputedStyle&, const Element&);
 
+    WEBCORE_EXPORT static void setOverrideBackgroundColorForTesting(Element&, std::optional<WebCore::Color>&&);
+
 private:
-    void LEGACY_NODELETE adjustDisplayContentsStyle(Style::ComputedStyle&) const;
+    NODELETE void adjustDisplayContentsStyle(Style::ComputedStyle&) const;
     void adjustForSiteSpecificQuirks(Style::ComputedStyle&) const;
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)

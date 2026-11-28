@@ -11,12 +11,28 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+enum class StopRequest : bool { IsAbsent, IsPending };
+CCallHelpers::Jump branchIfStopRequest(CCallHelpers&, StopRequest);
+
 class HintEmitter final : public OperationEmitter {
 public:
-    explicit HintEmitter(CodeGenerator&);
+    explicit HintEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateLoopHint(const ValueContext&);
-    void generateReleaseHint(const ValueContext&);
+    void generateEndCellLifetime(const ValueContext&);
+    void generateReleaseArray(const ValueContext&);
+    void generateReleaseList(const ValueContext&);
+    void generatePrefetchElements(const ValueContext&);
+    void generateGuessFailsUnasked(const ValueContext&);
+    void generateBeginEffectsCheck(const ValueContext&);
+    void generateCheckIterationRestart(const ValueContext&);
+    void generateCheckInlineeFallback(const ValueContext&);
+    void generateCheckReloadBypass(const ValueContext&);
+    void generateAskObjectAgain(const ValueContext&);
+    bool shouldEmitLifetimeEnds();
+    void emitLifetimeEnd(const OperationContext&, ValueID cell);
+    void noteThatCellIsLent(const ValueContext& made, CellPointer);
+    void crashIfLifetimeEnded(const OperationContext&, CellPointer);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:

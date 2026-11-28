@@ -37,10 +37,10 @@ class RenderButton final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderButton);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderButton);
 public:
-    RenderButton(HTMLFormControlElement&, Style::ComputedStyle&&);
+    RenderButton(HTMLFormControlElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderButton();
 
-    HTMLFormControlElement& LEGACY_NODELETE formControlElement() const;
+    NODELETE HTMLFormControlElement& formControlElement() const;
 
     bool canBeSelectionLeaf() const override;
 
@@ -55,11 +55,7 @@ public:
     void updateAnonymousChildStyle(Style::ComputedStyle&) const override;
 
     void setText(const String&);
-    String LEGACY_NODELETE text() const;
-
-#if PLATFORM(IOS_FAMILY)
-    void layout() override;
-#endif
+    NODELETE String text() const;
 
     RenderTextFragment* textRenderer() const { return m_buttonText.get(); }
 

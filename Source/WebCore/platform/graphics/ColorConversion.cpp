@@ -203,23 +203,24 @@ ExtendedSRGBA<float> ColorConversion<ExtendedSRGBA<float>, HWBA<float>>::convert
 
 // MARK: Lab conversions.
 
-constexpr float LABe = 216.0 / 24389.0;
-constexpr float LABk = 24389.0 / 27.0;
-
 XYZA<float, WhitePoint::D50> ColorConversion<XYZA<float, WhitePoint::D50>, Lab<float>>::convert(const Lab<float>& color)
 {
     auto [lightness, a, b, alpha] = color.resolved();
 
-    float f1 = (lightness + 16.0f) / 116.0f;
-    float f0 = f1 + (a / 500.0f);
-    float f2 = f1 - (b / 200.0f);
+    float lightness116 = lightness / 116.0f;
+    float a500 = a / 500.0f;
+    float b200 = b / 200.0f;
 
-    auto computeXAndZ = [](float t) {
+    float f1 = lightness116 + (16.0f / 116.0f);
+    float f0 = f1 + a500;
+    float f2 = f1 - b200;
+
+    auto computeXAndZ = [](float t, float linear) {
         float tCubed = t * t * t;
         if (tCubed > LABe)
             return tCubed;
 
-        return (116.0f * t - 16.0f) / LABk;
+        return linear * (116.0f / LABk);
     };
 
     auto computeY = [](float t) {
@@ -231,9 +232,9 @@ XYZA<float, WhitePoint::D50> ColorConversion<XYZA<float, WhitePoint::D50>, Lab<f
         return t / LABk;
     };
 
-    float x = D50WhitePoint[0] * computeXAndZ(f0);
+    float x = D50WhitePoint[0] * computeXAndZ(f0, lightness116 + a500);
     float y = D50WhitePoint[1] * computeY(lightness);
-    float z = D50WhitePoint[2] * computeXAndZ(f2);
+    float z = D50WhitePoint[2] * computeXAndZ(f2, lightness116 - b200);
 
     return { x, y, z, alpha };
 }
@@ -281,20 +282,6 @@ XYZA<float, WhitePoint::D65> ColorConversion<XYZA<float, WhitePoint::D65>, OKLab
     // matrix with any subsequent matrices in the conversion. This would mean teaching the main conversion about this matrix
     // and adding new logic for this transform.
 
-    // https://bottosson.github.io/posts/oklab/ with XYZ <-> LMS matrices recalculated for consistent reference white in https://github.com/w3c/csswg-drafts/issues/6642#issuecomment-943521484
-
-    constexpr ColorMatrix<3, 3> LinearLMSToXYZD65 {
-         1.2268798758459243, -0.5578149944602171,  0.2813910456659647,
-        -0.0405757452148008,  1.1122868032803170, -0.0717110580655164,
-        -0.0763729366746601, -0.4214933324022432,  1.5869240198367816,
-    };
-
-    constexpr ColorMatrix<3, 3> OKLabToNonLinearLMS {
-         1.0000000000000000,  0.3963377773761749,  0.2158037573099136,
-         1.0000000000000000, -0.1055613458156586, -0.0638541728258133,
-         1.0000000000000000, -0.0894841775298119, -1.2914855480194092,
-    };
-
     auto [lightness, a, b, alpha] = color.resolved();
 
     auto components = ColorComponents<float, 3> { lightness, a, b };
@@ -316,20 +303,6 @@ OKLab<float> ColorConversion<OKLab<float>, XYZA<float, WhitePoint::D65>>::conver
     // FIXME: This could be optimized for when we are not explicitly converting from XYZ-D65 by pre-multiplying the 'XYZD65ToLMS'
     // matrix with any previous matrices in the conversion. This would mean teaching the main conversion about this matrix
     // and adding new logic for this transform.
-
-    // https://bottosson.github.io/posts/oklab/ with XYZ <-> LMS matrices recalculated for consistent reference white in https://github.com/w3c/csswg-drafts/issues/6642#issuecomment-943521484
-
-    constexpr ColorMatrix<3, 3> XYZD65ToLinearLMS {
-        0.8190224379967030,  0.3619062600528904, -0.1288737815209879,
-        0.0329836539323885,  0.9292868615863434,  0.0361446663506424,
-        0.0481771893596242,  0.2642395317527308,  0.6335478284694309,
-    };
-
-    constexpr ColorMatrix<3, 3> NonLinearLMSToOKLab {
-        0.2104542683093140,  0.7936177747023054, -0.0040720430116193,
-        1.9779985324311684, -2.4285922420485799,  0.4505937096174110,
-        0.0259040424655478,  0.7827717124575296, -0.8086757549230774,
-    };
 
     auto [x, y, z, alpha] = color.resolved();
 
@@ -359,36 +332,74 @@ OKLab<float> ColorConversion<OKLab<float>, OKLCHA<float>>::convert(const OKLCHA<
 
 // MARK: Conversion functions for raw color components with associated color spaces.
 
+// MARK: Conversions for color types known only at runtime.
+
+// The index of the component of `outputCategories` analogous to component `index` of `inputCategories`, or 3 for alpha.
+static std::optional<unsigned> analogousComponentIndexForCategories(const ColorComponentCategories& outputCategories, const ColorComponentCategories& inputCategories, unsigned index)
+{
+    if (index == 3)
+        return 3;
+    if (!inputCategories[index])
+        return std::nullopt;
+    for (unsigned outputIndex = 0; outputIndex < 3; ++outputIndex) {
+        if (inputCategories[index] == outputCategories[outputIndex])
+            return outputIndex;
+    }
+    return std::nullopt;
+}
+
+void carryForwardMissingComponents(const ColorComponentCategories& inputCategories, const ColorComponents<float, 4>& input, const ColorComponentCategories& outputCategories, ColorComponents<float, 4>& output)
+{
+    // https://drafts.csswg.org/css-color-4/#interpolation-missing
+
+    bool hasAnalogousSet = false;
+    bool allAnalogousSetComponentsAreMissing = true;
+    for (unsigned index = 0; index < 4; ++index) {
+        if (analogousComponentIndexForCategories(outputCategories, inputCategories, index))
+            continue;
+        hasAnalogousSet = true;
+        if (!std::isnan(input[index]))
+            allAnalogousSetComponentsAreMissing = false;
+    }
+
+    if (hasAnalogousSet && allAnalogousSetComponentsAreMissing) {
+        for (unsigned index = 0; index < 4; ++index) {
+            if (!analogousComponentIndexForCategories(inputCategories, outputCategories, index))
+                output[index] = std::numeric_limits<float>::quiet_NaN();
+        }
+    }
+
+    for (unsigned index = 0; index < 4; ++index) {
+        if (auto outputIndex = analogousComponentIndexForCategories(outputCategories, inputCategories, index); outputIndex && std::isnan(input[index]))
+            output[*outputIndex] = std::numeric_limits<float>::quiet_NaN();
+    }
+}
+
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpaceName outputColorSpace)
 {
-    return callWithColorType<float>(inputColorSpace, [&]<typename InputColorType>() {
-        auto inputColor = makeFromComponents<InputColorType>(inputColorComponents);
-        return callWithColorType<float>(outputColorSpace, [&]<typename OutputColorType>() {
-            return asColorComponents(convertColor<OutputColorType>(inputColor).resolved());
-        });
+    return callWithColorType<float>(outputColorSpace, [&]<typename OutputColorType> {
+        return asColorComponents(convertColorComponents<OutputColorType>(inputColorSpace, inputColorComponents).resolved());
     });
 }
 
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, const ColorSpace& outputColorSpace)
 {
-#if USE(CG)
+#if ENABLE(DESTINATION_COLOR_SPACE_ARBITRARY_CONVERSION)
     return platformConvertColorComponents(inputColorSpace, inputColorComponents, outputColorSpace);
 #else
-    return callWithColorType(inputColorComponents, inputColorSpace, [outputColorSpace] (const auto& inputColor) {
-        if (outputColorSpace == ColorSpace::SRGB())
-            return asColorComponents(convertColor<SRGBA<float>>(inputColor).resolved());
-        if (outputColorSpace == ColorSpace::LinearSRGB())
-            return asColorComponents(convertColor<LinearSRGBA<float>>(inputColor).resolved());
+    if (outputColorSpace == ColorSpace::SRGB())
+        return asColorComponents(convertColorComponents<SRGBA<float>>(inputColorSpace, inputColorComponents).resolved());
+    if (outputColorSpace == ColorSpace::LinearSRGB())
+        return asColorComponents(convertColorComponents<LinearSRGBA<float>>(inputColorSpace, inputColorComponents).resolved());
 #if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
-        if (outputColorSpace == ColorSpace::DisplayP3())
-            return asColorComponents(convertColor<DisplayP3<float>>(inputColor).resolved());
-        if (outputColorSpace == ColorSpace::LinearDisplayP3())
-            return asColorComponents(convertColor<LinearDisplayP3<float>>(inputColor).resolved());
+    if (outputColorSpace == ColorSpace::DisplayP3())
+        return asColorComponents(convertColorComponents<DisplayP3<float>>(inputColorSpace, inputColorComponents).resolved());
+    if (outputColorSpace == ColorSpace::LinearDisplayP3())
+        return asColorComponents(convertColorComponents<LinearDisplayP3<float>>(inputColorSpace, inputColorComponents).resolved());
 #endif
 
-        ASSERT_NOT_REACHED();
-        return asColorComponents(convertColor<SRGBA<float>>(inputColor).resolved());
-    });
+    ASSERT_NOT_REACHED();
+    return asColorComponents(convertColorComponents<SRGBA<float>>(inputColorSpace, inputColorComponents).resolved());
 #endif
 }
 

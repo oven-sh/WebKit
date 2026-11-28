@@ -1,0 +1,54 @@
+# If a read off what `JSON.parse` answers found no layout and so gave nothing, the store of it would add nothing to the field, which would stay proven a string. If an object that is hung into the parsed value were forgotten there, the store through what is read back would miss its field
+# const box = { v: "s" }, o = { y: "s" }, d = JSON.parse("s");  function put(b, d) { b.v = d.a; }  function hang(d, o) { d.k = o; d.k.y = true; }  put(box, d); hang(d, o);
+# The result holds objects that code nobody has seen has made. A read off such an object gives anything. What is stored into one may come back out of any such read. The box itself has gone nowhere: its writers are still known.
+# RUN: summary f0
+# CHECK: call c0 v6 Builtin JSONParse (Constant string)
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known one-callee
+# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK: field L0.0 "v"
+# LINK-NOT: proven=string
+# LINK-NOT: proven=undefined|string
+# LINK: writers-known
+# LINK: field L1.0 "y"
+# LINK-NOT: proven=string
+# LINK: field L2.0 "end"
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="end" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=JSONParse [isNotReadFromHolder]
+    v6 = Call v5, -, v0
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v2, v6 calleeName="put"
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v6, v4 calleeName="hang"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v1 key="a"
+    PropSet v0, v2 key="v"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="hang" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="k"
+    v3 = PropGet v0 key="k"
+    v4 = Boolean boolean=true
+    PropSet v3, v4 key="y"
+    v6 = Undefined
+    Return v6
+}

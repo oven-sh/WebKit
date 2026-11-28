@@ -30,8 +30,7 @@
 #include "CSSImageValue.h"
 #include "DeprecatedCSSOMValue.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 Ref<InvalidImage> InvalidImage::create()
 {
@@ -49,22 +48,22 @@ void InvalidImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-ImageDrawResult InvalidImage::draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect&, const FloatRect&, ImageDrawingOptions, bool) const
+ImageDrawResult InvalidImage::draw(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect&, const FloatRect&, bool) const
 {
     return ImageDrawResult::DidNothing;
 }
 
-ImageDrawResult InvalidImage::drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImageDrawingOptions, bool) const
+ImageDrawResult InvalidImage::drawAsPattern(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, bool) const
 {
     return ImageDrawResult::DidNothing;
 }
 
-ImageDrawResult InvalidImage::drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect&, const FloatPoint&, const FloatSize&, const FloatSize&, ImageDrawingOptions, bool) const
+ImageDrawResult InvalidImage::drawTiled(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect&, const FloatPoint&, const FloatSize&, const FloatSize&, bool) const
 {
     return ImageDrawResult::DidNothing;
 }
 
-ImageDrawResult InvalidImage::drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImageDrawingOptions) const
+ImageDrawResult InvalidImage::drawNinePiece(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const NinePieceGeometry&) const
 {
     return ImageDrawResult::DidNothing;
 }
@@ -79,6 +78,4 @@ Ref<DeprecatedCSSOMValue> InvalidImage::computedStyleDeprecatedCSSOMValue(CSSVal
     return computedStyleValue(style)->createDeprecatedCSSOMWrapper(owner);
 }
 
-} // namespace Style
-} // namespace WebCore
-
+} // namespace WebCore::Style

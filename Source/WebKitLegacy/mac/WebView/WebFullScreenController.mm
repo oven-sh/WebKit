@@ -58,8 +58,7 @@ static WebCore::IntRect screenRectOfContents(WebCore::Element* element)
 {
     ASSERT(element);
     if (element->renderer() && element->renderer()->hasLayer() && element->renderer()->enclosingLayer()->isComposited()) {
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST WebCore::FloatQuad contentsBox = static_cast<WebCore::FloatRect>(element->renderer()->enclosingLayer()->backing()->contentsBox());
+        WebCore::FloatQuad contentsBox = static_cast<WebCore::FloatRect>(element->renderer()->enclosingLayer()->backing()->contentsBox());
         contentsBox = protect(element->renderer())->localToContainerQuad(contentsBox, nullptr);
         return protect(element->renderer()->view().frameView())->contentsToScreen(contentsBox.enclosingBoundingBox());
     }
@@ -473,7 +472,7 @@ static RetainPtr<NSWindow> createBackgroundFullscreenWindow(NSRect frame)
     return window;
 }
 
-static NSRect LEGACY_NODELETE windowFrameFromApparentFrames(NSRect screenFrame, NSRect initialFrame, NSRect finalFrame)
+NODELETE static NSRect windowFrameFromApparentFrames(NSRect screenFrame, NSRect initialFrame, NSRect finalFrame)
 {
     NSRect initialWindowFrame;
     if (!NSWidth(initialFrame) || !NSWidth(finalFrame) || !NSHeight(initialFrame) || !NSHeight(finalFrame))

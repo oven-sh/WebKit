@@ -46,6 +46,9 @@ SharedRoutine::Kind SharedRoutine::kind() const
         [](const MatchCodePointAgainstClassTable&) { return Kind::MatchCodePointAgainstClassTable; },
         [](const ClearCaptures&) { return Kind::ClearCaptures; },
         [](const FindFirstOfClass&) { return Kind::FindFirstOfClass; },
+        [](const FindFirstOfTwoUnits&) { return Kind::FindFirstOfTwoUnits; },
+        [](const FindFirstPairOfUnits&) { return Kind::FindFirstPairOfUnits; },
+        [](const FindEitherPrefix&) { return Kind::FindEitherPrefix; },
         [](const CanonicalEquivalence&) { return Kind::CanonicalEquivalence; });
 }
 
@@ -66,6 +69,15 @@ void add(Hasher& hasher, const SharedRoutine& routine)
         [](const SharedRoutine::ClearCaptures&) { },
         [&](const SharedRoutine::FindFirstOfClass& payload) {
             add(hasher, payload.words, payload.matchesAllNonASCII, payload.charSize);
+        },
+        [&](const SharedRoutine::FindFirstOfTwoUnits& payload) {
+            add(hasher, payload.charSize);
+        },
+        [&](const SharedRoutine::FindFirstPairOfUnits& payload) {
+            add(hasher, payload.charSize, payload.distance, payload.first, payload.second);
+        },
+        [&](const SharedRoutine::FindEitherPrefix& payload) {
+            add(hasher, payload.prefixLength);
         },
         [&](const SharedRoutine::CanonicalEquivalence& payload) {
             add(hasher, payload.mode);
@@ -92,6 +104,9 @@ bool canGenerateSharedRoutine(const SharedRoutine& routine)
         [](const SharedRoutine::MatchCodePointAgainstClassTable&) { return decodesSurrogatePairs && isSupportedCPU; },
         [](const SharedRoutine::ClearCaptures&) { return isX86_64(); },
         [](const SharedRoutine::FindFirstOfClass&) { return isSupportedCPU; },
+        [](const SharedRoutine::FindFirstOfTwoUnits&) { return isSupportedCPU; },
+        [](const SharedRoutine::FindFirstPairOfUnits&) { return isSupportedCPU; },
+        [](const SharedRoutine::FindEitherPrefix&) { return isSupportedCPU; },
         [](const SharedRoutine::CanonicalEquivalence&) { return comparesWideBackreferences && rangeHiEntriesAboveBMP().has_value(); });
 }
 
@@ -357,15 +372,23 @@ static void generateMatchCodePointAgainstClassTable(CCallHelpers& jit, const Sha
 static void generateClearCaptures(CCallHelpers& jit)
 {
 #if CPU(X86_64)
+    // Four captures at a time. The last four may include some that are cleared already. A string instruction has a higher startup cost.
     YarrJITDefaultRegisters regs;
-    jit.push(X86Registers::edi);
-    jit.push(X86Registers::ecx);
-    jit.getEffectiveAddress(MacroAssembler::BaseIndex(regs.output, MacroAssembler::s_scratchRegister, MacroAssembler::TimesOne), X86Registers::edi);
-    jit.move(regs.regT0, X86Registers::ecx);
-    jit.move(MacroAssembler::TrustedImm64(-1), X86Registers::eax);
-    jit.m_assembler.rep_stosq();
-    jit.pop(X86Registers::ecx);
-    jit.pop(X86Registers::edi);
+    constexpr auto next = MacroAssembler::s_scratchRegister;
+    constexpr FPRReg cleared = YarrJITDefaultRegisters::vectorInput0;
+    constexpr int32_t bytesPerIteration = 4 * sizeof(uint64_t);
+    auto clear = [&](MacroAssembler::RegisterID at) {
+        jit.m_assembler.movups_rm(cleared, 0, at);
+        jit.m_assembler.movups_rm(cleared, bytesPerIteration / 2, at);
+    };
+    jit.add64(regs.output, next);
+    jit.getEffectiveAddress(MacroAssembler::BaseIndex(next, regs.regT0, MacroAssembler::TimesEight, -bytesPerIteration), regs.regT0);
+    jit.m_assembler.pcmpeqd_rr(cleared, cleared);
+    MacroAssembler::Label loop = jit.label();
+    clear(next);
+    jit.add64(MacroAssembler::TrustedImm32(bytesPerIteration), next);
+    jit.branch64(MacroAssembler::Below, next, regs.regT0).linkTo(loop, &jit);
+    clear(regs.regT0);
     jit.ret();
 #else
     UNUSED_PARAM(jit);
@@ -631,6 +654,652 @@ struct FirstOfClassSearchGenerator {
 };
 #endif
 
+#if CPU(X86_64) || CPU(ARM64)
+struct FirstOfTwoUnitsSearchGenerator {
+    static constexpr int32_t unitsInStep = 16;
+    static constexpr MacroAssembler::RegisterID unit = YarrJITDefaultRegisters::regT0;
+    static constexpr MacroAssembler::RegisterID bothUnits = YarrJITDefaultRegisters::regT1;
+    static constexpr MacroAssembler::RegisterID firstUnit = YarrJITDefaultRegisters::regT2;
+    static constexpr MacroAssembler::RegisterID limit = YarrJITDefaultRegisters::regT3;
+    static constexpr MacroAssembler::RegisterID secondUnit = limit;
+    static constexpr FPRReg firstUnits = YarrJITDefaultRegisters::vectorTemp0;
+    static constexpr FPRReg secondUnits = YarrJITDefaultRegisters::vectorTemp1;
+    static constexpr FPRReg lower = YarrJITDefaultRegisters::vectorInput0;
+    static constexpr FPRReg upper = YarrJITDefaultRegisters::vectorInput1;
+    static constexpr FPRReg lowerAgain = YarrJITDefaultRegisters::vectorScratch0;
+    static constexpr FPRReg upperAgain = YarrJITDefaultRegisters::vectorScratch1;
+
+    void verifySubjectRead(unsigned unitCount, unsigned site)
+    {
+        emitVerifySubjectRead(jit, subject, unitCount << unitShift, regs.input, regs.length, unitShift, site);
+    }
+
+    void loadVectorConstants()
+    {
+#if CPU(X86_64)
+        auto& assembler = jit.m_assembler;
+        assembler.movq_rr(bothUnits, secondUnits);
+        assembler.pshufd_i8rr(0x00, secondUnits, firstUnits);
+        if (unitsDiffer)
+            assembler.pshufd_i8rr(0x55, secondUnits, secondUnits);
+#else
+        jit.vectorSplatInt32(bothUnits, firstUnits);
+        if (unitsDiffer) {
+            jit.urshift64(bothUnits, MacroAssembler::TrustedImm32(32), unit);
+            jit.vectorSplatInt32(unit, secondUnits);
+        }
+#endif
+    }
+
+    MacroAssembler::Jump testVector()
+    {
+        verifySubjectRead(unitsInStep, __LINE__);
+        loadWhole(subject, lower);
+        if (isWide)
+            loadWhole(MacroAssembler::BaseIndex(regs.input, regs.index, MacroAssembler::TimesTwo, subject.offset + 16), upper);
+        findUnitsInLoaded(isWide);
+        return branchIfSomeUnitWasFound();
+    }
+
+    void loadWhole(MacroAssembler::BaseIndex address, FPRReg vector)
+    {
+#if CPU(X86_64)
+        jit.m_assembler.movdqu_mr(address.offset, address.base, address.index, address.scale, vector);
+#else
+        jit.loadVector(address, vector);
+#endif
+    }
+
+    void loadEightBytes(MacroAssembler::BaseIndex address, FPRReg vector)
+    {
+#if CPU(X86_64)
+        jit.m_assembler.movsd_mr(address.offset, address.base, address.index, address.scale, vector);
+#else
+        jit.loadDouble(address, vector);
+#endif
+    }
+
+    MacroAssembler::Jump branchIfSomeUnitWasFound()
+    {
+#if CPU(X86_64)
+        return jit.branchTest32(MacroAssembler::NonZero, unit);
+#else
+        return jit.branchTest64(MacroAssembler::NonZero, unit);
+#endif
+    }
+
+    void findUnitsInLoaded(bool hasUpper)
+    {
+#if CPU(X86_64)
+        auto& assembler = jit.m_assembler;
+        if (unitsDiffer) {
+            assembler.movaps_rr(lower, lowerAgain);
+            if (hasUpper)
+                assembler.movaps_rr(upper, upperAgain);
+        }
+        auto compare = [&](FPRReg sought, FPRReg vector) {
+            if (isWide)
+                assembler.pcmpeqw_rr(sought, vector);
+            else
+                assembler.pcmpeqb_rr(sought, vector);
+        };
+        compare(firstUnits, lower);
+        if (hasUpper)
+            compare(firstUnits, upper);
+        if (unitsDiffer) {
+            compare(secondUnits, lowerAgain);
+            if (hasUpper)
+                compare(secondUnits, upperAgain);
+            assembler.por_rr(lowerAgain, lower);
+            if (hasUpper)
+                assembler.por_rr(upperAgain, upper);
+        }
+        if (isWide)
+            assembler.packsswb_rr(hasUpper ? upper : lower, lower);
+        assembler.pmovmskb_rr(lower, unit);
+#else
+        constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::Unsigned };
+        constexpr SIMDInfo words16 { SIMDLane::i16x8, SIMDSignMode::Unsigned };
+        constexpr SIMDInfo whole { SIMDLane::v128, SIMDSignMode::None };
+        const SIMDInfo units = isWide ? words16 : bytes;
+        if (unitsDiffer) {
+            jit.compareIntegerVector(MacroAssembler::Equal, units, lower, secondUnits, lowerAgain);
+            if (hasUpper)
+                jit.compareIntegerVector(MacroAssembler::Equal, units, upper, secondUnits, upperAgain);
+        }
+        jit.compareIntegerVector(MacroAssembler::Equal, units, lower, firstUnits, lower);
+        if (hasUpper)
+            jit.compareIntegerVector(MacroAssembler::Equal, units, upper, firstUnits, upper);
+        if (unitsDiffer) {
+            jit.vectorOr(whole, lower, lowerAgain, lower);
+            if (hasUpper)
+                jit.vectorOr(whole, upper, upperAgain, upper);
+        }
+        if (isWide)
+            jit.vectorUnzipEven(bytes, lower, hasUpper ? upper : lower, lower);
+        jit.vectorShrnInt8(lower, 4, lower);
+        jit.moveDoubleTo64(lower, unit);
+#endif
+    }
+
+    MacroAssembler::BaseIndex unitsAt(MacroAssembler::RegisterID place) const
+    {
+        return { regs.input, place, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne };
+    }
+
+    void joinLowerHalves()
+    {
+#if CPU(X86_64)
+        jit.m_assembler.punpcklqdq_rr(upper, lower);
+#else
+        jit.vectorUnzipEven(SIMDInfo { SIMDLane::i64x2, SIMDSignMode::None }, lower, upper, lower);
+#endif
+    }
+
+    MacroAssembler::Jump testHalvesAtIndexAndAtLimit(int32_t unitsInHalf)
+    {
+        emitVerifySubjectRead(jit, unitsAt(regs.index), unitsInHalf << unitShift, regs.input, regs.length, unitShift, __LINE__);
+        emitVerifySubjectRead(jit, unitsAt(limit), unitsInHalf << unitShift, regs.input, regs.length, unitShift, __LINE__);
+        const int32_t bytesInHalf = unitsInHalf << unitShift;
+        if (bytesInHalf == 16) {
+            loadWhole(unitsAt(regs.index), lower);
+            loadWhole(unitsAt(limit), upper);
+            findUnitsInLoaded(true);
+            return branchIfSomeUnitWasFound();
+        }
+        if (bytesInHalf == 8) {
+            loadEightBytes(unitsAt(regs.index), lower);
+            loadEightBytes(unitsAt(limit), upper);
+            joinLowerHalves();
+        } else {
+            ASSERT(bytesInHalf == 4);
+            jit.load32(unitsAt(regs.index), unit);
+            jit.load32(unitsAt(limit), firstUnit);
+            jit.lshift64(MacroAssembler::TrustedImm32(32), firstUnit);
+            jit.or64(firstUnit, unit);
+#if CPU(X86_64)
+            jit.m_assembler.movq_rr(unit, lower);
+#else
+            jit.move64ToDouble(unit, lower);
+#endif
+        }
+        findUnitsInLoaded(false);
+        if (2 * unitsInHalf < unitsInStep) {
+#if CPU(X86_64)
+            jit.and32(MacroAssembler::TrustedImm32((1 << (2 * unitsInHalf)) - 1), unit);
+#else
+            jit.zeroExtend32ToWord(unit, unit);
+#endif
+        }
+        return branchIfSomeUnitWasFound();
+    }
+
+    void generate()
+    {
+        MacroAssembler::JumpList isMember;
+        MacroAssembler::Jump reachedEnd = jit.branch32(MacroAssembler::AboveOrEqual, regs.index, regs.length);
+        jit.add32(MacroAssembler::TrustedImm32(unitsInStep), regs.index, limit);
+        MacroAssembler::Jump isLong = jit.branch32(MacroAssembler::BelowOrEqual, limit, regs.length);
+
+        MacroAssembler::JumpList holdsNone;
+        for (int32_t unitsInHalf : { 8, 4 }) {
+            jit.sub32(regs.length, MacroAssembler::TrustedImm32(unitsInHalf), limit);
+            MacroAssembler::Jump lacksHalf = jit.branch32(MacroAssembler::GreaterThan, regs.index, limit);
+            loadVectorConstants();
+            MacroAssembler::Jump isInHalves = testHalvesAtIndexAndAtLimit(unitsInHalf);
+            holdsNone.append(jit.jump());
+            isInHalves.link(&jit);
+            numberUnitFound();
+            MacroAssembler::Jump isInFirstHalf = jit.branch32(MacroAssembler::Below, unit, MacroAssembler::TrustedImm32(unitsInHalf));
+            jit.sub32(limit, MacroAssembler::TrustedImm32(unitsInHalf), regs.index);
+            isInFirstHalf.link(&jit);
+            jit.add32(unit, regs.index);
+            jit.ret();
+            lacksHalf.link(&jit);
+        }
+
+        jit.urshift64(bothUnits, MacroAssembler::TrustedImm32(32), secondUnit);
+        if (isWide) {
+            jit.zeroExtend16To32(bothUnits, firstUnit);
+            jit.zeroExtend16To32(secondUnit, secondUnit);
+        } else {
+            jit.zeroExtend8To32(bothUnits, firstUnit);
+            jit.zeroExtend8To32(secondUnit, secondUnit);
+        }
+        MacroAssembler::Label next = jit.label();
+        verifySubjectRead(1, __LINE__);
+        if (isWide)
+            jit.load16(subject, unit);
+        else
+            jit.load8(subject, unit);
+        isMember.append(jit.branch32(MacroAssembler::Equal, unit, firstUnit));
+        isMember.append(jit.branch32(MacroAssembler::Equal, unit, secondUnit));
+        jit.add32(MacroAssembler::TrustedImm32(1), regs.index);
+        jit.branch32(MacroAssembler::Below, regs.index, regs.length).linkTo(next, &jit);
+        reachedEnd.link(&jit);
+        holdsNone.link(&jit);
+        MacroAssembler::Label fails = jit.label();
+        jit.move(regs.length, regs.index);
+        isMember.link(&jit);
+        jit.ret();
+
+        isLong.link(&jit);
+        jit.sub32(regs.length, MacroAssembler::TrustedImm32(unitsInStep), limit);
+        loadVectorConstants();
+        MacroAssembler::Label nextVector = jit.label();
+        MacroAssembler::Jump isInVector = testVector();
+        jit.add32(MacroAssembler::TrustedImm32(unitsInStep), regs.index);
+        jit.branch32(MacroAssembler::BelowOrEqual, regs.index, limit).linkTo(nextVector, &jit);
+        jit.branch32(MacroAssembler::AboveOrEqual, regs.index, regs.length).linkTo(fails, &jit);
+        jit.move(limit, regs.index);
+        jit.jump().linkTo(nextVector, &jit);
+
+        isInVector.link(&jit);
+        advanceToUnitFound();
+        jit.ret();
+    }
+
+    void numberUnitFound()
+    {
+#if CPU(X86_64)
+        jit.m_assembler.bsf_rr(unit, unit);
+#else
+        jit.reverseBits64(unit, unit);
+        jit.countLeadingZeros64(unit, unit);
+        jit.urshift64(MacroAssembler::TrustedImm32(2), unit);
+#endif
+    }
+
+    void advanceToUnitFound()
+    {
+        numberUnitFound();
+        jit.add32(unit, regs.index);
+    }
+
+    CCallHelpers& jit;
+    const bool isWide;
+    const bool unitsDiffer { true };
+    const int32_t unitsInFrontOfIndex { 0 };
+    const unsigned unitShift { isWide ? 1u : 0u };
+    YarrJITDefaultRegisters regs { };
+    MacroAssembler::BaseIndex subject { regs.input, regs.index, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne, -(unitsInFrontOfIndex << unitShift) };
+};
+static_assert(FirstOfTwoUnitsSearchGenerator::unitsInStep == unitsInVectorOfTwoUnitsSearch);
+#endif
+
+MacroAssembler::Jump emitTestOfVectorForTwoUnits(CCallHelpers& jit, CharSize charSize, bool unitsDiffer, int32_t unitsInFrontOfIndex)
+{
+#if CPU(X86_64) || CPU(ARM64)
+    FirstOfTwoUnitsSearchGenerator generator { jit, charSize == CharSize::Char16, unitsDiffer, unitsInFrontOfIndex };
+    generator.loadVectorConstants();
+    return generator.testVector();
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(charSize);
+    UNUSED_PARAM(unitsDiffer);
+    UNUSED_PARAM(unitsInFrontOfIndex);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+void emitAdvanceToUnitFoundInVector(CCallHelpers& jit)
+{
+#if CPU(X86_64) || CPU(ARM64)
+    FirstOfTwoUnitsSearchGenerator { jit, false }.advanceToUnitFound();
+#else
+    UNUSED_PARAM(jit);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+#if CPU(X86_64) || CPU(ARM64)
+struct FirstPairOfUnitsSearchGenerator {
+    static constexpr int32_t unitsInStep = 16;
+    static constexpr MacroAssembler::RegisterID found = YarrJITDefaultRegisters::regT0;
+    static constexpr MacroAssembler::RegisterID bothUnits = YarrJITDefaultRegisters::regT1;
+    static constexpr MacroAssembler::RegisterID limit = YarrJITDefaultRegisters::regT3;
+    static constexpr FPRReg firstUnits = YarrJITDefaultRegisters::vectorTemp0;
+    static constexpr FPRReg secondUnits = YarrJITDefaultRegisters::vectorTemp1;
+    // The ASCII case bit in every lane, or the second unit of the position that matches two.
+    static constexpr FPRReg caseBitOrAlternate = YarrJITDefaultRegisters::vectorTemp2;
+    static constexpr FPRReg lowerOfFirst = YarrJITDefaultRegisters::vectorInput0;
+    static constexpr FPRReg upperOfFirst = YarrJITDefaultRegisters::vectorInput1;
+    static constexpr FPRReg lowerOfSecond = YarrJITDefaultRegisters::vectorScratch0;
+    static constexpr FPRReg upperOfSecond = YarrJITDefaultRegisters::vectorScratch1;
+
+    MacroAssembler::BaseIndex subjectAt(int32_t units) const
+    {
+        return { regs.input, regs.index, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne, units << unitShift };
+    }
+
+    void loadVectorConstants()
+    {
+        auto isOneOf = [&](PositionUnits units) {
+            return payload.first == units || payload.second == units;
+        };
+        const bool foldsCase = isOneOf(PositionUnits::IgnoreCase);
+        const bool hasAlternateUnit = isOneOf(PositionUnits::Two);
+        RELEASE_ASSERT(!hasAlternateUnit || (!foldsCase && payload.first != payload.second));
+        if (foldsCase)
+            jit.move(MacroAssembler::TrustedImm32(isWide ? 0x00200020 : 0x20202020), found);
+#if CPU(X86_64)
+        auto& assembler = jit.m_assembler;
+        assembler.movq_rr(bothUnits, secondUnits);
+        assembler.pshufd_i8rr(0x00, secondUnits, firstUnits);
+        assembler.pshufd_i8rr(0x55, secondUnits, secondUnits);
+        if (foldsCase || hasAlternateUnit) {
+            assembler.movd_rr(found, caseBitOrAlternate);
+            assembler.pshufd_i8rr(0x00, caseBitOrAlternate, caseBitOrAlternate);
+        }
+#else
+        jit.vectorSplatInt32(bothUnits, firstUnits);
+        jit.urshift64(bothUnits, MacroAssembler::TrustedImm32(32), bothUnits);
+        jit.vectorSplatInt32(bothUnits, secondUnits);
+        if (foldsCase || hasAlternateUnit)
+            jit.vectorSplatInt32(found, caseBitOrAlternate);
+#endif
+    }
+
+    MacroAssembler::Jump testVector()
+    {
+        emitVerifySubjectRead(jit, subjectAt(0), (unitsInStep + payload.distance) << unitShift, regs.input, regs.length, unitShift, __LINE__);
+#if CPU(X86_64)
+        auto& assembler = jit.m_assembler;
+        auto compare = [&](FPRReg sought, FPRReg vector) {
+            if (isWide)
+                assembler.pcmpeqw_rr(sought, vector);
+            else
+                assembler.pcmpeqb_rr(sought, vector);
+        };
+        auto loadAndCompare = [&](int32_t units, PositionUnits held, FPRReg sought, FPRReg vector, FPRReg scratch) {
+            assembler.movdqu_mr(units << unitShift, regs.input, regs.index, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne, vector);
+            if (held == PositionUnits::IgnoreCase)
+                assembler.por_rr(caseBitOrAlternate, vector);
+            if (held == PositionUnits::Two) {
+                assembler.movaps_rr(vector, scratch);
+                compare(caseBitOrAlternate, scratch);
+            }
+            compare(sought, vector);
+            if (held == PositionUnits::Two)
+                assembler.por_rr(scratch, vector);
+        };
+        auto join = [&](FPRReg vector, FPRReg into) {
+            assembler.pand_rr(vector, into);
+        };
+#else
+        constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::Unsigned };
+        constexpr SIMDInfo words16 { SIMDLane::i16x8, SIMDSignMode::Unsigned };
+        constexpr SIMDInfo whole { SIMDLane::v128, SIMDSignMode::None };
+        auto loadAndCompare = [&](int32_t units, PositionUnits held, FPRReg sought, FPRReg vector, FPRReg scratch) {
+            jit.loadVector(subjectAt(units), vector);
+            if (held == PositionUnits::IgnoreCase)
+                jit.vectorOr(whole, vector, caseBitOrAlternate, vector);
+            if (held == PositionUnits::Two)
+                jit.compareIntegerVector(MacroAssembler::Equal, isWide ? words16 : bytes, vector, caseBitOrAlternate, scratch);
+            jit.compareIntegerVector(MacroAssembler::Equal, isWide ? words16 : bytes, vector, sought, vector);
+            if (held == PositionUnits::Two)
+                jit.vectorOr(whole, vector, scratch, vector);
+        };
+        auto join = [&](FPRReg vector, FPRReg into) {
+            jit.vectorAnd(whole, into, vector, into);
+        };
+#endif
+        loadAndCompare(0, payload.first, firstUnits, lowerOfFirst, lowerOfSecond);
+        if (isWide)
+            loadAndCompare(8, payload.first, firstUnits, upperOfFirst, upperOfSecond);
+        loadAndCompare(payload.distance, payload.second, secondUnits, lowerOfSecond, upperOfSecond);
+        join(lowerOfSecond, lowerOfFirst);
+        if (isWide) {
+            loadAndCompare(payload.distance + 8, payload.second, secondUnits, upperOfSecond, lowerOfSecond);
+            join(upperOfSecond, upperOfFirst);
+        }
+#if CPU(X86_64)
+        if (isWide)
+            assembler.packsswb_rr(upperOfFirst, lowerOfFirst);
+        assembler.pmovmskb_rr(lowerOfFirst, found);
+        return jit.branchTest32(MacroAssembler::NonZero, found);
+#else
+        if (isWide)
+            jit.vectorUnzipEven(bytes, lowerOfFirst, upperOfFirst, lowerOfFirst);
+        jit.vectorShrnInt8(lowerOfFirst, 4, lowerOfFirst);
+        jit.moveDoubleTo64(lowerOfFirst, found);
+        return jit.branchTest64(MacroAssembler::NonZero, found);
+#endif
+    }
+
+    void generate()
+    {
+        jit.sub32(regs.length, MacroAssembler::TrustedImm32(unitsInStep + payload.distance), limit);
+        MacroAssembler::Jump restIsShort = jit.branch32(MacroAssembler::GreaterThan, regs.index, limit);
+        loadVectorConstants();
+        MacroAssembler::Label nextVector = jit.label();
+        MacroAssembler::Jump isInVector = testVector();
+        jit.add32(MacroAssembler::TrustedImm32(unitsInStep), regs.index);
+        jit.branch32(MacroAssembler::LessThanOrEqual, regs.index, limit).linkTo(nextVector, &jit);
+        jit.add32(MacroAssembler::TrustedImm32(unitsInStep), limit, found);
+        MacroAssembler::Jump isAtEnd = jit.branch32(MacroAssembler::GreaterThanOrEqual, regs.index, found);
+        jit.move(limit, regs.index);
+        jit.jump().linkTo(nextVector, &jit);
+
+        isAtEnd.link(&jit);
+        jit.move(regs.length, regs.index);
+        restIsShort.link(&jit);
+        jit.ret();
+
+        isInVector.link(&jit);
+#if CPU(X86_64)
+        jit.m_assembler.bsf_rr(found, found);
+#else
+        jit.reverseBits64(found, found);
+        jit.countLeadingZeros64(found, found);
+        jit.urshift64(MacroAssembler::TrustedImm32(2), found);
+#endif
+        jit.add32(found, regs.index);
+        jit.ret();
+    }
+
+    CCallHelpers& jit;
+    const SharedRoutine::FindFirstPairOfUnits& payload;
+    const bool isWide { payload.charSize == CharSize::Char16 };
+    const unsigned unitShift { isWide ? 1u : 0u };
+    YarrJITDefaultRegisters regs { };
+};
+#endif
+
+#if CPU(X86_64) || CPU(ARM64)
+// Finds the ends of prefixes. Bit k of a character's byte is set if the character may be at position k of a prefix. The bit stays set if the characters before it are at the positions before k. That is checked for one, then two, then four characters, with carries from the previous vector.
+struct EitherPrefixSearchGenerator {
+    static constexpr int32_t unitsInStep = prefixSearchVectorLength;
+    static constexpr unsigned maxSteps = 3;
+    static constexpr MacroAssembler::RegisterID found = YarrJITDefaultRegisters::regT0;
+    static constexpr MacroAssembler::RegisterID table = YarrJITDefaultRegisters::regT1;
+    static constexpr MacroAssembler::RegisterID limit = YarrJITDefaultRegisters::regT3;
+    static constexpr FPRReg firstTable = YarrJITDefaultRegisters::vectorTemp0;
+    static constexpr FPRReg secondTable = YarrJITDefaultRegisters::vectorTemp1;
+    static constexpr FPRReg characters = YarrJITDefaultRegisters::vectorInput0;
+    static constexpr FPRReg firstPositions = YarrJITDefaultRegisters::vectorInput1;
+    static constexpr FPRReg secondPositions = YarrJITDefaultRegisters::vectorInput2;
+    static constexpr FPRReg previous = YarrJITDefaultRegisters::vectorInput3;
+    static constexpr std::array<FPRReg, maxSteps> firstCarries { YarrJITDefaultRegisters::vectorTemp2, YarrJITDefaultRegisters::vectorTemp3, YarrJITDefaultRegisters::vectorTemp4 };
+    static constexpr std::array<FPRReg, maxSteps> secondCarries { YarrJITDefaultRegisters::vectorScratch0, YarrJITDefaultRegisters::vectorScratch1, YarrJITDefaultRegisters::vectorScratch2 };
+#if CPU(ARM64)
+    // What a table is indexed by: the low half of a character, and the bit of one that is not ASCII, for which the table gives zero.
+    static constexpr FPRReg indexMask = YarrJITDefaultRegisters::vectorScratch3;
+    static constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::Unsigned };
+    static constexpr SIMDInfo signedBytes { SIMDLane::i8x16, SIMDSignMode::Signed };
+    static constexpr SIMDInfo whole { SIMDLane::v128, SIMDSignMode::None };
+#endif
+
+    bool hasTwoTables() const { return payload.prefixLength == longPrefixLength; }
+    unsigned steps() const { return hasTwoTables() ? 3 : 2; }
+
+    void clearCarries()
+    {
+        auto clear = [&](FPRReg carry) {
+#if CPU(X86_64)
+            jit.m_assembler.pxor_rr(carry, carry);
+#else
+            jit.moveZeroToVector(carry);
+#endif
+        };
+        for (unsigned step = 0; step < steps(); ++step) {
+            clear(firstCarries[step]);
+            if (hasTwoTables())
+                clear(secondCarries[step]);
+        }
+    }
+
+    void matchPrefixes(FPRReg prefixTable, FPRReg positions, const std::array<FPRReg, maxSteps>& carries)
+    {
+#if CPU(X86_64)
+        auto& assembler = jit.m_assembler;
+        assembler.movaps_rr(prefixTable, positions);
+        assembler.pshufb_rr(characters, positions); // Zero for a character that is not ASCII.
+        for (unsigned step = 0; step < steps(); ++step) {
+            unsigned distance = 1u << step;
+            assembler.movaps_rr(positions, previous);
+            assembler.palignr_i8rr(unitsInStep - distance, carries[step], previous);
+            assembler.movaps_rr(positions, carries[step]);
+            assembler.psllw_i8r(distance, previous); // The bits shifted in from the byte below are not read by later steps.
+            assembler.pand_rr(previous, positions);
+        }
+#else
+        jit.vectorSwizzle(prefixTable, characters, positions);
+        for (unsigned step = 0; step < steps(); ++step) {
+            unsigned distance = 1u << step;
+            jit.vectorExtractPair(bytes, MacroAssembler::TrustedImm32(unitsInStep - distance), carries[step], positions, previous);
+            jit.moveVector(positions, carries[step]);
+            jit.vectorShl8(bytes, previous, MacroAssembler::TrustedImm32(distance), previous);
+            jit.vectorAnd(whole, positions, previous, positions);
+        }
+#endif
+    }
+
+    MacroAssembler::Jump testVector()
+    {
+        const MacroAssembler::BaseIndex subject { regs.input, regs.index, MacroAssembler::TimesOne };
+        emitVerifySubjectRead(jit, subject, unitsInStep, regs.input, regs.length, 0, __LINE__);
+#if CPU(X86_64)
+        auto& assembler = jit.m_assembler;
+        assembler.movdqu_mr(0, regs.input, regs.index, MacroAssembler::TimesOne, characters);
+        matchPrefixes(firstTable, firstPositions, firstCarries);
+        if (hasTwoTables()) {
+            matchPrefixes(secondTable, secondPositions, secondCarries);
+            assembler.por_rr(secondPositions, firstPositions);
+        } else {
+            assembler.movaps_rr(firstPositions, previous);
+            assembler.psllw_i8r(shortPrefixLength, previous);
+            assembler.por_rr(previous, firstPositions);
+        }
+        assembler.pmovmskb_rr(firstPositions, found);
+        return jit.branchTest32(MacroAssembler::NonZero, found);
+#else
+        jit.loadVector(subject, characters);
+        jit.vectorAnd(whole, characters, indexMask, characters);
+        matchPrefixes(firstTable, firstPositions, firstCarries);
+        if (hasTwoTables())
+            matchPrefixes(secondTable, secondPositions, secondCarries);
+        else
+            jit.vectorShl8(bytes, firstPositions, MacroAssembler::TrustedImm32(shortPrefixLength), secondPositions);
+        jit.vectorOr(whole, firstPositions, secondPositions, firstPositions);
+        jit.vectorSshr8(signedBytes, firstPositions, MacroAssembler::TrustedImm32(7), firstPositions);
+        jit.vectorShrnInt8(firstPositions, 4, firstPositions);
+        jit.moveDoubleTo64(firstPositions, found);
+        return jit.branchTest64(MacroAssembler::NonZero, found);
+#endif
+    }
+
+    void generate()
+    {
+#if CPU(X86_64)
+        RELEASE_ASSERT(jit.supportsSupplementalSSE3());
+#endif
+        const int32_t charactersBeforeEnd = payload.prefixLength - 1;
+        jit.sub32(regs.length, MacroAssembler::TrustedImm32(unitsInStep), limit);
+        MacroAssembler::Jump restIsShort = jit.branch32(MacroAssembler::GreaterThan, regs.index, limit);
+#if CPU(X86_64)
+        jit.m_assembler.movdqu_mr(0, table, firstTable);
+        if (hasTwoTables())
+            jit.m_assembler.movdqu_mr(unitsInStep, table, secondTable);
+#else
+        jit.loadVector(MacroAssembler::Address(table), firstTable);
+        if (hasTwoTables())
+            jit.loadVector(MacroAssembler::Address(table, unitsInStep), secondTable);
+        v128_t mask;
+        mask.u64x2[0] = mask.u64x2[1] = 0x8f8f8f8f'8f8f8f8fULL;
+        jit.move128ToVector(mask, indexMask);
+#endif
+        MacroAssembler::Label begin = jit.label();
+        clearCarries();
+        MacroAssembler::Label nextVector = jit.label();
+        MacroAssembler::Jump isInVector = testVector();
+        jit.add32(MacroAssembler::TrustedImm32(unitsInStep), regs.index);
+        jit.branch32(MacroAssembler::LessThanOrEqual, regs.index, limit).linkTo(nextVector, &jit);
+
+        // Less than a vector is left: search again from the earliest start of a prefix that ends there.
+        MacroAssembler::Jump isAtEnd = jit.branch32(MacroAssembler::GreaterThanOrEqual, regs.index, regs.length);
+        jit.sub32(MacroAssembler::TrustedImm32(charactersBeforeEnd), regs.index);
+        jit.branch32(MacroAssembler::LessThanOrEqual, regs.index, limit).linkTo(begin, &jit);
+        jit.move(limit, regs.index);
+        jit.jump().linkTo(begin, &jit);
+
+        isAtEnd.link(&jit);
+        jit.move(regs.length, regs.index);
+        restIsShort.link(&jit);
+        jit.ret();
+
+        isInVector.link(&jit);
+#if CPU(X86_64)
+        jit.m_assembler.bsf_rr(found, found);
+#else
+        jit.reverseBits64(found, found);
+        jit.countLeadingZeros64(found, found);
+        jit.urshift64(MacroAssembler::TrustedImm32(2), found);
+#endif
+        jit.add32(found, regs.index);
+        jit.sub32(MacroAssembler::TrustedImm32(charactersBeforeEnd), regs.index);
+        jit.ret();
+    }
+
+    CCallHelpers& jit;
+    const SharedRoutine::FindEitherPrefix& payload;
+    YarrJITDefaultRegisters regs { };
+};
+#endif
+
+static void generateFindEitherPrefix(CCallHelpers& jit, const SharedRoutine::FindEitherPrefix& payload)
+{
+#if CPU(X86_64) || CPU(ARM64)
+    EitherPrefixSearchGenerator { jit, payload }.generate();
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(payload);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+static void generateFindFirstPairOfUnits(CCallHelpers& jit, const SharedRoutine::FindFirstPairOfUnits& payload)
+{
+#if CPU(X86_64) || CPU(ARM64)
+    FirstPairOfUnitsSearchGenerator { jit, payload }.generate();
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(payload);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+static void generateFindFirstOfTwoUnits(CCallHelpers& jit, const SharedRoutine::FindFirstOfTwoUnits& payload)
+{
+#if CPU(X86_64) || CPU(ARM64)
+    FirstOfTwoUnitsSearchGenerator { jit, payload.charSize == CharSize::Char16 }.generate();
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(payload);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
 static void generateFindFirstOfClass(CCallHelpers& jit, const SharedRoutine::FindFirstOfClass& payload)
 {
 #if CPU(X86_64) || CPU(ARM64)
@@ -697,6 +1366,9 @@ void generateSharedRoutine(CCallHelpers& jit, const SharedRoutine& routine, Code
         [&](const SharedRoutine::MatchCodePointAgainstClassTable& payload) { generateMatchCodePointAgainstClassTable(jit, payload); },
         [&](const SharedRoutine::ClearCaptures&) { generateClearCaptures(jit); },
         [&](const SharedRoutine::FindFirstOfClass& payload) { generateFindFirstOfClass(jit, payload); },
+        [&](const SharedRoutine::FindFirstOfTwoUnits& payload) { generateFindFirstOfTwoUnits(jit, payload); },
+        [&](const SharedRoutine::FindFirstPairOfUnits& payload) { generateFindFirstPairOfUnits(jit, payload); },
+        [&](const SharedRoutine::FindEitherPrefix& payload) { generateFindEitherPrefix(jit, payload); },
         [&](const SharedRoutine::CanonicalEquivalence& payload) { generateCanonicalEquivalence(jit, payload, addressing); });
 }
 

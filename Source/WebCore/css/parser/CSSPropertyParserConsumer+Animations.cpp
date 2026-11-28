@@ -40,8 +40,7 @@
 #include "CSSPropertyParserState.h"
 #include "CSSStringValue.h"
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 Vector<std::pair<CSSValueID, CSS::Percentage<>>> consumeKeyframeKeyList(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
@@ -118,8 +117,7 @@ RefPtr<CSSValue> consumeKeyframesName(CSSParserTokenRange& range, CSS::PropertyP
         if (token.value().isEmpty())
             return nullptr;
 
-        auto valueId = cssValueKeywordID(token.value());
-        if (isValidCustomIdentifier(valueId) && valueId != CSSValueID::None)
+        if (isValidCustomIdentifierForKeyframeName(cssValueKeywordID(token.value())))
             return CSSCustomIdentValue::create(CSS::CustomIdent { token.value().toAtomString() });
         return CSSStringValue::create(CSS::String { token.value().toString() });
     }
@@ -127,5 +125,4 @@ RefPtr<CSSValue> consumeKeyframesName(CSSParserTokenRange& range, CSS::PropertyP
     return consumeCustomIdent(range, state);
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

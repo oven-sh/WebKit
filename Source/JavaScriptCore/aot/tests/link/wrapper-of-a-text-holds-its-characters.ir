@@ -1,0 +1,27 @@
+# If the object that stands for a text held nothing, what Object.values() reads out of it would be proven to be nothing at all. It has the characters under their indexes from its birth.
+# function use(e) { return e; }  use(Object.values(new String("ab"))[0]);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: parameter 0 {{*}}proven=undefined|string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    v1 = Builtin builtin=String
+    v2 = Construct v1, -, v0 calleeName="String"
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectValues
+    v5 = Call v4, v3, v2 calleeName="Object.values"
+    v6 = Integer integer=0
+    v7 = ElemGet v5, v6
+    v8 = NewClosure function=f1
+    v9 = Call v8, -, v7 calleeName="use"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

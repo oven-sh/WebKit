@@ -80,7 +80,7 @@ static Lock wrapperCacheLock;
 static CreateWrapperFunction createDOMWrapperFunction;
 static DisconnectWindowWrapperFunction disconnectWindowWrapperFunction;
 
-static HashMap<JSObject*, NSObject *>& LEGACY_NODELETE wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
+NODELETE static HashMap<JSObject*, NSObject *>& wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
 {
     static NeverDestroyed<HashMap<JSObject*, NSObject *>> map;
     return map;
@@ -337,8 +337,7 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
 
 static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray *array, RootObject* rootObject, MarkedArgumentBuffer& aList)
 {
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL id anObject in array)
+    for (id anObject in array)
         aList.append(convertObjcValueToValue(lexicalGlobalObject, anObject, rootObject));
 }
 

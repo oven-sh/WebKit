@@ -1,0 +1,44 @@
+# String.fromCharCode(x) takes the code unit of x. The handler is handed x.
+# let sink; function last(o) { let x; try { do { x = o.pos; } while (sink(String.fromCharCode(x))); } catch { return x; } }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+DirectCalls+Folding+LoopInvariants+UnboxedNumbers+Handlers+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[argument]]: {{*}}= PropGet v0 key="pos"
+# CHECK: = ToNumber [[argument]] form=Generic
+# CHECK: handler={{*}}([[argument]])
+# CHECK-NEXT: inlineBuiltin=StringFromCharCode
+
+variable g0 name="sink" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    PutModuleVariable v3 variable=g0
+    Return v3
+}
+function f1 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Jump -> next b1(v1)
+  b1(v2) handler=b4(v2):
+    LoopHint
+    v4 = PropGet v0 key="pos"
+    Jump -> next b2()
+  b2() handler=b4(v4):
+    v5 = Builtin builtin=String
+    v6 = Builtin builtin=StringFromCharCode
+    v7 = Call v6, v5, v4 calleeName="String.fromCharCode"
+    v8 = GetModuleVariable variable=g0
+    v9 = Call v8, -, v7
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(v4), notTaken b3()
+  b3():
+    v11 = Undefined
+    Return v11
+  b4(v12) role=CatchHandler:
+    v13 = CatchValue
+    Return v12
+}

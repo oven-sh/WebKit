@@ -50,13 +50,14 @@ struct MatchedRule {
 class ElementRuleCollector {
 public:
     ElementRuleCollector(const Element&, const ScopeRuleSets&, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
-    ElementRuleCollector(const Element&, const RuleSet& authorStyle, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
+    ElementRuleCollector(const Element&, Ref<const RuleSet>&& authorStyle, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
 
     void setIncludeEmptyRules(bool value) { m_shouldIncludeEmptyRules = value; }
 
     void matchAllRules(bool matchAuthorAndUserStyles, bool includeSMILProperties);
     void matchUARules();
     void matchAuthorRules();
+    void matchQuirkRules();
     void matchUserRules();
 
     bool matchesAnyAuthorRules();
@@ -65,10 +66,10 @@ public:
     void setMedium(const MQ::MediaQueryEvaluator& medium) { m_isPrintStyle = medium.isPrintMedia(); }
 
 
-    const MatchResult& LEGACY_NODELETE matchResult() const;
-    Ref<MatchResult> LEGACY_NODELETE releaseMatchResult();
+    NODELETE const MatchResult& matchResult() const;
+    NODELETE Ref<MatchResult> releaseMatchResult();
 
-    const Vector<Ref<const StyleRule>>& LEGACY_NODELETE matchedRuleList() const;
+    NODELETE const Vector<Ref<const StyleRule>>& matchedRuleList() const;
 
     void clearMatchedRules();
 
@@ -93,13 +94,16 @@ private:
     void matchPartPseudoElementRulesForScope(const Element& partMatchingElement, DeclarationOrigin);
 
     void collectMatchingUserAgentPartRules(const MatchRequest&);
+#if ENABLE(VIDEO)
+    void matchWebVTTEmbeddedStyleRules();
+#endif
 
     void collectMatchingRules(DeclarationOrigin);
     void collectMatchingRules(const MatchRequest&);
     void collectMatchingRulesForList(const RuleSet::RuleDataVector*, const MatchRequest&);
     void collectMatchingRulesForList(const RuleSet::RuleDataVector&, const MatchRequest&);
     void collectMatchingRulesForListSlow(const RuleSet::RuleDataVector&, const MatchRequest&);
-    bool LEGACY_NODELETE isFirstMatchModeAndHasMatchedAnyRules() const;
+    NODELETE bool isFirstMatchModeAndHasMatchedAnyRules() const;
     struct ScopingRootWithDistance {
         RefPtr<const ContainerNode> scopingRoot;
         unsigned distance { std::numeric_limits<unsigned>::max() };
@@ -111,7 +115,7 @@ private:
 
     void sortMatchedRules();
 
-    Vector<MatchedProperties>& LEGACY_NODELETE declarationsForOrigin(DeclarationOrigin);
+    NODELETE Vector<MatchedProperties>& declarationsForOrigin(DeclarationOrigin);
     void sortAndTransferMatchedRules(DeclarationOrigin);
     void transferMatchedRules(DeclarationOrigin, std::optional<ScopeOrdinal> forScope = { });
 
@@ -123,6 +127,7 @@ private:
     const Ref<const Element> m_element;
     const Ref<const RuleSet> m_authorStyle;
     const RefPtr<const RuleSet> m_userStyle;
+    const RefPtr<const RuleSet> m_quirkStyle;
     const RefPtr<const RuleSet> m_userAgentMediaQueryStyle;
     const RefPtr<const RuleSet> m_dynamicViewTransitionsStyle;
     SelectorMatchingState* m_selectorMatchingState;
@@ -140,7 +145,7 @@ private:
     Ref<MatchResult> m_result;
     Relations m_styleRelations;
     EnumSet<PseudoElementType> m_matchedPseudoElements;
-    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
+    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NoGeneratedContent };
 };
 
 ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleSet::RuleDataVector* rules, const MatchRequest& matchRequest)

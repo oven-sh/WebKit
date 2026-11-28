@@ -55,7 +55,7 @@ NSString * const WebHistoryItemsDiscardedWhileLoadingNotification = @"WebHistory
 NSString * const WebHistorySavedNotification = @"WebHistorySavedNotification";
 NSString * const WebHistoryItemsKey = @"WebHistoryItems";
 
-static RetainPtr<WebHistory>& LEGACY_NODELETE sharedHistory()
+NODELETE static RetainPtr<WebHistory>& sharedHistory()
 {
     static NeverDestroyed<RetainPtr<WebHistory>> _sharedHistory;
     return _sharedHistory;
@@ -570,8 +570,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     BOOL itemLimitPassed = NO;
     ASSERT(*numberOfItemsLoaded == 0);
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *itemAsDictionary in array) {
+    for (NSDictionary *itemAsDictionary in array) {
         @autoreleasepool {
             auto item = adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:itemAsDictionary]);
 

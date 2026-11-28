@@ -1,0 +1,29 @@
+# main.cjs: require("./helper.cjs"); print(1)        helper.cjs: module.exports = 1
+# A file of the program names a way to a module object, so the front end has laid the records. Nobody reads `parent`, `children` or `id`, the main module, or how a file was loaded: the records go.
+# The other half of the three tests beside this one: what they find is there because somebody asks.
+# RUN: walk f0
+# CHECK: code f0
+# CHECK-NOT: RecordRequire
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare, isCallOfRequire]
+    RecordRequire module=m1 referrer=m0
+    v5 = Integer integer=1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = Call v7, -, v5
+    Return
+}
+function f1 name="helper" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+}

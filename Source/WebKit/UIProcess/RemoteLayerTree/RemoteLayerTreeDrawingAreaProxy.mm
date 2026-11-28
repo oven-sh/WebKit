@@ -34,6 +34,7 @@
 #import "ProcessThrottler.h"
 #import "RemoteLayerTreeCommitBundle.h"
 #import "RemoteLayerTreeDrawingAreaProxyMessages.h"
+#import "RemoteLayerTreeMirror.h"
 #import "RemotePageDrawingAreaProxy.h"
 #import "RemotePageProxy.h"
 #import "RemoteScrollingCoordinatorProxy.h"
@@ -99,7 +100,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeDrawingAreaProxy);
 
 RemoteLayerTreeDrawingAreaProxy::RemoteLayerTreeDrawingAreaProxy(WebPageProxy& pageProxy, WebProcessProxy& webProcessProxy)
     : DrawingAreaProxy(pageProxy, webProcessProxy)
-    , m_remoteLayerTreeHost(makeUnique<RemoteLayerTreeHost>(*this))
+    , m_remoteLayerTreeHost(makeUnique<RemoteLayerTreeHost>(*this, RemoteLayerTreeHost::Role::Primary))
     , m_webPageProxyProcessState(webProcessProxy)
 {
     // We don't want to pool surfaces in the UI process.
@@ -113,7 +114,11 @@ RemoteLayerTreeDrawingAreaProxy::RemoteLayerTreeDrawingAreaProxy(WebPageProxy& p
         initializeSlowFrameIndicator();
 }
 
-RemoteLayerTreeDrawingAreaProxy::~RemoteLayerTreeDrawingAreaProxy() = default;
+RemoteLayerTreeDrawingAreaProxy::~RemoteLayerTreeDrawingAreaProxy()
+{
+    if (m_mirrorInvalidationProducer)
+        m_mirrorInvalidationProducer->resolve();
+}
 
 std::span<IPC::ReceiverName> RemoteLayerTreeDrawingAreaProxy::messageReceiverNames() const
 {
@@ -137,6 +142,11 @@ void RemoteLayerTreeDrawingAreaProxy::removeRemotePageDrawingAreaProxy(RemotePag
 
     if (proxy.process().hasConnection())
         flushOutstandingPresentationUpdateCallbacks(protect(proxy.process().connection()));
+
+    if (m_mirror) {
+        m_mirror->processDidLeavePage(proxy.process().coreProcessIdentifier());
+        completeMirrorAttachIfReady();
+    }
 }
 
 ProcessState::ProcessState(WebProcessProxy& webProcess, std::optional<WebCore::PageIdentifier> webPageID)
@@ -192,8 +202,12 @@ void RemoteLayerTreeDrawingAreaProxy::remotePageProcessDidTerminate(WebCore::Pro
         scrollingCoordinator->removeTimelines(processIdentifier);
 #endif
         m_remoteLayerTreeHost->remotePageProcessDidTerminate(processIdentifier);
+        if (m_mirror)
+            m_mirror->processDidTerminate(processIdentifier);
         scrollingCoordinator->didCommitLayerAndScrollingTrees();
     }
+
+    completeMirrorAttachIfReady();
 }
 
 void RemoteLayerTreeDrawingAreaProxy::viewWillStartLiveResize()
@@ -335,8 +349,10 @@ void RemoteLayerTreeDrawingAreaProxy::notifyPendingCommitLayerTree(IPC::Connecti
 
 #if ENABLE(ASYNC_SCROLLING)
         if (RefPtr page = this->page()) {
-            if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
+            if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy()) {
                 scrollingCoordinatorProxy->applyScrollingTreeLayerPositionsAfterCommit();
+                scrollingCoordinatorProxy->flushMainThreadTransactionIfNeeded();
+            }
         }
 #endif
     }
@@ -358,7 +374,7 @@ void RemoteLayerTreeDrawingAreaProxy::notifyFlushingLayerTree(IPC::Connection& c
     }
 }
 
-void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connection, const RemoteLayerTreeCommitBundle& bundle, HashMap<ImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&& handlesMap)
+void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connection, const RemoteLayerTreeCommitBundle& bundle, RemoteLayerTreeFullState&& fullState, HashMap<ImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&& handlesMap)
 {
     {
         ProcessState& state = processStateForConnection(connection);
@@ -384,7 +400,7 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
     Borrow borrowedTransactions = bundle.transactions;
     for (auto& transaction : borrowedTransactions) {
         // commitLayerTreeTransaction consumes the incoming buffers, so we need to grab them first.
-        CheckedRef removeLayerTreeTransaction = transaction.first;
+        CheckedRef removeLayerTreeTransaction = transaction.first.get();
         for (auto& [layerID, properties] : removeLayerTreeTransaction->changedLayerProperties()) {
             auto* backingStoreProperties = properties->backingStoreOrProperties.properties.get();
             if (!backingStoreProperties)
@@ -441,13 +457,19 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
             page->didReachLayoutMilestone(milestones, WallTime::now());
     }
 
+    for (auto& [frameID, edges] : borrow(bundle.fixedContainerEdges))
+        page->didReceiveFixedContainerEdges(connection, frameID, edges);
+
     WeakPtr weakThis { *this };
 
     for (auto& transaction : borrowedTransactions) {
-        commitLayerTreeTransaction(connection, CheckedRef { transaction.first }.get(), transaction.second,  transaction.first.remoteContextHostedIdentifier() ? std::nullopt : bundle.mainFrameData, bundle.pageData, bundle.transactionID);
+        commitLayerTreeTransaction(connection, CheckedRef { transaction.first.get() }.get(), transaction.second,  transaction.first->remoteContextHostedIdentifier() ? std::nullopt : bundle.mainFrameData, bundle.pageData, bundle.transactionID);
         if (!weakThis)
             return;
     }
+
+    if (!fullState.isEmpty())
+        didReceiveMirrorFullState(connection, *page, fullState, !!bundle.mainFrameData);
 
     if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
         scrollingCoordinatorProxy->establishLayerTreeScrollingRelations(connection);
@@ -487,6 +509,9 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
 
     updateSlowFrameIndicator();
     scheduleDisplayRefreshCallbacks();
+
+    if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
+        scrollingCoordinatorProxy->flushMainThreadTransactionIfNeeded();
 }
 
 #if ENABLE(TOUCH_EVENT_REGIONS)
@@ -534,6 +559,10 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTreeTransaction(IPC::Connection
                 } else
                     m_remoteLayerTreeHost->detachRootLayer();
             }
+
+            if (m_mirror)
+                m_mirror->didCommitTransactionToPrimaryTree(connection, layerTreeTransaction, mainFrameData, transactionID, *m_remoteLayerTreeHost);
+
             requestedScroll = scrollingCoordinatorProxy->commitScrollingTreeState(connection, scrollingTreeTransaction, layerTreeTransaction.remoteContextHostedIdentifier());
         };
 
@@ -596,6 +625,9 @@ void RemoteLayerTreeDrawingAreaProxy::asyncSetLayerContents(IPC::Connection& con
 void RemoteLayerTreeDrawingAreaProxy::setLayerContentsFromAnotherProcess(WebCore::PlatformLayerIdentifier layerID, RemoteLayerBackingStoreProperties&& properties)
 {
     m_remoteLayerTreeHost->asyncSetLayerContents(layerID, WTF::move(properties));
+
+    if (m_mirror)
+        m_mirror->didSetLayerContentsInPrimaryTree(layerID, *m_remoteLayerTreeHost);
 }
 
 bool RemoteLayerTreeDrawingAreaProxy::startDisplayOnlyImage(RemoteSnapshotIdentifier image)
@@ -613,6 +645,14 @@ void RemoteLayerTreeDrawingAreaProxy::releaseDisplayOnlyImage(RemoteSnapshotIden
     if (m_remoteLayerTreeHost)
         m_remoteLayerTreeHost->releaseDisplayOnlyImage(image);
 }
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+void RemoteLayerTreeDrawingAreaProxy::updateDeferredInteractionRegions()
+{
+    if (m_remoteLayerTreeHost)
+        m_remoteLayerTreeHost->updateDeferredInteractionRegions();
+}
+#endif
 
 void RemoteLayerTreeDrawingAreaProxy::acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier layerID, const String& key, MonotonicTime startTime)
 {
@@ -727,8 +767,7 @@ void RemoteLayerTreeDrawingAreaProxy::updateDebugIndicator(IntSize contentsSize,
 
 void RemoteLayerTreeDrawingAreaProxy::initializeDebugIndicator()
 {
-    lazyInitialize(m_debugIndicatorLayerTreeHost, makeUnique<RemoteLayerTreeHost>(*this));
-    m_debugIndicatorLayerTreeHost->setIsDebugLayerTreeHost(true);
+    lazyInitialize(m_debugIndicatorLayerTreeHost, makeUnique<RemoteLayerTreeHost>(*this, RemoteLayerTreeHost::Role::DebugIndicator));
 
     lazyInitialize(m_tileMapHostLayer, adoptNS([[CALayer alloc] init]));
     [m_tileMapHostLayer setName:@"Tile map host"];
@@ -758,6 +797,88 @@ void RemoteLayerTreeDrawingAreaProxy::initializeDebugIndicator()
         RetainPtr<CGColorRef> color = adoptCF(CGColorCreate(colorSpace.get(), components));
         [m_exposedRectIndicatorLayer setBorderColor:color.get()];
     }
+}
+
+Ref<MirrorLayerTreePromise> RemoteLayerTreeDrawingAreaProxy::enableMirrorLayerTree()
+{
+#if PLATFORM(MAC)
+    RefPtr page = this->page();
+    if (!page || !page->hasRunningProcess() || !m_remoteLayerTreeHost)
+        return MirrorLayerTreePromise::createAndReject();
+
+    if (m_mirror) {
+        RELEASE_LOG_ERROR(RemoteLayerTree, "RemoteLayerTreeDrawingAreaProxy(%" PRIu64 ")::enableMirrorLayerTree - there is already a mirror", identifier().toUInt64());
+        return MirrorLayerTreePromise::createAndReject();
+    }
+
+    m_mirror = makeUnique<RemoteLayerTreeMirror>(*this);
+    m_mirrorAttachProducer.emplace();
+    Ref promise = m_mirrorAttachProducer->promise();
+
+    forEachProcessState([&](auto& state, auto& webProcess) {
+        if (!webProcess.hasConnection())
+            return;
+
+        if (&state != &m_webPageProxyProcessState && !state.committedLayerTreeTransactionID)
+            return;
+
+        m_mirror->willRequestFullState(webProcess.coreProcessIdentifier());
+
+        if (std::exchange(state.hasPendingFullStateRequest, true))
+            return;
+        protect(webProcess.connection())->send(Messages::DrawingArea::BuildFullLayerTreeState(), identifier());
+    });
+
+    RELEASE_LOG(RemoteLayerTree, "RemoteLayerTreeDrawingAreaProxy(%" PRIu64 ")::enableMirrorLayerTree", identifier().toUInt64());
+    completeMirrorAttachIfReady();
+    return promise;
+#else
+    return MirrorLayerTreePromise::createAndReject();
+#endif
+}
+
+void RemoteLayerTreeDrawingAreaProxy::didReceiveMirrorFullState(IPC::Connection& connection, WebPageProxy& page, const RemoteLayerTreeFullState& fullState, bool hasMainFrame)
+{
+    ASSERT(processStateForConnection(connection).hasPendingFullStateRequest);
+    processStateForConnection(connection).hasPendingFullStateRequest = false;
+
+    if (!m_mirror || !m_remoteLayerTreeHost)
+        return;
+
+    m_mirror->didReceiveFullState(connection, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier(), fullState, hasMainFrame, *m_remoteLayerTreeHost);
+
+    completeMirrorAttachIfReady();
+}
+
+void RemoteLayerTreeDrawingAreaProxy::completeMirrorAttachIfReady()
+{
+    if (!m_mirror || m_mirror->isWaitingForFullStates() || !m_mirrorAttachProducer)
+        return;
+
+    if (!m_mirror->host().rootLayer()) {
+        RELEASE_LOG_ERROR(RemoteLayerTree, "RemoteLayerTreeDrawingAreaProxy(%" PRIu64 ")::completeMirrorAttachIfReady - no root layer after applying the full states", identifier().toUInt64());
+        disableMirrorLayerTree();
+        return;
+    }
+
+    m_mirrorInvalidationProducer.emplace();
+    std::exchange(m_mirrorAttachProducer, std::nullopt)->resolve(MirrorLayerTree { m_mirror->layer(), m_mirrorInvalidationProducer->promise() });
+}
+
+void RemoteLayerTreeDrawingAreaProxy::disableMirrorLayerTree()
+{
+    if (m_mirror)
+        RELEASE_LOG(RemoteLayerTree, "RemoteLayerTreeDrawingAreaProxy(%" PRIu64 ")::disableMirrorLayerTree", identifier().toUInt64());
+
+    m_mirror = nullptr;
+    m_mirrorAttachProducer = std::nullopt;
+    if (auto invalidationProducer = std::exchange(m_mirrorInvalidationProducer, std::nullopt))
+        invalidationProducer->resolve();
+}
+
+bool RemoteLayerTreeDrawingAreaProxy::isMirrorLayer(CALayer *layer) const
+{
+    return layer && m_mirror && m_mirror->layer() == layer;
 }
 
 void RemoteLayerTreeDrawingAreaProxy::initializeSlowFrameIndicator()
@@ -1007,6 +1128,15 @@ void RemoteLayerTreeDrawingAreaProxy::sizeToContentAutoSizeMaximumSizeDidChange(
 }
 
 #if ENABLE(THREADED_ANIMATIONS)
+bool RemoteLayerTreeDrawingAreaProxy::schedulesUpdatesForMonotonicAnimationsForTesting() const
+{
+    if (RefPtr page = this->page()) {
+        if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
+            return scrollingCoordinatorProxy->hasVisibleMonotonicAnimations();
+    }
+    return false;
+}
+
 void RemoteLayerTreeDrawingAreaProxy::animationsWereAddedToNode(RemoteLayerTreeNode& node)
 {
     if (RefPtr page = this->page()) {

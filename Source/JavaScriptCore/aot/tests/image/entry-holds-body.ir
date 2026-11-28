@@ -1,0 +1,43 @@
+# The host finds a function of the library by the entry of its closures
+# sink(Function.prototype.call, Function.prototype.apply)
+# `call` takes its arguments as a list. A function without a row is run by the interpreter.
+# RUN: image Functions ProgramTables
+# CHECK-LABEL: Functions:
+# CHECK: : f1 sideTables
+# CHECK: : f2 sideTables
+# CHECK-LABEL: ProgramTables:
+# CHECK: compiledRuntimeFunction FunctionPrototypeApply function=f
+# CHECK: compiledRuntimeFunction FunctionPrototypeCall function=f
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=FunctionPrototypeApply function=f2
+runtimefunction id=ReflectObjectApply function=f3
+runtimefunction id=FunctionPrototypeCall function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Builtin builtin=FunctionPrototypeCall
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    Return v4
+}
+function f1 name="call" module=m1 kind=Method role=Library flags=[HasRestParameter, HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array):
+    v3 = CallList v0, v1, v2
+    Return v3
+}
+function f2 name="apply" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
+    v4 = Call v3, v0, v1, v2 [isDoneInPlace]
+    Return v4
+}
+function f3 name="apply" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
+    v4 = Call v3, v0, v1, v2 [isDoneInPlace]
+    Return v4
+}

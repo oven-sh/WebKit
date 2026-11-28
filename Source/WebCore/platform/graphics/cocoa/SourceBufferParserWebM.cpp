@@ -248,7 +248,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebMParser::VideoTrackData);
 
 constexpr uint32_t k_us_in_seconds = 1000000000;
 
-static bool LEGACY_NODELETE isWebmParserAvailable()
+NODELETE static bool isWebmParserAvailable()
 {
     return !!webm::swap;
 }
@@ -380,7 +380,7 @@ public:
         m_currentSegment = m_data.end();
     }
 
-    bool LEGACY_NODELETE rewindTo(uint64_t rewindToPosition)
+    NODELETE bool rewindTo(uint64_t rewindToPosition)
     {
         ASSERT(rewindToPosition <= m_position);
         if (rewindToPosition > m_position)
@@ -409,7 +409,7 @@ public:
     }
 
 private:
-    void LEGACY_NODELETE advanceToNextSegment()
+    NODELETE void advanceToNextSegment()
     {
         ASSERT(m_currentSegment != m_data.end());
         if (m_currentSegment == m_data.end())
@@ -446,7 +446,7 @@ public:
     bool isAudio() const final { return m_track.track_type.is_present() && m_track.track_type.value() == TrackType::kAudio; }
     bool isText() const final { return m_track.track_type.is_present() && m_track.track_type.value() == TrackType::kSubtitle; }
 
-    const webm::TrackEntry& LEGACY_NODELETE track() { return m_track; }
+    NODELETE const webm::TrackEntry& track() { return m_track; }
 
 private:
     String extractCodec(const webm::TrackEntry& track) const
@@ -1168,16 +1168,27 @@ void WebMParser::VideoTrackData::consumeAdditionalBlockData(const webm::BlockAdd
         if (!blockMore.is_present())
             continue;
 
+        if (!blockMore.value().data.is_present() || !blockMore.value().id.is_present())
+            continue;
+
+        auto blockAddId = blockMore.value().id.value();
+        auto& blockMoreData = blockMore.value().data.value();
+
         // https://www.webmproject.org/docs/container/#BlockAddID
+        if (blockAddId == 0x1) {
+            if (!m_pendingMediaSamples.isEmpty())
+                m_pendingMediaSamples.last().alphaData = SharedBuffer::create(std::span { blockMoreData });
+            continue;
+        }
+
         // 0x04 indicates ITU T.35 metadata as defined by ITU-T T.35 terminal codes.
-        if (!blockMore.value().data.is_present() || !blockMore.value().id.is_present() || blockMore.value().id.value() != 0x4)
+        if (blockAddId != 0x4)
             continue;
 
         // ANSI/CTA-861-H:
         // S.3 User_data_registered_itu_t_t35 SEI message semantics for ST 2094-40 [55]
         static constexpr std::array<uint8_t, 5> s_ST2094_40_Message = { 0xB5, 0x00, 0x3C, 0x00, 0x01 };
 
-        auto& blockMoreData = blockMore.value().data.value();
         if (blockMoreData.size() < s_ST2094_40_Message.size())
             continue;
 

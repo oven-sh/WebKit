@@ -1,0 +1,78 @@
+# a key that is joined of two parts for one read alone is looked up by its parts: the stub finds the name that it made of the same two parts before, and no text is joined
+# function handlerOf(handlers, type) { if (typeof type === "string") return [handlers["on" + type]]; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGetByKeyParts
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = ElemGet {{*}},
+# three parts are joined: function cached(cache, a, b) { if (typeof a === "string" && typeof b === "string") return [cache[a + ":" + b]]; }
+# RUN(THREE): walk f2 mechanisms=none+TypedOperations
+# THREE-NOT: ElemGetByKeyParts
+# RUN(THREEAS): walk f2 mechanisms=none+TypedOperations
+# THREEAS-LABEL: code f2:Body
+# THREEAS: = ElemGet {{*}},
+# somebody else reads the text: function both(handlers, type) { if (typeof type === "string") { const k = "on" + type; return [handlers[k], k]; } }
+# RUN(BOTH): walk f3 mechanisms=none+TypedOperations
+# BOTH-NOT: ElemGetByKeyParts
+# RUN(BOTHAS): walk f3 mechanisms=none+TypedOperations
+# BOTHAS-LABEL: code f3:Body
+# BOTHAS: = ElemGet {{*}},
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="handlerOf" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = String string="on"
+    v5 = Add v4, v3
+    v6 = ElemGet v0, v5
+    v7 = NewArray v6 contents=anything
+    Return v7
+  b2():
+    v8 = Undefined
+    Return v8
+}
+function f2 name="cached" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = TypeTest v2 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = String string=":"
+    v8 = Add v4, v7
+    v9 = Add v8, v6
+    v10 = ElemGet v0, v9
+    v11 = NewArray v10 contents=anything
+    Return v11
+  b3():
+    v12 = Undefined
+    Return v12
+}
+function f3 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = String string="on"
+    v5 = Add v4, v3
+    v6 = ElemGet v0, v5
+    v7 = NewArray v6, v5 contents=anything
+    Return v7
+  b2():
+    v8 = Undefined
+    Return v8
+}

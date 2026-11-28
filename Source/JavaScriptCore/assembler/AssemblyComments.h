@@ -40,12 +40,12 @@ class AssemblyCommentRegistry {
     WTF_MAKE_TZONE_ALLOCATED(AssemblyCommentRegistry);
     WTF_MAKE_NONCOPYABLE(AssemblyCommentRegistry);
 public:
-    static AssemblyCommentRegistry& LEGACY_NODELETE singleton();
+    NODELETE static AssemblyCommentRegistry& singleton();
     static void initialize();
 
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
 
-    using CommentMap = UncheckedKeyHashMap<uintptr_t, String>;
+    using CommentMap = HashMap<uintptr_t, String>;
 
     void registerCodeRange(void* start, void* end, CommentMap&& map)
     {

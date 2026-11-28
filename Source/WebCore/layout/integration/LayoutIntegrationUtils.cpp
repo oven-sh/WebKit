@@ -35,8 +35,7 @@
 #include "RenderObject.h"
 #include "RenderObjectInlines.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 const Style::ComputedStyle& IntegrationUtils::firstNonAnonymousAncestorStyle(const Box& box)
 {
@@ -57,12 +56,12 @@ static LayoutUnit inlineWidthForGridItemWithGridArea(const LayoutState& layoutSt
     // item placement which is present until we have resolved the actual grid area
     // inline size.
     renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize.value_or(0_lu));
-    renderer->invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+    renderer->invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
 
     auto width = layoutState.logicalWidthWithFormattingContextForBox(box, logicalWidthType);
 
     renderer->clearGridAreaContentSize();
-    renderer->invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+    renderer->invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
 
     return width;
 }
@@ -91,10 +90,10 @@ std::pair<LayoutUnit, LayoutUnit> IntegrationUtils::borderAndPaddingForGridItem(
     return { inlineBorderAndPadding, blockBorderAndPadding };
 }
 
-void IntegrationUtils::layoutGridItem(const ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize) const
+void IntegrationUtils::layoutGridItem(const ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, std::optional<LayoutUnit> gridAreaBlockSize) const
 {
     ASSERT(box.isGridItem());
-    LayoutIntegration::layoutGridItemWithFormattingContext(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, gridAreaInlineSize, const_cast<LayoutState&>(m_globalLayoutState.get()));
+    LayoutIntegration::layoutGridItemWithFormattingContext(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, gridAreaInlineSize, gridAreaBlockSize, const_cast<LayoutState&>(m_globalLayoutState.get()));
 }
 
 std::optional<LayoutUnit> IntegrationUtils::firstLineBaselineForGridItem(const ElementBox& box) const
@@ -151,9 +150,9 @@ static LayoutUnit blockSizeForGridItem(const LayoutState& layoutState, const Ele
     case LayoutIntegration::LogicalHeightType::MaxContent:
     case LayoutIntegration::LogicalHeightType::MinContentContribution:
     case LayoutIntegration::LogicalHeightType::MaxContentContribution: {
-        renderer->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderer->setNeedsLayout(MarkingBehavior::OnlyThis);
 
-        LayoutIntegration::layoutGridItemWithFormattingContext(box, { }, { }, gridAreaInlineSize, const_cast<LayoutState&>(layoutState));
+        LayoutIntegration::layoutGridItemWithFormattingContext(box, { }, { }, gridAreaInlineSize, { }, const_cast<LayoutState&>(layoutState));
 
         return layoutState.geometryForBox(box).borderBoxHeight();
     }
@@ -239,7 +238,7 @@ std::pair<LayoutRect, LayoutRect> IntegrationUtils::toMarginAndBorderBoxVisualRe
         marginWidth = logicalGeometry.marginStart() + logicalGeometry.marginEnd();
         marginHeight = logicalGeometry.marginBefore() + logicalGeometry.marginAfter();
     } else {
-        // Invert verticalLogicalMargin() and convert to unflipped coords.
+        // Invert verticalLogicalMargin() and convert to block-start relative coords.
         marginLeft = writingMode.isLineInverted() ? logicalGeometry.marginAfter() : logicalGeometry.marginBefore();
         marginTop = writingMode.isInlineTopToBottom() ? logicalGeometry.marginStart() : logicalGeometry.marginEnd();
         marginWidth = logicalGeometry.marginBefore() + logicalGeometry.marginAfter();
@@ -254,5 +253,3 @@ std::pair<LayoutRect, LayoutRect> IntegrationUtils::toMarginAndBorderBoxVisualRe
 }
 
 }
-}
-

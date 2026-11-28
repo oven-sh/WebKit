@@ -18,6 +18,13 @@ export function checkDenseIds(cppType: string, items: readonly { id: number }[],
   if (position !== -1) problems.add(null, `${cppType}(${items[position].id}) is at position ${position} of its list`);
 }
 
+export function hashOfText(text: string): number {
+  const bytes = Buffer.from(text, "latin1");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < bytes.length; index++) hash = Math.imul(hash ^ bytes[index], 0x01000193) >>> 0;
+  return hash;
+}
+
 export function formatAggregate(members: readonly AggregateMember[]): string {
   const printed = members.flatMap(([name, value]) => (value === null ? [] : [`.${name} = ${value}`]));
   return printed.length === 0 ? "{ }" : `{ ${printed.join(", ")} }`;
@@ -83,7 +90,6 @@ export function formatInt64(value: number): string {
   return `${value}LL`;
 }
 
-// What stands between the quotes of a C++ literal.
 export function formatCharacters(text: string): string {
   if (!/^[\x00-\x7f]*$/.test(text)) throw new GeneratorError(`${JSON.stringify(text)} is not ASCII`);
   return text
@@ -99,7 +105,6 @@ export function formatASCIILiteral(text: string): string {
   return `"${formatCharacters(text)}"_s`;
 }
 
-// AOTBuiltinTable.h declares these without a bound and code of the engine names them: a table defines each, whether or not it has a record.
 const arraysNamedByEngine: ReadonlySet<string> = new Set([
   "builtinTableOverloads",
   "builtinTableDispatches",
@@ -110,8 +115,6 @@ const arraysNamedByEngine: ReadonlySet<string> = new Set([
   "builtinTableCalledFunctions",
   "builtinTableStartupCalledFunctions",
   "builtinTableHostObjects",
-  "builtinTableNamedMemberCalls",
-  "builtinTableHostMethodCalls",
   "builtinTableForms",
   "builtinTableClassesByMemberName",
 ]);
@@ -168,7 +171,6 @@ export class Pool {
   readonly #firstOfRun = new Map<string, number>();
   readonly #isDeclaredInHeader: boolean;
 
-  // An array that AOTBuiltinTable.h declares is named by stretches too: see BuiltinRecordStretch there.
   constructor(cppType: string, arrayName: string, isDeclaredInHeader = false) {
     this.#cppType = cppType;
     this.#arrayName = arrayName;
@@ -218,7 +220,6 @@ export class Pool {
   }
 
   emit(): string {
-    // The header declares the array whether or not it has a record.
     if (this.#isDeclaredInHeader) {
       const elements = this.#elements.length === 0 ? ["{ }"] : this.#elements;
       return emitArray(`constinit const ${this.#cppType} ${this.#arrayName}`, elements);

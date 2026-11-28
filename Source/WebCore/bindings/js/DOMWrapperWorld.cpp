@@ -25,11 +25,16 @@
 #include "JSEventListener.h"
 #include "Logging.h"
 #include "WebCoreJSClientData.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include "WindowProxy.h"
+#include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/MainThread.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -55,9 +60,54 @@ DOMWrapperWorld::~DOMWrapperWorld()
         protect(*m_jsWindowProxies.begin())->destroyJSWindowProxy(*this);
 }
 
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(DOMWrapperWorld::ArrayBufferViewWrapper);
+
+void DOMWrapperWorld::ArrayBufferViewWrapperDeleter::operator()(ArrayBufferViewWrapper* wrapper) const
+{
+    delete wrapper;
+}
+
+class DOMWrapperWorld::ArrayBufferViewWrapperOwner final : public JSC::WeakHandleOwner {
+public:
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
+    {
+        if (reason) [[unlikely]]
+            *reason = "ArrayBufferView is opaque root"_s;
+        auto& entry = *static_cast<ArrayBufferViewWrapper*>(context);
+        return containsWebCoreOpaqueRoot(visitor, WebCoreOpaqueRoot { entry.view.ptr() });
+    }
+
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final
+    {
+        auto& entry = *static_cast<ArrayBufferViewWrapper*>(context);
+        if (RefPtr world = entry.world)
+            world->m_arrayBufferViewWrappers.remove(entry.view.ptr());
+        return FinalizeResult::KeepImpl;
+    }
+};
+
+JSC::JSArrayBufferView* DOMWrapperWorld::arrayBufferViewWrapper(JSC::ArrayBufferView& view) const
+{
+    auto* entry = m_arrayBufferViewWrappers.get(&view);
+    return entry ? entry->wrapper.get() : nullptr;
+}
+
+void DOMWrapperWorld::cacheArrayBufferViewWrapper(JSC::ArrayBufferView& view, JSC::JSArrayBufferView& wrapper)
+{
+    static NeverDestroyed<ArrayBufferViewWrapperOwner> owner;
+
+    auto& entry = *m_arrayBufferViewWrappers.ensure(&view, [&] {
+        return std::unique_ptr<ArrayBufferViewWrapper, ArrayBufferViewWrapperDeleter>(new ArrayBufferViewWrapper(*this, view));
+    }).iterator->value;
+    if (entry.wrapper)
+        return;
+
+    entry.wrapper = JSC::Weak<JSC::JSArrayBufferView>(&wrapper, &owner.get(), &entry);
+}
+
 void DOMWrapperWorld::clearWrappers()
 {
-    if (!m_eventListeners.isEmptyIgnoringNullReferences()) {
+    if (!m_eventListeners.computeIsEmpty()) {
         RELEASE_LOG_ERROR(Bindings, "DOMWrapperWorld::clearWrappers() called when there were still registered event listeners");
         auto eventListeners = std::exchange(m_eventListeners, { });
         for (Ref eventListener : eventListeners)
@@ -65,6 +115,7 @@ void DOMWrapperWorld::clearWrappers()
     }
 
     m_wrappers.clear();
+    m_arrayBufferViewWrappers.clear();
 
     // These items are created lazily.
     while (!m_jsWindowProxies.isEmpty())
@@ -90,7 +141,7 @@ DOMWrapperWorld& normalWorld(JSC::VM& vm)
 
 DOMWrapperWorld& mainThreadNormalWorldSingleton()
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     static NeverDestroyed<Ref<DOMWrapperWorld>> cachedNormalWorld = normalWorld(commonVM());
     return cachedNormalWorld->get();
 }

@@ -1,0 +1,48 @@
+# An object is its own object, and an integer that a length can be is its own length. The texts of the library begin with both conversions, and in a copy the caller knows the list.
+# function ofList(a) { const list = [a]; return @toLength(@toObject(list).length); }   function ofAnything(a) { return @toLength(@toObject(a).length); }
+# LIBRARY: own
+# RUN: walk f1 mechanisms=none+Folding+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: [[list]]: Array {{*}} = NewArray
+# CHECK: = GetArrayLength
+# RUN(NEVER): walk f1 mechanisms=none+Folding+TypedOperations
+# NEVER-NOT: ToObject
+# NEVER-NOT: ToLength
+# RUN(OTHER): walk f2 mechanisms=none+Folding+TypedOperations
+# OTHER: = ToObject
+# OTHER: = ToLength
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations
+# WITHHELD: = ToObject
+# WITHHELD: = ToLength
+
+variable g0 name="map" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="filter" module=m0 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="filter" variable=g1}, {name="map" variable=g0}]
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f2
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeMap
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=ArrayPrototypeFilter
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    Return v4
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1 contents=anything
+    v3 = ToObject v2
+    v4 = PropGet v3 key="length"
+    v5 = ToLength v4
+    Return v5
+}
+function f2 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToObject v1
+    v3 = PropGet v2 key="length"
+    v4 = ToLength v3
+    Return v4
+}

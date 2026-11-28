@@ -1,0 +1,41 @@
+# the run time goes by its own table, which locks Math.imul, and by the list of the image. The wire lists nothing: the image lists the member because Link has followed a write to it, so the store goes through
+# put(Math, () => 7); print(Math.imul(2, 2))   with   put = (o, v) => { o.imul = v }
+# with the list left empty the store throws a TypeError, and nothing is printed
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all
+# CHECK: 7
+# CHECK-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: 7
+# CLOSED-NEXT: exited with 0
+# RUN(IMAGE): image ProgramTables
+# IMAGE: constantAndUnlockedBuiltinMembers
+# RUN(LIST): test-run
+# LIST: replaces MathImul
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v2, -, v1, v3
+    v5 = PropGet v1 key="imul"
+    v6 = Integer integer=2
+    v7 = Call v5, v1, v6, v6 calleeKey="imul"
+    v8 = PropGet v0 key="print" [isFreeName]
+    v9 = Call v8, -, v7
+    Return v9
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="imul"
+    Return v1
+}
+function f2 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

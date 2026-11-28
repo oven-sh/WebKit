@@ -1,0 +1,7 @@
+# where the run follows some star of a module and not every one, each star bears its rank among the star statements, though they stand in order
+# RUN: verify
+
+module m0 path="main" displayPath="main" requests=[{target=m1 isDynamicStarExport=true completes=true starPlace=0}, {target=m2 completes=true starPlace=1}]
+module m1 path="first" displayPath="first"
+module m2 path="second" displayPath="second"
+entry module=m0

@@ -29,15 +29,17 @@
 #include "config.h"
 #include "ArchiveResource.h"
 
+#include "HTTPParsers.h"
 #include "SharedBuffer.h"
+#include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
 
 namespace WebCore {
 
 inline ArchiveResource::ArchiveResource(Ref<FragmentedSharedBuffer>&& data, const URL& url, const String& mimeType, const String& textEncoding, const String& frameName, const ResourceResponse& response, const String& relativeFilePath)
     : SubstituteResource(URL { url }, ResourceResponse { response }, WTF::move(data))
-    , m_mimeType(mimeType)
-    , m_textEncoding(textEncoding)
+    , m_mimeType(extractMIMETypeFromMediaType(mimeType))
+    , m_textEncoding(textEncoding.isEmpty() ? extractCharsetFromMediaType(mimeType).toString() : textEncoding)
     , m_frameName(frameName)
     , m_relativeFilePath(relativeFilePath)
     , m_shouldIgnoreWhenUnarchiving(false)
@@ -80,7 +82,7 @@ std::expected<String, ArchiveError> ArchiveResource::saveToDisk(const String& di
     auto filePath = FileSystem::pathByAppendingComponent(directory, m_relativeFilePath);
     FileSystem::makeAllDirectories(FileSystem::parentPath(filePath));
     auto fileData = protect(data())->extractData();
-    auto bytesWritten = FileSystem::overwriteEntireFile(filePath, fileData.span());
+    auto bytesWritten = FileSystem::overwriteEntireFile(filePath, borrow(fileData)->span());
 
     if (!bytesWritten)
         return makeUnexpected(ArchiveError::FileSystemError);

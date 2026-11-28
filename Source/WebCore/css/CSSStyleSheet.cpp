@@ -52,7 +52,7 @@
 
 namespace WebCore {
 
-static Style::Scope& LEGACY_NODELETE styleScopeFor(ContainerNode& treeScope)
+NODELETE static Style::Scope& styleScopeFor(ContainerNode& treeScope)
 {
     ASSERT(is<Document>(treeScope) || is<ShadowRoot>(treeScope));
     if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(treeScope))
@@ -67,13 +67,23 @@ public:
     StyleSheetCSSRuleList(CSSStyleSheet* sheet) : m_styleSheet(sheet) { }
     
 private:
-    void LEGACY_NODELETE ref() const final { m_styleSheet->ref(); }
+    NODELETE void ref() const final { m_styleSheet->ref(); }
     void deref() const final { m_styleSheet->deref(); }
 
     unsigned length() const final { return m_styleSheet->length(); }
     CSSRule* item(unsigned index) const final { return protect(m_styleSheet)->item(index); }
 
-    CSSStyleSheet* LEGACY_NODELETE styleSheet() const final { return m_styleSheet.get(); }
+    NODELETE CSSStyleSheet* styleSheet() const final { return m_styleSheet.get(); }
+
+    // CSSStyleSheet::item() lazily creates the child wrappers, so it must not be reached from the
+    // GC marker threads; the sheet is the list's opaque root anyway.
+    WebCoreOpaqueRoot opaqueRootForGCThread() const final
+    {
+        SUPPRESS_UNCOUNTED_LOCAL CSSStyleSheet* styleSheet = m_styleSheet.get();
+        if (!styleSheet)
+            return WebCoreOpaqueRoot { nullptr };
+        return styleSheet->opaqueRootForGCThread();
+    }
 
     SingleThreadWeakPtr<CSSStyleSheet> m_styleSheet;
 };
@@ -176,7 +186,7 @@ CSSStyleSheet::~CSSStyleSheet()
             m_childRuleCSSOMWrappers[i]->setParentStyleSheet(nullptr);
     }
     if (m_mediaCSSOMWrapper)
-        protect(m_mediaCSSOMWrapper)->detachFromParent();
+        m_mediaCSSOMWrapper->detachFromParent();
 
     protect(m_contents)->unregisterClient(this);
 }
@@ -235,7 +245,6 @@ void CSSStyleSheet::didMutateRules(RuleMutationType mutationType, ContentsCloned
 {
     ASSERT(m_contents->isMutable());
     ASSERT(m_contents->hasOneClient());
-    m_contents->setHasResolvedNesting(false);
 
     forEachStyleScope([&](Style::Scope& scope) {
         if ((mutationType == RuleInsertion || mutationType == RuleReplace) && contentsClonedForMutation == ContentsClonedForMutation::No && !scope.activeStyleSheetsContains(*this)) {
@@ -274,7 +283,8 @@ void CSSStyleSheet::forEachStyleScope(NOESCAPE const Function<void(Style::Scope&
         apply(*scope);
         return;
     }
-    for (Ref treeScope : m_adoptingTreeScopes)
+
+    for (const auto& treeScope : copyToVectorOf<Ref<ContainerNode>>(m_adoptingTreeScopes))
         apply(protect(styleScopeFor(treeScope)));
 }
 
@@ -290,6 +300,7 @@ WebCoreOpaqueRoot CSSStyleSheet::opaqueRootForGCThread()
     if (m_ownerNode)
         return root(m_ownerNode.get());
     if (SUPPRESS_UNCOUNTED_LOCAL SUPPRESS_UNCHECKED_LOCAL CSSImportRule* ownerRule = m_ownerRule.get()) {
+        Locker ruleLocker { ownerRule->opaqueRootLockForGC() };
         // Cannot ref on the GC thread, same as ownerRule above.
         if (SUPPRESS_UNCOUNTED_LOCAL auto* parentSheet = ownerRule->parentStyleSheet())
             return parentSheet->opaqueRootForGCThread();
@@ -330,7 +341,7 @@ void CSSStyleSheet::setDisabled(bool disabled)
 
 void CSSStyleSheet::setMediaQueries(MQ::MediaQueryList&& mediaQueries)
 {
-    m_mediaQueries = WTF::move(mediaQueries);
+    m_mediaQueries = MQ::makeShared(WTF::move(mediaQueries));
 }
 
 unsigned CSSStyleSheet::length() const
@@ -340,6 +351,8 @@ unsigned CSSStyleSheet::length() const
 
 CSSRule* CSSStyleSheet::item(unsigned index)
 {
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
+
     unsigned ruleCount = length();
     if (index >= ruleCount)
         return nullptr;
@@ -483,9 +496,8 @@ bool CSSStyleSheet::isLoading() const
 
 MediaList* CSSStyleSheet::media() const 
 {
-    if (!m_mediaCSSOMWrapper) {
-        m_mediaCSSOMWrapper = MediaList::create(const_cast<CSSStyleSheet*>(this));
-    }
+    if (!m_mediaCSSOMWrapper)
+        lazyInitialize(m_mediaCSSOMWrapper, MediaList::create(const_cast<CSSStyleSheet*>(this)));
     return m_mediaCSSOMWrapper.get();
 }
 
@@ -571,21 +583,31 @@ ExceptionOr<void> CSSStyleSheet::replaceSync(String&& text)
     // Try to use the cache in the case where contents is replaced before the stylesheet is attached to the document.
     if (isDetached() && m_childRuleCSSOMWrappers.isEmpty()) {
         auto key = Style::StyleSheetContentsCache::Key { text, m_contents->parserContext() };
-        auto cachedContents = Style::StyleSheetContentsCache::singleton().get(key);
-        if (cachedContents) {
+        if (RefPtr cachedContents = Style::StyleSheetContentsCache::singleton().get(key)) {
             protect(m_contents)->unregisterClient(this);
-            m_contents = *cachedContents;
+            m_contents = cachedContents.releaseNonNull();
             protect(m_contents)->registerClient(this);
-        } else {
+            return { };
+        }
+
+        // Contents that are shared with other stylesheets or published to the cache have to stay
+        // immutable, so parse into fresh contents instead of replacing the rules in place.
+        auto contentsForReplacement = [&] -> Ref<StyleSheetContents> {
+            if (m_contents->hasOneClient() && !m_contents->isInMemoryCache()) {
+                protect(m_contents)->clearRules();
+                return m_contents;
+            }
             Ref contents = StyleSheetContents::create(m_contents->parserContext());
             protect(m_contents)->unregisterClient(this);
-            m_contents = contents;
+            m_contents = contents.copyRef();
             contents->registerClient(this);
             contents->checkLoaded();
-            contents->parseString(WTF::move(text));
-            if (contents->isCacheable())
-                Style::StyleSheetContentsCache::singleton().add(WTF::move(key), contents);
-        }
+            return contents;
+        }();
+
+        contentsForReplacement->parseString(WTF::move(text));
+        if (contentsForReplacement->isCacheable())
+            Style::StyleSheetContentsCache::singleton().add(WTF::move(key), WTF::move(contentsForReplacement));
         return { };
     }
 
@@ -605,7 +627,7 @@ bool CSSStyleSheet::isDetached() const
     assertIsOwnerThread();
     return !m_ownerNode
         && !m_ownerRule
-        && m_adoptingTreeScopes.isEmptyIgnoringNullReferences();
+        && m_adoptingTreeScopes.computeIsEmpty();
 }
 
 Document* CSSStyleSheet::constructorDocument() const

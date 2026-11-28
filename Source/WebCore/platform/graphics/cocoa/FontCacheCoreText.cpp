@@ -115,7 +115,7 @@ VariationDefaultsMap defaultVariationValues(CTFontRef font, ShouldLocalizeAxisNa
     return result;
 }
 
-static std::optional<bool>& LEGACY_NODELETE overrideEnhanceTextLegibility()
+NODELETE static std::optional<bool>& overrideEnhanceTextLegibility()
 {
     static NeverDestroyed<std::optional<bool>> overrideEnhanceTextLegibility;
     return overrideEnhanceTextLegibility.get();
@@ -220,7 +220,7 @@ Vector<String> FontCache::systemFontFamilies()
     return fontFamilies;
 }
 
-static inline bool LEGACY_NODELETE isSystemFont(const String& family)
+NODELETE static inline bool isSystemFont(const String& family)
 {
     // String's operator[] handles out-of-bounds by returning 0.
     return family[0] == '.';
@@ -231,7 +231,7 @@ bool FontCache::isSystemFontForbiddenForEditing(const String& fontFamily)
     return isSystemFont(fontFamily);
 }
 
-static CTFontSymbolicTraits LEGACY_NODELETE computeTraits(const FontDescription& fontDescription)
+NODELETE static CTFontSymbolicTraits computeTraits(const FontDescription& fontDescription)
 {
     CTFontSymbolicTraits traits = 0;
     if (fontDescription.fontStyleSlope())
@@ -273,7 +273,7 @@ SynthesisPair computeNecessarySynthesis(CTFontRef font, const FontDescription& f
 
 class FontCacheAllowlist {
 public:
-    static FontCacheAllowlist& LEGACY_NODELETE singleton() WTF_REQUIRES_LOCK(lock)
+    NODELETE static FontCacheAllowlist& singleton() WTF_REQUIRES_LOCK(lock)
     {
         static NeverDestroyed<FontCacheAllowlist> allowlist;
         return allowlist;
@@ -671,7 +671,7 @@ static void autoActivateFont(const String& name, CGFloat size)
 static void registerFontIfNeeded(const String& family) WTF_REQUIRES_LOCK(userInstalledFontMapLock())
 {
     if (auto fontURL = userInstalledFontMap().getOptional(family)) {
-        RELEASE_LOG_FORWARDABLE(Fonts, FontCacheCoreTextRegisterFont, family.utf8(), fontURL->string().utf8());
+        RELEASE_LOG_FORWARDABLE(Fonts, FontCacheCoreTextRegisterFont, makeUTF8CString(family), makeUTF8CString(fontURL->string()));
         RetainPtr cfURL = fontURL->createCFURL();
 
         CFErrorRef error = nullptr;
@@ -679,7 +679,7 @@ static void registerFontIfNeeded(const String& family) WTF_REQUIRES_LOCK(userIns
             SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr adoptedError = adoptCF(error);
             RetainPtr descriptionCF = adoptCF(CFErrorCopyDescription(adoptedError.get()));
             String errorDescription(descriptionCF.get());
-            RELEASE_LOG_FORWARDABLE(Fonts, FontCacheCoreTextRegisterError, family.utf8(), errorDescription.utf8());
+            RELEASE_LOG_FORWARDABLE(Fonts, FontCacheCoreTextRegisterError, makeUTF8CString(family), makeUTF8CString(errorDescription));
         }
 
         userInstalledFontMap().removeIf([&](auto& keyAndValue) {
@@ -812,9 +812,9 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
     const FontPlatformData& platformData = originalFontData.platformData();
     RetainPtr ctFont = platformData.ctFont();
 
-    auto fullName = String(adoptCF(CTFontCopyFullName(ctFont.get())).get());
-    if (!fullName.isEmpty())
-        m_fontNamesRequiringSystemFallbackForPrewarming.add(fullName);
+    auto postScriptName = String(adoptCF(CTFontCopyPostScriptName(ctFont.get())).get());
+    if (!postScriptName.isEmpty())
+        m_fontNamesRequiringSystemFallbackForPrewarming.add(postScriptName);
 
     auto result = lookupFallbackFont(ctFont.get(), description.weight(), description.usedLocale(), description.shouldAllowUserInstalledFonts(), characterCluster);
     result = preparePlatformFont(UnrealizedCoreTextFont { WTF::move(result) }, description, { });

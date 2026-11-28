@@ -38,11 +38,11 @@ public:
     static Ref<MathMLSelectElement> create(const QualifiedName& tagName, Document&);
     static bool isMathMLEncoding(const AtomString& value);
     static bool isSVGEncoding(const AtomString& value);
-    static bool LEGACY_NODELETE isHTMLEncoding(const AtomString& value);
+    NODELETE static bool isHTMLEncoding(const AtomString& value);
 
 private:
     MathMLSelectElement(const QualifiedName& tagName, Document&);
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
 
     bool childShouldCreateRenderer(const Node&) const final;
 

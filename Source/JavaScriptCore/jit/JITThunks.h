@@ -248,25 +248,25 @@ private:
 
     MacroAssemblerCodeRef<JITThunkPtrTag> lazyCommonThunk(VM&, CommonJITThunkID);
 
-    void finalize(Handle<Unknown>, void* context) final;
+    FinalizeResult finalize(Handle<Unknown>, void* context) final;
 
     struct Entry {
         PackedRefPtr<ExecutableMemoryHandle> handle;
         bool needsCrossModifyingCodeFence;
     };
-    using CTIStubMap = UncheckedKeyHashMap<ThunkGenerator, Entry>;
+    using CTIStubMap = HashMap<ThunkGenerator, Entry>;
 
     using HostFunctionKey = std::tuple<TaggedNativeFunction, TaggedNativeFunction, ImplementationVisibility, unsigned, String>;
 
     struct WeakNativeExecutableHash {
-        static inline unsigned LEGACY_NODELETE hash(const Weak<NativeExecutable>&);
+        NODELETE static inline unsigned hash(const Weak<NativeExecutable>&);
         static inline unsigned hash(const NativeExecutable*);
         static unsigned hash(const HostFunctionKey& key)
         {
             return hash(std::get<0>(key), std::get<1>(key), std::get<2>(key), std::get<3>(key), std::get<4>(key));
         }
 
-        static inline bool LEGACY_NODELETE equal(const Weak<NativeExecutable>&, const Weak<NativeExecutable>&);
+        NODELETE static inline bool equal(const Weak<NativeExecutable>&, const Weak<NativeExecutable>&);
         static inline bool equal(const Weak<NativeExecutable>&, const HostFunctionKey&);
         static inline bool equal(const Weak<NativeExecutable>&, const NativeExecutable*);
         static inline bool equal(const NativeExecutable&, const NativeExecutable&);
@@ -288,7 +288,7 @@ private:
     struct HostKeySearcher;
     struct NativeExecutableTranslator;
 
-    using WeakNativeExecutableSet = UncheckedKeyHashSet<Weak<NativeExecutable>, WeakNativeExecutableHash>;
+    using WeakNativeExecutableSet = HashSet<Weak<NativeExecutable>, WeakNativeExecutableHash>;
 
     // A lazy thunk is published with a release store to its state, so a request that finds it
     // generated reads its code with an acquire load and no lock, and each thunk's own lock keeps

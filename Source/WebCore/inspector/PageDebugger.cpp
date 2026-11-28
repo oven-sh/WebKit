@@ -98,6 +98,9 @@ void PageDebugger::didPause(JSGlobalObject* globalObject)
 {
     JSC::Debugger::didPause(globalObject);
 
+    if (auto* client = protect(m_page)->inspectorController().inspectorBackendClient())
+        client->debuggerDidPause();
+
     setJavaScriptPaused(protect(protect(m_page)->group()), true);
 }
 
@@ -148,6 +151,11 @@ void PageDebugger::runEventLoopWhilePausedInternal()
 bool PageDebugger::isContentScript(JSGlobalObject* state) const
 {
     return &currentWorld(*state) != &mainThreadNormalWorldSingleton() || JSC::Debugger::isContentScript(state);
+}
+
+bool PageDebugger::isInternalScript(JSGlobalObject* state) const
+{
+    return currentWorld(*state).type() == DOMWrapperWorld::Type::Internal || JSC::Debugger::isInternalScript(state);
 }
 
 URL PageDebugger::sourceURLBase(JSGlobalObject* state) const

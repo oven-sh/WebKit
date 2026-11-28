@@ -52,6 +52,10 @@ class ExecutablePool;
 class MacroAssembler;
 class VM;
 
+namespace AOT {
+class ImageAssembler;
+}
+
 namespace Yarr {
 
 class CodeAddressing;
@@ -90,7 +94,7 @@ public:
         m_isValid = false;
     }
 
-    bool LEGACY_NODELETE isEmpty() const { return m_characters.isEmpty(); }
+    NODELETE bool isEmpty() const { return m_characters.isEmpty(); }
     unsigned size() const { return m_characters.size(); }
     char32_t at(unsigned index) const { return m_characters.at(index); }
 
@@ -196,7 +200,7 @@ public:
         }
     }
 
-    void LEGACY_NODELETE setAll()
+    NODELETE void setAll()
     {
         m_count = mapSize;
     }
@@ -325,7 +329,7 @@ public:
     void setCodeFromImage(const void* for8Bit, const void* for16Bit)
     {
         m_ref8 = MacroAssemblerCodeRef<Yarr8BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr8BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for8Bit)));
-        m_ref16 = MacroAssemblerCodeRef<Yarr16BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr16BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for16Bit)));
+        m_ref16 = for16Bit ? MacroAssemblerCodeRef<Yarr16BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr16BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for16Bit))) : MacroAssemblerCodeRef<Yarr16BitPtrTag>();
     }
     void set8BitCodeMatchOnly(MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag> matchOnly, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
@@ -477,7 +481,9 @@ struct CodeGenerationRequest {
     std::optional<StringView> sampleString;
     YarrCodeBlock* codeBlock;
     const CodeGenerationPolicy& policy;
-    Function<std::unique_ptr<CodeAddressing>(CCallHelpers&)> createCodeAddressing;
+    Function<std::unique_ptr<CodeAddressing>(AOT::ImageAssembler&)> createCodeAddressing;
+    // Whether the pattern's flat programs remember failed searches. Requests for one pattern share it.
+    std::optional<bool>* remembersFailedSearches { nullptr };
 };
 
 struct CodeGenerationAttempt;
@@ -492,6 +498,7 @@ public:
     JS_EXPORT_PRIVATE CCallHelpers& jit();
     JS_EXPORT_PRIVATE CodeAddressing& addressing();
     JS_EXPORT_PRIVATE bool hasElidedFrame() const;
+    JS_EXPORT_PRIVATE bool handsLongSearchesOver() const;
     JS_EXPORT_PRIVATE unsigned classTableLimitHits() const;
     CodeGenerationAttempt& attempt() { return *m_attempt; }
 

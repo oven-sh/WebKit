@@ -513,9 +513,17 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
             features = features.with(feature);
     };
 
-#if !OS(DARWIN)
-    bool hasAVX = false;
+    bool isTranslated = false;
+#if OS(DARWIN)
+    {
+        uint32_t val = 0;
+        size_t valSize = sizeof(val);
+        // Not WTF::isX86BinaryRunningOnARM(): Rosetta developer builds compile it out but still run translated.
+        int rc = sysctlbyname("sysctl.proc_translated", &val, &valSize, nullptr, 0);
+        isTranslated = rc >= 0 && val;
+    }
 #endif
+    bool hasAVX = false;
     {
         CPUID cpuid = getCPUID(0x1);
         add(CPUFeature::SSE3, cpuid[2] & (1 << 0));
@@ -524,7 +532,7 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
         add(CPUFeature::SSE4_2, cpuid[2] & (1 << 20));
         add(CPUFeature::Popcnt, cpuid[2] & (1 << 23));
 #if OS(DARWIN)
-        add(CPUFeature::AVX, true);
+        hasAVX = true;
 #else
         // Per the Intel SDM, AVX is usable only when:
         //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
@@ -538,11 +546,29 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
             constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
             hasAVX = (readXCR0() & ymmStateMask) == ymmStateMask;
         }
-        add(CPUFeature::AVX, hasAVX);
 #endif
+        add(CPUFeature::AVX, hasAVX);
+        // F16C is VEX-encoded, so it needs what AVX needs. Rosetta translates F16C even though it does not advertise it, the same as AVX.
+        add(CPUFeature::F16C, hasAVX && (isTranslated || (cpuid[2] & (1 << 29))));
     }
+    auto collectLeaf7Features = [&] {
+        if (getCPUID(0x0)[0] < 0x7)
+            return;
+        // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
+        CPUID cpuid = getCPUID(0x7);
+        add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
+        // AVX2 is VEX-encoded and therefore also requires the OS to have
+        // enabled YMM state; gate it on the AVX result computed above.
+        bool hasAVX2Feature = cpuid[1] & (1 << 5);
+        add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
+    };
 #if OS(DARWIN)
-    {
+    if (isTranslated) {
+        // Rosetta translates AVX2 even when it does not advertise it, the same as AVX. It reports
+        // BMI1 only through CPUID, and only when the process is launched with ROSETTA_ADVERTISE_AVX=1.
+        collectLeaf7Features();
+        add(CPUFeature::AVX2, true);
+    } else {
         uint32_t val = 0;
         size_t valSize = sizeof(val);
         int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
@@ -552,15 +578,7 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
         add(CPUFeature::AVX2, rc >= 0 && val);
     }
 #else
-    {
-        // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
-        CPUID cpuid = getCPUID(0x7);
-        add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
-        // AVX2 is VEX-encoded and therefore also requires the OS to have
-        // enabled YMM state; gate it on the AVX result computed above.
-        bool hasAVX2Feature = cpuid[1] & (1 << 5);
-        add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
-    }
+    collectLeaf7Features();
 #endif
     {
         CPUID cpuid = getCPUID(0x80000001);

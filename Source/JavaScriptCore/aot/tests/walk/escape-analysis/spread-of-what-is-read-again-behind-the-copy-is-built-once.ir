@@ -1,0 +1,44 @@
+# what arrives at the join is spread and then handed out, so it is a cell on every way. Each way brings a literal that only it has, with its keys in sight: each walks the join for itself, and the copy is made with the properties of that way
+# The name of the file is out of date: the copy is built once for each way
+# function widen(c, a, b) { const more = c ? { a } : { a, b }; return a({ ...more }, more); }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: = NewObject {{*}}layout=L0
+# CHECK-COUNT-1: = NewObject {{*}}layout=L1
+# CHECK-COUNT-2: = NewObject {{*}}layout=L2
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-LABEL: code f1:Body
+# NEVER-NOT: CopyDataProperties
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="widen" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    Jump -> next b3(v5)
+  b2():
+    v6 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = NewObject layout=L2
+    CopyDataProperties v9, v8
+    v11 = FinishObject v9
+    v12 = Call v1, -, v11, v8
+    Return v12
+}

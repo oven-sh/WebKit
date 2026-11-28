@@ -69,6 +69,7 @@
 #include "LazyLoadElementObserver.h"
 #include "LegacySchemeRegistry.h"
 #include "Logging.h"
+#include "MIMESniffer.h"
 #include "MIMETypeRegistry.h"
 #include "MediaQueryEvaluator.h"
 #include "Model.h"
@@ -242,7 +243,7 @@ RefPtr<Model> HTMLModelElement::model() const
     return m_model;
 }
 
-static bool LEGACY_NODELETE isSupportedModelType(const AtomString& type)
+NODELETE static bool isSupportedModelType(const AtomString& type)
 {
     return type.isEmpty() || MIMETypeRegistry::isSupportedModelMIMEType(type);
 }
@@ -261,7 +262,11 @@ URL HTMLModelElement::selectModelSource() const
 
     Ref document = this->document();
     for (Ref element : childrenOfType<HTMLSourceElement>(*this)) {
-        if (!isSupportedModelType(element->attributeWithoutSynchronization(typeAttr)))
+        auto& type = element->attributeWithoutSynchronization(typeAttr);
+        if (!isSupportedModelType(type))
+            continue;
+
+        if (MIMETypeRegistry::isSTLMIMEType(type) && !document->settings().modelElementSTLEnabled())
             continue;
 
         auto& queries = element->parsedMediaAttribute(document);
@@ -421,7 +426,7 @@ void HTMLModelElement::didMoveToNewDocument(Document& oldDocument, Document& new
 
 // MARK: - Rendering overrides.
 
-RenderPtr<RenderElement> HTMLModelElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
+RenderPtr<RenderElement> HTMLModelElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition& position)
 {
 #if ENABLE(SPATIAL_PORTAL)
     if (isInsidePortal())
@@ -715,7 +720,7 @@ void HTMLModelElement::didConvertModelData(ModelPlayer& modelPlayer, Ref<SharedB
 #endif
     ASSERT(m_dataComplete);
 
-    RELEASE_LOG(ModelElement, "%p - HTMLModelElement::didConvertModelData: Received converted model data, size=%zu mimeType=%s", this, convertedData->size(), convertedMIMEType.utf8());
+    RELEASE_LOG(ModelElement, "%p - HTMLModelElement::didConvertModelData: Received converted model data, size=%zu mimeType=%s", this, convertedData->size(), makeUTF8CString(convertedMIMEType));
 
     m_model = Model::create(WTF::move(convertedData), String { convertedMIMEType }, m_sourceURL, true /* isConverted */);
     m_dataMemoryCost.store(m_model->data()->size(), std::memory_order_relaxed);
@@ -841,7 +846,7 @@ void HTMLModelElement::logWarning(ModelPlayer& modelPlayer, const String& warnin
     ASSERT_UNUSED(modelPlayer, &modelPlayer == m_modelPlayer);
 #endif
 
-    protect(document())->addConsoleMessage(MessageSource::Other, MessageLevel::Warning, warningMessage);
+    protect(document())->addConsoleMessage(MessageSource::Rendering, MessageLevel::Warning, warningMessage);
 }
 
 // MARK: - ModelPlayer support
@@ -1827,6 +1832,12 @@ bool HTMLModelElement::shouldDeferLoading() const
     return !isVisible() && isModelDeferred() && !document().page()->shouldDisableModelLoadDelaysForTesting();
 }
 
+static String modelMIMEType(const SharedBuffer& data, const String& contentType)
+{
+    auto mimeType = MIMESniffer::getModelMIMETypeFromContent(data.span());
+    return mimeType.isNull() ? contentType : mimeType;
+}
+
 void HTMLModelElement::modelResourceFinished()
 {
     auto invalidateResourceHandleAndUpdateRenderer = [&] {
@@ -1838,24 +1849,36 @@ void HTMLModelElement::modelResourceFinished()
     };
 
     RefPtr resource = m_resource;
-    int status = resource->response().httpStatusCode();
-    if (resource->loadFailedOrCanceled() || (status && !isHttpOkStatus(status))) {
+
+    auto failLoading = [&](ExceptionCode code, ASCIILiteral message) {
         m_data.reset();
 
         ActiveDOMObject::queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
         invalidateResourceHandleAndUpdateRenderer();
 
         if (!m_readyPromise->isFulfilled())
-            m_readyPromise->reject(Exception { ExceptionCode::NetworkError });
+            m_readyPromise->reject(Exception { code });
 
-        triggerModelPlayerCreationCallbacksIfNeeded(Exception { ExceptionCode::NetworkError, "The model resource failed to load"_s });
+        triggerModelPlayerCreationCallbacksIfNeeded(Exception { code, message });
+    };
+
+    int status = resource->response().httpStatusCode();
+    if (resource->loadFailedOrCanceled() || (status && !isHttpOkStatus(status))) {
+        failLoading(ExceptionCode::NetworkError, "The model resource failed to load"_s);
+        return;
+    }
+
+    Ref data = m_data.takeBufferAsContiguous();
+    auto mimeType = modelMIMEType(data, resource->mimeType());
+    if (MIMETypeRegistry::isSTLMIMEType(mimeType) && !document().settings().modelElementSTLEnabled()) {
+        failLoading(ExceptionCode::NotSupportedError, "STL models are not supported"_s);
         return;
     }
 
     m_dataComplete = true;
-    m_dataMemoryCost.store(m_data.size(), std::memory_order_relaxed);
+    m_dataMemoryCost.store(data->size(), std::memory_order_relaxed);
     m_originalMIMEType = resource->mimeType();
-    m_model = Model::create(m_data.takeBufferAsContiguous().get(), resource->mimeType(), resource->url());
+    m_model = Model::create(WTF::move(data), WTF::move(mimeType), resource->url());
 
     ActiveDOMObject::queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().loadEvent, Event::CanBubble::No, Event::IsCancelable::No));
 
@@ -1988,10 +2011,9 @@ void HTMLModelElement::setAnimationCurrentTime(double currentTime, DOMPromiseDef
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 
-bool HTMLModelElement::immersive() const
+bool HTMLModelElement::isImmersiveEnabled() const
 {
-    RefPtr documentImmersive = document().immersiveIfExists();
-    return documentImmersive && documentImmersive->immersiveElement() == this;
+    return document().settings().modelElementImmersiveEnabled();
 }
 
 void HTMLModelElement::requestImmersive(DOMPromiseDeferred<void>&& promise)
@@ -2005,7 +2027,7 @@ void HTMLModelElement::requestImmersive(DOMPromiseDeferred<void>&& promise)
     });
 }
 
-void HTMLModelElement::ensureImmersivePresentation(CompletionHandler<void(ExceptionOr<LayerHostingContextIdentifier>)>&& completion)
+void HTMLModelElement::prepareImmersivePresentation(CompletionHandler<void(ExceptionOr<void>)>&& completion)
 {
 #if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
     if (m_presentationMode == ModelPresentationMode::Volumetric) {
@@ -2044,13 +2066,16 @@ void HTMLModelElement::ensureImmersivePresentation(CompletionHandler<void(Except
                 return;
             }
 
-            completion(WTF::move(contextID.value()));
+            protectedThis->m_immersiveContextID = contextID.value();
+            completion({ });
         });
     });
 }
 
 void HTMLModelElement::exitImmersivePresentation(CompletionHandler<void()>&& completion)
 {
+    m_immersiveContextID = std::nullopt;
+
     RefPtr modelPlayer = m_modelPlayer;
     if (!modelPlayer) {
         setPresentationMode(ModelPresentationMode::Inline);
@@ -2124,7 +2149,7 @@ void HTMLModelElement::triggerModelPlayerCreationCallbacksIfNeeded(ExceptionOr<R
         return;
 
     if (result.hasException())
-        RELEASE_LOG_ERROR(ModelElement, "%p - HTMLModelElement: Model Player creation request: FAILED with error: %s", this, result.exception().message().utf8());
+        RELEASE_LOG_ERROR(ModelElement, "%p - HTMLModelElement: Model Player creation request: FAILED with error: %s", this, makeUTF8CString(result.exception().message()));
     else
         RELEASE_LOG_INFO(ModelElement, "%p - HTMLModelElement: Model Player creation request: SUCCEEDED", this);
 

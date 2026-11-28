@@ -24,6 +24,7 @@
 #include "JSObject.h"
 #include "RuntimeType.h"
 #include "StackFrame.h"
+#include <atomic>
 
 namespace JSC {
 
@@ -200,7 +201,19 @@ protected:
     bool m_stackStringIsFramesOnly : 1;
     JSValue stackWithHeader(VM&, String&& frames);
 #endif
+
+private:
+    size_t stackTraceMemorySize() const;
+    void updateReportedStackTraceMemory();
+    void reportStackTraceMemory(VM&);
+
+    // What visitChildren() reports, for which it may not look at the frames: the JS thread changes them without the lock.
+    std::atomic<uint16_t> m_reportedStackTraceMemoryInKB { 0 };
 };
+
+#if USE(BUN_JSC_ADDITIONS) && CPU(ADDRESS64)
+static_assert(sizeof(ErrorInstance) == 80);
+#endif
 
 String appendSourceToErrorMessage(CodeBlock*, BytecodeIndex, const String&, RuntimeType, ErrorInstance::SourceAppender);
 

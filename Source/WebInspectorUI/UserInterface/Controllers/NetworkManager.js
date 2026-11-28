@@ -35,7 +35,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         this._mainFrame = null;
         this._resourceRequestIdentifierMap = new Map;
         this._orphanedResources = new Map;
-        this._webSocketIdentifierToURL = new Map;
+        this._webSocketCreationInfo = new Map;
 
         this._waitingForMainFrameResourceTreePayload = true;
         this._transitioningPageTarget = false;
@@ -267,6 +267,10 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             // ProxyingPageAgent is live.
             this._requestAggregatedResourceTree();
 
+            // Replay the Page setting overrides to the ProxyingPageAgent, which fans them out to every process.
+            WI.layerTreeManager?.initializeBackendTargetForSiteIsolation(WI.backendTarget);
+            WI.deviceSettingsManager?.initializeBackendTargetForSiteIsolation(WI.backendTarget);
+
             if (this._bootstrapScript && this._bootstrapScriptEnabledSetting.value && WI.backendTarget?.hasCommand("Page.setBootstrapScript"))
                 WI.backendTarget.PageAgent.setBootstrapScript(this._bootstrapScript.content);
         }
@@ -288,8 +292,18 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     get mainFrame() { return this._mainFrame; }
     get localResourceOverrides() { return this._localResourceOverrides; }
     get bootstrapScript() { return this._bootstrapScript; }
-    get enabledNetworkForSiteIsolation() { return this._enabledNetworkForSiteIsolation; }
     get enabledPageForSiteIsolation() { return this._enabledPageForSiteIsolation; }
+
+    get pageAgentTargets()
+    {
+        let targets = WI.targets;
+
+        // `WI.targets` excludes the WebPage target, whose ProxyingPageAgent forwards Page commands to cross-origin frames' processes under Site Isolation.
+        if (this._enabledPageForSiteIsolation && WI.backendTarget && !targets.includes(WI.backendTarget))
+            targets = [...targets, WI.backendTarget];
+
+        return targets;
+    }
 
     get frames()
     {
@@ -316,7 +330,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
         this._interceptionEnabled = enabled;
 
-        for (let target of WI.targets) {
+        for (let target of this._interceptionTargets()) {
             // COMPATIBILITY (iOS 13.0): Network.setInterceptionEnabled did not exist.
             if (target.hasCommand("Network.setInterceptionEnabled"))
                 target.NetworkAgent.setInterceptionEnabled(this._interceptionEnabled);
@@ -358,6 +372,15 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     resourceForRequestIdentifier(requestIdentifier)
     {
         return this._resourceRequestIdentifierMap.get(requestIdentifier) || null;
+    }
+
+    networkTargetForCommand(target, command)
+    {
+        // Under Site Isolation, ProxyingNetworkAgent on the backend target routes the command to the owning process.
+        // hasCommand() alone can't tell: the protocol declares these commands on the backend target either way.
+        if (this._enabledNetworkForSiteIsolation && WI.backendTarget?.hasCommand(command))
+            return WI.backendTarget;
+        return target;
     }
 
     downloadSourceMap(sourceMapURL, baseURL, originalSourceCode)
@@ -782,22 +805,36 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         this._resourceRequestIdentifierMap.set(requestIdentifier, resource);
     }
 
-    webSocketCreated(requestId, url)
+    webSocketCreated(requestId, url, frameId, loaderId)
     {
-        this._webSocketIdentifierToURL.set(requestId, url);
+        // COMPATIBILITY (macOS X.Y, iOS X.Y): Network.webSocketCreated did not have "frameId" or "loaderId" parameters.
+        this._webSocketCreationInfo.set(requestId, {url, frameId: frameId || null, loaderId: loaderId || null});
     }
 
     webSocketWillSendHandshakeRequest(requestId, timestamp, walltime, request)
     {
-        let url = this._webSocketIdentifierToURL.get(requestId);
-        console.assert(url);
-        if (!url)
+        let creationInfo = this._webSocketCreationInfo.get(requestId);
+        console.assert(creationInfo);
+        if (!creationInfo)
             return;
 
-        // FIXME: <webkit.org/b/168475> Web Inspector: Correctly display iframe's and worker's WebSockets
+        // Under Site Isolation the backend reports the frame whose document opened the socket, which may be a
+        // cross-origin frame hosted in another process. Without it, fall back to the main frame.
+        // FIXME: <webkit.org/b/168475> Web Inspector: Correctly display worker's WebSockets
+        let frame = null;
+        if (creationInfo.frameId) {
+            frame = this.frameForIdentifier(creationInfo.frameId);
+            if (!frame && creationInfo.frameId.startsWith("frame-"))
+                frame = this._createPlaceholderFrame(creationInfo.frameId);
+        }
+        if (!frame)
+            frame = this._mainFrame;
+        console.assert(frame);
+        if (!frame)
+            return;
 
-        let resource = new WI.WebSocketResource(url, {
-            loaderIdentifier: WI.networkManager.mainFrame.id,
+        let resource = new WI.WebSocketResource(creationInfo.url, {
+            loaderIdentifier: creationInfo.loaderId || frame.id,
             requestIdentifier: requestId,
             requestHeaders: request.headers,
             timestamp,
@@ -805,7 +842,6 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             requestSentTimestamp: WI.timelineManager.computeElapsedTime(timestamp),
         });
 
-        let frame = this.frameForIdentifier(WI.networkManager.mainFrame.id);
         frame.addResource(resource);
 
         this._resourceRequestIdentifierMap.set(requestId, resource);
@@ -852,7 +888,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         let elapsedTime = WI.timelineManager.computeElapsedTime(timestamp);
         resource.markAsFinished(elapsedTime);
 
-        this._webSocketIdentifierToURL.delete(requestId);
+        this._webSocketCreationInfo.delete(requestId);
         this._resourceRequestIdentifierMap.delete(requestId);
     }
 
@@ -1260,6 +1296,19 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             frame.addExecutionContext(context);
     }
 
+    _createPlaceholderFrame(frameIdentifier, frameOptions = {})
+    {
+        let mainResource = new WI.Resource("about:blank");
+        let frame = new WI.Frame(frameIdentifier, frameOptions.name, frameOptions.securityOrigin, null, mainResource);
+        this._frameIdentifierMap.set(frame.id, frame);
+        this._associateTargetExecutionContextsWithFrame(frame);
+        mainResource.markAsFinished();
+        if (this._mainFrame)
+            this._mainFrame.addChildFrame(frame);
+        this._dispatchFrameWasAddedEvent(frame);
+        return frame;
+    }
+
     _addNewResourceToFrameOrTarget(url, frameIdentifier, resourceOptions = {}, frameOptions = {})
     {
         console.assert(!this._waitingForMainFrameResourceTreePayload);
@@ -1286,16 +1335,8 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         // rather than being treated as the main resource of a brand-new frame (firing FrameWasAdded).
         // A document request is the frame's own load, so it takes the new-frame path below instead.
         let isDocument = resourceOptions.type === InspectorBackend.Enum.Page.ResourceType.Document;
-        if (!frame && !isDocument && frameIdentifier.startsWith("frame-")) {
-            let mainResource = new WI.Resource("about:blank");
-            frame = new WI.Frame(frameIdentifier, frameOptions.name, frameOptions.securityOrigin, null, mainResource);
-            this._frameIdentifierMap.set(frame.id, frame);
-            this._associateTargetExecutionContextsWithFrame(frame);
-            mainResource.markAsFinished();
-            if (this._mainFrame)
-                this._mainFrame.addChildFrame(frame);
-            this._dispatchFrameWasAddedEvent(frame);
-        }
+        if (!frame && !isDocument && frameIdentifier.startsWith("frame-"))
+            frame = this._createPlaceholderFrame(frameIdentifier, frameOptions);
 
         if (frame) {
             if (isDocument && frame.provisionalMainResource && frame.provisionalMainResource.url === url && frame.provisionalLoaderIdentifier === resourceOptions.loaderIdentifier)
@@ -1713,12 +1754,23 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         };
     }
 
+    _interceptionTargets()
+    {
+        // Under Site Isolation, the Network domain (and with it interception) lives on the
+        // multiplexing backend target, which WI.targets leaves out. Frame targets have no Network
+        // domain; the backend target intercepts the loads of every frame of the page.
+        let targets = WI.targets;
+        if (this._enabledNetworkForSiteIsolation && WI.backendTarget && !targets.includes(WI.backendTarget))
+            targets = [WI.backendTarget, ...targets];
+        return targets;
+    }
+
     _addInterception(localResourceOverride, specificTarget)
     {
         console.assert(localResourceOverride instanceof WI.LocalResourceOverride, localResourceOverride);
         console.assert(!localResourceOverride.disabled, localResourceOverride);
 
-        let targets = specificTarget ? [specificTarget] : WI.targets;
+        let targets = specificTarget ? [specificTarget] : this._interceptionTargets();
         for (let target of targets) {
             // COMPATIBILITY (iOS 13.0): Network.addInterception did not exist yet.
             if (!target.hasCommand("Network.addInterception"))
@@ -1732,7 +1784,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     {
         console.assert(localResourceOverride instanceof WI.LocalResourceOverride, localResourceOverride);
 
-        let targets = specificTarget ? [specificTarget] : WI.targets;
+        let targets = specificTarget ? [specificTarget] : this._interceptionTargets();
         for (let target of targets) {
             // COMPATIBILITY (iOS 13.0): Network.removeInterception did not exist yet.
             if (!target.hasCommand("Network.removeInterception"))
@@ -1747,7 +1799,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         if (!WI.settings.experimentalEnableNetworkEmulatedCondition.value)
             return;
 
-        // COMPATIBILITY (macOS X.Y, iOS X.Y): Network.setEmulatedConditions did not exist.
+        // COMPATIBILITY (macOS 27.0, iOS 27.0): The latency paratemeter of Network.setEmulatedConditions did not exist.
         if (!target.hasCommand("Network.setEmulatedConditions"))
             return;
 
@@ -1806,15 +1858,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             return;
         }
 
-        let target = WI.assumingMainTarget();
-
-        // Under Site Isolation, ProxyingNetworkAgent implements Network.loadResource on the backend
-        // (web-page) target, fanning the load out to the frame's owning process. Route there when
-        // Network is enabled on the backend target; otherwise the main target handles it. Mirrors
-        // Resource.requestContentFromBackend.
-        if (this._networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== target && WI.backendTarget.hasCommand("Network.loadResource"))
-            target = WI.backendTarget;
-
+        let target = this.networkTargetForCommand(WI.assumingMainTarget(), "Network.loadResource");
         if (!target.hasCommand("Network.loadResource")) {
             this._sourceMapLoadFailed(sourceMapURL);
             return;
@@ -1936,13 +1980,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
     _setBootstrapScriptSource(source)
     {
-        let targets = WI.targets;
-
-        // `WI.targets` excludes the WebPage target, whose ProxyingPageAgent forwards the script to cross-origin frames' processes under Site Isolation.
-        if (this._enabledPageForSiteIsolation && WI.backendTarget && !targets.includes(WI.backendTarget))
-            targets = [...targets, WI.backendTarget];
-
-        for (let target of targets) {
+        for (let target of this.pageAgentTargets) {
             // COMPATIBILITY (iOS 13.0): Page.setBootstrapScript did not exist yet.
             if (target.hasCommand("Page.setBootstrapScript"))
                 target.PageAgent.setBootstrapScript(source);

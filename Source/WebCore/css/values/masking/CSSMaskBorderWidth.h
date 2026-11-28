@@ -27,8 +27,7 @@
 
 #include "CSSPrimitiveNumericTypes.h"
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // <mask-border-width-value> = <length-percentage [0,∞]> | <number [0,∞]> | auto
 struct MaskBorderWidthValue {
@@ -62,7 +61,7 @@ struct MaskBorderWidth {
 
     Edges values;
 
-    bool LEGACY_NODELETE isInitialValue() const;
+    NODELETE bool isInitialValue() const;
 
     bool operator==(const MaskBorderWidth&) const = default;
 };
@@ -72,8 +71,7 @@ DEFINE_TYPE_WRAPPER_GET(MaskBorderWidth, values);
 
 template<> struct CSSValueCreation<MaskBorderWidth> { auto operator()(CSSValuePool&, const MaskBorderWidth&) -> Ref<CSSValue>; };
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS
 
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::CSS::MaskBorderWidth)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::CSS::MaskBorderWidthValue)

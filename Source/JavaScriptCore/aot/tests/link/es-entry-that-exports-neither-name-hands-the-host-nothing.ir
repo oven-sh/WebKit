@@ -1,0 +1,22 @@
+# main.mjs, the entry: export function fetch() {}; export const port = 0: the host reads `default` and `then` off the namespace of an entry: it lists neither.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions modules lookups mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: lookup entry-hands-host-nothing 0
+
+variable g0 name="fetch" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="port" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="fetch" variable=g0}, {name="port" variable=g1}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f1 name="fetch" module=m0 sourceRange={start=7 end=37} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+entry module=m0 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["fetch", "app"]}, {exportName="then"}]

@@ -48,7 +48,7 @@ class RenderView final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderView);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderView);
 public:
-    RenderView(Document&, Style::ComputedStyle&&);
+    RenderView(Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderView();
 
     ASCIILiteral renderName() const override { return "RenderView"_s; }
@@ -72,9 +72,8 @@ public:
     LayoutUnit clientLogicalWidthForFixedPosition() const;
     LayoutUnit clientLogicalHeightForFixedPosition() const;
 
-    float LEGACY_NODELETE pageZoomFactor() const;
 
-    inline LocalFrameView& LEGACY_NODELETE frameView() const LIFETIME_BOUND; // Defined in LocalFrameViewInlines.h.
+    NODELETE inline LocalFrameView& frameView() const LIFETIME_BOUND; // Defined in LocalFrameViewInlines.h.
 
     Layout::InitialContainingBlock& initialContainingBlock() { return m_initialContainingBlock.get(); }
     const Layout::InitialContainingBlock& initialContainingBlock() const { return m_initialContainingBlock.get(); }
@@ -114,13 +113,12 @@ public:
 #endif
 
     void paint(PaintInfo&, const LayoutPoint&) override;
-    void paintBoxDecorations(PaintInfo&, const LayoutPoint&) override;
     // Return the renderer whose background style is used to paint the root background.
     RenderElement* rendererForRootBackground() const;
 
     RenderSelection& selection() LIFETIME_BOUND { return m_selection; }
 
-    bool LEGACY_NODELETE printing() const;
+    NODELETE bool printing() const;
 
     Vector<FloatRect> localBorderBoxRects() const final;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const override;
@@ -129,37 +127,24 @@ public:
 
     void updateHitTestResult(HitTestResult&, const LayoutPoint&) const override;
 
-    void LEGACY_NODELETE setPageLogicalSize(LayoutSize);
+    void setPageLogicalSize(LayoutSize);
+    // The page area while printing, which css-page-3 makes the initial containing block.
+    std::optional<LayoutSize> printedPageAreaLogicalSize() const;
     LayoutUnit pageOrViewLogicalHeight() const;
 
     // This method is used to assign a page number only when pagination modes have
     // a block progression. This happens with vertical-rl books for example, but it
     // doesn't happen for normal horizontal-tb books. This is a very specialized
     // function and should not be mistaken for a general page number API.
-    unsigned LEGACY_NODELETE pageNumberForBlockProgressionOffset(int offset) const;
+    NODELETE unsigned pageNumberForBlockProgressionOffset(int offset) const;
 
-    unsigned LEGACY_NODELETE pageCount() const;
-
-    // FIXME: These functions are deprecated. No code should be added that uses these.
-    int bestTruncatedAt() const { return m_legacyPrinting.m_bestTruncatedAt; }
-    void setBestTruncatedAt(int y, RenderBoxModelObject* forRenderer, bool forcedBreak = false);
-    int truncatedAt() const { return m_legacyPrinting.m_truncatedAt; }
-    void setTruncatedAt(int y)
-    { 
-        m_legacyPrinting.m_truncatedAt = y;
-        m_legacyPrinting.m_bestTruncatedAt = 0;
-        m_legacyPrinting.m_truncatorWidth = 0;
-        m_legacyPrinting.m_forcedPageBreak = false;
-    }
-    const IntRect& printRect() const LIFETIME_BOUND { return m_legacyPrinting.m_printRect; }
-    void setPrintRect(const IntRect& r) { m_legacyPrinting.m_printRect = r; }
-    // End deprecated functions.
+    NODELETE unsigned pageCount() const;
 
     // Notification that this view moved into or out of a native window.
     void setIsInWindow(bool);
 
     WEBCORE_EXPORT RenderLayerCompositor& compositor();
-    WEBCORE_EXPORT bool LEGACY_NODELETE usesCompositing() const;
+    NODELETE WEBCORE_EXPORT bool usesCompositing() const;
 
     WEBCORE_EXPORT IntRect unscaledDocumentRect() const;
     LayoutRect unextendedBackgroundRect() const;
@@ -184,6 +169,9 @@ public:
     void addCounterNeedingUpdate(RenderCounter&);
     SingleThreadWeakHashSet<RenderCounter> takeCountersNeedingUpdate();
 
+    void addRendererNeedingCounterNodes(RenderElement&);
+    SingleThreadWeakHashSet<RenderElement> takeRenderersNeedingCounterNodes();
+
     bool hasCounterTreeNeedingUpdate() const { return m_hasCounterTreeNeedingUpdate; }
     void setHasCounterTreeNeedingUpdate(bool hasCounterTreeNeedingUpdate) { m_hasCounterTreeNeedingUpdate = hasCounterTreeNeedingUpdate; }
 
@@ -193,6 +181,9 @@ public:
     void incrementRenderersWithPixelMovingFilter() { ++m_renderersWithPixelMovingFilterCount; }
     void decrementRenderersWithPixelMovingFilter() { ASSERT(m_renderersWithPixelMovingFilterCount > 0); --m_renderersWithPixelMovingFilterCount; }
     bool hasRenderersWithPixelMovingFilter() const { return m_renderersWithPixelMovingFilterCount; }
+    void incrementRenderersWithCounterNodes() { ++m_renderersWithCounterNodesCount; }
+    void decrementRenderersWithCounterNodes() { ASSERT(m_renderersWithCounterNodesCount > 0); --m_renderersWithCounterNodesCount; }
+    bool hasRenderersWithCounterNodes() const { return m_renderersWithCounterNodesCount; }
 
     ImageQualityController& imageQualityController() LIFETIME_BOUND;
 
@@ -205,12 +196,9 @@ public:
     void unregisterForVisibleInViewportCallback(RenderElement&);
 
     void resumePausedImageAnimationsIfNeeded(const IntRect& visibleRect);
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     void updatePlayStateForAllAnimations(const IntRect& visibleRect);
-#endif
-    void addRendererWithPausedImageAnimations(RenderElement&, CachedImage&);
+    void addRendererWithPausedImageAnimations(RenderElement&);
     void removeRendererWithPausedImageAnimations(RenderElement&);
-    void removeRendererWithPausedImageAnimations(RenderElement&, CachedImage&);
 
     class RepaintRegionAccumulator {
         WTF_MAKE_NONCOPYABLE(RepaintRegionAccumulator);
@@ -243,12 +231,12 @@ public:
     void unregisterPositionTryBox(const RenderBox&);
     const SingleThreadWeakHashSet<const RenderBox>& positionTryBoxes() const LIFETIME_BOUND { return m_positionTryBoxes; }
 
-    SingleThreadWeakPtr<RenderBlockFlow> LEGACY_NODELETE viewTransitionContainingBlock() const;
-    void LEGACY_NODELETE setViewTransitionContainingBlock(RenderBlockFlow& renderer);
+    NODELETE SingleThreadWeakPtr<RenderBlockFlow> viewTransitionContainingBlock() const;
+    NODELETE void setViewTransitionContainingBlock(RenderBlockFlow& renderer);
 
     void addViewTransitionGroup(const AtomString&, RenderBox&);
     void removeViewTransitionGroup(const AtomString&);
-    RenderBox* LEGACY_NODELETE viewTransitionGroupForName(const AtomString&);
+    NODELETE RenderBox* viewTransitionGroupForName(const AtomString&);
 
 protected:
     void willBeDestroyed() override;
@@ -263,7 +251,7 @@ private:
 
     void computeColumnCountAndWidth() override;
 
-    bool LEGACY_NODELETE shouldRepaint(const LayoutRect&) const;
+    NODELETE bool shouldRepaint(const LayoutRect&) const;
 
     // Returns true if we determine that the accumulated dirty rect makes up a significant fraction of viewRect.
     bool accumulateRepaintRect(IntRect dirtyRect, IntRect viewRect);
@@ -282,25 +270,14 @@ private:
     // Include this RenderView.
     uint64_t m_rendererCount { 1 };
 
-    // Note that currently RenderView::layoutBox(), if it exists, is a child of m_initialContainingBlock.
+    // The parent of RenderView's layout box.
     const UniqueRef<Layout::InitialContainingBlock> m_initialContainingBlock;
     const UniqueRef<Layout::LayoutState> m_layoutState;
 
     mutable std::unique_ptr<Region> m_accumulatedRepaintRegion;
     RenderSelection m_selection;
 
-    // FIXME: Only used by embedded WebViews inside AppKit NSViews.  Find a way to remove.
-    struct LegacyPrinting {
-        int m_bestTruncatedAt { 0 };
-        int m_truncatedAt { 0 };
-        int m_truncatorWidth { 0 };
-        IntRect m_printRect;
-        bool m_forcedPageBreak { false };
-    };
-    LegacyPrinting m_legacyPrinting;
-    // End deprecated members.
-
-    bool LEGACY_NODELETE shouldUsePrintingLayout() const;
+    NODELETE bool shouldUsePrintingLayout() const;
 
     const std::unique_ptr<ImageQualityController> m_imageQualityController;
     std::optional<LayoutSize> m_pageLogicalSize;
@@ -310,15 +287,17 @@ private:
     bool m_hasQuotesNeedingUpdate { false };
 
     SingleThreadWeakHashSet<RenderCounter> m_countersNeedingUpdate;
+    SingleThreadWeakHashSet<RenderElement> m_renderersNeedingCounterNodes;
     bool m_hasCounterTreeNeedingUpdate { false };
     unsigned m_renderersWithOutlineCount { 0 };
     unsigned m_renderersWithPixelMovingFilterCount { 0 };
+    unsigned m_renderersWithCounterNodesCount { 0 };
     bool m_needsRepaintHackAfterCompositingLayerUpdateForDebugOverlaysOnly { false };
     bool m_needsEventRegionUpdateForNonCompositedFrame { false };
 
     TextAutosizingState m_textAutosizingState { TextAutosizingState::Normal };
 
-    SingleThreadWeakHashMap<RenderElement, Vector<WeakPtr<CachedImage>>> m_renderersWithPausedImageAnimation;
+    SingleThreadWeakHashSet<RenderElement> m_renderersWithPausedImageAnimation;
     WeakHashSet<SVGSVGElement, WeakPtrImplWithEventTargetData> m_SVGSVGElementsWithPausedImageAnimation;
     SingleThreadWeakHashSet<RenderElement> m_visibleInViewportRenderers;
 

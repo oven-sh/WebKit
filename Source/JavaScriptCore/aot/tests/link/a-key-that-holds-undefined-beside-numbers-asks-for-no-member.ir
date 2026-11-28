@@ -1,0 +1,29 @@
+# var stage = 0;  function advance(list) { stage++; return list[stage]; }  advance(["idle"]);
+# A `var` of a module holds `undefined` until it is filled, so the key of the read is a number or `undefined`. Such a key spells digits, NaN, Infinity or "undefined": no member of the table with code
+# has such a name. Taken for a key that nobody knows, the read asked for every member of everything in reach, and the build stopped over what the load, which takes the key for a number, had left out.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN(LACKED): lacked
+# LACKED-NOT: lacked
+
+variable g0 name="stage" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=0
+    PutModuleVariable v1 variable=g0
+    v3 = String string="idle"
+    v4 = NewArray v3 contents=anything
+    v5 = Call v0, -, v4 calleeName="advance"
+    Return v5
+}
+function f1 name="advance" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Increment v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = ElemGet v0, v4
+    Return v5
+}

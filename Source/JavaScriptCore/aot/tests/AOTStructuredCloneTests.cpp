@@ -8,13 +8,14 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <initializer_list>
@@ -144,18 +145,18 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const TestedProgram& t
     options.target.referenceWidth = referenceWidth;
     options.admittedCode = tested.admittedCode;
     BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(tested.text)), Typed::IRForm::AsRead, build);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(tested.text)), build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
     }
     AOT_TEST_CHECK(program);
 
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
-    AOT_TEST_CHECK(output->entryModuleIDs.size() == 1);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        Typed::printDiagnosticsOf(*output, WTF::dataFile());
+    AOT_TEST_CHECK(output->hasImage());
+    AOT_TEST_CHECK(output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     return output;
 }
 
@@ -171,11 +172,11 @@ static std::unique_ptr<CompileOutput> compileProgramText(const TestedProgram& te
 static String runInShell(const TestedProgram& tested, Wire::ReferenceWidth referenceWidth, ASCIILiteral statements)
 {
     std::unique_ptr<CompileOutput> output = compileProgramText(tested, referenceWidth);
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(() => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
+        makeString(scriptStart, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ").then(() => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
     };
 
     String shell = shellPath();
@@ -224,7 +225,6 @@ generator: throws TypeError: Value could not be cloned.
 )"_s);
 }
 
-// The table has structuredClone as a member of the host. The shell has no host and defines a function of its own under the name, after start-up has locked what the program takes for constants.
 static void testProgramThatNamesTheFunctionOfTheShell()
 {
     for (Wire::AdmittedCode admittedCode : { Wire::AdmittedCode { }, Wire::AdmittedCode::Inspector }) {

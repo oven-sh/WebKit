@@ -774,7 +774,7 @@ void UIDelegate::UIClient::unlockScreenOrientation(WebPageProxy&)
 #endif
 }
 
-static inline _WKFocusDirection LEGACY_NODELETE toWKFocusDirection(WKFocusDirection direction)
+NODELETE static inline _WKFocusDirection toWKFocusDirection(WKFocusDirection direction)
 {
     switch (direction) {
     case kWKFocusDirectionBackward:
@@ -803,7 +803,7 @@ bool UIDelegate::UIClient::takeFocus(WebPageProxy*, WKFocusDirection direction)
     return true;
 }
 
-static _WKAutoplayEventFlags LEGACY_NODELETE toWKAutoplayEventFlags(OptionSet<WebCore::AutoplayEventFlags> flags)
+NODELETE static _WKAutoplayEventFlags toWKAutoplayEventFlags(OptionSet<WebCore::AutoplayEventFlags> flags)
 {
     _WKAutoplayEventFlags wkFlags = _WKAutoplayEventFlagsNone;
     if (flags.contains(WebCore::AutoplayEventFlags::HasAudio))
@@ -816,7 +816,7 @@ static _WKAutoplayEventFlags LEGACY_NODELETE toWKAutoplayEventFlags(OptionSet<We
     return wkFlags;
 }
 
-static _WKAutoplayEvent LEGACY_NODELETE toWKAutoplayEvent(WebCore::AutoplayEvent event)
+NODELETE static _WKAutoplayEvent toWKAutoplayEvent(WebCore::AutoplayEvent event)
 {
     switch (event) {
     case WebCore::AutoplayEvent::DidPreventMediaFromPlaying:
@@ -951,8 +951,7 @@ bool UIDelegate::UIClient::runOpenPanel(WebPageProxy& page, WebFrameProxy* webFr
                 filenames.append(maybeMovedURL.get().path);
         }
 #else
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in URLs)
+        for (NSURL *url in URLs)
             filenames.append(url.path);
 #endif
         listener->chooseFiles(filenames, openPanelParameters->allowedMIMETypes()->toStringVector());
@@ -1841,7 +1840,7 @@ void UIDelegate::UIClient::confirmPDFOpening(WebPageProxy& page, const WTF::URL&
 
 #if ENABLE(WEB_AUTHN)
 
-static WebAuthenticationPanelResult LEGACY_NODELETE webAuthenticationPanelResult(_WKWebAuthenticationPanelResult result)
+NODELETE static WebAuthenticationPanelResult webAuthenticationPanelResult(_WKWebAuthenticationPanelResult result)
 {
     switch (result) {
     case _WKWebAuthenticationPanelResultUnavailable:
@@ -2281,6 +2280,16 @@ static MTLPixelFormat toMetalFormat(::WebGPU::TextureFormat format)
 static MTLPixelFormat toMetalFormat(std::optional<::WebGPU::TextureFormat> optionalFormat)
 {
     return optionalFormat ? toMetalFormat(*optionalFormat) : MTLPixelFormatInvalid;
+}
+
+bool UIDelegate::UIClient::canRequestPermissionOnXRSessionFeatures() const
+{
+    return m_uiDelegate && m_uiDelegate->m_delegateMethods.webViewRequestPermissionForXRSessionOriginModeAndFeaturesWithCompletionHandler;
+}
+
+bool UIDelegate::UIClient::canStartXRSession() const
+{
+    return m_uiDelegate && m_uiDelegate->m_delegateMethods.webViewStartXRSessionWithCompletionHandler;
 }
 
 void UIDelegate::UIClient::startXRSession(WebPageProxy&, const PlatformXR::Device::FeatureList& sessionFeatures, std::optional<WebCore::XRCanvasConfiguration>&& init, CompletionHandler<void(RetainPtr<id>, PlatformViewController *)>&& completionHandler)

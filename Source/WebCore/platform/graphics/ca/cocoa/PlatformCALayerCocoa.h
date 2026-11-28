@@ -146,7 +146,7 @@ public:
     float opacity() const override;
     void setOpacity(float) override;
     void setFilters(const FilterOperations&) override;
-    WEBCORE_EXPORT static bool LEGACY_NODELETE filtersCanBeComposited(const FilterOperations&);
+    NODELETE WEBCORE_EXPORT static bool filtersCanBeComposited(const FilterOperations&);
     void copyFiltersFrom(const PlatformCALayer&) override;
 
     void setBlendMode(BlendMode) override;
@@ -165,6 +165,8 @@ public:
 
     Path shadowPath() const override;
     void setShadowPath(const Path&) override;
+
+    void setHidesFromScreenCapture(bool) override;
 
     void setAntialiasesEdges(bool) override;
 
@@ -227,7 +229,7 @@ private:
 
     Type type() const final { return Type::Cocoa; }
 
-    bool LEGACY_NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
+    NODELETE bool requiresCustomAppearanceUpdateOnBoundsChange() const;
 
     void updateContentsFormat();
 

@@ -61,7 +61,7 @@ messages -> RemoteMediaPlayerProxy {
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] UpdateVideoFullscreenInlineImage()
-    [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] SetVideoFullscreenMode(WebCore::MediaPlayer::VideoFullscreenMode mode)
+    [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] SetVideoFullscreenMode(WebCore::MediaPlayerEnums::VideoFullscreenMode mode)
     [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] SetVideoFullscreenGravity(enum:uint8_t WebCore::MediaPlayerVideoGravity gravity)
     [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] VideoFullscreenStandbyChanged(bool standby)
 #endif
@@ -113,8 +113,6 @@ messages -> RemoteMediaPlayerProxy {
     SetPlatformDynamicRangeLimit(WebCore::PlatformDynamicRangeLimit platformDynamicRangeLimit)
 
 #if PLATFORM(IOS_FAMILY)
-    ErrorLog() -> (String errorLog) Synchronous
-    AccessLog() -> (String accessLog) Synchronous
     SetSceneIdentifier(String sceneIdentifier)
 #endif
 
@@ -124,10 +122,9 @@ messages -> RemoteMediaPlayerProxy {
 #endif
 
 #if PLATFORM(COCOA)
-    NativeImageForCurrentTime() -> (std::optional<MachSendRight> sendRight, WebCore::ColorSpace colorSpace) Synchronous
     ColorSpace() -> (WebCore::ColorSpace colorSpace) Synchronous
 #endif
-    VideoFrameForCurrentTimeIfChanged() -> (struct std::optional<WebKit::RemoteVideoFrameProxyProperties> videoFrame, bool changed) Synchronous
+    VideoFrameForCurrentTimeIfChanged(WebKit::RemoteVideoFrameReference reference) -> (struct std::optional<WebKit::RemoteVideoFrameProxyProperties> videoFrame, bool changed) Synchronous
     BitmapImageForCurrentTime() -> (std::optional<WebCore::ShareableBitmapHandle> image)
 
     PlayAtHostTime(MonotonicTime time)

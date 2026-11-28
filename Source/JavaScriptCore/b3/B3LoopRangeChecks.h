@@ -100,7 +100,7 @@ struct StridedIndexVariable {
 using StridedIndexVariables = std::array<StridedIndexVariable, Limits::maxStridedRangeChecksPerLoop>;
 
 struct RangeCheckPlan {
-    UncheckedKeyHashMap<Value*, bool> decidedComparisons;
+    HashMap<Value*, bool> decidedComparisons;
     Vector<RangeCheckBound, 4> bounds;
     std::unique_ptr<StridedRangeChecks> strided;
     Vector<EntryGuard, 8> entryGuards;

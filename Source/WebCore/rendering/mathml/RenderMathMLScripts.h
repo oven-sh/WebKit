@@ -39,7 +39,7 @@ class RenderMathMLScripts : public RenderMathMLRow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLScripts);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLScripts);
 public:
-    RenderMathMLScripts(Type, MathMLScriptsElement&, Style::ComputedStyle&&);
+    RenderMathMLScripts(Type, MathMLScriptsElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMathMLScripts();
 
     CheckedPtr<RenderMathMLOperator> unembellishedOperator() const final;
@@ -47,12 +47,12 @@ public:
 protected:
     bool isRenderMathMLScripts() const override { return true; }
     ASCIILiteral renderName() const override { return "RenderMathMLScripts"_s; }
-    MathMLScriptsElement::ScriptType LEGACY_NODELETE scriptType() const;
-    void computeIntrinsicLogicalWidthContributions() override;
+    NODELETE MathMLScriptsElement::ScriptType scriptType() const;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;
 
 private:
-    MathMLScriptsElement& LEGACY_NODELETE element() const;
+    NODELETE MathMLScriptsElement& element() const;
     std::optional<LayoutUnit> firstLineBaseline() const final;
     struct ReferenceChildren {
         const CheckedPtr<RenderBox> base;
@@ -60,7 +60,7 @@ private:
         const CheckedPtr<RenderBox> firstPostScript;
         const CheckedPtr<RenderBox> firstPreScript;
     };
-    std::optional<ReferenceChildren> LEGACY_NODELETE validateAndGetReferenceChildren() const;
+    NODELETE std::optional<ReferenceChildren> validateAndGetReferenceChildren() const;
     LayoutUnit spaceAfterScript();
     LayoutUnit italicCorrection(const ReferenceChildren&);
     struct VerticalParameters {

@@ -42,13 +42,14 @@
 #include "MediaKeySession.h"
 #include "SharedBuffer.h"
 #include <ranges>
+#include <wtf/Borrow.h>
 #include <wtf/Logger.h>
 #include <wtf/LoggerHelper.h>
 
 namespace WebCore {
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& LEGACY_NODELETE logChannel() { return LogEME; }
+NODELETE static WTFLogChannel& logChannel() { return LogEME; }
 static ASCIILiteral logClassName() { return "MediaKeys"_s; }
 #endif
 
@@ -184,7 +185,7 @@ bool MediaKeys::hasOpenSessions() const
 
 bool MediaKeys::hasOpenSessionWithIdForOrigin(const String& sessionId, const String& origin) const
 {
-    return std::any_of(m_sessions.begin(), m_sessions.end(),
+    return std::ranges::any_of(borrow(m_sessions),
         [&sessionId, &origin](auto& session) {
             return session->sessionId() == sessionId && !session->isClosed()
                 && session->hasSecurityOrigin(origin);

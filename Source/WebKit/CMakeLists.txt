@@ -87,6 +87,7 @@ set(WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/UIProcess/UserContent"
     "${WEBKIT_DIR}/UIProcess/WebAuthentication"
     "${WEBKIT_DIR}/UIProcess/WebAuthentication/Mock"
+    "${WEBKIT_DIR}/UIProcess/WebAuthentication/fido"
     "${WEBKIT_DIR}/UIProcess/WebsiteData"
     "${WEBKIT_DIR}/UIProcess/XR"
     "${WEBKIT_DIR}/WebProcess"
@@ -96,6 +97,7 @@ set(WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/WebProcess/Cache"
     "${WEBKIT_DIR}/WebProcess/Databases"
     "${WEBKIT_DIR}/WebProcess/Databases/IndexedDB"
+    "${WEBKIT_DIR}/WebProcess/DigitalCredentials"
     "${WEBKIT_DIR}/WebProcess/EncryptedMedia"
     "${WEBKIT_DIR}/WebProcess/Extensions"
     "${WEBKIT_DIR}/WebProcess/Extensions/API"
@@ -132,6 +134,7 @@ set(WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/WebProcess/Speech"
     "${WEBKIT_DIR}/WebProcess/Storage"
     "${WEBKIT_DIR}/WebProcess/UserContent"
+    "${WEBKIT_DIR}/WebProcess/WebAuthentication"
     "${WEBKIT_DIR}/WebProcess/WebCoreSupport"
     "${WEBKIT_DIR}/WebProcess/WebPage"
     "${WEBKIT_DIR}/WebProcess/WebPage/RemoteLayerTree"
@@ -171,7 +174,6 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsInspectedWindow
     WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsNetwork
     WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsPanels
-    WebProcess/Extensions/Interfaces/WebExtensionAPIEvent
     WebProcess/Extensions/Interfaces/WebExtensionAPIExtension
     WebProcess/Extensions/Interfaces/WebExtensionAPILocalization
     WebProcess/Extensions/Interfaces/WebExtensionAPIMenus
@@ -193,6 +195,8 @@ set(WebKit_BINDINGS_IN_FILES
 
 set(WebKit_CPP_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
+    WebProcess/Extensions/Interfaces/WebExtensionAPIEvent
+    WebProcess/Extensions/Interfaces/WebExtensionAPIExtensionTypes
     WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
     WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPIStorage
@@ -521,6 +525,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/GoToBackForwardItemParameters.serialization.in
     Shared/IPCTester.serialization.in
     Shared/ImageOptions.serialization.in
+    Shared/ImmersiveElementDetails.serialization.in
     Shared/InspectorExtensionTypes.serialization.in
     Shared/InspectorNetworkTypes.serialization.in
     Shared/InspectorPageTypes.serialization.in
@@ -551,6 +556,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/RemoteWorkerType.serialization.in
     Shared/ResourceLoadInfo.serialization.in
     Shared/ResourceLoadStatisticsParameters.serialization.in
+    Shared/RotationMonitoringReason.serialization.in
     Shared/RunJavaScriptParameters.serialization.in
     Shared/SameDocumentNavigationType.serialization.in
     Shared/SandboxExtension.serialization.in
@@ -630,7 +636,7 @@ set(WebKit_SERIALIZATION_IN_FILES
 
     Shared/Extensions/WebExtensionActionClickBehavior.serialization.in
     Shared/Extensions/WebExtensionAlarmParameters.serialization.in
-    Shared/Extensions/WebExtensionBookmarksParameters.serialization.in
+    Shared/Extensions/WebExtensionBookmarkParameters.serialization.in
     Shared/Extensions/WebExtensionCommandParameters.serialization.in
     Shared/Extensions/WebExtensionContentWorldType.serialization.in
     Shared/Extensions/WebExtensionContext.serialization.in
@@ -642,6 +648,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/Extensions/WebExtensionFrameParameters.serialization.in
     Shared/Extensions/WebExtensionMatchedRuleParameters.serialization.in
     Shared/Extensions/WebExtensionMenuItem.serialization.in
+    Shared/Extensions/WebExtensionMessage.serialization.in
     Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in
     Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in
     Shared/Extensions/WebExtensionNotification.serialization.in
@@ -791,6 +798,13 @@ if (USE_APPLE_INTERNAL_SDK)
         ${WebKitAdditions_HEADERS_DIR}/WebPageProxyAdditions.messages.in
     )
     set(WebKitAdditions_MESSAGES_IN_ARGS --additions-dir ${WebKitAdditions_HEADERS_DIR})
+
+    set(WebKitAdditions_SERIALIZATION_IN_FILES)
+    set(WebKitAdditions_BINDINGS_IN_FILES)
+    set(WebKitAdditions_EXTENSION_PARTIAL_IDLS)
+    if (EXISTS ${WebKitAdditions_HEADERS_DIR}/WebExtensionAdditions.cmake)
+        include(${WebKitAdditions_HEADERS_DIR}/WebExtensionAdditions.cmake)
+    endif ()
 endif ()
 
 set(WebKit_FRAMEWORKS
@@ -942,7 +956,7 @@ if (NOT USE_FRAMEWORK_BUNDLES)
 endif ()
 
 if (NOT APPLE AND SWIFT_REQUIRED)
-    # Export-macro stubs, LEGACY_NODELETE=, WK_SUPPORTS_SWIFT_OBJCXX_INTEROP and the
+    # Export-macro stubs, NODELETE=, WK_SUPPORTS_SWIFT_OBJCXX_INTEROP and the
     # full ENABLE/HAVE/USE config-var set now come from
     # _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS in WebKitMacros.cmake. Only
     # Linux-specific importer flags remain here.
@@ -989,6 +1003,7 @@ endif ()
 
 if (SWIFT_REQUIRED)
     set(WebKit_SWIFT_INTEROP_SOURCES
+        Shared/IPCTester.cpp
         UIProcess/ProvisionalPageProxy.cpp
         UIProcess/RemotePageProxy.cpp
         UIProcess/WebBackForwardList.cpp
@@ -1005,6 +1020,9 @@ if (SWIFT_REQUIRED)
         list(APPEND WebKit_SWIFT_INTEROP_SOURCES
             UIProcess/API/ios/WKWebViewIOS.mm
             UIProcess/API/mac/WKWebViewMac.mm
+
+            UIProcess/PhoneNumberPossession/Cocoa/WebPhoneNumberPossessionCoordinatorProxyCocoa.mm
+
             UIProcess/ios/ViewGestureControllerIOS.mm
             UIProcess/mac/ViewGestureControllerMac.mm
             UIProcess/mac/WebViewImpl.mm
@@ -1023,9 +1041,6 @@ WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
     "${WebKit_DERIVED_SOURCES_DIR}/WebKit-Swift-Generated.h")
 
 if (SWIFT_REQUIRED)
-    # should match the rest of WebKit and use -Onone, but it negatively impacts build time
-    webkit_target_add_swift_options(WebKit
-        "$<$<AND:$<COMPILE_LANGUAGE:Swift>,$<CONFIG:Debug>>:-O>")
     # Every frontend job imports most of WebCore's C++ declarations, at a cost
     # of seconds of CPU time and gigabytes of memory, before compiling anything.
     # One batch per core repeats that work for each core and competes with the
@@ -1051,6 +1066,11 @@ if (WebKit_PRIVATE_FRAMEWORK_HEADERS)
     if (NOT USE_HEADER_MAPS)
         list(APPEND WebKit_INTERFACE_DEPENDENCIES WebKit_CopyPrivateHeaders)
     endif ()
+endif ()
+
+# PlatformCocoa.cmake migrates WebCore and WebKitLegacy headers in beside these.
+if (TARGET WebKit_MigrateHeaders)
+    add_dependencies(WebKit_MigrateHeaders WebKit_CopyHeaders WebKit_CopyPrivateHeaders)
 endif ()
 
 # Helper macro which wraps the generate-message-receiver.py script
@@ -1093,8 +1113,10 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
 
     list(APPEND ${_output_source}
         ${WebKit_DERIVED_SOURCES_DIR}/MessageArgumentDescriptions.cpp
-        ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp
     )
+    if (NOT WebKit_USE_PLATFORM_SUBTARGET)
+        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp)
+    endif ()
 
     set(_messages_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.messages-stage)
     # copy_if_different (rather than copy_directory_if_different, which is unavailable on
@@ -1117,6 +1139,7 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
             ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
             ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.tracking.in
             ${WEBKIT_DIR}/Scripts/webkit/parser.py
+            ${WEBKIT_DIR}/Scripts/webkit/swift_types.py
             ${WEBKIT_DIR}/Scripts/webkit/untrusted_origins.py
             ${_input_files}
             ${WebKitAdditions_MESSAGES_IN_FILES}
@@ -1150,6 +1173,8 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
     unset(_cpp_input_files)
     unset(_outputs)
     unset(_import_names)
+    unset(_supplemental_arguments)
+    unset(_supplemental_files)
     foreach (_file IN ITEMS ${_inputs})
         get_filename_component(_name ${_file} NAME_WE)
         list(APPEND _input_files ${WEBKIT_DIR}/${_file}.idl)
@@ -1160,6 +1185,18 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
         )
         list(APPEND _import_names JS${_name}.mm)
         list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h)
+    endforeach ()
+    foreach (_file IN ITEMS ${WebKitAdditions_BINDINGS_IN_FILES})
+        if (EXISTS ${WebKitAdditions_HEADERS_DIR}/${_file}.idl)
+            list(APPEND _input_files ${WebKitAdditions_HEADERS_DIR}/${_file}.idl)
+            list(APPEND _outputs
+                ${WebKit_DERIVED_SOURCES_DIR}/JS${_file}.mm
+
+                ${WebKit_DERIVED_SOURCES_DIR}/JS${_file}.h
+            )
+            list(APPEND _import_names JS${_file}.mm)
+            list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_file}.h)
+        endif ()
     endforeach ()
     foreach (_file IN ITEMS ${_cpp_inputs})
         get_filename_component(_name ${_file} NAME_WE)
@@ -1174,6 +1211,30 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
         list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h)
     endforeach ()
 
+    set(_supplemental_content)
+    set(_partial_targets)
+    foreach (_pair IN ITEMS ${WebKitAdditions_EXTENSION_PARTIAL_IDLS})
+        string(REPLACE ":" ";" _pair_parts ${_pair})
+        list(GET _pair_parts 0 _partial_target)
+        list(GET _pair_parts 1 _partial_file)
+        if (EXISTS ${WebKitAdditions_HEADERS_DIR}/${_partial_file})
+            list(APPEND _partial_targets ${_partial_target})
+            list(APPEND _partial_files_${_partial_target} ${WebKitAdditions_HEADERS_DIR}/${_partial_file})
+            list(APPEND _supplemental_files ${WebKitAdditions_HEADERS_DIR}/${_partial_file})
+        endif ()
+    endforeach ()
+    list(REMOVE_DUPLICATES _partial_targets)
+    foreach (_partial_target IN ITEMS ${_partial_targets})
+        list(JOIN _partial_files_${_partial_target} " " _partial_line)
+        string(APPEND _supplemental_content "${_partial_target}.idl ${_partial_line}\n")
+    endforeach ()
+    if (_supplemental_content)
+        set(_supplemental_dependency_file ${WebKit_DERIVED_SOURCES_DIR}/WebExtensionSupplementalDependencies.txt)
+        file(GENERATE OUTPUT ${_supplemental_dependency_file} CONTENT "${_supplemental_content}")
+        list(APPEND _supplemental_files ${_supplemental_dependency_file})
+        set(_supplemental_arguments --supplementalDependencyFile ${_supplemental_dependency_file})
+    endif ()
+
     add_custom_command(
         OUTPUT
             ${_outputs}
@@ -1182,13 +1243,14 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
         MAIN_DEPENDENCY ${WEBCORE_DIR}/bindings/scripts/generate-bindings-all.pl
         DEPENDS
             ${_input_files}
+            ${_supplemental_files}
            "${WEBCORE_DIR}/bindings/scripts/CodeGenerator.pm"
            "${WEBCORE_DIR}/bindings/scripts/generate-bindings.pl"
            "${WEBCORE_DIR}/bindings/scripts/IDLParser.pm"
            "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/CodeGeneratorExtensions.pm"
            "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl"
            "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json"
-        COMMAND ${PERL_EXECUTABLE} -I "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts" ${WEBCORE_DIR}/bindings/scripts/generate-bindings.pl --outputDir . --generator Extensions --idlAttributesFile "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json" --idlFileNamesList WebExtensionIDLFileNamesList.txt ${_input_files}
+        COMMAND ${PERL_EXECUTABLE} -I "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts" ${WEBCORE_DIR}/bindings/scripts/generate-bindings.pl --outputDir . --generator Extensions --idlAttributesFile "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json" --idlFileNamesList WebExtensionIDLFileNamesList.txt ${_supplemental_arguments} ${_input_files}
         COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" --output=JSWebExtensionAPIUnified.mm -- ${_import_names}
         COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" --cpp --output=JSWebExtensionAPIUnified.cpp -- ${_cpp_import_names}
         WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
@@ -1208,6 +1270,19 @@ foreach (in_file ${WebCore_SERIALIZATION_IN_FILES})
 endforeach ()
 list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.serialization.in")
 list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.serialization.in")
+set(WebKit_OPAQUE_IPC_TYPES_ADDITIONS_FILES)
+set(WebKit_OPAQUE_IPC_TYPES_ADDITIONS_ARGS)
+if (USE_APPLE_INTERNAL_SDK)
+    foreach (in_file ${WebKitAdditions_SERIALIZATION_IN_FILES})
+        if (EXISTS "${WebKitAdditions_HEADERS_DIR}/${in_file}")
+            list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKitAdditions_HEADERS_DIR}/${in_file}")
+        endif ()
+    endforeach ()
+    if (EXISTS "${WebKitAdditions_HEADERS_DIR}/OpaqueIPCTypesAdditions.tracking.in")
+        list(APPEND WebKit_OPAQUE_IPC_TYPES_ADDITIONS_FILES "${WebKitAdditions_HEADERS_DIR}/OpaqueIPCTypesAdditions.tracking.in")
+        list(APPEND WebKit_OPAQUE_IPC_TYPES_ADDITIONS_ARGS "--opaque-ipc-types-tracking-file=${WebKitAdditions_HEADERS_DIR}/OpaqueIPCTypesAdditions.tracking.in")
+    endif ()
+endif ()
 
 list(APPEND WebKit_DERIVED_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
@@ -1238,6 +1313,7 @@ endif ()
 set(_serializers_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.serializers-stage)
 set(_serializers_outputs
     GeneratedSerializers.h
+    GeneratedSerializers.swift
     GeneratedSerializersShared.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedExtensions.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
@@ -1268,7 +1344,7 @@ foreach (_rel IN LISTS _serializers_outputs)
     list(APPEND _serializers_copy_commands COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_serializers_stage_dir}/${_rel} ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
 endforeach ()
 set(_serializers_input_files_rsp ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersInputFiles.rsp)
-string(JOIN "\n" _serializers_input_files_rsp_content ${WebKit_SERIALIZATION_DEPENDENCIES})
+string(JOIN "\n" _serializers_input_files_rsp_content ${WebKit_SERIALIZATION_DEPENDENCIES} ${WebKit_OPAQUE_IPC_TYPES_ADDITIONS_ARGS})
 file(GENERATE OUTPUT ${_serializers_input_files_rsp} CONTENT "${_serializers_input_files_rsp_content}\n")
 add_custom_command(
     OUTPUT
@@ -1276,7 +1352,9 @@ add_custom_command(
     MAIN_DEPENDENCY ${WEBKIT_DIR}/Scripts/generate-serializers.py
     DEPENDS
         ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
+        ${WEBKIT_DIR}/Scripts/webkit/swift_types.py
         ${WebKit_SERIALIZATION_DEPENDENCIES}
+        ${WebKit_OPAQUE_IPC_TYPES_ADDITIONS_FILES}
         ${_serializers_input_files_rsp}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${_serializers_stage_dir}
     COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-serializers.py ${WebKit_GENERATED_SERIALIZERS_SUFFIX} --split-by-directory @${_serializers_input_files_rsp} --output-dir ${_serializers_stage_dir}
@@ -1347,6 +1425,7 @@ set(WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiBrowser.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiBrowsingContext.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiDigitalCredentials.json
+    ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiEmulation.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiInput.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiLog.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiPermissions.json
@@ -1498,8 +1577,13 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
 endif ()
 
 if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
+    set_source_files_properties(
+        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.swift
+        PROPERTIES GENERATED TRUE)
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/Platform/IPC/MessageCheck.swift
+        ${WEBKIT_DIR}/Platform/IPC/SwiftCoding.swift
+        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.swift
     )
 endif ()
 
@@ -1519,13 +1603,18 @@ if (SWIFT_REQUIRED)
         ${WEBKIT_DIR}/Shared/Foundation+Extras.swift
         ${WEBKIT_DIR}/Shared/IPCTesterReceiver.swift
         ${WEBKIT_DIR}/Shared/RunJavaScriptResult.swift
-        ${WEBKIT_DIR}/Shared/WTFCompletionHandler+Extras.swift
         ${WEBKIT_DIR}/Shared/WTFExpected+Extras.swift
         ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift
     )
 endif ()
 
 list(APPEND WebKit_SOURCES ${WebKit_DERIVED_SOURCES})
+
+if (SWIFT_REQUIRED)
+    # WebKit_SwiftCxxHeader is created in a deferred call.
+    add_custom_target(WebKit_DerivedHeadersForSwift DEPENDS ${WebKit_HEADERS} ${WebKit_DERIVED_SOURCES})
+    cmake_language(DEFER CALL add_dependencies WebKit_SwiftCxxHeader WebKit_DerivedHeadersForSwift)
+endif ()
 
 WEBKIT_COMPUTE_SOURCES(WebKit)
 if (DEFINED WebKit_SWIFT_INTEROP_SOURCES)
@@ -1568,7 +1657,7 @@ if (APPLE AND USE_LIBWEBRTC)
     add_dependencies(WebKit webrtc)
 endif ()
 
-if (SWIFT_REQUIRED AND WEBKIT_SDK_IS_MACOS)
+if (SWIFT_REQUIRED AND WEBKIT_PLATFORM_MAC)
     WEBKIT_ADD_SWIFT_PREWARM(WebKit SwiftPrewarmMac.swift)
 endif ()
 
@@ -1576,6 +1665,9 @@ if (DEFINED WebKit_SWIFT_INTEROP_SOURCES)
     WEBKIT_DEFINE_SUBTARGET(WebKit_SwiftInterop WebKit ${WebKit_SWIFT_INTEROP_SOURCES})
     WEBKIT_REUSE_PREFIX_HEADER(WebKit_SwiftInterop WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
     target_compile_definitions(WebKit_SwiftInterop PRIVATE WK_COMPILING_SWIFT_INTEROP_SUBTARGET)
+    # Generate the derived headers (e.g. *Messages.h) first. This target is kept
+    # out of the WebKit build order (see below), so it would not wait for them.
+    add_dependencies(WebKit_SwiftInterop WebKit_DerivedHeadersForSwift)
     # Feed objects into the WebKit link via a response file + LINK_DEPENDS so
     # cmake_object_order_depends_target_WebKit doesn't pick up this sub-target
     # (and through it, WebKit_SwiftCxxHeader).

@@ -1,0 +1,122 @@
+# const MASKS = hidden() as Int32Array; const PACKED = hidden() as Int32Array;
+# function find(words: Int32Array) { let alive = -1; const packed = PACKED;
+#   for (let row = 0, at = 0; at < packed.length; row += 1, at += 5) { if (alive === 0) break;
+#     const bit = ((words[packed[at]] >>> packed[at + 1]) ^ (words[packed[at + 2]] >>> packed[at + 3])) & 1; alive &= ~(-(bit ^ packed[at + 4]) & MASKS[row]); } return alive; }
+# (hidden() as any).length = 0; Object.getPrototypeOf(hidden());
+# THE SHAPE OF A LARGE PROGRAM's TEST RUN. Nobody has followed what lies in the two tables, and somewhere `length` is written through a value that nobody knows while prototypes are reached from such values,
+# so the getter above all views is no constant. All that is left is what the checker infers of the two constants, which the front end hands on as expected.
+# Without it the loop had no typed copy: eight reads by key and one by name in every turn, 528 instructions a turn for 155.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN(LOCKS): locks open
+# LOCKS: open TypedArrayPrototypeLength spelled-through-unseen
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=Int32Array
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-COUNT-8: = GetTypedArrayElement
+# RUN(SHELL): run-in-shell let asked = 0; const all = [new Int32Array([1, 2]), new Int32Array([0, 0, 1, 0, 1, 1, 1, 0, 1, 0]), { length: 3 }, new Int32Array([5, 6]), {}]; globalThis.hidden = () => all[asked++]; globalThis.sink = found => { print(String(found)); };
+# SHELL: -3
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="MASKS" module=m0 declared={type=undefined|null|absent|Int32Array flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="PACKED" module=m0 declared={type=undefined|null|absent|Int32Array flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @98
+    v3 = PropGet v2 key="hidden" [isFreeName] @98
+    v4 = Call v3 calleeName="hidden" @98
+    v5 = Convert v4 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @98
+    PutModuleVariable v5 variable=g0 @90
+    v7 = Builtin builtin=GlobalThis @137
+    v8 = PropGet v7 key="hidden" [isFreeName] @137
+    v9 = Call v8 calleeName="hidden" @137
+    v10 = Convert v9 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @137
+    PutModuleVariable v10 variable=g1 @128
+    v12 = Builtin builtin=GlobalThis @536
+    v13 = PropGet v12 key="hidden" [isFreeName] @536
+    v14 = Call v13 calleeName="hidden" @536
+    v15 = Integer @562
+    PropSet v14, v15 key="length" @543
+    v17 = Builtin builtin=GlobalThis @565
+    v18 = PropGet v17 key="sink" [isFreeName] @565
+    v19 = Builtin builtin=GlobalThis @575
+    v20 = PropGet v19 key="hidden" [isFreeName] @575
+    v21 = Call v20 calleeName="hidden" @575
+    v22 = Convert v21 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @575
+    v23 = Call v1, -, v22 calleeName="find" @570
+    v24 = Builtin builtin=Object @600
+    v25 = Builtin builtin=ObjectGetPrototypeOf @600
+    v26 = Builtin builtin=GlobalThis @622
+    v27 = PropGet v26 key="hidden" [isFreeName] @622
+    v28 = Call v27 calleeName="hidden" @622
+    v29 = Call v25, v24, v28 calleeName="Object.getPrototypeOf" @607
+    v30 = Call v18, -, v23, v29 calleeName="sink" @565
+    v31 = Undefined @565
+    Return v31 @565
+}
+function f1 name="find" module=m0 position=161 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array):
+    v1 = Integer integer=-1 @218
+    v2 = Convert v1 declared={type=number} @218
+    v3 = GetModuleVariable variable=g1 @239
+    v4 = CheckInitialized v3 name="PACKED" @239
+    v5 = Integer @264
+    v6 = Convert v5 declared={type=number} @264
+    v7 = Integer @272
+    v8 = Convert v7 declared={type=number} @272
+    Jump -> next b1(v2, v6, v8) @267
+  b1(v9: number, v10: number, v11: number):
+    LoopHint @267
+    v13 = PropGet v4 key="length" @280
+    v14 = Less v11, v13 @280
+    Branch v14 -> taken b2(), notTaken b4() @280
+  b2():
+    v15 = Integer @334
+    v16 = StrictEq v9, v15 @334
+    Branch v16 -> taken b4(), notTaken b3() @334
+  b3():
+    v17 = ElemGet v4, v11 @368
+    v18 = ElemGet v0, v17 @362
+    v19 = Integer integer=1 @398
+    v20 = Add v11, v19 @398
+    v21 = ElemGet v4, v20 @386
+    v22 = URShift v18, v21 @386
+    v23 = Integer integer=2 @424
+    v24 = Add v11, v23 @424
+    v25 = ElemGet v4, v24 @412
+    v26 = ElemGet v0, v25 @406
+    v27 = Integer integer=3 @446
+    v28 = Add v11, v27 @446
+    v29 = ElemGet v4, v28 @434
+    v30 = URShift v26, v29 @434
+    v31 = BitXor v22, v30 @434
+    v32 = Integer integer=1 @454
+    v33 = BitAnd v31, v32 @454
+    v34 = Integer integer=4 @492
+    v35 = Add v11, v34 @492
+    v36 = ElemGet v4, v35 @480
+    v37 = BitXor v33, v36 @480
+    v38 = Negate v37 @480
+    v39 = GetModuleVariable variable=g0 @499
+    v40 = CheckInitialized v39 name="MASKS" @499
+    v41 = ElemGet v40, v10 @499
+    v42 = BitAnd v38, v41 @499
+    v43 = BitNot v42 @499
+    v44 = BitAnd v9, v43 @499
+    v45 = Convert v44 declared={type=number} @461
+    v46 = Integer integer=1 @302
+    v47 = Add v10, v46 @302
+    v48 = Convert v47 declared={type=number} @295
+    v49 = Integer integer=5 @311
+    v50 = Add v11, v49 @311
+    v51 = Convert v50 declared={type=number} @305
+    Jump -> next b1(v45, v48, v51) @305
+  b4():
+    v52 = Convert v9 declared={type=number} @526
+    Return v52 @526
+}

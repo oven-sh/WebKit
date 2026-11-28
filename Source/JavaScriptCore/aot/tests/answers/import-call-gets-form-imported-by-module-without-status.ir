@@ -1,0 +1,76 @@
+# A module with a single importer keeps no status. An import() after it has run still gets the form of the file that its static import asked for.
+# inner.mjs: import conf from "./conf.toml" with { type: "toml" }; export const port = conf.port;
+# mid.mjs: import { port } from "./inner.mjs"; export const doubled = port * 2;
+# main.mjs: import { doubled } from "./mid.mjs"; const loaded = await import("./conf.toml", { with: { type: "text" } }); print(doubled, typeof loaded.default);
+# RUN: run-in-shell
+# CHECK: 42 object
+# CHECK-NEXT: exited with 0
+
+module m0 path="/conf.toml?toml" displayPath="conf.toml" kind=Data requireResult=DefaultExport body=f0 data=d0 exports=[{name="default" variable=g0}]
+module m1 path="/inner.mjs" displayPath="inner.mjs" flags=[CachesEvaluationError] body=f1 requests=[{target=m0 completes=true}]
+module m2 path="/mid.mjs" displayPath="mid.mjs" flags=[CachesEvaluationError] body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[LoaderReturnsNamespace] requireResult=DefaultExport body=f3 exports=[{name="default" variable=g3}]
+module m4 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, CachesEvaluationError] body=f4 requests=[{target=m2 completes=true}]
+entry module=m4
+layout L0 module=m0 fields=[{key="port" declared={type=anything}}] ownFieldCount=1
+layout L1 fields=[{key="with" declared={type=anything}}] ownFieldCount=1
+layout L2 fields=[{key="type" declared={type=anything}}] ownFieldCount=1
+variable g0 name="_0" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="port" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="doubled" module=m2 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="default" module=m3 declared={type=anything|absent} flags=[IsImmutable]
+data d0 root=Object{layout=L0 members=[{key="port" value=Number{value=21}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="conf"
+    v2 = PropGet v1 key="port"
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    Return v4
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="port"
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    PutModuleVariable v3 variable=g2
+    v5 = Undefined
+    Return v5
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="port = 21\n"
+    PutModuleVariable v0 variable=g3
+    v2 = Undefined
+    Return v2
+}
+function f4 module=m4 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L2
+    v1 = String string="text"
+    PropDefine v0, v1 key="type"
+    v3 = FinishObject v0
+    v4 = NewObject layout=L1
+    PropDefine v4, v3 key="with"
+    v6 = FinishObject v4
+    v7 = ImportModule v6 module=m3 referrer=m4
+    v8 = Await v7
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="print" [isFreeName]
+    v11 = GetModuleVariable variable=g2
+    v12 = CheckInitialized v11 name="doubled"
+    v13 = PropGet v8 key="default"
+    v14 = TypeOf v13
+    v15 = Call v10, -, v12, v14 calleeName="print"
+    v16 = Undefined
+    Return v16
+}

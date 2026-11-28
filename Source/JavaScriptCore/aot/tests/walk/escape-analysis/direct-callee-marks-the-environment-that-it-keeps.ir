@@ -1,0 +1,61 @@
+# `watch` hands its scope to `note`, which is entered itself, and proposes to hand the cell back when it has done with it. On one way `note` makes a closure over the scope that it was handed: the closure is the one argument of a call by value, so it lies in the frame of `note` and is left to the stub of the call, which marks the scope where it moves the closure to the heap: the code of `note` itself marks nothing.
+# function watch(start) { let seen = start; function note(keep) { seen++; if (keep) hold(() => seen); } note(false); note(true); return seen; }  sink(watch);
+# RUN: walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: = NewClosure {{*}}function=f3
+# RUN(EMIT): bytes f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# EMIT: NewSlimClosureInFrame.Plain count 1
+# EMIT: CallValueLending.First count 1
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# NEVER-NOT: ReleaseEnvironment
+# RUN(MAKER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# MAKER-LABEL: code f1:Body
+# MAKER: = CallDirect {{*}}function=f2
+# MAKER: ReleaseEnvironment
+# RUN(UNMARKED): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# UNMARKED-NOT: MarkEnvironmentEscaped
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="seen"}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}
+function f1 name="watch" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Boolean
+    v3 = CallDirect v1, v2 function=f2
+    v4 = Boolean boolean=true
+    v5 = CallDirect v1, v4 function=f2
+    v6 = GetEnvironmentField v1 layout=L0
+    Return v6
+}
+function f2 name="note" module=m0 length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = Increment v2
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = ToBoolean v1
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = NewClosure v0 function=f3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="hold" [isFreeName]
+    v9 = Call v8, -, v6 calleeName="hold"
+    Jump -> next b2()
+  b2():
+    v10 = Undefined
+    Return v10
+}
+function f3 name="read" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    Return v1
+}

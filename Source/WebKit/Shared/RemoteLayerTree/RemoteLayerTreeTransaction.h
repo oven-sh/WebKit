@@ -39,6 +39,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -74,7 +75,7 @@ struct ChangedLayers {
     ~ChangedLayers();
 };
 
-class RemoteLayerTreeTransaction final : public CanMakeCheckedPtr<RemoteLayerTreeTransaction, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+class RemoteLayerTreeTransaction final : public CanMakeCheckedPtr<RemoteLayerTreeTransaction> {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeTransaction);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteLayerTreeTransaction);
 public:
@@ -130,11 +131,10 @@ public:
 
     RemoteLayerTreeTransaction();
     ~RemoteLayerTreeTransaction();
-    RemoteLayerTreeTransaction(RemoteLayerTreeTransaction&&);
-    RemoteLayerTreeTransaction& operator=(RemoteLayerTreeTransaction&&);
 
     std::optional<WebCore::PlatformLayerIdentifier> rootLayerID() const { return m_rootLayerID.asOptional(); }
-    void LEGACY_NODELETE setRootLayerID(WebCore::PlatformLayerIdentifier);
+    NODELETE void setRootLayerID(WebCore::PlatformLayerIdentifier);
+    void copyRootStateFrom(const RemoteLayerTreeTransaction&);
     void layerPropertiesChanged(PlatformCALayerRemote&);
     void setCreatedLayers(Vector<LayerCreationProperties>);
     void setDestroyedLayerIDs(Vector<WebCore::PlatformLayerIdentifier>);
@@ -145,16 +145,16 @@ public:
     void dump() const;
 #endif
     
-    bool LEGACY_NODELETE hasAnyLayerChanges() const;
+    NODELETE bool hasAnyLayerChanges() const;
 
     const Vector<LayerCreationProperties>& createdLayers() const LIFETIME_BOUND { return m_createdLayers; }
     const Vector<WebCore::PlatformLayerIdentifier>& destroyedLayers() const LIFETIME_BOUND { return m_destroyedLayerIDs; }
     const Vector<WebCore::PlatformLayerIdentifier>& layerIDsWithNewlyUnreachableBackingStore() const LIFETIME_BOUND { return m_layerIDsWithNewlyUnreachableBackingStore; }
 
-    HashSet<Ref<PlatformCALayerRemote>>& LEGACY_NODELETE changedLayers() LIFETIME_BOUND;
+    NODELETE HashSet<Ref<PlatformCALayerRemote>>& changedLayers() LIFETIME_BOUND;
 
-    const LayerPropertiesMap& LEGACY_NODELETE changedLayerProperties() const LIFETIME_BOUND;
-    LayerPropertiesMap& LEGACY_NODELETE changedLayerProperties() LIFETIME_BOUND;
+    NODELETE const LayerPropertiesMap& changedLayerProperties() const LIFETIME_BOUND;
+    NODELETE LayerPropertiesMap& changedLayerProperties() LIFETIME_BOUND;
 
     void setRemoteContextHostedIdentifier(Markable<WebCore::LayerHostingContextIdentifier> identifier) { m_remoteContextHostedIdentifier = identifier; }
     Markable<WebCore::LayerHostingContextIdentifier> remoteContextHostedIdentifier() const { return m_remoteContextHostedIdentifier; }
@@ -197,5 +197,7 @@ private:
     WebCore::AcceleratedTimelinesUpdate m_timelinesUpdate;
 #endif
 };
+
+using RemoteLayerTreeFullState = Vector<UniqueRef<RemoteLayerTreeTransaction>>;
 
 } // namespace WebKit

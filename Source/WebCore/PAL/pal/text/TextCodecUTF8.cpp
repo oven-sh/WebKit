@@ -71,7 +71,7 @@ void TextCodecUTF8::registerCodecs(TextCodecRegistrar registrar)
     });
 }
 
-static inline uint8_t LEGACY_NODELETE nonASCIISequenceLength(uint8_t firstByte)
+NODELETE static inline uint8_t nonASCIISequenceLength(uint8_t firstByte)
 {
     static constexpr std::array<uint8_t, 256> lengths {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -94,7 +94,7 @@ static inline uint8_t LEGACY_NODELETE nonASCIISequenceLength(uint8_t firstByte)
     return lengths[firstByte];
 }
 
-static inline int LEGACY_NODELETE decodeNonASCIISequence(std::span<const uint8_t> sequence, uint8_t& length)
+NODELETE static inline int decodeNonASCIISequence(std::span<const uint8_t> sequence, uint8_t& length)
 {
     ASSERT(!isASCII(sequence[0]));
     if (length == 2) {
@@ -167,7 +167,7 @@ static inline int LEGACY_NODELETE decodeNonASCIISequence(std::span<const uint8_t
     return ((sequence[0] << 18) + (sequence[1] << 12) + (sequence[2] << 6) + sequence[3]) - 0x03C82080;
 }
 
-static inline std::span<char16_t> LEGACY_NODELETE appendCharacter(std::span<char16_t> destination, int character)
+NODELETE static inline std::span<char16_t> appendCharacter(std::span<char16_t> destination, int character)
 {
     ASSERT(character != nonCharacter);
     ASSERT(!U_IS_SURROGATE(character));
@@ -478,25 +478,9 @@ upConvertTo16Bit:
     return String::adopt(WTF::move(buffer16));
 }
 
-Vector<uint8_t> TextCodecUTF8::encodeUTF8(StringView string)
-{
-    // The buffer size is string.length() * maxBytesPerUnit, where maxBytesPerUnit is the
-    // worst-case UTF-8 bytes per input code unit.
-    // - 8-bit (Latin1) strings: max 2 UTF-8 bytes per character (for 0x80-0xFF).
-    // - 16-bit strings: max 3 UTF-8 bytes per code unit (BMP characters use 1 code unit
-    //   and up to 3 bytes; non-BMP use 2 code units and 4 bytes, i.e. only 2 per unit).
-    size_t maxBytesPerUnit = string.is8Bit() ? 2 : 3;
-    Vector<uint8_t> bytes(WTF::checkedProduct<size_t>(string.length(), maxBytesPerUnit));
-    size_t bytesWritten = 0;
-    for (auto character : string.codePoints())
-        U8_APPEND_UNSAFE(bytes, bytesWritten, character);
-    bytes.shrink(bytesWritten);
-    return bytes;
-}
-
 Vector<uint8_t> TextCodecUTF8::encode(StringView string, UnencodableHandling) const
 {
-    return encodeUTF8(string);
+    return utf8Bytes(string);
 }
 
 } // namespace PAL

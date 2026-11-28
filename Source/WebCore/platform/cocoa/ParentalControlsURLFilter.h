@@ -31,7 +31,7 @@
 #include <WebCore/ParentalControlsURLFilterParameters.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
-#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && HAVE(UI_VIEW)
 #include <WebCore/CocoaView.h>
 #endif
 
@@ -52,13 +52,13 @@ public:
 #else
     WEBCORE_EXPORT static ParentalControlsURLFilter& singleton();
     WEBCORE_EXPORT static void setGlobalFilter(Ref<ParentalControlsURLFilter>&&);
-    WEBCORE_EXPORT static bool LEGACY_NODELETE hasGlobalFilter();
+    NODELETE WEBCORE_EXPORT static bool hasGlobalFilter();
 #endif
     WEBCORE_EXPORT static void setFilterForTesting(Ref<ParentalControlsURLFilter>&&);
     WEBCORE_EXPORT static void allowURL(const ParentalControlsURLFilterParameters&, CompletionHandler<void(bool)>&&);
     WEBCORE_EXPORT static WorkQueue& workQueueSingleton();
     WEBCORE_EXPORT bool isEnabled() const;
-    void LEGACY_NODELETE resetIsEnabled();
+    NODELETE void resetIsEnabled();
 
     WEBCORE_EXPORT virtual ~ParentalControlsURLFilter();
     virtual bool isEnabledImpl() const;
@@ -66,7 +66,7 @@ public:
     WEBCORE_EXPORT void isURLAllowed(IsMainFrameLoad, const URL& mainDocumentURL, const URL&, CompletionHandler<void(bool, NSData *)>&&);
     virtual void allowURL(const URL&, CompletionHandler<void(bool)>&&);
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
-#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && HAVE(UI_VIEW)
     virtual void requestPermissionForURL(const URL&, const URL& referrerURL, CompletionHandler<void(bool)>&&, CocoaView* presentingView = nullptr);
 #else
     WEBCORE_EXPORT void requestPermissionForURL(const URL&, const URL& referrerURL, CompletionHandler<void(bool)>&&);

@@ -109,7 +109,7 @@ public:
         }
     }
 
-    bool LEGACY_NODELETE isObservingMedia() const { return m_isObservingMedia; }
+    NODELETE bool isObservingMedia() const { return m_isObservingMedia; }
 
     void whenReady(UserMediaCaptureManagerProxy::CreateSourceCallback&& createCallback)
     {
@@ -123,8 +123,8 @@ public:
         });
     }
 
-    bool LEGACY_NODELETE isUsingSource(const RealtimeMediaSource& source) const { return m_source.ptr() == &source; }
-    RealtimeMediaSource& LEGACY_NODELETE source() { return m_source; }
+    NODELETE bool isUsingSource(const RealtimeMediaSource& source) const { return m_source.ptr() == &source; }
+    NODELETE RealtimeMediaSource& source() { return m_source; }
 
     void audioUnitWillStart() final
     {
@@ -176,11 +176,6 @@ public:
     void setShouldApplyRotation() { m_source->setShouldApplyRotation(); }
     void setIsInBackground(bool value) { m_source->setIsInBackground(value); }
 
-    bool isPowerEfficient()
-    {
-        return m_source->isPowerEfficient();
-    }
-
     bool updateVideoConstraints(const WebCore::MediaConstraints& constraints)
     {
         m_videoConstraints = constraints;
@@ -216,7 +211,7 @@ public:
 
     void queueAndProcessSerialAction(Function<Ref<GenericPromise>()>&& action)
     {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
 
         Ref pendingAction = WTF::move(m_pendingAction);
         m_pendingAction = pendingAction->isResolved() ? action() : pendingAction->whenSettled(RunLoop::mainSingleton(), WTF::move(action));
@@ -377,7 +372,7 @@ private:
         Ref source = m_source;
         auto deviceType = source->deviceType();
 
-        if (m_isObservingMedia && (deviceType == CaptureDevice::DeviceType::Screen || deviceType == CaptureDevice::DeviceType::Window) && m_videoConstraints && updateVideoConstraints(*m_videoConstraints)) {
+        if (m_isObservingMedia && CaptureDevice::isVideoScreenShare(deviceType) && m_videoConstraints && updateVideoConstraints(*m_videoConstraints)) {
             source->removeVideoFrameObserver(*this);
             source->addVideoFrameObserver(*this, { m_widthConstraint, m_heightConstraint }, m_frameRateConstraint);
         }
@@ -441,8 +436,9 @@ private:
             return;
         }
 
-        auto properties = m_videoFrameObjectHeap->add(frame);
-        m_connection->send(Messages::RemoteCaptureSampleManager::VideoFrameAvailable(m_id, properties, metadata), 0);
+        auto properties = RemoteVideoFrameProxy::properties(frame);
+        auto reference = m_videoFrameObjectHeap->add(frame);
+        m_connection->send(Messages::RemoteCaptureSampleManager::VideoFrameAvailable(m_id, reference, properties, metadata), 0);
     }
 
     bool preventSourceFromEnding()
@@ -529,7 +525,7 @@ CaptureSourceOrError UserMediaCaptureManagerProxy::createMicrophoneSource(const 
     return source;
 }
 
-static bool LEGACY_NODELETE canCaptureFromMultipleCameras()
+NODELETE static bool canCaptureFromMultipleCameras()
 {
 #if PLATFORM(IOS_FAMILY)
     return false;
@@ -592,6 +588,7 @@ void UserMediaCaptureManagerProxy::createMediaSourceForCaptureDeviceWithConstrai
         break;
     case WebCore::CaptureDevice::DeviceType::Screen:
     case WebCore::CaptureDevice::DeviceType::Window:
+    case WebCore::CaptureDevice::DeviceType::BrowserTab:
         sourceOrError = RealtimeMediaSourceCenter::singleton().displayCaptureFactory().createDisplayCaptureSource(device, WTF::move(hashSalts), nullptr, pageIdentifier);
         break;
     case WebCore::CaptureDevice::DeviceType::SystemAudio:
@@ -656,27 +653,56 @@ void UserMediaCaptureManagerProxy::startProducingData(RealtimeMediaSourceIdentif
     if (!proxy)
         return;
 
-    if (!m_connectionProxy->setCaptureAttributionString()) {
-        RELEASE_LOG_ERROR(WebRTC, "Unable to set capture attribution, failing capture.");
+    Ref source = proxy->source();
+    if (auto failure = applyCaptureEnvironment(source->deviceType(), pageIdentifier)) {
+        if (*failure == CaptureEnvironmentFailure::NoMediaEnvironment)
+            source->captureFailed();
         return;
     }
 
-    Ref source = proxy->source();
+    m_connectionProxy->startProducingData(source->deviceType(), pageIdentifier);
+    proxy->start();
+}
+
+auto UserMediaCaptureManagerProxy::applyCaptureEnvironment(CaptureDevice::DeviceType deviceType, WebCore::PageIdentifier pageIdentifier) -> std::optional<CaptureEnvironmentFailure>
+{
+    if (!m_connectionProxy->setCaptureAttributionString()) {
+        RELEASE_LOG_ERROR(WebRTC, "Unable to set capture attribution, failing capture.");
+        return CaptureEnvironmentFailure::NoAttribution;
+    }
 
 #if ENABLE(APP_PRIVACY_REPORT)
     m_connectionProxy->setTCCIdentity();
 #endif
 #if ENABLE(EXTENSION_CAPABILITIES) && !PLATFORM(IOS_FAMILY_SIMULATOR)
     bool hasValidMediaEnvironmentOrIdentity = m_connectionProxy->setCurrentMediaEnvironment(pageIdentifier) || RealtimeMediaSourceCenter::singleton().hasIdentity();
-    if (!hasValidMediaEnvironmentOrIdentity && source->deviceType() == CaptureDevice::DeviceType::Camera
+    if (!hasValidMediaEnvironmentOrIdentity && deviceType == CaptureDevice::DeviceType::Camera
         && WTF::processHasEntitlement("com.apple.developer.web-browser-engine.rendering"_s)) {
         RELEASE_LOG_ERROR(WebRTC, "Unable to set media environment, failing capture.");
-        source->captureFailed();
+        return CaptureEnvironmentFailure::NoMediaEnvironment;
+    }
+#else
+    UNUSED_PARAM(deviceType);
+    UNUSED_PARAM(pageIdentifier);
+#endif // ENABLE(EXTENSION_CAPABILITIES) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+    return std::nullopt;
+}
+
+void UserMediaCaptureManagerProxy::reapplyCaptureEnvironment(WebCore::PageIdentifier pageIdentifier)
+{
+    for (Ref proxy : m_proxies.values()) {
+        Ref source = proxy->source();
+        auto sourcePageIdentifier = source->pageIdentifier();
+        if (!sourcePageIdentifier || *sourcePageIdentifier != pageIdentifier || !source->isProducingData())
+            continue;
+
+        if (applyCaptureEnvironment(source->deviceType(), pageIdentifier))
+            RELEASE_LOG_ERROR(WebRTC, "UserMediaCaptureManagerProxy::reapplyCaptureEnvironment failed for a running capture");
+#if PLATFORM(IOS_FAMILY)
+        m_connectionProxy->providePresentingApplicationPID(pageIdentifier);
+#endif
         return;
     }
-#endif // ENABLE(EXTENSION_CAPABILITIES) && !PLATFORM(IOS_FAMILY_SIMULATOR)
-    m_connectionProxy->startProducingData(source->deviceType(), pageIdentifier);
-    proxy->start();
 }
 
 void UserMediaCaptureManagerProxy::stopProducingData(RealtimeMediaSourceIdentifier id)
@@ -833,12 +859,6 @@ void UserMediaCaptureManagerProxy::setIsInBackground(RealtimeMediaSourceIdentifi
 {
     if (RefPtr proxy = m_proxies.get(sourceID))
         proxy->setIsInBackground(isInBackground);
-}
-
-void UserMediaCaptureManagerProxy::isPowerEfficient(WebCore::RealtimeMediaSourceIdentifier sourceID, CompletionHandler<void(bool)>&& callback)
-{
-    RefPtr proxy = m_proxies.get(sourceID);
-    callback(proxy && proxy->isPowerEfficient());
 }
 
 void UserMediaCaptureManagerProxy::clear()

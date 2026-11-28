@@ -1,0 +1,32 @@
+# If "no receiver is passed" and "any receiver may be passed" were one thing, as in the first version, either `this` of every plain call would be anything, or `this` would be proven undefined where an unknown value arrives
+# function who() { return this; }  function whose() { return this; }  who();  whose.call(thing);
+# RUN: summary f0
+# CHECK: call c0 v1 Value Closure f1 ()
+# CHECK: call c1 v5 Value Closure f2 this=
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=undefined
+# LINK-NEXT: parameter 0 {{*}}proven=undefined
+# LINK: function f2 callers-known one-callee
+# LINK-NOT: =undefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="who"
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="thing" [isFreeName]
+    v5 = Call v2, v4 calleeName="whose"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="who" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="whose" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

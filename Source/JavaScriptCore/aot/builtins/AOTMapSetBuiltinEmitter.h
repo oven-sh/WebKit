@@ -19,12 +19,17 @@ public:
 
 private:
     enum class WeakLookup : uint8_t { MapGet, MapHas, SetHas };
+    struct WeakProbe {
+        LBasicBlock found;
+        LBasicBlock absent;
+        LValue bucket;
+    };
 
     void createFromIterable(const InlineCall&, HashTableOwner);
     void clear(const InlineCall&, HashTableOwner);
     void createIterator(const InlineCall&, HashTableOwner);
     void lookUpWeakTable(const InlineCall&, WeakLookup);
-    void probeWeakTable(const InlineCall&, WeakLookup, CellPointer table, Boxed key);
+    WeakProbe probeWeakTable(WeakLookup, CellPointer table, Boxed key, const Type& typeOfKey);
 };
 
 } } } // namespace JSC::AOT::Typed

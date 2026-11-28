@@ -28,10 +28,8 @@
 #include <WebCore/RenderEmbeddedObject.h>
 #include <wtf/Platform.h>
 
-namespace JSC {
-namespace Bindings {
+namespace JSC::Bindings {
 class Instance;
-}
 }
 
 namespace WebCore {
@@ -74,9 +72,9 @@ public:
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
 
     WEBCORE_EXPORT void pluginDestroyedWithPendingPDFTestCallback(RefPtr<VoidCallback>&&);
-    WEBCORE_EXPORT RefPtr<VoidCallback> LEGACY_NODELETE takePendingPDFTestCallback();
+    NODELETE WEBCORE_EXPORT RefPtr<VoidCallback> takePendingPDFTestCallback();
 
-    RenderEmbeddedObject* LEGACY_NODELETE renderEmbeddedObject() const;
+    NODELETE RenderEmbeddedObject* renderEmbeddedObject() const;
 
     virtual void updateWidget(CreatePlugins) = 0;
 
@@ -106,7 +104,7 @@ protected:
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) override;
 
     bool requestObject(const String& url, const String& mimeType, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues);
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) override;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
@@ -138,7 +136,7 @@ private:
     bool canLoadPlugInContent(const String& relativeURL, const String& mimeType) const;
     bool canLoadURL(const URL&) const;
 
-    RenderPtr<RenderElement> createPluginRenderer(Style::ComputedStyle&&, const RenderTreePosition&);
+    RenderPtr<RenderElement> createPluginRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&);
     bool childShouldCreateRenderer(const Node&) const override;
     void willRecalcStyle(OptionSet<Style::Change>) final;
     void didRecalcStyle(OptionSet<Style::Change>) final;

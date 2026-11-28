@@ -171,7 +171,7 @@ private:
     std::atomic<bool> m_isOver; // set with m_lock held
 
     Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
-    UncheckedKeyHashMap<std::pair<const uint8_t*, uint32_t>, unsigned> m_sources WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<std::pair<const uint8_t*, uint32_t>, unsigned> m_sources WTF_GUARDED_BY_LOCK(m_lock);
     unsigned m_lastSource WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     // A function is decoded again after its code was returned to the cache.
     OrderHashSet m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
@@ -283,9 +283,9 @@ private:
 
     Vector<Entry> m_entries;
     Vector<uint16_t> m_freeIndices;
-    UncheckedKeyHashMap<Identity, uint16_t> m_indices;
+    HashMap<Identity, uint16_t> m_indices;
     VM& m_vm;
-    UncheckedKeyHashMap<uint64_t, FixedVector<Weak<UnlinkedFunctionExecutable>>> m_childExecutables;
+    HashMap<uint64_t, FixedVector<Weak<UnlinkedFunctionExecutable>>> m_childExecutables;
 #if USE(BUN_JSC_ADDITIONS)
     RefPtr<BytecodeOrderRecorder> m_orderRecorder;
     const void* m_linkedPayloadBase { nullptr }; // never a Decoder's base while null

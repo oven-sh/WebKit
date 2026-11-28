@@ -486,7 +486,7 @@ static void testVersionLoopsOmitsStridedLimitGuardOnlyWhenToldTo()
     unsigned numberOfGuards[2];
     for (bool omitsLimitGuard : { false, true }) {
         Policy policy = loopPolicy();
-        policy.validation.omitsStridedLimitGuard = omitsLimitGuard;
+        policy.validation.skipsStridedLimitGuard = omitsLimitGuard;
         StridedLoop loop(policy, StridedLoopShape { });
         CHECK(versionLoopsAndValidate(loop.proc));
         CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 1u);

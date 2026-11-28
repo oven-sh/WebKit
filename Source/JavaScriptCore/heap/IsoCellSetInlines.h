@@ -67,7 +67,7 @@ inline bool IsoCellSet::remove(HeapCell* cell)
 inline bool IsoCellSet::contains(HeapCell* cell) const
 {
     if (cell->isPreciseAllocation())
-        return !m_lowerTierPreciseBits.get(cell->preciseAllocation().lowerTierPreciseIndex());
+        return m_lowerTierPreciseBits.get(cell->preciseAllocation().lowerTierPreciseIndex());
     AtomIndices atomIndices(cell);
     auto* bits = m_bits[atomIndices.blockIndex].get();
     if (bits)
@@ -79,7 +79,7 @@ template<typename Func>
 void IsoCellSet::forEachMarkedCell(NOESCAPE const Func& func)
 {
     BlockDirectory& directory = m_subspace.m_directory;
-    directory.assertIsMutatorOrMutatorIsStopped();
+    directory.assertMayAccessBitsUnlocked();
     (directory.markingNotEmptyBitsView() & m_blocksWithBits).forEachSetBit(
         [&] (unsigned blockIndex) {
             MarkedBlock::Handle* block = directory.m_blocks[blockIndex].first;

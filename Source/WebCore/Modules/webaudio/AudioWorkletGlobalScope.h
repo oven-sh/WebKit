@@ -31,6 +31,7 @@
 #if ENABLE(WEB_AUDIO)
 #include "AudioWorkletThread.h"
 #include "MessagePort.h"
+#include "ScriptExecutionContextIdentifier.h"
 #include "WorkletGlobalScope.h"
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/ThreadSafeWeakHashSet.h>
@@ -53,6 +54,7 @@ class AudioWorkletGlobalScope final : public WorkletGlobalScope {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(AudioWorkletGlobalScope);
 public:
     static RefPtr<AudioWorkletGlobalScope> tryCreate(AudioWorkletThread&, const WorkletParameters&);
+    WEBCORE_EXPORT static bool hasScopeForDocument(ScriptExecutionContextIdentifier);
     ~AudioWorkletGlobalScope();
 
     ExceptionOr<void> registerProcessor(String&& name, Ref<JSAudioWorkletProcessorConstructor>&&);
@@ -63,6 +65,7 @@ public:
     size_t currentFrame() const { return m_currentFrame; }
 
     float sampleRate() const { return m_sampleRate; }
+    MessagePort& port() LIFETIME_BOUND { return m_port.get(); }
 
     double currentTime() const { return m_sampleRate > 0.0 ? m_currentFrame / static_cast<double>(m_sampleRate) : 0.0; }
 
@@ -83,6 +86,8 @@ private:
 
     size_t m_currentFrame { 0 };
     const float m_sampleRate;
+    const ScriptExecutionContextIdentifier m_documentIdentifier;
+    const Ref<MessagePort> m_port;
     MemoryCompactRobinHoodHashMap<String, Ref<JSAudioWorkletProcessorConstructor>> m_processorConstructorMap;
     ThreadSafeWeakHashSet<AudioWorkletProcessor> m_processors;
     std::unique_ptr<AudioWorkletProcessorConstructionData> m_pendingProcessorConstructionData;

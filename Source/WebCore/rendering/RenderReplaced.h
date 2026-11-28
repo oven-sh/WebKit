@@ -40,14 +40,15 @@ public:
     void computeReplacedOutOfFlowPositionedLogicalWidth(LogicalExtentComputedValues&) const;
 
     LayoutRect replacedContentRect(NaturalDimensions zoomedNaturalDimensions) const;
-    LayoutRect replacedContentRect() const;
+    WEBCORE_EXPORT LayoutRect replacedContentRect() const;
     LayoutRect replacedContentPaintRect() const;
+    LayoutRect replacedContentPaintRect(const LayoutRect& replacedContentRect, NaturalDimensions zoomedNaturalDimensions) const;
 
     std::optional<FloatRect> resolvedObjectViewBox(const FloatSize& physicalIntrinsicSize) const;
 
     // Out-of-line so callers outside style/rendering/layout code don't need to pull in
     // the (compile-time-expensive) computed style getter headers just to check this.
-    WEBCORE_EXPORT bool LEGACY_NODELETE hasObjectViewBoxSet() const;
+    NODELETE WEBCORE_EXPORT bool hasObjectViewBoxSet() const;
 
     // Returns the full content rect scaled so the view-box sub-region maps onto destRect,
     // or destRect itself when object-view-box is not set.
@@ -67,7 +68,7 @@ public:
 
     virtual bool paintsContent() const { return true; }
 
-    LayoutUnit computeReplacedLogicalHeightUsing(const Style::PreferredSize& logicalHeight) const;
+    LayoutUnit computeReplacedLogicalHeightUsing(const Style::PreferredSize& logicalHeight, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
     LayoutUnit computeReplacedLogicalHeightUsing(const Style::MinimumSize& logicalHeight) const;
     LayoutUnit computeReplacedLogicalHeightUsing(const Style::MaximumSize& logicalHeight) const;
 
@@ -82,10 +83,14 @@ public:
     std::optional<double> preferredAspectRatio() const override;
     FloatSize preferredAspectRatioAsSize() const override;
 
+    // The content box max-content width of an element with a preferred aspect ratio but no natural size, measured into the
+    // available space. Used for flex base sizes.
+    std::optional<LayoutUnit> stretchFitLogicalWidthWithoutNaturalSize() const;
+
 protected:
-    RenderReplaced(Type, Element&, Style::ComputedStyle&&, OptionSet<ReplacedFlag> = { });
-    RenderReplaced(Type, Element&, Style::ComputedStyle&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
-    RenderReplaced(Type, Document&, Style::ComputedStyle&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
+    RenderReplaced(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<ReplacedFlag> = { });
+    RenderReplaced(Type, Element&, UniqueRef<Style::ComputedStyle>&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
+    RenderReplaced(Type, Document&, UniqueRef<Style::ComputedStyle>&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
 
     void layout() override;
 
@@ -95,18 +100,17 @@ protected:
 
     virtual LayoutUnit minimumReplacedHeight() const { return 0_lu; }
 
-    bool LEGACY_NODELETE isSelected() const;
+    NODELETE bool isSelected() const;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     void setIntrinsicSize(const LayoutSize& intrinsicSize) { m_intrinsicSize = intrinsicSize; }
     virtual void intrinsicSizeChanged();
     virtual bool hasRelativeIntrinsicLogicalWidth() const { return false; }
-    virtual bool hasDrawableContent() const { return false; }
 
     void paint(PaintInfo&, const LayoutPoint&) override;
     bool shouldPaint(PaintInfo&, const LayoutPoint&);
-    LayoutRect LEGACY_NODELETE localSelectionRect(bool checkWhetherSelected = true) const; // This is in local coordinates, but it's a physical rect (so the top left corner is physical top left).
+    NODELETE LayoutRect localSelectionRect(bool checkWhetherSelected = true) const; // This is in local coordinates, but it's a physical rect (so the top left corner is physical top left).
 
     virtual void layoutShadowContent(const LayoutSize&);
 
@@ -123,8 +127,8 @@ private:
 
     LayoutUnit computeConstrainedLogicalWidth() const;
 
-    template<typename SizeType> LayoutUnit computeReplacedLogicalWidthUsing(const SizeType& logicalWidth) const;
-    template<typename SizeType> LayoutUnit computeReplacedLogicalHeightUsingGeneric(const SizeType& logicalHeight) const;
+    template<typename SizeType> LayoutUnit computeReplacedLogicalWidthUsing(const SizeType& logicalWidth, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
+    template<typename SizeType> LayoutUnit computeReplacedLogicalHeightUsingGeneric(const SizeType& logicalHeight, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
     bool replacedMinMaxLogicalHeightComputesAsNone(const auto& logicalHeight, const auto& initialLogicalHeight) const;
 
 
@@ -132,7 +136,8 @@ private:
 
     bool canHaveChildren() const override { return false; }
 
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
     virtual void paintReplaced(PaintInfo&, const LayoutPoint&) { }
 
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const override;
@@ -147,7 +152,7 @@ private:
     virtual bool shouldDrawSelectionTint() const;
     
     Color calculateHighlightColor() const;
-    bool LEGACY_NODELETE isHighlighted(HighlightState, const RenderHighlight&) const;
+    NODELETE bool isHighlighted(HighlightState, const RenderHighlight&) const;
 
     bool hasReplacedLogicalHeight() const;
 

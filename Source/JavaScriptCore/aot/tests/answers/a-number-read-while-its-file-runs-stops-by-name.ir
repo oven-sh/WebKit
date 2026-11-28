@@ -1,0 +1,49 @@
+# ring.cjs    const early = require("./early.cjs"); exports.count = 41; exports.count = 0.5;
+# early.cjs   sink(require("./ring.cjs").count);
+# main.cjs    require("./ring.cjs");
+# The records lie as in an-export-read-while-its-file-runs-stops-by-name.ir: each request says completes=true, though early.cjs asks for ring.cjs while that runs. Link takes `count` for stored.
+# `count` holds numbers alone and lies raw. Its type says no marker, so neither the type nor a box made by it tells that nothing is stored yet: the read is asked for the markers in its own form.
+# RUN(PLAN): plan variables mechanisms=all
+# PLAN: variable g0 {{*}}OptionalDouble
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=i32|fractional {{*}}filled
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:
+# WALK: [[read]]: i32|fractional @OptionalDouble = GetModuleVariable variable=g0
+# WALK-NEXT: CheckProof [[read]] checkedType=number typeWithoutProof=undefined|null|number|absent source=Variable
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = value => print("said " + String(value));
+# SHELL: bun: internal AOT error: type check failed at {{*}}
+# SHELL-NEXT: in a local variable
+# SHELL-NOT: said
+
+variable g0 name="count" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require completes=true}]
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m0 [isBare, isCallOfRequire]
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m1 [isBare, isCallOfRequire]
+    v1 = GetModuleVariable variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f2 module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m2 [isBare, isCallOfRequire]
+    v1 = Integer integer=41
+    PutModuleVariable v1 variable=g0
+    v3 = Double number=0.5
+    PutModuleVariable v3 variable=g0
+    v5 = Undefined
+    Return v5
+}

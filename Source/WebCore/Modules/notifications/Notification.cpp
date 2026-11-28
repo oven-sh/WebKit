@@ -68,7 +68,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Notification);
 
 static Lock nonPersistentNotificationMapLock;
-static HashMap<WTF::UUID, WeakRef<Notification, WeakPtrImplWithEventTargetData>>& LEGACY_NODELETE nonPersistentNotificationMap() WTF_REQUIRES_LOCK(nonPersistentNotificationMapLock)
+NODELETE static HashMap<WTF::UUID, WeakRef<Notification, WeakPtrImplWithEventTargetData>>& nonPersistentNotificationMap() WTF_REQUIRES_LOCK(nonPersistentNotificationMapLock)
 {
     static NeverDestroyed<HashMap<WTF::UUID, WeakRef<Notification, WeakPtrImplWithEventTargetData>>> map;
     return map;
@@ -347,7 +347,7 @@ void Notification::dispatchShowEvent()
     if (!context)
         return;
 
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
     ASSERT(!isPersistent());
 
     if (m_notificationSource == NotificationSource::ServiceWorker)
@@ -362,7 +362,7 @@ void Notification::dispatchClickEvent()
     if (!context)
         return;
 
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
     ASSERT(m_notificationSource != NotificationSource::ServiceWorker);
     ASSERT(!isPersistent());
 
@@ -378,7 +378,7 @@ void Notification::dispatchCloseEvent()
     if (!context)
         return;
 
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
     ASSERT(m_notificationSource != NotificationSource::ServiceWorker);
     ASSERT(!isPersistent());
 
@@ -392,7 +392,7 @@ void Notification::dispatchErrorEvent()
     if (!context)
         return;
 
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
     ASSERT(m_notificationSource != NotificationSource::ServiceWorker);
     ASSERT(!isPersistent());
 

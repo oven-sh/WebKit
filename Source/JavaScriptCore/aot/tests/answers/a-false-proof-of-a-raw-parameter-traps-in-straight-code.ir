@@ -1,0 +1,200 @@
+# function takes(whole: number, half: number, flag: boolean) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return (flag ? whole * 2 : whole) + half + work; }
+# function handsOnWhole() { return takes(id("text"), 1.5, true) + 1; }
+# function handsOnHalf() { return takes(5, id("text"), true) + 1; }
+# function handsOnFlag() { return takes(5, 1.5, id("text")) + 1; }
+# function leavesByIt() { return takes(id("text"), 1.5, true); }
+# print(takes(1, 2.5, false));
+# if (which === 1) print(handsOnWhole());
+# if (which === 2) print(handsOnHalf());
+# if (which === 3) print(handsOnFlag());
+# if (which === 4) print(leavesByIt());
+# print("went on");
+# A direct call in straight code converts its operands to the callee's unboxed representations, which the plan chose from what Link has proven about the parameters. Straight code has no types of its own.
+# So each such operand is tested for that type before the call, in every build, and the failing side traps.
+# The generic entry does the same for indirect callers, and the walk does it for a caller that it has visited.
+# This is the failing control. The fault is written by hand: the first two parameters of `takes` are marked here as the compiler's own positions (IsFromCompiler).
+# Link treats the written type of such a position as proven, whatever arrives. A string arrives.
+# Without the test the string's bits were unboxed as they were, as some integer or some number, and the program printed a number and continued.
+# RUN(FORM): plan units mechanisms=all
+# FORM: f1:Body (Int32, Double, JSValue) -> (Double)
+# OPTIONS: testing=ForceStraightCompilation
+# RUN(WHOLE): run-in-shell mechanisms=all globalThis.which = 1;
+# WHOLE: 4.5
+# WHOLE-NOT: went on
+# WHOLE: crashed with
+# RUN(HALF): run-in-shell mechanisms=all globalThis.which = 2;
+# HALF: 4.5
+# HALF-NOT: went on
+# HALF: crashed with
+# RUN(LEAVES): run-in-shell mechanisms=all globalThis.which = 4;
+# LEAVES: 4.5
+# LEAVES-NOT: went on
+# LEAVES: crashed with
+# Where the program reaches no false proof, nothing crashes.
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 4.5
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+
+module m0 path="raw-parameters.ts" displayPath="raw-parameters.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="takes" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=GlobalThis @563
+    v9 = PropGet v8 key="print" [isFreeName] @563
+    v10 = GetModuleVariable variable=g0 @569
+    v11 = Integer integer=1 @575
+    v12 = Double number=2.5 @578
+    v13 = Boolean @583
+    v14 = Call v10, -, v11, v12, v13 calleeName="takes" @569
+    v15 = Call v9, -, v14 calleeName="print" @563
+    v16 = Builtin builtin=GlobalThis @596
+    v17 = PropGet v16 key="which" [isFreeName] @596
+    v18 = Integer integer=1 @606
+    v19 = StrictEq v17, v18 @606
+    Branch v19 -> taken b1(), notTaken b2() @606
+  b1():
+    v20 = Builtin builtin=GlobalThis @609
+    v21 = PropGet v20 key="print" [isFreeName] @609
+    v22 = Call v1 calleeName="handsOnWhole" @615
+    v23 = Call v21, -, v22 calleeName="print" @609
+    Jump -> next b2() @609
+  b2():
+    v24 = Builtin builtin=GlobalThis @636
+    v25 = PropGet v24 key="which" [isFreeName] @636
+    v26 = Integer integer=2 @646
+    v27 = StrictEq v25, v26 @646
+    Branch v27 -> taken b3(), notTaken b4() @646
+  b3():
+    v28 = Builtin builtin=GlobalThis @649
+    v29 = PropGet v28 key="print" [isFreeName] @649
+    v30 = Call v3 calleeName="handsOnHalf" @655
+    v31 = Call v29, -, v30 calleeName="print" @649
+    Jump -> next b4() @649
+  b4():
+    v32 = Builtin builtin=GlobalThis @675
+    v33 = PropGet v32 key="which" [isFreeName] @675
+    v34 = Integer integer=3 @685
+    v35 = StrictEq v33, v34 @685
+    Branch v35 -> taken b5(), notTaken b6() @685
+  b5():
+    v36 = Builtin builtin=GlobalThis @688
+    v37 = PropGet v36 key="print" [isFreeName] @688
+    v38 = Call v5 calleeName="handsOnFlag" @694
+    v39 = Call v37, -, v38 calleeName="print" @688
+    Jump -> next b6() @688
+  b6():
+    v40 = Builtin builtin=GlobalThis @714
+    v41 = PropGet v40 key="which" [isFreeName] @714
+    v42 = Integer integer=4 @724
+    v43 = StrictEq v41, v42 @724
+    Branch v43 -> taken b7(), notTaken b8() @724
+  b7():
+    v44 = Builtin builtin=GlobalThis @727
+    v45 = PropGet v44 key="print" [isFreeName] @727
+    v46 = Call v7 calleeName="leavesByIt" @733
+    v47 = Call v45, -, v46 calleeName="print" @727
+    Jump -> next b8() @727
+  b8():
+    v48 = Builtin builtin=GlobalThis @748
+    v49 = PropGet v48 key="print" [isFreeName] @748
+    v50 = String string="went on" @754
+    v51 = Call v49, -, v50 calleeName="print" @748
+    v52 = Undefined @748
+    Return v52 @748
+}
+function f1 name="takes" module=m0 position=123 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=i32 flags=[IsFromCompiler]}, {type=number flags=[IsFromCompiler]}, {type=boolean}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: number, v2: boolean):
+    v3 = Integer @195
+    v4 = Convert v3 declared={type=number} @195
+    v5 = Integer @211
+    v6 = Convert v5 declared={type=number} @211
+    Jump -> next b1(v4, v6) @207
+  b1(v7: number, v8: number):
+    LoopHint @207
+    v10 = Integer integer=2 @218
+    v11 = Less v8, v10 @218
+    Branch v11 -> taken b2(), notTaken b3() @218
+  b2():
+    v12 = Add v7, v8 @241
+    v13 = Integer @246
+    v14 = BitOr v12, v13 @246
+    v15 = Convert v14 declared={type=number} @226
+    v16 = Increment v8 @221
+    v17 = Convert v16 declared={type=number} @221
+    Jump -> next b1(v15, v17) @221
+  b3():
+    v18 = ToBoolean v2 @257
+    Branch v18 -> taken b4(| 0), notTaken b5(v0) @257
+  b4(v19):
+    v20 = Integer integer=2 @272
+    v21 = Mul v0, v20 @272
+    Jump -> next b5(v21) @272
+  b5(v22):
+    v23 = Add v22, v1 @285
+    v24 = Add v23, v7 @292
+    Return v24 @292
+}
+function f2 name="handsOnWhole" module=m0 position=300 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @333
+    v1 = Builtin builtin=GlobalThis @339
+    v2 = PropGet v1 key="id" [isFreeName] @339
+    v3 = String string="text" @342
+    v4 = Call v2, -, v3 calleeName="id" @339
+    v5 = Double number=1.5 @351
+    v6 = Boolean boolean=true @356
+    v7 = Call v0, -, v4, v5, v6 calleeName="takes" @333
+    v8 = Integer integer=1 @364
+    v9 = Add v7, v8 @364
+    Return v9 @364
+}
+function f3 name="handsOnHalf" module=m0 position=369 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @401
+    v1 = Integer integer=5 @407
+    v2 = Builtin builtin=GlobalThis @410
+    v3 = PropGet v2 key="id" [isFreeName] @410
+    v4 = String string="text" @413
+    v5 = Call v3, -, v4 calleeName="id" @410
+    v6 = Boolean boolean=true @422
+    v7 = Call v0, -, v1, v5, v6 calleeName="takes" @401
+    v8 = Integer integer=1 @430
+    v9 = Add v7, v8 @430
+    Return v9 @430
+}
+function f4 name="handsOnFlag" module=m0 position=435 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @467
+    v1 = Integer integer=5 @473
+    v2 = Double number=1.5 @476
+    v3 = Builtin builtin=GlobalThis @481
+    v4 = PropGet v3 key="id" [isFreeName] @481
+    v5 = String string="text" @484
+    v6 = Call v4, -, v5 calleeName="id" @481
+    v7 = Call v0, -, v1, v2, v6 calleeName="takes" @467
+    v8 = Integer integer=1 @495
+    v9 = Add v7, v8 @495
+    Return v9 @495
+}
+function f5 name="leavesByIt" module=m0 position=500 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @531
+    v1 = Builtin builtin=GlobalThis @537
+    v2 = PropGet v1 key="id" [isFreeName] @537
+    v3 = String string="text" @540
+    v4 = Call v2, -, v3 calleeName="id" @537
+    v5 = Double number=1.5 @549
+    v6 = Boolean boolean=true @554
+    v7 = Call v0, -, v4, v5, v6 calleeName="takes" @531
+    ReturnCall v7 @531
+}

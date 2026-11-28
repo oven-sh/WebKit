@@ -1,0 +1,42 @@
+# If a row whose parameter converts what it is passed took only what needs no conversion, `String(object)` would fit no row, nothing would be asked of the object, and the `toString` of its class, which no call names, would be left out of the executable
+# class N { toString() { return "n"; } }  function text(n) { return String(n); }  text(new N());  text([new N()]);
+# Whatever is passed is converted, so the row takes it, and its conversion asks the operand. The engine's own conversion of a list asks what the list holds. Either way the method is reached.
+# RUN: link functions mechanisms=all
+# CHECK: function f2
+# CHECK-NOT: unreached
+# CHECK: function f3 callers-known one-callee {{*}}result=string
+
+layout L0 kind=Instance name="N" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="toString"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewArray v5 contents=anything
+    v7 = NewClosure function=f3
+    v8 = Call v7, -, v6 calleeName="text"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="N" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="toString" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="n"
+    Return v0
+}
+function f3 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=String [isNotReadFromHolder]
+    v2 = Call v1, -, v0 calleeName="String"
+    Return v2
+}

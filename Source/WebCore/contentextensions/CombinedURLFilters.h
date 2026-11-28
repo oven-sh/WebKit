@@ -33,9 +33,7 @@
 #include <wtf/Function.h>
 #include <wtf/Forward.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 struct PrefixTreeVertex;
 
@@ -46,7 +44,7 @@ public:
 
     void addPattern(uint64_t actionId, const Vector<Term>& pattern);
     bool processNFAs(size_t maxNFASize, NOESCAPE const Function<bool(NFA&&)>&);
-    bool LEGACY_NODELETE isEmpty() const;
+    NODELETE bool isEmpty() const;
 
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     size_t memoryUsed() const;
@@ -61,7 +59,6 @@ private:
     HashMap<const PrefixTreeVertex*, ActionList> m_actions;
 };
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

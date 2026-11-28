@@ -25,12 +25,13 @@
 #pragma once
 
 #include "CSSKeywordValue.h"
+#include "CSSValuePair.h"
+#include "RenderStyleConstants.h"
 #include "StyleBuilderChecking.h"
 #include "StyleKeyword+Mappings.h"
 #include "StyleValueTypes.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 template<typename T> requires std::is_enum_v<T> struct CSSValueConversion<T> {
     T operator()(BuilderState&, const CSSKeywordValue& value)
@@ -46,5 +47,30 @@ template<typename T> requires std::is_enum_v<T> struct CSSValueConversion<T> {
     }
 };
 
-} // namespace Style
-} // namespace WebCore
+template<> struct CSSValueConversion<FillBox> {
+    FillBox operator()(BuilderState&, const CSSKeywordValue& value)
+    {
+        return fromCSSValueID<FillBox>(value.valueID());
+    }
+    FillBox operator()(BuilderState& state, const CSSValue& value)
+    {
+        if (auto* pair = dynamicDowncast<CSSValuePair>(value))
+            return isCSSValuePairForBorderAreaText(*pair) ? FillBox::BorderAreaText : FillBox::BorderBox;
+        RefPtr keywordValue = requiredDowncast<CSSKeywordValue>(state, value);
+        if (!keywordValue)
+            return FillBox::BorderBox;
+        return fromCSSValueID<FillBox>(keywordValue->valueID());
+    }
+
+private:
+    static bool isCSSValuePairForBorderAreaText(const CSSValuePair& pair)
+    {
+        auto* first = dynamicDowncast<CSSKeywordValue>(pair.first());
+        auto* second = dynamicDowncast<CSSKeywordValue>(pair.second());
+        return first && second
+            && first->valueID() == CSSValueID::BorderArea
+            && second->valueID() == CSSValueID::Text;
+    }
+};
+
+} // namespace WebCore::Style

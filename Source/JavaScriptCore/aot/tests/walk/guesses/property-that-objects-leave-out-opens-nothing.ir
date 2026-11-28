@@ -1,0 +1,36 @@
+# unseen code has an Options, and the source says that its objects leave both properties out. A look at such a slot fails as often as not, and the looks at the cell behind which an empty slot
+# reads as undefined cost what the closed reads cost. Outside a loop, in a file that nobody has checked, where an Options is only seen to arrive and nobody has written what `o` is, the reads stay closed
+# function list(o) { return [o.x, o.y, o.x]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: Test
+# CHECK-COUNT-3: = PropGet
+# CHECK-NOT: = PropGet
+
+layout L0 name="Options" module=m0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    v6 = FinishObject v4
+    v7 = Call v1, -, v6
+    v8 = NewObject layout=L0
+    v9 = FinishObject v8
+    v10 = Call v1, -, v9
+    v11 = Call v2, -, v9
+    Return v7
+}
+function f1 name="list" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = PropGet v0 key="x"
+    v4 = NewArray v1, v2, v3 contents=anything
+    Return v4
+}

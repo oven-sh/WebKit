@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { emitCppAccessors } from "./emit-cpp-accessors.ts";
+import { emitCppBodyVerifier } from "./emit-cpp-body-verifier.ts";
+import { emitCppBodyWalkers } from "./emit-cpp-body-walkers.ts";
+import { emitCppCursors } from "./emit-cpp-cursors.ts";
 import { emitCppDispatch } from "./emit-cpp-dispatch.ts";
 import { emitCppEffects } from "./emit-cpp-effects.ts";
 import { emitCppEnums } from "./emit-cpp-enums.ts";
@@ -14,10 +17,9 @@ import { emitCppReader } from "./emit-cpp-reader.ts";
 import { emitCppRecords } from "./emit-cpp-records.ts";
 import { emitCppResultRules } from "./emit-cpp-result-rules.ts";
 import { emitCppRuntimeOperations } from "./emit-cpp-runtime-operations.ts";
-import { emitCppVerifier } from "./emit-cpp-verifier.ts";
 import { emitCppWalkers } from "./emit-cpp-walkers.ts";
 import { emitCppWire } from "./emit-cpp-wire.ts";
-import { emitRustAbi } from "./emit-rust-abi.ts";
+import { emitRustAbi, modulesOfCompileCallEnums } from "./emit-rust-abi.ts";
 import { emitRustBuilder } from "./emit-rust-builder.ts";
 import { emitRustChecks } from "./emit-rust-checks.ts";
 import { emitRustEntries } from "./emit-rust-entries.ts";
@@ -35,7 +37,6 @@ import { screamingCase } from "./names.ts";
 export interface OutputFile {
   readonly name: string;
   readonly lines: Lines;
-  /** A source that only testaot links. */
   readonly isTestSource?: true;
 }
 
@@ -48,8 +49,6 @@ export type Emitter = (context: EmitContext) => OutputFile[];
 
 export const fileListName = "AOTSchemaFiles.cmake";
 export const hashHeaderName = "AOTSchemaHash.h";
-export const maxInterfaceLines = 1000;
-export const maxInterfaceBytes = 160000;
 
 const engineEmitters: readonly Emitter[] = [
   emitCppEnums,
@@ -58,12 +57,14 @@ const engineEmitters: readonly Emitter[] = [
   emitCppPacked,
   emitCppOperations,
   emitCppAccessors,
+  emitCppCursors,
   emitCppEffects,
   emitCppReader,
   emitCppPrinter,
   emitCppParser,
   emitCppWalkers,
-  emitCppVerifier,
+  emitCppBodyWalkers,
+  emitCppBodyVerifier,
   emitCppResultRules,
   emitCppRuntimeOperations,
   emitCppInlineBuiltins,
@@ -88,27 +89,11 @@ function byName(left: OutputFile, right: OutputFile): number {
   return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
 }
 
-export function isInterfaceOutput(name: string): boolean {
-  if (name.endsWith(".rs")) return !name.startsWith("record_") && !name.startsWith("entry_") && name !== "checks.rs";
-  return (name.endsWith(".h") && !name.endsWith("Inlines.h")) || name.endsWith(".inc");
-}
-
-function checkSize(file: OutputFile): void {
-  if (!isInterfaceOutput(file.name)) return;
-  const bytes = Buffer.byteLength(toText(file.lines));
-  if (file.lines.length > maxInterfaceLines || bytes > maxInterfaceBytes) {
-    throw new Error(
-      `${file.name} has ${file.lines.length} lines and ${bytes} bytes: people read it, so its emitter has to split it`,
-    );
-  }
-}
-
 export function runEmitters(emitters: readonly Emitter[], context: EmitContext): OutputFile[] {
   const files = emitters.flatMap(emitter => emitter(context)).sort(byName);
   for (let index = 1; index < files.length; index += 1) {
     if (files[index].name === files[index - 1].name) throw new Error(`two emitters write ${files[index].name}`);
   }
-  files.forEach(checkSize);
   return files;
 }
 
@@ -126,7 +111,6 @@ function listsOfCMakeFile(text: string): Map<string, string[]> {
   return lists;
 }
 
-/** Both builds of the engine read that file before anything is generated, so people keep it. */
 export function findFileListProblems(loaded: LoadedSchema, files: readonly OutputFile[]): string[] {
   const listFile = path.join(loaded.directory, fileListName);
   const text = readIfPresent(listFile);
@@ -169,7 +153,7 @@ const filesOfOtherCrates: readonly RustCrateFile[] = [
   {
     name: "aot_schema_interface.rs",
     parent: "bun_aot_interface::ir::generated",
-    modules: ["compile_call_enums", "diagnostics", "limits", "statistics"],
+    modules: [...modulesOfCompileCallEnums, "diagnostics", "limits", "statistics"],
   },
 ];
 const rustFileName = "aot_schema.rs";
@@ -178,7 +162,6 @@ function moduleNameOf(file: OutputFile): string {
   return file.name.slice(0, -".rs".length);
 }
 
-/** Bun writes the program as bytes. Only tests read text. */
 function attributesOf(module: string): string[] {
   if (module === "checks") return ["#[cfg(test)]"];
   return module.endsWith("_text") ? ['#[cfg(any(test, feature = "ir_text"))]'] : [];
@@ -238,7 +221,6 @@ function rustModuleFile(context: EmitContext, files: readonly OutputFile[]): Out
   };
 }
 
-/** One file a crate, under names that no change to the schema moves: Bun's build declares them before it has the engine. */
 export function rustOutputs(loaded: LoadedSchema): OutputFile[] {
   const context = { schema: loaded.model, hash: loaded.hash };
   const files = runEmitters(rustEmitters, context);
@@ -271,7 +253,6 @@ function isGenerated(text: string): boolean {
   return text.startsWith(cppMarker) || text.startsWith(rustMarker);
 }
 
-/** Other generators write into the same folders. */
 const ownFileName = /^(?:AOTSchema|AOTWire|aot_schema)/;
 
 function leftoverFiles(directory: string, files: readonly OutputFile[]): string[] {

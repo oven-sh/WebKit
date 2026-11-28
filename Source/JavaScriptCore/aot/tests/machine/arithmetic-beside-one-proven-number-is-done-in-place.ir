@@ -1,0 +1,47 @@
+# function under(x) { return x - 1.5; }   function twice(x) { return 2 * x; }
+# Beside one proven number the other side is an int32 wherever such code runs, or else a double: it is asked for the one, then for the other, and the operator works on two doubles in place.
+# The stub that takes the number raw stands in a rare block, for what is no number. It was called at every turn: ten instructions within it, and the moves in front.
+# RUN: emit f1:Body f2:Body mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: unit f1:Body
+# CHECK: = AboveEqual(
+# CHECK-NEXT: = Branch({{*}}, unlikely #
+# CHECK: = IToD(
+# CHECK-NEXT: = Sub(
+# CHECK: = Branch({{*}}, rare #
+# CHECK: = BitwiseCast(
+# CHECK-NEXT: = Sub(
+# CHECK-LABEL: unit f2:Body
+# CHECK: = AboveEqual(
+# CHECK-NEXT: = Branch({{*}}, unlikely #
+# CHECK: = IToD(
+# CHECK-NEXT: = Mul(
+# RUN(BYTES): bytes f1:Body f2:Body mechanisms=none+TypedOperations+UnboxedNumbers
+# BYTES-LABEL: unit f1:Body
+# BYTES: BinaryWithDouble.SubWithNumberOnRight
+# BYTES-LABEL: unit f2:Body
+# BYTES: BinaryWithDouble.Mul
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v0 key="under"
+    PropSet v2, v1 key="twice"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="under" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = Sub v0, v1
+    Return v2
+}
+function f2 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v1, v0
+    Return v2
+}

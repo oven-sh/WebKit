@@ -55,12 +55,12 @@ static std::atomic<unsigned> gNumberOfWorkletGlobalScopes { 0 };
 WorkletGlobalScope::WorkletGlobalScope(WorkerOrWorkletThread& thread, Ref<JSC::VM>&& vm, const WorkletParameters& parameters)
     : WorkerOrWorkletGlobalScope(WorkerThreadType::Worklet, parameters.sessionID, WTF::move(vm), parameters.referrerPolicy, &thread, parameters.noiseInjectionHashSalt, parameters.advancedPrivacyProtections)
     , m_topOrigin(SecurityOrigin::createOpaque())
-    , m_url(parameters.windowURL)
+    , m_url(parameters.windowURL.isolatedCopy())
     , m_jsRuntimeFlags(parameters.jsRuntimeFlags)
-    , m_settingsValues(parameters.settingsValues)
-    , m_agentClusterID(parameters.agentClusterID)
+    , m_settingsValues(parameters.settingsValues.isolatedCopy())
+    , m_agentClusterID(parameters.agentClusterID.isolatedCopy())
     , m_canBeCrossOriginIsolated(parameters.canBeCrossOriginIsolated)
-    , m_networkLoadPolicy(parameters.networkLoadPolicy)
+    , m_networkLoadPolicy(parameters.networkLoadPolicy.isolatedCopy())
 {
     ++gNumberOfWorkletGlobalScopes;
 
@@ -177,7 +177,7 @@ void WorkletGlobalScope::addMessage(MessageSource source, MessageLevel level, co
 
 void WorkletGlobalScope::fetchAndInvokeScript(const URL& moduleURL, FetchRequestCredentials credentials, CompletionHandler<void(std::optional<Exception>&&)>&& completionHandler)
 {
-    ASSERT(!isMainThread());
+    ASSERT(isContextThread());
     protect(script())->loadAndEvaluateModule(moduleURL, credentials, WTF::move(completionHandler));
 }
 

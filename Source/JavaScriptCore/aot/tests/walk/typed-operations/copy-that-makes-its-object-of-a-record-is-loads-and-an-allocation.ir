@@ -1,0 +1,48 @@
+# no type says which names the copy will have, so the operation makes its object itself. The copy of a record is a record of the same layout: behind the tests of the source it is loads and an allocation of that layout
+# function copy(state: State) { return { ...(state as any) }; }   in `without` a key is left out, and an allocation that leaves fields out need not be one that the layout allows
+# both are handed to sink, so the type of `state` is what is written
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L1]
+# CHECK: = HasKeyOrder {{*}}layout=L1
+# CHECK: = GetSlot {{*}}key="a"
+# CHECK: = GetSlot {{*}}key="b"
+# CHECK: = NewObject {{*}}layout=L1
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = HasKeyOrder {{*}}layout=L1
+# ALL: = NewObject {{*}}layout=L1
+# RUN(WRITTEN): walk f1 mechanisms=all
+# WRITTEN: frequency=Unlikely
+# WRITTEN: = CopyObject
+# RUN(KEPT): walk f2 mechanisms=all
+# KEPT-LABEL: code f2:Body
+# KEPT-NOT: HasKeyOrder
+# KEPT: = CopyObject
+# KEPT-NOT: HasKeyOrder
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Data data=d0
+    v5 = Call v3, -, v0, v1, v4
+    Return v5
+}
+function f1 name="copy" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1):
+    v1 = CopyObject v0
+    Return v1
+}
+function f2 name="without" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1):
+    v1 = CopyObject v0 excludedKeys=["a"]
+    Return v1
+}

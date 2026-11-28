@@ -1,0 +1,49 @@
+# beside one proven number an arithmetic operator whose result is sure to be a number takes that number raw, asks the other side alone and gives a raw number. A sum may be a text, so it stays as it is
+# function twice(x) { return x * 2; }   function more(x) { return x + 2; }   function text(x) { return "" + x; }
+# all three are handed to sink, so nothing is known of x
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = Mul {{*}}form=NumberAndValue
+# RUN(ALL): walk f1 mechanisms=all-ParameterGuards
+# ALL-LABEL: code f1:Body
+# ALL: = Mul {{*}}form=NumberAndValue
+# RUN(SUM): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# SUM-LABEL: code f2:Body
+# SUM: = Add {{*}}form=Generic
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# NEVER-NOT: form=NumberAndValue
+# RUN(TEXT): walk f3 mechanisms=none+TypedOperations
+# TEXT-LABEL: code f3:Body
+# TEXT: = Add {{*}}form=MayBeString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f2 name="more" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Add v1, v0
+    Return v2
+}

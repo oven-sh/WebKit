@@ -1,0 +1,52 @@
+# an edge out of the loop of a text hands on a proof about the text, and the block that bears the edge is passed by: the walk leads the edge from the block in front, whose own terminator says nothing of that proof
+# the proof is the only reader behind the edge, so the text is finished for it, and what is returned is the string
+# function found(n) { let s = ""; for (let i = 0; i < n; i++) { s += "a"; const hit = s === "aaa"; if (hit) { if (hit) return s; } } return 0; }
+# the function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: [[text]]: {{*}}StringBuilderFinish
+# CHECK: [[boxed]]: {{*}}= Box [[text]]
+# CHECK: Return [[boxed]]
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderBegin
+# ALL: StringBuilderFinish
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="found" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = String string="a"
+    v8 = Add v3, v7
+    v9 = String string="aaa"
+    v10 = StrictEq v8, v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    Branch v10 -> taken b5(| 0), notTaken b4()
+  b4():
+    v11 = Increment v4
+    Jump -> next b1(v8, v11)
+  b5(v12):
+    Return v12
+  b6():
+    v13 = Integer
+    Return v13
+}

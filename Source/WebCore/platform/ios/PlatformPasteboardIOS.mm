@@ -740,8 +740,7 @@ int PlatformPasteboard::count() const
 Vector<String> PlatformPasteboard::allStringsForType(const String& type) const
 {
     auto numberOfItems = count();
-    Vector<String> strings;
-    strings.reserveInitialCapacity(numberOfItems);
+    Vector<String> strings(ReserveCapacityTag { }, numberOfItems);
     for (int index = 0; index < numberOfItems; ++index) {
         String value = readString(index, type);
         if (!value.isEmpty())
@@ -803,12 +802,12 @@ String PlatformPasteboard::readString(size_t index, const String& type) const
     
     if (type == String(UTTypePlainText.identifier) || type == String(UTTypeHTML.identifier)) {
         ASSERT([value isKindOfClass:[NSString class]]);
-        return [value isKindOfClass:[NSString class]] ? value.get() : nil;
+        return dynamic_objc_cast<NSString>(value.get());
     }
     if (type == String(UTTypeText.identifier)) {
         ASSERT([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSAttributedString class]]);
         if ([value isKindOfClass:[NSString class]])
-            return value.get();
+            return checked_objc_cast<NSString>(value);
         if ([value isKindOfClass:[NSAttributedString class]])
             return [(NSAttributedString *)value string];
     }

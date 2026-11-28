@@ -32,6 +32,7 @@
 #include "AirCode.h"
 #include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
+#include "B3BulkMemoryValue.h"
 #include "B3CountedLoops.h"
 #include "B3Dominators.h"
 #include "B3IntRange.h"
@@ -91,7 +92,7 @@ public:
         m_ownerOfValue.fill(nullptr, values.size());
         Vector<unsigned> indexInBlock;
         indexInBlock.fill(0, values.size());
-        UncheckedKeyHashMap<Value*, Vector<std::optional<Type>>> extractions;
+        HashMap<Value*, Vector<std::optional<Type>>> extractions;
         m_blocksWithPhis.ensureSize(m_procedure.size());
 
         for (unsigned tuple = 0; tuple < m_procedure.tuples().size(); ++tuple) {
@@ -477,13 +478,18 @@ public:
                 VALIDATE(value->child(2)->type() == pointerType(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
                 break;
-            case MemoryFill:
+            case MemoryFill8:
+            case MemoryFill16:
+            case MemoryFill32:
+            case MemoryFill64:
+            case MemoryFill128:
                 VALIDATE(!value->kind().isChill(), ("At ", *value));
                 VALIDATE(value->numChildren() == 3, ("At ", *value));
                 VALIDATE(value->child(0)->type() == pointerType(), ("At ", *value));
-                VALIDATE(value->child(1)->type() == Int32, ("At ", *value));
+                VALIDATE(value->child(1)->type() == memoryFillPatternType(value->opcode()), ("At ", *value));
                 VALIDATE(value->child(2)->type() == pointerType(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
+                VALIDATE(!value->as<BulkMemoryValue>()->isGCSafe() || value->opcode() == MemoryFill64, ("At ", *value));
                 break;
             case AtomicWeakCAS:
                 VALIDATE(!value->kind().isChill(), ("At ", *value));
@@ -1050,8 +1056,10 @@ public:
                 VALIDATE_RULE(ValidationRule::KnownRange, range->min() <= range->max() && range->isSubsetOf(IntRange::top(value->type())), ("At ", *value, ": ", *range));
                 VALIDATE_RULE(ValidationRule::KnownRange, isKnownRangePlausible(m_procedure, value), ("At ", *value, ": ", *range));
             }
-            if (m_procedure.knownDereferenceableBytes(value))
+            if (m_procedure.knownDereferenceableBytes(value)) {
+                VALIDATE_RULE(ValidationRule::KnownDereferenceableBytes, mayHaveKnownDereferenceableBytes(value), ("At ", *value));
                 VALIDATE_RULE(ValidationRule::KnownDereferenceableBytes, value->type() == pointerType(), ("At ", *value));
+            }
             // Conceptually, if you exit sideways, you will almost certainly read Top or (AbstractHeapRepository) root. 
             // Since we can't easily find out what root is here, we settle for checking that you at least read *something*.
             // This is technically overly strict, but in practice violating this is almost certainly a bug.
@@ -1238,7 +1246,7 @@ private:
     {
         bool changed = true;
         BitVector blocksToVisit;
-        IndexMap<BasicBlock*, UncheckedKeyHashSet<Value*>> undominatedPhisAtTail(m_procedure.size());
+        IndexMap<BasicBlock*, HashSet<Value*>> undominatedPhisAtTail(m_procedure.size());
         // A BitVector grows by no more than it is asked for.
         blocksToVisit.ensureSize(m_procedure.size());
         for (BasicBlock* block : m_procedure)
@@ -1252,7 +1260,7 @@ private:
                     continue;
                 if (undominatedPhisAtTail[block].isEmpty() && !m_blocksWithPhis.quickGet(block->index()))
                     continue;
-                UncheckedKeyHashSet<Value*> undominatedPhis = undominatedPhisAtTail[block];
+                HashSet<Value*> undominatedPhis = undominatedPhisAtTail[block];
                 for (unsigned index = block->size()-1; index--;) {
                     Value* value = block->at(index);
                     switch (value->opcode()) {

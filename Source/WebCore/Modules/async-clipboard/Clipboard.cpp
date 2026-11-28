@@ -51,6 +51,7 @@
 #include "SharedBuffer.h"
 #include "TaskSource.h"
 #include "WebContentReader.h"
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -391,7 +392,7 @@ void Clipboard::ItemWriter::setData(std::optional<PasteboardCustomData>&& data, 
         return;
     }
 
-    m_dataToWrite[index] = WTF::move(data);
+    borrow(m_dataToWrite)[index] = WTF::move(data);
 }
 
 void Clipboard::ItemWriter::didSetAllData()
@@ -421,9 +422,8 @@ void Clipboard::ItemWriter::didSetAllData()
         return;
     }
 
-    Vector<PasteboardCustomData> customData;
-    customData.reserveInitialCapacity(dataToWrite.size());
-    for (auto&& data : WTF::move(dataToWrite)) {
+    Vector<PasteboardCustomData> customData(ReserveCapacityTag { }, dataToWrite.size());
+    for (auto&& data : borrow(dataToWrite)) {
         if (!data) {
             reject();
             return;

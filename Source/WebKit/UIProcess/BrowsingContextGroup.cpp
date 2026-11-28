@@ -39,6 +39,7 @@
 #include "WebPreferences.h"
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
+#include "WebsiteDataStore.h"
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/SecurityOrigin.h>
 
@@ -48,8 +49,11 @@ namespace WebKit {
 
 using namespace WebCore;
 
-BrowsingContextGroup::BrowsingContextGroup(CrossOriginMode crossOriginMode)
+BrowsingContextGroup::BrowsingContextGroup(CrossOriginMode crossOriginMode, WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
     : m_crossOriginMode(crossOriginMode)
+    , m_websiteDataStore(websiteDataStore)
+    , m_lockdownMode(lockdownMode)
+    , m_enhancedSecurity(enhancedSecurity)
 {
 }
 
@@ -65,6 +69,9 @@ static bool isLoopbackOrLocalNetworkSite(const Site& site, bool localNetworkAcce
 void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataStore, API::WebsitePolicies* websitePolicies, const WebPreferences& preferences, const WebCore::Site& site, const WebCore::Site& mainFrameSite,
     WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, API::PageConfiguration& pageConfiguration, IsMainFrame isMainFrame, CompletionHandler<void(FrameProcess*)>&& completionHandler)
 {
+    ASSERT(&websiteDataStore == m_websiteDataStore.ptr());
+    ASSERT(lockdownMode == m_lockdownMode);
+
     if (!preferences.siteIsolationEnabled() || !preferences.siteIsolationSharedProcessEnabled())
         return completionHandler(nullptr);
 
@@ -113,18 +120,22 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
         ASSERT(existingSharedProcess->isSharedProcess());
         RELEASE_ASSERT(!existingSharedProcess->process().isInProcessCache());
         existingSharedProcess->process().addSharedProcessDomain(site.domain());
-        BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", site.loggingString().utf8(), existingSharedProcess->process().processID(), m_sharedProcessSites.size());
+        BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", makeUTF8CString(site.loggingString()), existingSharedProcess->process().processID(), m_sharedProcessSites.size());
         return completionHandler(existingSharedProcess.get());
     }
 
-    Ref process = protect(pageConfiguration.processPool())->processForSite(websiteDataStore, WebProcessProxy::IsolatedProcessType::Shared, site, mainFrameSite, lockdownMode, enhancedSecurity, pageConfiguration, ProcessSwapDisposition::Other, processCrossOriginIsolationForBrowsingContextGroup(m_crossOriginMode));
+    if (!isEnhancedSecurityEnabledForState(enhancedSecurity) && lockdownMode == WebProcessProxy::LockdownMode::Disabled
+        && preferences.siteIsolationSharedProcessEnhancedSecurityEnabled() && !preferences.enhancedSecurityForceDisabled())
+        enhancedSecurity = EnhancedSecurity::EnabledPolicy;
+
+    Ref process = protect(pageConfiguration.processPool())->processForSite(websiteDataStore, WebProcessProxy::IsolatedProcessType::Shared, site, mainFrameSite, lockdownMode, enhancedSecurity, pageConfiguration, processCrossOriginIsolationForBrowsingContextGroup(m_crossOriginMode));
     ASSERT(!process->isInProcessCache());
     Ref frameProcess = FrameProcess::create(process, *this, std::nullopt, mainFrameSite, preferences, LoadedWebArchive::No, BrowsingContextGroupUpdate::AddProcessAndInjectBrowsingContext);
     ASSERT(frameProcess->isSharedProcess());
     ASSERT(frameProcess->process().isSharedProcess());
     frameProcess->process().addSharedProcessDomain(site.domain());
     m_sharedProcess = frameProcess.ptr();
-    BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: created shared process %d for site %" SENSITIVE_LOG_STRING, process->processID(), site.loggingString().utf8());
+    BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: created shared process %d (enhancedSecurity=%d) for site %" SENSITIVE_LOG_STRING, process->processID(), isEnhancedSecurityEnabledForState(process->enhancedSecurity()), makeUTF8CString(site.loggingString()));
     completionHandler(frameProcess.ptr());
 }
 
@@ -135,9 +146,35 @@ bool BrowsingContextGroup::canUseProcessForCrossOriginIsolation(const WebProcess
     return process.crossOriginIsolation() != ProcessCrossOriginIsolation::BrowsingContextGroup;
 }
 
+bool BrowsingContextGroup::canUseProcessForEnhancedSecurity(const WebProcessProxy& process, const WebPreferences& preferences) const
+{
+    if (enhancedSecurityStatesAreConsistent(process.enhancedSecurity(), m_enhancedSecurity))
+        return true;
+
+    // A process created for subframes, such as the shared process, can have Enhanced Security when the group does not.
+    return preferences.siteIsolationSharedProcessEnhancedSecurityEnabled() && isEnhancedSecurityEnabledForState(process.enhancedSecurity())
+        && (process.isolatedProcessType() == WebProcessProxy::IsolatedProcessType::SubFrame || process.isolatedProcessType() == WebProcessProxy::IsolatedProcessType::Shared);
+}
+
+bool BrowsingContextGroup::canUseProcess(const WebProcessProxy& process, const WebPreferences& preferences) const
+{
+    return canUseProcessForCrossOriginIsolation(process) && process.websiteDataStore() == m_websiteDataStore.ptr() && process.lockdownMode() == m_lockdownMode && canUseProcessForEnhancedSecurity(process, preferences);
+}
+
+// Unlike canUseProcess(), this doesn't allow a subframe process with Enhanced Security the navigation doesn't have.
+bool BrowsingContextGroup::canUseProcessForNavigation(const WebProcessProxy& process, const WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity) const
+{
+    return canUseProcessForCrossOriginIsolation(process) && process.websiteDataStore() == &websiteDataStore && process.matchesLockdownModeAndEnhancedSecurity(lockdownMode, enhancedSecurity);
+}
+
+bool BrowsingContextGroup::hasSameModesAs(const BrowsingContextGroup& other) const
+{
+    return m_crossOriginMode == other.m_crossOriginMode && m_websiteDataStore.ptr() == other.m_websiteDataStore.ptr() && m_lockdownMode == other.m_lockdownMode && enhancedSecurityStatesAreConsistent(m_enhancedSecurity, other.m_enhancedSecurity);
+}
+
 Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, const Site& mainFrameSite, WebProcessProxy& process, const WebPreferences& preferences, LoadedWebArchive loadedWebArchive, BrowsingContextGroupUpdate browsingContextGroupUpdate)
 {
-    ASSERT(process.isDummyProcessProxy() || canUseProcessForCrossOriginIsolation(process));
+    ASSERT(process.isDummyProcessProxy() || canUseProcess(process, preferences));
 
     if (preferences.siteIsolationEnabled()) {
         RefPtr sharedProcess = liveSharedProcess();
@@ -145,7 +182,7 @@ Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, c
             ASSERT(&sharedProcess->process() == &process);
             if (m_sharedProcessSites.add(site).isNewEntry) {
                 process.addSharedProcessDomain(site.domain());
-                BROWSINGCONTEXTGROUP_RELEASE_LOG("ensureProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", site.loggingString().utf8(), process.processID(), m_sharedProcessSites.size());
+                BROWSINGCONTEXTGROUP_RELEASE_LOG("ensureProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", makeUTF8CString(site.loggingString()), process.processID(), m_sharedProcessSites.size());
             }
             return sharedProcess.releaseNonNull();
         }
@@ -163,7 +200,7 @@ RefPtr<FrameProcess> BrowsingContextGroup::liveSharedProcess()
     RefPtr sharedProcess = m_sharedProcess.get();
     if (!sharedProcess)
         return nullptr;
-    if (sharedProcess->process().state() != WebProcessProxy::State::Terminated)
+    if (!sharedProcess->process().wasTerminated())
         return sharedProcess;
     clearSharedProcess();
     return nullptr;
@@ -203,7 +240,18 @@ RefPtr<FrameProcess> BrowsingContextGroup::processForSite(const Site& site, Proc
         process = m_processMap.get({ site, isDocumentIsolationPolicyProcess });
     if (!process)
         return nullptr;
-    if (process->process().state() == WebProcessProxy::State::Terminated)
+    if (process->process().wasTerminated())
+        return nullptr;
+    return process;
+}
+
+RefPtr<WebProcessProxy> BrowsingContextGroup::processForNavigationToSite(const Site& site, ProcessCrossOriginIsolation crossOriginIsolation, const WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
+{
+    RefPtr frameProcess = processForSite(site, crossOriginIsolation);
+    if (!frameProcess)
+        return nullptr;
+    Ref process = frameProcess->process();
+    if (process->isInProcessCache() || !canUseProcessForNavigation(process, websiteDataStore, lockdownMode, enhancedSecurity))
         return nullptr;
     return process;
 }
@@ -226,12 +274,16 @@ void BrowsingContextGroup::addFrameProcess(FrameProcess& process)
 void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& process, Function<bool(WebPageProxy&)> functor)
 {
     Ref processProxy = process.process();
+    bool processWasTerminated = processProxy->wasTerminated();
     auto createRemotePageIfNeeded = [&](WebPageProxy& page, const Site& site) {
         if (!functor(page))
             return;
 
         // The process is hosting main frame so it does not need remote page.
         if (page.legacyMainFrameProcess().coreProcessIdentifier() == processProxy->coreProcessIdentifier())
+            return;
+
+        if (processWasTerminated)
             return;
 
         auto& set = m_remotePages.ensure(page, [] {
@@ -252,6 +304,8 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
     };
 
     if (process.isSharedProcess()) {
+        if (processWasTerminated)
+            return;
         // RemotePageProxy currently requires a site, but it has no meaning under shared process mode since
         // one process/RemotePageProxy can represent multiple sites, so we just pick the first site as a
         // placeholder value.
@@ -270,10 +324,11 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
         // Under site isolation, a same-site page should be hosted in the same process and
         // shouldn't need a remote page. Empty sites are the exception, as they can compare equal
         // for pages that are not actually co-located in the same process, and so are documents
-        // with a Document-Isolation-Policy, which have their own process.
-        bool sameSite = site == Site(URL(page->currentURL()));
+        // with a Document-Isolation-Policy, which have their own process. A pending main frame load
+        // doesn't count, as its document isn't in this process yet.
         RefPtr mainFrame = page->mainFrame();
-        if (sameSite && !site.isEmpty() && mainFrame && mainFrame->process().isDocumentIsolationPolicyProcess() == processProxy->isDocumentIsolationPolicyProcess())
+        bool sameSite = mainFrame && site == Site(mainFrame->url());
+        if (sameSite && !site.isEmpty() && mainFrame->process().isDocumentIsolationPolicyProcess() == processProxy->isDocumentIsolationPolicyProcess())
             continue;
         createRemotePageIfNeeded(page, site);
     }
@@ -287,11 +342,11 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
 // never represented a unique site-to-process binding; replacing them is benign.
 // Otherwise the previous FrameProcess must be used by at most the one frame the navigation causing
 // this replacement is replacing, so it is destroyed when that navigation commits. Navigations that
-// would move a site away from a FrameProcess other frames still need are declined before they get
-// this far (see canMoveSiteToEnhancedSecurityProcess in WebPageProxy.cpp).
+// would move a site away from a FrameProcess other frames still need get a new browsing context group
+// or are declined (see triggerProcessSwapForEnhancedSecurity in WebPageProxy.cpp).
 static bool canReplaceFrameProcessInProcessMap(const WebCore::Site& site, const FrameProcess& existing)
 {
-    if (existing.process().state() == WebProcessProxy::State::Terminated)
+    if (existing.process().wasTerminated())
         return true;
     if (site.isEmpty())
         return true;
@@ -351,6 +406,8 @@ void BrowsingContextGroup::addPage(WebPageProxy& page)
         // RemotePageProxy to reach itself.
         if (page->legacyMainFrameProcess().coreProcessIdentifier() == processProxy.coreProcessIdentifier())
             return;
+        if (processProxy.wasTerminated())
+            return;
         Ref newRemotePage = RemotePageProxy::create(page, processProxy, site);
 #if ASSERT_ENABLED
         for (auto& existingPage : set) {
@@ -393,6 +450,8 @@ void BrowsingContextGroup::removePage(WebPageProxy& page, ShouldSendCloseMessage
 
 void BrowsingContextGroup::closeRemotePagesForPage(WebPageProxy& page, ShouldSendCloseMessage shouldSendCloseMessage)
 {
+    // This closes the page's RemotePageProxy in the shared process too, so a later addPage() must make a new one.
+    m_pagesInSharedProcess.remove(page);
     for (auto& remotePage : m_remotePages.take(page))
         protect(remotePage)->disconnect(shouldSendCloseMessage);
 }
@@ -400,6 +459,15 @@ void BrowsingContextGroup::closeRemotePagesForPage(WebPageProxy& page, ShouldSen
 bool BrowsingContextGroup::hasMultiplePages() const
 {
     return m_pages.computeSize() > 1;
+}
+
+bool BrowsingContextGroup::hasPageOtherThan(const WebPageProxy& page) const
+{
+    for (Ref otherPage : m_pages) {
+        if (otherPage.ptr() != &page)
+            return true;
+    }
+    return false;
 }
 
 bool BrowsingContextGroup::hasVisiblePage() const

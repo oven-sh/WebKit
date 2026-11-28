@@ -79,7 +79,6 @@ static void emitClampToLength(StubAssembler& jit, GPRReg unclamped, GPRReg lengt
     isStart.link(&jit);
 }
 
-// Copies count elements, at least one, from source to the elements of storage. Only storage and shape survive.
 static void emitCopyElements(StubAssembler& jit, const ArrayCopyRegisters& registers)
 {
     const auto [result, shape, source, count, storage, scratch] = registers;
@@ -125,6 +124,50 @@ static void emitCopyElements(StubAssembler& jit, const ArrayCopyRegisters& regis
 #endif
 }
 
+static void emitReleasedCopyReuse(StubAssembler& jit, const ArrayCopyRegisters& registers, Jump hasReleasedCopy, Label isNotServed, Label hasCell)
+{
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        constexpr int32_t extraCapacity = 16;
+        constexpr ptrdiff_t offsetOfStructures = AOT_INSTANCE_OFFSET(arrays.structuresAroundFirstShift);
+        constexpr ptrdiff_t offsetOfStartOffset = -static_cast<ptrdiff_t>(sizeof(IndexingHeader) + sizeof(uint64_t));
+        constexpr int32_t offsetOfElements = sizeof(JSArray) + sizeof(IndexingHeader);
+        const auto [result, relativeShape, source, count, storage, scratch] = registers;
+        JumpList doesNotServe;
+
+        hasReleasedCopy.link(&jit);
+        doesNotServe.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+        jit.load64(BaseIndex(instanceGPR, relativeShape, CCallHelpers::TimesFour, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header)), result);
+        jit.load64(Address(storage), scratch);
+        Jump startsAtSamePlace = jit.branch64(CCallHelpers::Equal, scratch, result);
+        doesNotServe.append(jit.branch32(CCallHelpers::NotEqual, result, Address(instanceGPR, offsetOfStructures)));
+        doesNotServe.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, offsetOfStructures + sizeof(uint32_t))));
+        jit.xor64(scratch, result);
+        jit.urshift64(TrustedImm32(32), result);
+        doesNotServe.append(jit.branchTest64(CCallHelpers::NonZero, result));
+        jit.loadPtr(Address(storage, JSObject::butterflyOffset()), result);
+        jit.load64(Address(result, offsetOfStartOffset), scratch);
+        Jump hasStart = jit.jump();
+        startsAtSamePlace.link(&jit);
+        jit.loadPtr(Address(storage, JSObject::butterflyOffset()), result);
+        jit.move(TrustedImm32(0), scratch);
+        hasStart.link(&jit);
+
+        jit.getEffectiveAddress(BaseIndex(storage, scratch, CCallHelpers::TimesEight, offsetOfElements), storage);
+        doesNotServe.append(jit.branchPtr(CCallHelpers::NotEqual, storage, result));
+        jit.load32(Address(storage, Butterfly::offsetOfVectorLength()), result);
+        jit.add32(scratch, result);
+        jit.neg64(scratch);
+        jit.getEffectiveAddress(BaseIndex(storage, scratch, CCallHelpers::TimesEight, -offsetOfElements), storage);
+        jit.or32(TrustedImm32(1), count, scratch);
+        jit.sub32(scratch, result);
+        doesNotServe.append(jit.branch32(CCallHelpers::Above, result, TrustedImm32(extraCapacity)));
+        jit.store64(TrustedImm32(0), Address(instanceGPR, AOT_INSTANCE_OFFSET(arrays.releasedCopy)));
+        jit.jump().linkTo(hasCell, &jit);
+        doesNotServe.link(&jit);
+        jit.jump().linkTo(isNotServed, &jit);
+    });
+}
+
 StubSignature signatureOfArraySlice(StubKey key)
 {
     switch (static_cast<ArraySliceRange>(key.form())) {
@@ -146,7 +189,6 @@ void generateArraySlice(StubAssembler& jit)
     const bool isWhole = range == ArraySliceRange::Whole || range == ArraySliceRange::WholeWithPropertyRoom || range == ArraySliceRange::WholeAsDoubles;
     const bool makesDoubles = range == ArraySliceRange::BoundedAsDoubles || range == ArraySliceRange::WholeAsDoubles;
     const unsigned propertyRoom = range == ArraySliceRange::BoundedWithPropertyRoom || range == ArraySliceRange::WholeWithPropertyRoom ? propertyRoomOfArray : 0;
-    // Turns the cell into the address of the indexing header.
     auto skipCellAndPropertyRoom = [&](GPRReg cell) {
         for (unsigned offset = 0; offset < propertyRoom; offset += sizeof(EncodedJSValue))
             jit.store64(TrustedImm32(0), Address(cell, sizeof(JSArray) + offset));
@@ -184,6 +226,12 @@ void generateArraySlice(StubAssembler& jit)
     }
     slowPath.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxLengthForElementwiseCopy)));
     slowPath.append(branchIfHavingABadTime(jit));
+    Jump hasReleasedCopy;
+    if (!propertyRoom && !makesDoubles) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(arrays.releasedCopy)), storage);
+        hasReleasedCopy = jit.branchTestPtr(CCallHelpers::NonZero, storage);
+    }
+    Label isNotServed = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), storageAllocator);
     Jump isOne = jit.branch32(CCallHelpers::Equal, count, TrustedImm32(1));
 
@@ -191,6 +239,9 @@ void generateArraySlice(StubAssembler& jit)
     jit.loadPtr(BaseIndex(storageAllocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep() + (2 + propertyRoom / MarkedSpace::sizeStep) * sizeof(Allocator)), storageAllocator);
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, storageAllocator));
     allocateCell(jit, storage, storageAllocator, scratch, slowPath);
+    Label hasCell = jit.label();
+    if (!propertyRoom && !makesDoubles)
+        emitReleasedCopyReuse(jit, registers, hasReleasedCopy, isNotServed, hasCell);
     skipCellAndPropertyRoom(storage);
     jit.or32(TrustedImm32(1), count, vectorLength);
     jit.store32(count, Address(storage, 0));
@@ -216,7 +267,7 @@ void generateArraySlice(StubAssembler& jit)
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(sizeof(JSArray) + propertyRoom)), storage, result);
     jit.load64(BaseIndex(instanceGPR, relativeShape, CCallHelpers::TimesFour, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header)), scratch);
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
-    jit.storePair64(scratch, storage, result, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, storage, result);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -295,7 +346,7 @@ void generateArraySlice(StubAssembler& jit)
 
 StubSignature signatureOfCreateArguments(StubKey)
 {
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) });
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::A4) });
 }
 
 void generateCreateArguments(StubAssembler& jit)
@@ -308,7 +359,19 @@ void generateCreateArguments(StubAssembler& jit)
     const GPRReg count = jit.operand(0);
     const GPRReg rest = jit.operand(1);
     const GPRReg parameters = jit.operand(2);
-    const auto [result, position, source, restLength, storage, scratch] = allocateArrayCopyRegisters(jit);
+    const GPRReg wordsAtParameters = jit.clobberOperand(3);
+    const GPRReg source = wordsAtParameters;
+    const GPRReg result = jit.result();
+    const GPRReg position = jit.allocateScratch(StubRegister::T9);
+#if CPU(ARM64)
+    const GPRReg restLength = jit.allocateScratch(StubRegister::T12);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T13);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T14);
+#else
+    const GPRReg restLength = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
+#endif
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const GPRReg allocator = position;
     const GPRReg numberOfParameters = result;
@@ -316,11 +379,16 @@ void generateCreateArguments(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(count, rest, parameters, result, position, source, restLength, storage, scratch));
 
     JumpList slowPath;
+    JumpList wouldReadPastParameters;
+    jit.loadPtr(Address(rest, JSObject::butterflyOffset()), storage);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), restLength);
+    wouldReadPastParameters.append(jit.branch32(CCallHelpers::Above, restLength, count));
+    jit.move(count, scratch);
+    jit.sub32(restLength, scratch);
+    wouldReadPastParameters.append(jit.branch32(CCallHelpers::Above, scratch, wordsAtParameters));
+    jit.move(storage, source);
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator))));
     slowPath.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxCount)));
-    jit.loadPtr(Address(rest, JSObject::butterflyOffset()), source);
-    jit.load32(Address(source, Butterfly::offsetOfPublicLength()), restLength);
-    slowPath.append(jit.branch32(CCallHelpers::Above, restLength, count));
 
     jit.add32(TrustedImm32(wordsInFrontOfElements + 1), count, scratch);
     jit.urshift32(TrustedImm32(1), scratch);
@@ -384,6 +452,10 @@ void generateCreateArguments(StubAssembler& jit)
     jit.jump().linkTo(isFilled, &jit);
 
     slowPath.link(&jit);
+    Jump toOperation = jit.jump();
+    wouldReadPastParameters.link(&jit);
+    jit.breakpoint();
+    toOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTCreateUnmappedArguments, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedRegisters,
@@ -420,7 +492,12 @@ void generateCreateMappedArguments(StubAssembler& jit)
     RELEASE_ASSERT(DirectArguments::offsetOfSlot(0) == static_cast<size_t>(offsetOfSlots));
 
     JumpList slowPath;
+    jit.loadPtr(Address(rest, JSObject::butterflyOffset()), source);
+    jit.load32(Address(source, Butterfly::offsetOfPublicLength()), restLength);
     Jump holdsEveryArgument = jit.branch32(CCallHelpers::AboveOrEqual, capacity, count);
+    jit.move(count, scratch);
+    jit.sub32(capacity, scratch);
+    slowPath.append(jit.branch32(CCallHelpers::Below, restLength, scratch));
     jit.move(count, capacity);
     holdsEveryArgument.link(&jit);
     slowPath.append(jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(maxCapacity)));

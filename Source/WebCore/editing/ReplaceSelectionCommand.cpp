@@ -107,15 +107,15 @@ class ReplacementFragment {
 public:
     ReplacementFragment(RefPtr<DocumentFragment>&&, const VisibleSelection&);
 
-    DocumentFragment* LEGACY_NODELETE fragment() { return m_fragment.get(); }
+    NODELETE DocumentFragment* fragment() { return m_fragment.get(); }
 
     Node* firstChild() const;
     Node* lastChild() const;
 
-    bool LEGACY_NODELETE isEmpty() const;
+    NODELETE bool isEmpty() const;
     
-    bool LEGACY_NODELETE hasInterchangeNewlineAtStart() const { return m_hasInterchangeNewlineAtStart; }
-    bool LEGACY_NODELETE hasInterchangeNewlineAtEnd() const { return m_hasInterchangeNewlineAtEnd; }
+    NODELETE bool hasInterchangeNewlineAtStart() const { return m_hasInterchangeNewlineAtStart; }
+    NODELETE bool hasInterchangeNewlineAtEnd() const { return m_hasInterchangeNewlineAtEnd; }
     
     void removeNode(Node&);
     void removeNodePreservingChildren(Node&);
@@ -136,13 +136,13 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ReplacementFragment);
 
-static bool LEGACY_NODELETE isInterchangeNewlineNode(const Node& node)
+NODELETE static bool isInterchangeNewlineNode(const Node& node)
 {
     auto* br = dynamicDowncast<HTMLBRElement>(node);
     return br && br->attributeWithoutSynchronization(classAttr) == AppleInterchangeNewline;
 }
 
-static bool LEGACY_NODELETE isInterchangeConvertedSpaceSpan(const Node& node)
+NODELETE static bool isInterchangeConvertedSpaceSpan(const Node& node)
 {
     auto* element = dynamicDowncast<HTMLElement>(node);
     return element && element->attributeWithoutSynchronization(classAttr) == AppleConvertedSpace;
@@ -286,12 +286,12 @@ bool ReplacementFragment::isEmpty() const
     return (!m_fragment || !m_fragment->firstChild()) && !m_hasInterchangeNewlineAtStart && !m_hasInterchangeNewlineAtEnd;
 }
 
-Node *LEGACY_NODELETE ReplacementFragment::firstChild() const 
+NODELETE Node *ReplacementFragment::firstChild() const 
 { 
     return m_fragment ? m_fragment->firstChild() : 0; 
 }
 
-Node *LEGACY_NODELETE ReplacementFragment::lastChild() const 
+NODELETE Node *ReplacementFragment::lastChild() const 
 { 
     return m_fragment ? m_fragment->lastChild() : 0; 
 }
@@ -496,7 +496,7 @@ static bool hasMatchingQuoteLevel(VisiblePosition endOfExistingContent, VisibleP
 {
     Position existing = endOfExistingContent.deepEquivalent();
     Position inserted = endOfInsertedContent.deepEquivalent();
-    bool isInsideMailBlockquote = enclosingNodeOfType(inserted, isMailBlockquote, CanCrossEditingBoundary);
+    bool isInsideMailBlockquote = enclosingNodeOfType(inserted, isMailBlockquote, EditingBoundaryCrossingRule::CanCross);
     return isInsideMailBlockquote && (numEnclosingMailBlockquotes(existing) == numEnclosingMailBlockquotes(inserted));
 }
 
@@ -506,7 +506,7 @@ bool ReplaceSelectionCommand::shouldMergeStart(bool selectionStartWasStartOfPara
         return false;
     
     VisiblePosition startOfInsertedContent(positionAtStartOfInsertedContent());
-    VisiblePosition prev = startOfInsertedContent.previous(CannotCrossEditingBoundary);
+    VisiblePosition prev = startOfInsertedContent.previous(EditingBoundaryCrossingRule::CannotCross);
     if (prev.isNull())
         return false;
     
@@ -528,7 +528,7 @@ bool ReplaceSelectionCommand::shouldMergeStart(bool selectionStartWasStartOfPara
 bool ReplaceSelectionCommand::shouldMergeEnd(bool selectionEndWasEndOfParagraph)
 {
     VisiblePosition endOfInsertedContent(positionAtEndOfInsertedContent());
-    VisiblePosition next = endOfInsertedContent.next(CannotCrossEditingBoundary);
+    VisiblePosition next = endOfInsertedContent.next(EditingBoundaryCrossingRule::CannotCross);
     if (next.isNull())
         return false;
 
@@ -538,7 +538,7 @@ bool ReplaceSelectionCommand::shouldMergeEnd(bool selectionEndWasEndOfParagraph)
         && shouldMerge(endOfInsertedContent, next);
 }
 
-static bool LEGACY_NODELETE isMailPasteAsQuotationNode(const Node& node)
+NODELETE static bool isMailPasteAsQuotationNode(const Node& node)
 {
     return node.hasTagName(blockquoteTag) && downcast<Element>(node).attributeWithoutSynchronization(classAttr) == ApplePasteAsQuotation;
 }
@@ -572,7 +572,7 @@ bool ReplaceSelectionCommand::shouldMerge(const VisiblePosition& source, const V
         && !isBlock(*sourceNode) && !isBlock(*destinationNode);
 }
 
-static bool LEGACY_NODELETE isLightEnoughToTreatAsBackground(double lightness)
+NODELETE static bool isLightEnoughToTreatAsBackground(double lightness)
 {
     return lightness > 0.6;
 }
@@ -726,7 +726,7 @@ void ReplaceSelectionCommand::removeRedundantStylesAndKeepStyleSpanInline(Insert
                     return false;
                 if (isMailPasteAsQuotationNode(*context))
                     return true;
-                return enclosingNodeOfType(firstPositionInNode(*context), isMailBlockquote, CanCrossEditingBoundary);
+                return enclosingNodeOfType(firstPositionInNode(*context), isMailBlockquote, EditingBoundaryCrossingRule::CanCross);
             };
             if (hasBlockquoteNode())
                 newInlineStyle->removeStyleFromRulesAndContext(*element, protect(document().documentElement()).get());
@@ -780,7 +780,7 @@ void ReplaceSelectionCommand::removeRedundantStylesAndKeepStyleSpanInline(Insert
     }
 }
 
-static bool LEGACY_NODELETE isProhibitedParagraphChild(const QualifiedName& name)
+NODELETE static bool isProhibitedParagraphChild(const QualifiedName& name)
 {
     using namespace ElementNames;
 
@@ -976,7 +976,7 @@ static bool handleStyleSpansBeforeInsertion(ReplacementFragment& fragment, const
 
     // Handling the case where we are doing Paste as Quotation or pasting into quoted content is more complicated (see handleStyleSpans)
     // and doesn't receive the optimization.
-    if (isMailPasteAsQuotationNode(*topNode) || enclosingNodeOfType(firstPositionInOrBeforeNode(topNode.get()), isMailBlockquote, CanCrossEditingBoundary))
+    if (isMailPasteAsQuotationNode(*topNode) || enclosingNodeOfType(firstPositionInOrBeforeNode(topNode.get()), isMailBlockquote, EditingBoundaryCrossingRule::CanCross))
         return false;
 
     // Either there are no style spans in the fragment or a WebKit client has added content to the fragment
@@ -1032,7 +1032,7 @@ void ReplaceSelectionCommand::handleStyleSpans(InsertedNodes& insertedNodes)
     if (context && isMailPasteAsQuotationNode(*context))
         blockquoteNode = context;
     else
-        blockquoteNode = enclosingNodeOfType(firstPositionInNode(*context), isMailBlockquote, CanCrossEditingBoundary);
+        blockquoteNode = enclosingNodeOfType(firstPositionInNode(*context), isMailBlockquote, EditingBoundaryCrossingRule::CanCross);
 
     if (blockquoteNode)
         context = document().documentElement();
@@ -1142,7 +1142,7 @@ static bool isInlineNodeWithStyle(const Node& node)
 inline RefPtr<Node> nodeToSplitToAvoidPastingIntoInlineNodesWithStyle(const Position& insertionPos)
 {
     auto containingBlock = enclosingBlock(protect(insertionPos.containerNode()));
-    return highestEnclosingNodeOfType(insertionPos, isInlineNodeWithStyle, CannotCrossEditingBoundary, containingBlock.get());
+    return highestEnclosingNodeOfType(insertionPos, isInlineNodeWithStyle, EditingBoundaryCrossingRule::CannotCross, containingBlock.get());
 }
 
 bool ReplaceSelectionCommand::willApplyCommand()
@@ -1159,8 +1159,8 @@ static bool hasBlankLineBetweenParagraphs(Position& position)
     bool reachedBoundaryStart = false;
     bool reachedBoundaryEnd = false;
     VisiblePosition visiblePosition(position);
-    VisiblePosition previousPosition = visiblePosition.previous(CannotCrossEditingBoundary, &reachedBoundaryStart);
-    VisiblePosition nextPosition = visiblePosition.next(CannotCrossEditingBoundary, &reachedBoundaryStart);
+    VisiblePosition previousPosition = visiblePosition.previous(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryStart);
+    VisiblePosition nextPosition = visiblePosition.next(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryStart);
     bool hasLineBeforePosition = isEndOfLine(previousPosition);
     
     return !reachedBoundaryStart && !reachedBoundaryEnd && isBlankParagraph(visiblePosition) && hasLineBeforePosition && isStartOfLine(nextPosition);
@@ -1202,7 +1202,7 @@ void ReplaceSelectionCommand::doApply()
     RefPtr startBlock { enclosingBlock(protect(visibleStart.deepEquivalent().deprecatedNode())) };
 
     Position insertionPos = selection.start();
-    bool shouldHandleMailBlockquote = enclosingNodeOfType(insertionPos, isMailBlockquote, CanCrossEditingBoundary) && !m_ignoreMailBlockquote;
+    bool shouldHandleMailBlockquote = enclosingNodeOfType(insertionPos, isMailBlockquote, EditingBoundaryCrossingRule::CanCross) && !m_ignoreMailBlockquote;
     bool selectionIsPlainText = !selection.isContentRichlyEditable();
     RefPtr currentRoot { selection.rootEditableElement() };
 
@@ -1234,7 +1234,7 @@ void ReplaceSelectionCommand::doApply()
     } else {
         ASSERT(selection.isCaret());
         if (fragment.hasInterchangeNewlineAtStart()) {
-            VisiblePosition next = visibleStart.next(CannotCrossEditingBoundary);
+            VisiblePosition next = visibleStart.next(EditingBoundaryCrossingRule::CannotCross);
             if (isEndOfParagraph(visibleStart) && !isStartOfParagraph(visibleStart) && next.isNotNull())
                 setEndingSelection(next);
             else  {
@@ -1525,7 +1525,7 @@ void ReplaceSelectionCommand::doApply()
     Position lastPositionToSelect;
     if (fragment.hasInterchangeNewlineAtEnd()) {
         VisiblePosition endOfInsertedContent = positionAtEndOfInsertedContent();
-        VisiblePosition next = endOfInsertedContent.next(CannotCrossEditingBoundary);
+        VisiblePosition next = endOfInsertedContent.next(EditingBoundaryCrossingRule::CannotCross);
 
         if (selectionEndWasEndOfParagraph || !isEndOfParagraph(endOfInsertedContent) || next.isNull()) {
             if (!isStartOfParagraph(endOfInsertedContent)) {
@@ -1539,7 +1539,7 @@ void ReplaceSelectionCommand::doApply()
                     // Use a default paragraph element (a plain div) for the empty paragraph, using the last paragraph
                     // block's style seems to annoy users.
                     insertParagraphSeparator(true, !shouldHandleMailBlockquote && highestEnclosingNodeOfType(endOfInsertedContent.deepEquivalent(),
-                        isMailBlockquote, CannotCrossEditingBoundary, protect(insertedNodes.firstNodeInserted()->parentNode()).get()));
+                        isMailBlockquote, EditingBoundaryCrossingRule::CannotCross, protect(insertedNodes.firstNodeInserted()->parentNode()).get()));
                 }
 
                 // Select up to the paragraph separator that was added.
@@ -1651,14 +1651,14 @@ void ReplaceSelectionCommand::addNewLinesForSmartReplace()
 
     bool reachedBoundaryStart = false;
     bool reachedBoundaryEnd = false;
-    VisiblePosition positionBeforeStart = startOfInsertedContent.previous(CannotCrossEditingBoundary, &reachedBoundaryStart);
-    VisiblePosition positionAfterEnd = endOfInsertedContent.next(CannotCrossEditingBoundary, &reachedBoundaryEnd);
+    VisiblePosition positionBeforeStart = startOfInsertedContent.previous(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryStart);
+    VisiblePosition positionAfterEnd = endOfInsertedContent.next(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryEnd);
 
     if (!reachedBoundaryStart && !reachedBoundaryEnd) {
         if (!isBlankParagraph(positionBeforeStart) && !isBlankParagraph(startOfInsertedContent) && isEndOfLine(positionBeforeStart) && !isEndOfEditableOrNonEditableContent(positionAfterEnd) && !isEndOfEditableOrNonEditableContent(endOfInsertedContent)) {
             setEndingSelection(startOfInsertedContent);
             insertParagraphSeparator();
-            auto newStart = endingSelection().visibleStart().previous(CannotCrossEditingBoundary, &reachedBoundaryStart);
+            auto newStart = endingSelection().visibleStart().previous(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryStart);
             if (!reachedBoundaryStart)
                 m_startOfInsertedContent = newStart.deepEquivalent();
         }
@@ -1666,8 +1666,8 @@ void ReplaceSelectionCommand::addNewLinesForSmartReplace()
 
     reachedBoundaryStart = false;
     reachedBoundaryEnd = false;
-    positionAfterEnd = endOfInsertedContent.next(CannotCrossEditingBoundary, &reachedBoundaryEnd);
-    positionBeforeStart = startOfInsertedContent.previous(CannotCrossEditingBoundary, &reachedBoundaryStart);
+    positionAfterEnd = endOfInsertedContent.next(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryEnd);
+    positionBeforeStart = startOfInsertedContent.previous(EditingBoundaryCrossingRule::CannotCross, &reachedBoundaryStart);
 
     if (!reachedBoundaryEnd && !reachedBoundaryStart) {
         if (!isBlankParagraph(positionAfterEnd) && !isBlankParagraph(endOfInsertedContent) && isStartOfLine(positionAfterEnd) && !isEndOfLine(positionAfterEnd) && !isEndOfEditableOrNonEditableContent(positionAfterEnd)) {

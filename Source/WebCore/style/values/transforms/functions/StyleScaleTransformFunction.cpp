@@ -29,8 +29,7 @@
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 ScaleTransformFunction::ScaleTransformFunction(NumberOrPercentageResolvedToNumber<> x, NumberOrPercentageResolvedToNumber<> y, NumberOrPercentageResolvedToNumber<> z, TransformFunctionBase::Type type)
     : TransformFunctionBase(type)
@@ -75,7 +74,7 @@ void ScaleTransformFunction::apply(TransformationMatrix& transform, const FloatS
     transform.scale3d(m_x.value.value, m_y.value.value, m_z.value.value);
 }
 
-static NumberOrPercentageResolvedToNumber<> LEGACY_NODELETE blendScaleComponent(NumberOrPercentageResolvedToNumber<> from, NumberOrPercentageResolvedToNumber<> to, const BlendingContext& context)
+NODELETE static NumberOrPercentageResolvedToNumber<> blendScaleComponent(NumberOrPercentageResolvedToNumber<> from, NumberOrPercentageResolvedToNumber<> to, const BlendingContext& context)
 {
     switch (context.compositeOperation) {
     case CompositeOperation::Replace:
@@ -111,5 +110,4 @@ void ScaleTransformFunction::dump(TextStream& ts) const
     ts << type() << '(' << m_x << ", "_s << m_y << ", "_s << m_z << ')';
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

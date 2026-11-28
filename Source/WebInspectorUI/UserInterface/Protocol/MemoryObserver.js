@@ -34,16 +34,16 @@ WI.MemoryObserver = class MemoryObserver extends InspectorBackend.Dispatcher
 
     trackingStart(timestamp)
     {
-        WI.timelineManager.memoryTrackingStarted(timestamp);
+        WI.timelineManager.memoryTrackingStarted(this._target, timestamp);
     }
 
     trackingUpdate(event)
     {
-        WI.timelineManager.memoryTrackingUpdated(event);
+        WI.timelineManager.memoryTrackingUpdated(this._target, event);
     }
 
     trackingComplete(timestamp)
     {
-        WI.timelineManager.memoryTrackingCompleted(timestamp);
+        WI.timelineManager.memoryTrackingCompleted(this._target, timestamp);
     }
 };

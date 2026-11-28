@@ -1,0 +1,10 @@
+# the same functions with calls of built-ins withheld: each method is called by value, and nothing reads a code unit
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: GetStringCodeUnit
+# CHECK: = Call v
+# RUN(LETTER): walk f3 mechanisms=none+TypedOperations+DirectCalls
+# LETTER-NOT: = Substring
+# RUN(PIECE): walk f7 mechanisms=none+TypedOperations+DirectCalls
+# PIECE-NOT: = StringRange
+# PROGRAM-OF: character-reads-of-a-text-are-written-out.ir

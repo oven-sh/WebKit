@@ -1,0 +1,29 @@
+# Object.getPrototypeOf([Uint8Array.prototype, Map.prototype][1])
+# Two built-ins lie in one list, so the flow no longer knows which of them a read gives: both are let go. The program climbs from what it read: it gets %TypedArray%.prototype or Object.prototype, and the flow follows neither.
+# So what is let go takes along what it inherits from, with all below it, and `at`, which is written in JavaScript, is in the program. If the climb led nowhere, a program that walks up the chain to a descriptor
+# and calls what that holds would find that the function was never compiled.
+# The control: built-in-that-is-let-go-takes-nothing-above-it-along-where-nobody-climbs.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/TypedArrayPrototype.ts" displayPath="/$bun/js/engine/TypedArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=TypedArrayPrototypeAt function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Uint8ArrayPrototype
+    v1 = Builtin builtin=MapPrototype
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Double number=0.5
+    v4 = ElemGet v2, v3
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectGetPrototypeOf
+    v7 = Call v6, v5, v4 calleeName="Object.getPrototypeOf"
+    Return v7
+}
+function f1 name="at" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayPrototypeAt thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

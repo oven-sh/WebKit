@@ -1,0 +1,95 @@
+# function count(text: string) { let found = 0; for (let at = 0; at < text.length; at++) if (text.charCodeAt(at) === 10) found++; return found; }
+# print(count(text)); replace(); print(count(text)); restore(); print(count(text))   in a run one of whose tests is seen to replace String.prototype.charCodeAt: the wire lists the member
+# One test among thousands that replaces a member must not cost the others their code in line: the member stays open, and it lies behind the watch like one that a store nobody followed has opened.
+# The byte of the member is asked once, in front of the loop; where it is set the loop is taken as it is written, and finds what the test has laid.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell const above = String.prototype, original = above.charCodeAt; globalThis.hidden = () => [1]; globalThis.replace = () => { above.charCodeAt = () => 10; }; globalThis.restore = () => { above.charCodeAt = original; };
+# CHECK: 2
+# CHECK-NEXT: 4
+# CHECK-NEXT: 2
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open StringPrototypeCharCodeAt left-open-for-tests
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: frequency=Rare isLoopHead=true
+# WALK: = PropGet {{*}}key="charCodeAt"
+# WALK: = IsMemberAsBuilt builtin=StringPrototypeCharCodeAt
+# WALK: isInLoop=true isLoopHead=true
+# WALK-NOT: = IsMemberAsBuilt
+# WALK-NOT: = PropGet
+# WALK: = GetStringCodeUnit
+# WALK-NOT: = IsMemberAsBuilt
+
+replaceablebuiltin member=StringPrototypeCharCodeAt
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @290
+    v3 = PropGet v2 key="hidden" [isFreeName] @290
+    v4 = Call v3 calleeName="hidden" @290
+    v5 = Integer @312
+    PropSet v4, v5 key="charCodeAt" @297
+    v7 = PropGet v2 key="Object" [isFreeName] @315
+    v8 = PropGet v7 key="getPrototypeOf" @315
+    v9 = Builtin builtin=GlobalThis @337
+    v10 = PropGet v9 key="hidden" [isFreeName] @337
+    v11 = Call v10 calleeName="hidden" @337
+    v12 = Call v8, v7, v11 calleeKey="getPrototypeOf" @322
+    v13 = Builtin builtin=GlobalThis @348
+    v14 = PropGet v13 key="print" [isFreeName] @348
+    v15 = String string="a\nb\n" @360
+    v16 = Call v1, -, v15 calleeName="count" @354
+    v17 = Call v14, -, v16 calleeName="print" @348
+    v18 = Builtin builtin=GlobalThis @372
+    v19 = PropGet v18 key="replace" [isFreeName] @372
+    v20 = Call v19 calleeName="replace" @372
+    v21 = Builtin builtin=GlobalThis @383
+    v22 = PropGet v21 key="print" [isFreeName] @383
+    v23 = String string="a\nb\n" @395
+    v24 = Call v1, -, v23 calleeName="count" @389
+    v25 = Call v22, -, v24 calleeName="print" @383
+    v26 = Builtin builtin=GlobalThis @407
+    v27 = PropGet v26 key="restore" [isFreeName] @407
+    v28 = Call v27 calleeName="restore" @407
+    v29 = Builtin builtin=GlobalThis @418
+    v30 = PropGet v29 key="print" [isFreeName] @418
+    v31 = String string="a\nb\n" @430
+    v32 = Call v1, -, v31 calleeName="count" @424
+    v33 = Call v30, -, v32 calleeName="print" @418
+    v34 = Undefined @418
+    Return v34 @418
+}
+function f1 name="count" module=m0 position=146 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @189
+    v2 = Convert v1 declared={type=number} @189
+    v3 = Integer @206
+    v4 = Convert v3 declared={type=number} @206
+    Jump -> next b1(v2, v4) @201
+  b1(v5: number, v6: number):
+    LoopHint @201
+    v8 = PropGet v0 key="length" @214
+    v9 = Less v6, v8 @214
+    Branch v9 -> taken b2(), notTaken b5() @214
+  b2():
+    v10 = PropGet v0 key="charCodeAt" @237
+    v11 = Call v10, v0, v6 calleeKey="charCodeAt" calleeName="text.charCodeAt" @242
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody @237
+    v13 = Integer integer=10 @261
+    v14 = StrictEq v12, v13 @261
+    Branch v14 -> taken b3(), notTaken b4(v5) @261
+  b3():
+    v15 = Increment v5 @265
+    v16 = Convert v15 declared={type=number} @265
+    Jump -> next b4(v16) @265
+  b4(v17: number):
+    v18 = Increment v6 @227
+    v19 = Convert v18 declared={type=number} @227
+    Jump -> next b1(v17, v19) @227
+  b5():
+    Return v5 @281
+}

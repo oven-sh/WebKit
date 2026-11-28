@@ -1,0 +1,73 @@
+# function count(m, keys) { let n = 0; for (let i = 0; i < keys.length; i++) n += m.get(keys[i]) ?? 0; return n; }
+# A key out of a list of numbers is an int32 nearly always: the side that normalizes a double lies out of the line.
+# RUN(EMITTED): emit f1 mechanisms=all
+# EMITTED: Branch({{*}}) -> unlikely #
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 136
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Builtin builtin=Map
+    v4 = Construct v3 calleeName="Map"
+    v5 = PropGet v4 key="set"
+    v6 = Integer
+    v7 = Double number=2.5
+    v8 = Integer integer=7
+    v9 = Integer integer=2147483648
+    v10 = Double number=NaN
+    v11 = Double number=-0
+    v12 = Call v5, v4, v6, v8 calleeKey="set" calleeName="m.set"
+    v13 = Integer integer=20
+    v14 = Call v5, v4, v7, v13 calleeKey="set" calleeName="m.set"
+    v15 = Integer integer=30
+    v16 = Call v5, v4, v9, v15 calleeKey="set" calleeName="m.set"
+    v17 = Integer integer=72
+    v18 = Call v5, v4, v10, v17 calleeKey="set" calleeName="m.set"
+    v19 = Integer integer=3
+    v20 = NewArray v19, v7, v9, v10, v11, v8
+    v21 = Call v0, -, v4, v20 calleeName="count"
+    v22 = NewArray v6, v19
+    v23 = Call v0, -, v4, v22 calleeName="count"
+    v24 = Add v21, v23
+    v25 = Call v2, -, v24 calleeName="sink"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="count" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Map flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map, v1: undefined|null|Array<number>):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = PropGet v1 key="length"
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(), notTaken b6()
+  b2():
+    v11 = ElemGet v1, v7
+    v12 = PropGet v0 key="get"
+    v13 = Call v12, v0, v11 calleeKey="get" calleeName="m.get"
+    v14 = TypeTest v13 testedType=undefined|null
+    Branch v14 -> taken b3(), notTaken b4()
+  b3():
+    v15 = Integer
+    Jump -> next b5(v15)
+  b4():
+    Jump -> next b5(v13)
+  b5(v16):
+    v17 = Add v6, v16
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Increment v7
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v18, v20)
+  b6():
+    Return v6
+}

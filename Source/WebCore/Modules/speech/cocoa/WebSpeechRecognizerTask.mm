@@ -111,14 +111,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)callbackWithTranscriptions:(NSArray<SFTranscription *> *)transcriptions isFinal:(BOOL)isFinal
 {
-    Vector<WebCore::SpeechRecognitionAlternativeData> alternatives;
-    alternatives.reserveInitialCapacity(_maxAlternatives);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL SFTranscription* transcription in transcriptions) {
+    Vector<WebCore::SpeechRecognitionAlternativeData> alternatives(ReserveCapacityTag { }, _maxAlternatives);
+    for (SFTranscription* transcription in transcriptions) {
         // FIXME: <rdar://73629573> get confidence of SFTranscription when possible.
         double maxConfidence = 0.0;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL SFTranscriptionSegment* segment in [transcription segments]) {
+        for (SFTranscriptionSegment* segment in [transcription segments]) {
             double confidence = [segment confidence];
             maxConfidence = maxConfidence < confidence ? confidence : maxConfidence;
         }

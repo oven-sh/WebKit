@@ -1,0 +1,51 @@
+# `some` is what the function object of the built-in runs: it is in the queue from the start, and so is `someFrom`, in which it goes on: a copy of `some` in whatever unit mentions it.
+# `someOfList` is the second text of the method. No summary names it: it is compiled where the walk first mentions it, and in a program that never does, it is not compiled at all.
+# `everyFrom`, which `someOfList` alone names here, is not in the queue either: or every program held the helpers of texts that it never brings. Whoever copies `someOfList` leads to it by way of the group `anybody`, and on to the helper.
+# Neither helper takes what callers leave: the calls that Link lists are not all their calls.
+# export const some = Array.prototype.some;  in the library: function some(f) { return $someFrom(this, f); }  function someOfList(f) { return $everyFrom(this, f); }
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}} in-queue-from-start
+# CHECK: function f2 callers-known cycle={{*}} in-queue-from-start
+# CHECK: function f3 cycle=
+# CHECK: referrers anybody
+# CHECK: function f4 callers-known cycle=
+# CHECK: referrers f3
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f3 {{*}}in-queue-from-start
+# NEVER-NOT: function f4 {{*}}in-queue-from-start
+# NEVER-NOT: takes-arrivals
+
+variable g0 name="some" module=m0 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="some" variable=g0}]
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeSome function=f1
+runtimefunction id=ArrayPrototypeEveryFrom function=f4 visibility=Private
+runtimefunction id=ArrayPrototypeSomeFrom function=f2 visibility=Private
+runtimefunction id=ArrayPrototypeSomeOfList function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeSome
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="some" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallDirect v0, v1 function=f2
+    Return v2
+}
+function f2 name="someFrom" module=m1 kind=Method role=Library length=2 enclosingRuntimeFunction=ArrayPrototypeSomeFrom thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="someOfList" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSomeOfList thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallDirect v0, v1 function=f4
+    Return v2
+}
+function f4 name="everyFrom" module=m1 kind=Method role=Library length=2 enclosingRuntimeFunction=ArrayPrototypeEveryFrom thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

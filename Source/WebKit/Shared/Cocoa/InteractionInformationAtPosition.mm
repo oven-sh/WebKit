@@ -49,6 +49,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
     bool isCustomSlider,
     bool hasDirectionalResizeCursor,
     bool isInResizeControl,
+    bool isHoverActivatedByClick,
     bool isOverVideo,
     bool isNearMarkedText,
 #if PLATFORM(IOS_FAMILY)
@@ -85,7 +86,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
 #endif
     bool shouldTreatLongClickAsSecondaryClickQuirk,
     WebCore::FloatPoint&& adjustedPointForNodeRespondingToClickEvents,
-    std::optional<WebCore::IntPoint>&& automationAdjustedInteractionLocation,
+    std::optional<WebCore::IntPoint>&& nearbySliderInteractionLocation,
     URL&& url,
     URL&& imageURL,
     URL&& modelURL,
@@ -126,6 +127,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
     , isCustomSlider(isCustomSlider)
     , hasDirectionalResizeCursor(hasDirectionalResizeCursor)
     , isInResizeControl(isInResizeControl)
+    , isHoverActivatedByClick(isHoverActivatedByClick)
     , isOverVideo(isOverVideo)
     , isNearMarkedText(isNearMarkedText)
 #if PLATFORM(IOS_FAMILY)
@@ -162,7 +164,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
 #endif
     , shouldTreatLongClickAsSecondaryClickQuirk(shouldTreatLongClickAsSecondaryClickQuirk)
     , adjustedPointForNodeRespondingToClickEvents(WTF::move(adjustedPointForNodeRespondingToClickEvents))
-    , automationAdjustedInteractionLocation(WTF::move(automationAdjustedInteractionLocation))
+    , nearbySliderInteractionLocation(WTF::move(nearbySliderInteractionLocation))
     , url(WTF::move(url))
     , imageURL(WTF::move(imageURL))
     , modelURL(WTF::move(modelURL))

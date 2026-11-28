@@ -1,5 +1,4 @@
 # A program with a module and no entry point
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: NoEntryPoint 1
 

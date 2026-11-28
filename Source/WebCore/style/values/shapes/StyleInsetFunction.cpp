@@ -32,14 +32,13 @@
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TinyLRUCache.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Path Caching
 
 struct RoundedInsetPathPolicy : public TinyLRUCachePolicy<FloatRoundedRect, WebCore::Path> {
 public:
-    static bool LEGACY_NODELETE isKeyNull(const FloatRoundedRect& rect)
+    NODELETE static bool isKeyNull(const FloatRoundedRect& rect)
     {
         return rect.isEmpty();
     }
@@ -93,5 +92,4 @@ AcceleratedEffectInsetFunction Evaluation<InsetFunction, AcceleratedEffectInsetF
 
 #endif
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -26,7 +26,6 @@ PACKAGES=(
     lcms2-devel
     libepoxy-devel
     libevent-devel
-    libgcrypt-devel
     libinput-devel
     libjpeg-turbo-devel
     libjxl-devel
@@ -38,7 +37,6 @@ PACKAGES=(
     libsoup3-devel
     libsqlite3x-devel
     libsrtp-devel
-    libtasn1-devel
     libvorbis-devel
     libv4l-devel
     libva-devel
@@ -90,13 +88,16 @@ PACKAGES=(
     time
 
     # These are dependencies necessary for building the jhbuild.
+    bison
     expat-devel
     fdk-aac-free-devel
+    flex
     git
     gnutls-devel
     gsettings-desktop-schemas-devel
     gyp
     itstool
+    json-glib-devel
     libproxy-devel
     libpsl-devel
     libtheora-devel
@@ -104,9 +105,12 @@ PACKAGES=(
     libp11-devel
     libxcb-devel
     mesa-libEGL-devel
+    meson
+    nasm
     orc-devel
     perl-XML-LibXML
     python3-setuptools
+    which
     yasm
 
     # These are dependencies necessary for using webkit-patch.

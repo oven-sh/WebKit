@@ -42,6 +42,8 @@ class JSGlobalObject;
 
 namespace FFI {
 
+String stringFromCString(const char*);
+
 JS_EXPORT_PRIVATE bool writeSlotFromJSValue(JSGlobalObject*, FFIContext&, Type, JSValue, uint64_t& slotOut, StringArena* arena);
 
 JS_EXPORT_PRIVATE JSValue jsValueFromSlot(JSGlobalObject*, FFIContext&, Type, uint64_t slot);

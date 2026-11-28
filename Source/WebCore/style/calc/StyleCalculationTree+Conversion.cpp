@@ -42,9 +42,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 
-namespace WebCore {
-namespace Style {
-namespace Calculation {
+namespace WebCore::Style::Calculation {
 
 struct ToCSSConversionOptions {
     CSSCalc::CanonicalDimension::Dimension canonicalDimension;
@@ -55,7 +53,7 @@ struct ToStyleConversionOptions {
     CSSCalc::EvaluationOptions evaluation;
 };
 
-static CSSCalc::Random::Sharing LEGACY_NODELETE toCSS(const Random::Fixed&, const ToCSSConversionOptions&);
+NODELETE static CSSCalc::Random::Sharing toCSS(const Random::Fixed&, const ToCSSConversionOptions&);
 static auto toCSS(const CSS::Keyword::None&, const ToCSSConversionOptions&) -> CSS::Keyword::None;
 static auto toCSS(const CalcMix::Item&, const ToCSSConversionOptions&) -> CSSCalc::CalcMix::Item;
 static auto toCSS(const Vector<CalcMix::Item>&, const ToCSSConversionOptions&) -> Vector<CSSCalc::CalcMix::Item>;
@@ -89,7 +87,7 @@ static auto toStyle(const CSSCalc::IndirectNode<CSSCalc::AnchorSize>&, const ToS
 static auto toStyle(const CSSCalc::IndirectNode<CSSCalc::Deg2Rad>&, const ToStyleConversionOptions&) -> Child;
 template<typename Op> auto toStyle(const CSSCalc::IndirectNode<Op>&, const ToStyleConversionOptions&) -> Child;
 
-static CSSCalc::CanonicalDimension::Dimension LEGACY_NODELETE determineCanonicalDimension(CSS::Category category)
+NODELETE static CSSCalc::CanonicalDimension::Dimension determineCanonicalDimension(CSS::Category category)
 {
     switch (category) {
     case CSS::Category::LengthPercentage:
@@ -121,7 +119,7 @@ CSSCalc::Random::Sharing toCSS(const Random::Fixed& randomFixed, const ToCSSConv
     return CSSCalc::Random::SharingFixed { randomFixed.baseValue };
 }
 
-CSS::Keyword::None LEGACY_NODELETE toCSS(const CSS::Keyword::None& none, const ToCSSConversionOptions&)
+NODELETE CSS::Keyword::None toCSS(const CSS::Keyword::None& none, const ToCSSConversionOptions&)
 {
     return none;
 }
@@ -225,7 +223,7 @@ std::optional<Child> toStyle(const std::optional<CSSCalc::Child>& optionalChild,
     return std::nullopt;
 }
 
-CSS::Keyword::None LEGACY_NODELETE toStyle(const CSS::Keyword::None& none, const ToStyleConversionOptions&)
+NODELETE CSS::Keyword::None toStyle(const CSS::Keyword::None& none, const ToStyleConversionOptions&)
 {
     return none;
 }
@@ -393,6 +391,4 @@ Tree toStyle(const CSSCalc::Tree& tree, const ToStyleOptions& toStyleOptions)
     return Tree { toStyle(simplifiedTree.root, conversionOptions) };
 }
 
-} // namespace Calculation
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style::Calculation

@@ -29,6 +29,7 @@ from webkitcorepy import string_utils
 from webkitcorepy import TaskPool
 
 from webkitpy.common.iteration_compatibility import iteritems
+from webkitpy.common.program_status import ProgramStatus
 from webkitpy.port.server_process import ServerProcess, _log as server_process_logger
 
 _log = logging.getLogger(__name__)
@@ -88,10 +89,12 @@ def report_result(worker, test, status, output, elapsed=None):
     else:
         Runner.instance.results[test] = status, output, elapsed
 
-    if status in (Runner.STATUS_FAILED, Runner.STATUS_CRASHED, Runner.STATUS_TIMEOUT):
+    failed = status in (Runner.STATUS_FAILED, Runner.STATUS_CRASHED, Runner.STATUS_TIMEOUT)
+    if failed:
         Runner.instance._failure_count += 1
-        if Runner.instance.exit_after_n_failures and Runner.instance._failure_count >= Runner.instance.exit_after_n_failures:
-            raise EarlyExitException(Runner.instance._failure_count)
+    Runner.instance.test_finished()
+    if failed and Runner.instance.exit_after_n_failures and Runner.instance._failure_count >= Runner.instance.exit_after_n_failures:
+        raise EarlyExitException(Runner.instance._failure_count)
 
 
 def teardown_shard():
@@ -121,10 +124,13 @@ class Runner(object):
 
     instance = None
 
-    def __init__(self, port, printer, log_limit=250, expectations=None):
+    def __init__(self, port, printer, log_limit=250, expectations=None, status=None):
         self.port = port
         self.printer = printer
         self.tests_run = 0
+        self._status = status or ProgramStatus.disabled()
+        self._tests_total = 0
+        self._tests_finished = 0
         self._num_workers = 1
         self.log_limit = log_limit
         self._has_logged_for_test = True  # Suppress an empty line between "Running tests" and the first test's output.
@@ -138,16 +144,8 @@ class Runner(object):
     def command_for_port(port, args, worker_number=None):
         if (port.get_option('force')):
             args.append('--force')
-        if (port.get_option('remote_layer_tree')):
-            args.append('--remote-layer-tree')
         if (port.get_option('site_isolation_enabled_by_default')):
             args.append('--site-isolation-enabled-by-default')
-        if (port.get_option('no_remote_layer_tree')):
-            args.append('--no-remote-layer-tree')
-        if (port.get_option('use_gpu_process')):
-            args.append('--use-gpu-process')
-        if (port.get_option('no_use_gpu_process')):
-            args.append('--no-use-gpu-process')
         if getattr(port, 'DEVICE_MANAGER', None):
             assert port.DEVICE_MANAGER.INITIALIZED_DEVICES
             device = port.target_host(worker_number) if worker_number is not None else port.DEVICE_MANAGER.INITIALIZED_DEVICES[0]
@@ -195,6 +193,22 @@ class Runner(object):
         components = test_name.split('.')[1:]
         return len(components) > 1 and components[1].startswith('DISABLED_')
 
+    def begin_tests(self, total):
+        self._tests_total = total
+        self._tests_finished = 0
+        self._report_progress()
+
+    def test_finished(self):
+        self._tests_finished += 1
+        self._report_progress()
+
+    def _report_progress(self):
+        progress = None
+        if self._tests_total and not self.port.get_option('test_parallel_safety'):
+            progress = min(self._tests_finished * 100 // self._tests_total, 100)
+        msg = string_utils.pluralize(self._failure_count, 'failure') if self._failure_count else None
+        self._status.report('working', progress=progress, msg=msg)
+
     def run(self, tests, num_workers):
         if not tests:
             return
@@ -202,12 +216,13 @@ class Runner(object):
         if self.port.get_option('fully_parallel') and self.port.get_option('test_parallel_safety'):
             raise RuntimeError(f'Running api tests fully parallel is not compatible with test_parallel_safety')
 
-        self.printer.write_update('Filtering tests by allowlist ...')
-        # Split tests by allowlist BEFORE sharding
-        allowlisted_tests, non_allowlisted_tests = self.port.filter_api_tests_by_allowlist(tests)
+        self.begin_tests(len(tests))
 
-        if non_allowlisted_tests and not self.port.get_option('test_parallel_safety'):
-            _log.info(f'{len(non_allowlisted_tests)} tests not in allowlist will run in system shard')
+        self.printer.write_update('Filtering tests by blocklist ...')
+        parallel_tests, blocklisted_tests = self.port.filter_api_tests_by_blocklist(tests)
+
+        if blocklisted_tests and not self.port.get_option('test_parallel_safety'):
+            _log.info(f'{len(blocklisted_tests)} tests in blocklist will run in system shard')
 
         original_level = server_process_logger.level
         server_process_logger.setLevel(logging.CRITICAL)
@@ -228,12 +243,11 @@ class Runner(object):
             setupkwargs = dict(port=self.port, devices=devices, log_limit=self.log_limit)
 
             if self.port.get_option('test_parallel_safety'):
-                self._run_parallel_safety(tests, allowlisted_tests, workers, setupkwargs)
+                self._run_parallel_safety(tests, parallel_tests, workers, setupkwargs)
                 return
 
             self.printer.write_update('Sharding tests ...')
-            # Only shard allowlisted tests for parallel execution
-            shards = Runner._shard_tests(allowlisted_tests, self.port.get_option('fully_parallel'))
+            shards = Runner._shard_tests(parallel_tests, self.port.get_option('fully_parallel'))
             self._num_workers = min(workers, max(len(shards), 1))
 
             with TaskPool(
@@ -247,16 +261,16 @@ class Runner(object):
                 pool.wait()
 
             # Run system shard tests after all parallel tests complete
-            if non_allowlisted_tests:
-                _log.info(f'Running {len(non_allowlisted_tests)} system shard tests sequentially')
+            if blocklisted_tests:
+                _log.info(f'Running {len(blocklisted_tests)} system shard tests sequentially')
                 with TaskPool(
                     workers=1,  # System shard tests run with single worker to avoid conflicts
                     mutually_exclusive_groups=[],
                     setup=setup_shard, setupkwargs=setupkwargs, teardown=teardown_shard,
                 ) as pool:
                     # Group system shard tests by suite for efficiency
-                    non_allowlisted_shards = Runner._shard_tests(non_allowlisted_tests, False)
-                    for name, shard_tests in iteritems(non_allowlisted_shards):
+                    blocklisted_shards = Runner._shard_tests(blocklisted_tests, False)
+                    for name, shard_tests in iteritems(blocklisted_shards):
                         pool.do(run_shard, name, *shard_tests)
 
                     pool.wait()
@@ -265,7 +279,7 @@ class Runner(object):
             server_process_logger.setLevel(original_level)
             Runner.instance = None
 
-    def _run_parallel_safety(self, tests, allowlisted_tests, workers, setupkwargs):
+    def _run_parallel_safety(self, tests, parallel_tests, workers, setupkwargs):
         supplied_tests = []
         for test_arg in self.port.get_option('test_parallel_safety'):
             supplied_tests.extend(test_arg.split())
@@ -280,7 +294,7 @@ class Runner(object):
             return
 
         checked_suites = {Runner._suite_name(test) for test in checked_tests}
-        background_chunks = Runner._parallel_safety_background_chunks([test for test in allowlisted_tests if Runner._suite_name(test) not in checked_suites], checked_tests)
+        background_chunks = Runner._parallel_safety_background_chunks([test for test in parallel_tests if Runner._suite_name(test) not in checked_suites], checked_tests)
         iterations = self.port.get_option('parallel_safety_iterations') or 1
         checked_workers = min(len(checked_tests), max(1, workers // 3))
         background_workers = min(len(background_chunks), workers - checked_workers)

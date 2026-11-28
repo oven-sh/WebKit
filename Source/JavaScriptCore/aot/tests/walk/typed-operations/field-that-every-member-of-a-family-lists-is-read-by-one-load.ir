@@ -1,0 +1,41 @@
+# if the two layouts of the family kept the field at different places, the read through the family would stay closed. What every member of a declared family lists lies at one slot in all of them, in front of what only some list
+# interface Shape { }  type Circle = { inner: Point }  type Square = { side: string, inner: Point }  function get(s: Shape) { return s.inner.x; }  get(circle); get(square);
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f1:Body
+# CHECK: [[inner]]: L3 {{*}} = GetSlot {{*}}key="inner" receivers=[L1, L2] level=Proven
+# CHECK: : string {{*}} = GetSlot {{*}}key="x"
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# PLAN: layout L1 CompiledObject
+# PLAN-NEXT: slot 0 "inner" JSValue Inline offset=24
+# PLAN: layout L2 CompiledObject
+# PLAN-NEXT: slot 0 "side" JSValue Inline offset=32
+# PLAN-NEXT: slot 1 "inner" JSValue Inline offset=24
+# Without typed operations nobody reads through a family, and the fields lie as they are listed.
+# RUN(NONE): plan layouts mechanisms=none
+# NONE: layout L2 CompiledObject
+# NONE-NEXT: slot 0 "side" JSValue Inline offset=24
+# NONE-NEXT: slot 1 "inner" JSValue Inline offset=32
+
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Circle" module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" module=m0 fields=[{key="side" declared={type=anything} flags=[IsRequired]}, {key="inner" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v2 calleeName="get"
+    v6 = Call v4, -, v3 calleeName="get"
+    Return v0
+}
+function f1 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="x"
+    Return v2
+}

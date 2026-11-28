@@ -32,6 +32,7 @@
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/PageInspectorController.h>
 #import <wtf/Assertions.h>
+#import <wtf/Borrow.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <CoreGraphics/CoreGraphics.h>
@@ -47,8 +48,7 @@
 #if PLATFORM(IOS_FAMILY)
 - (void)_removeAllLayers
 {
-    for (CAShapeLayer *layer in _layers.get())
-        [layer removeFromSuperlayer];
+    [_layers makeObjectsPerformSelector:@selector(removeFromSuperlayer)];
     [_layers removeAllObjects];
 }
 #endif
@@ -309,7 +309,7 @@ static void layerPath(CAShapeLayer *layer, const FloatQuad& outerQuad)
     for (NSUInteger i = 0; i < numLayers; ++i) {
         CAShapeLayer *layer = [_layers objectAtIndex:i];
         layer.fillColor = contentColor.get();
-        layerPath(layer, highlight->quads[i]);
+        layerPath(layer, borrow(highlight->quads)[i]);
     }
 }
 

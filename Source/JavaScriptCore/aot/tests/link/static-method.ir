@@ -1,0 +1,56 @@
+# If Link looked a name that is called on a class object up among the members of the prototype, `C.make()` would run the method of the instances. If it could not look it up at all, the class object would escape with the call, and the class with it
+# class A { static make() { return "s"; }  make() { return true; } }  function use(C) { return C.make(); }  use(A);
+# RUN: summary f0
+# CHECK: member L0 Static 0 Method "make" = Closure f2
+# CHECK: member L0 Prototype 1 Method "make" = Closure f3
+# CHECK: edge Closure f2 -> Member L0 Static 0
+# RUN(USE): summary f4
+# USE: call c0 v2 Name "make" this=Parameter 0 ()
+# RUN(LINK): link calls functions members mechanisms=all
+# LINK: call f4 v2 -> f2
+# LINK: function f2 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=f1
+# LINK: function f3 unreached
+# LINK: function f4 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=f1
+# LINK: member L0 Static 0 Method "make" function=f2 writers-known
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key="make"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="make"
+    v6 = FinishClass v1 layout=L0
+    v7 = NewClosure function=f4
+    v8 = Call v7, -, v6 calleeName="use"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="make" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="s"
+    Return v1
+}
+function f3 name="make" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f4 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="make"
+    v2 = Call v1, v0 calleeKey="make"
+    Return v2
+}

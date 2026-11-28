@@ -7,40 +7,38 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCode.h"
 #include "AOTCompiledCode.h"
-#include "AOTIR.h"
+#include "AOTMachine.h"
 #include "AOTRelocation.h"
 #include "AOTVector.h"
 #include "CCallHelpers.h"
+#include "LineColumn.h"
+#include <optional>
 
-namespace JSC {
-
-namespace B3 {
-class Procedure;
-}
-
-namespace AOT {
+namespace JSC { namespace AOT {
 
 class BuildContext;
 
 namespace Typed {
 
+class CallingConventions;
+class Program;
 struct CodeGenerationInputs;
 struct CodeRecords;
 struct StackCheckState;
 
 struct EmittedCode {
     ImageLinkBuffer& buffer;
-    B3::Procedure* procedure;
+    Machine::Procedure& procedure;
     const StackCheckState& stackChecks;
-    CCallHelpers::Label paddingStart;
     Vector<Relocation> relocations;
 };
 
-CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, FunctionID, const Function&, CodeRecords&, EmittedCode&&);
+CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, const Code&, CodeRecords&, EmittedCode&&);
+std::optional<LineColumn> positionInBuiltin(const Program&, const CallingConventions&, FunctionID shown);
 
-Vector<ConstantData> copyConstants(const B3::Procedure&);
-Vector<AOT::JumpTable> takeJumpTables(B3::Procedure&);
+JS_EXPORT_PRIVATE void printOriginOutsideOperations(PrintStream&, uint32_t origin);
 
 } } } // namespace JSC::AOT::Typed
 

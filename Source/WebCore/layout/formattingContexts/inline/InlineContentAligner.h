@@ -30,8 +30,7 @@
 #include <WebCore/InlineLineRun.h>
 #include <WebCore/LayoutUnits.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineContentAligner {
 public:
@@ -44,9 +43,7 @@ public:
     static void adjustAnnotationContentWithAlignmentOffset(std::span<InlineDisplay::Box>, InlineLayoutUnit alignmentOffset, InlineFormattingContext&);
 
 private:
-    static InlineLayoutUnit LEGACY_NODELETE applyExpansionOnRange(std::span<LineRun>, const ExpansionInfo&, InlineLayoutUnit spaceToDistribute);
+    NODELETE static InlineLayoutUnit applyExpansionOnRange(std::span<LineRun>, const ExpansionInfo&, InlineLayoutUnit spaceToDistribute);
 };
 
 }
-}
-

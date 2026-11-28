@@ -50,7 +50,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLMenclose);
 // For now, we use a Bezier curve and this somewhat arbitrary value.
 const unsigned short longDivLeftSpace = 10;
 
-RenderMathMLMenclose::RenderMathMLMenclose(MathMLMencloseElement& element, Style::ComputedStyle&& style)
+RenderMathMLMenclose::RenderMathMLMenclose(MathMLMencloseElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLRow(Type::MathMLMenclose, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLMenclose());
@@ -160,22 +160,14 @@ RenderMathMLMenclose::SpaceAroundContent RenderMathMLMenclose::spaceAroundConten
     return space;
 }
 
-void RenderMathMLMenclose::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMathMLMenclose::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
     LayoutUnit preferredWidth = preferredLogicalWidthOfRowItems();
     SpaceAroundContent space = spaceAroundContent(preferredWidth, 0);
     preferredWidth += space.left + space.right;
-    m_minContentLogicalWidthContribution = preferredWidth;
-    m_maxContentLogicalWidthContribution = preferredWidth;
-
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
-    adjustContentLogicalWidthsForBorderAndPadding();
-
-    clearContentLogicalWidthsInvalidation();
+    return intrinsicLogicalWidthContributionsForMathContent(preferredWidth);
 }
 
 void RenderMathMLMenclose::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit)

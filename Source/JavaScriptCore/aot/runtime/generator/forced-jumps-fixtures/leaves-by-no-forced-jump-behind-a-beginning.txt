@@ -1,0 +1,15 @@
+JSC_DEFINE_JIT_OPERATION(operationThatBeginsNothingAndJumps, EncodedJSValue, (Instance* instance, EncodedJSValue home, EncodedJSValue receiver, uint32_t name))
+{
+    AOT_MUST_TAIL_CALL return operationReadOffBase(instance, plainBaseOf(home), receiver, name);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationThatBeginsAndCalls, EncodedJSValue, (Instance* instance, EncodedJSValue home, EncodedJSValue receiver, uint32_t name))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationThatBeginsAndCalls);
+    OPERATION_RETURN(scope, readOffBase(instance, baseOf(instance, vm, home), receiver, name));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationBehindOneThatBegins, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
+{
+    AOT_MUST_TAIL_CALL return operationReadOffBase(instance, base, receiver, name);
+}

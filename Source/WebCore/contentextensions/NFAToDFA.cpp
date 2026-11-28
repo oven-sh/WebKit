@@ -38,11 +38,9 @@
 #include <wtf/HashSet.h>
 #include <wtf/IndexedRange.h>
 
-namespace WebCore {
+namespace WebCore::ContentExtensions {
 
-namespace ContentExtensions {
-
-typedef HashSet<unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> NFANodeIndexSet;
+using NFANodeIndexSet = HashSet<unsigned>;
 typedef MutableRange<signed char, NFANodeIndexSet> NFANodeRange;
 typedef MutableRangeList<signed char, NFANodeIndexSet> NFANodeRangeList;
 typedef MutableRangeList<signed char, NFANodeIndexSet, 128> PreallocatedNFANodeRangeList;
@@ -95,12 +93,12 @@ static ALWAYS_INLINE void extendSetWithClosure(const NFANodeClosures& nfaNodeClo
 }
 
 struct UniqueNodeIdSetImpl {
-    std::span<unsigned> LEGACY_NODELETE buffer()
+    NODELETE std::span<unsigned> buffer()
     {
         return unsafeMakeSpan(m_buffer, m_size);
     }
 
-    std::span<const unsigned> LEGACY_NODELETE buffer() const
+    NODELETE std::span<const unsigned> buffer() const
     {
         return unsafeMakeSpan(m_buffer, m_size);
     }
@@ -150,7 +148,7 @@ public:
         other.m_uniqueNodeIdSetBuffer = nullptr;
     }
 
-    UniqueNodeIdSet& LEGACY_NODELETE operator=(UniqueNodeIdSet&& other)
+    NODELETE UniqueNodeIdSet& operator=(UniqueNodeIdSet&& other)
     {
         m_uniqueNodeIdSetBuffer = other.m_uniqueNodeIdSetBuffer;
         other.m_uniqueNodeIdSetBuffer = nullptr;
@@ -162,9 +160,9 @@ public:
         fastFree(m_uniqueNodeIdSetBuffer);
     }
 
-    friend bool LEGACY_NODELETE operator==(const UniqueNodeIdSet&, const UniqueNodeIdSet&) = default;
+    NODELETE friend bool operator==(const UniqueNodeIdSet&, const UniqueNodeIdSet&) = default;
 
-    bool LEGACY_NODELETE operator==(const NodeIdSet& other) const
+    NODELETE bool operator==(const NodeIdSet& other) const
     {
         if (m_uniqueNodeIdSetBuffer->m_size != static_cast<unsigned>(other.size()))
             return false;
@@ -176,23 +174,23 @@ public:
         return true;
     }
 
-    UniqueNodeIdSetImpl* LEGACY_NODELETE impl() const { return m_uniqueNodeIdSetBuffer; }
+    NODELETE UniqueNodeIdSetImpl* impl() const { return m_uniqueNodeIdSetBuffer; }
 
-    unsigned LEGACY_NODELETE hash() const { return m_uniqueNodeIdSetBuffer->m_hash; }
-    bool LEGACY_NODELETE isEmptyValue() const { return !m_uniqueNodeIdSetBuffer; }
-    bool LEGACY_NODELETE isDeletedValue() const { return m_uniqueNodeIdSetBuffer == reinterpret_cast<UniqueNodeIdSetImpl*>(-1); }
+    NODELETE unsigned hash() const { return m_uniqueNodeIdSetBuffer->m_hash; }
+    NODELETE bool isEmptyValue() const { return !m_uniqueNodeIdSetBuffer; }
+    NODELETE bool isDeletedValue() const { return m_uniqueNodeIdSetBuffer == reinterpret_cast<UniqueNodeIdSetImpl*>(-1); }
 
 private:
     UniqueNodeIdSetImpl* m_uniqueNodeIdSetBuffer = nullptr;
 };
 
 struct UniqueNodeIdSetHash {
-    static unsigned LEGACY_NODELETE hash(const UniqueNodeIdSet& p)
+    NODELETE static unsigned hash(const UniqueNodeIdSet& p)
     {
         return p.hash();
     }
 
-    static bool LEGACY_NODELETE equal(const UniqueNodeIdSet& a, const UniqueNodeIdSet& b)
+    NODELETE static bool equal(const UniqueNodeIdSet& a, const UniqueNodeIdSet& b)
     {
         return a == b;
     }
@@ -228,21 +226,21 @@ struct NodeIdSetToUniqueNodeIdSetSource {
 };
 
 struct NodeIdSetToUniqueNodeIdSetTranslator {
-    static unsigned LEGACY_NODELETE hash(const NodeIdSetToUniqueNodeIdSetSource& source)
+    NODELETE static unsigned hash(const NodeIdSetToUniqueNodeIdSetSource& source)
     {
         return source.hash;
     }
 
-    static inline bool LEGACY_NODELETE equal(const UniqueNodeIdSet& a, const NodeIdSetToUniqueNodeIdSetSource& b)
+    NODELETE static inline bool equal(const UniqueNodeIdSet& a, const NodeIdSetToUniqueNodeIdSetSource& b)
     {
         return a == b.nodeIdSet;
     }
 
-    static void translate(UniqueNodeIdSet& location, const NodeIdSetToUniqueNodeIdSetSource& source, unsigned hash)
+    static void translate(UniqueNodeIdSet* location, const NodeIdSetToUniqueNodeIdSetSource& source, unsigned hash)
     {
         DFANode newDFANode;
 
-        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> actions;
+        HashSet<uint64_t> actions;
 
         for (unsigned nfaNodeId : source.nodeIdSet) {
             const auto* nfaNode = source.nfa.nodes().pointerAt(nfaNodeId);
@@ -260,9 +258,9 @@ struct NodeIdSetToUniqueNodeIdSetTranslator {
 
         unsigned dfaNodeId = source.dfa.nodes.size();
         source.dfa.nodes.append(newDFANode);
-        new (NotNull, &location) UniqueNodeIdSet(source.nodeIdSet, hash, dfaNodeId);
+        new (NotNull, location) UniqueNodeIdSet(source.nodeIdSet, hash, dfaNodeId);
 
-        ASSERT(location.impl());
+        ASSERT(location->impl());
     }
 };
 
@@ -357,8 +355,6 @@ std::optional<DFA> NFAToDFA::convert(NFA&& nfa)
     return dfa;
 }
 
-} // namespace ContentExtensions
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

@@ -1,0 +1,147 @@
+# THE STORE THAT HIDES THE MEMBER STANDS IN THE ASKER'S OWN TEXT, BEHIND THE YES (a reviewer's program). Right is `found own` or `- step`, never `found step`.
+# function Meter(level) { this.level = level; }
+# Meter.prototype.step = function () { return "step"; };
+# function hides(object, own) { if (!$findsDeclaredMember(object, "step")) return "- " + object.step(); object.step = own; return "found " + object.step(); }
+# function asks(object) { if ($findsDeclaredMember(object, "step")) return "found " + object.step(); return "- " + object.step(); }
+# print(asks(new Meter(17)));
+# print(hides(new Meter(18), function () { return "own"; }), hides(new Meter(19), function () { return "own"; }));
+# print(asks(new Meter(20)));
+# f2 = hides . f3 = asks
+# OPTIONS: mechanisms=all
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: found step
+# ANSWERS-NEXT: found own - step
+# ANSWERS-NEXT: - step
+# ANSWERS-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: found step
+# CHECKED-NEXT: found own - step
+# CHECKED-NEXT: - step
+# CHECKED-NEXT: exited with 0
+
+module m0 path="hides.js" displayPath="hides.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = PropGet v1 key="prototype" @46
+    v7 = NewClosure function=f4 @69
+    PropSet v6, v7 key="step" @52
+    v9 = Builtin builtin=GlobalThis @387
+    v10 = PropGet v9 key="print" [isFreeName] @387
+    v11 = Integer integer=17 @408
+    v12 = Construct v1, -, v11 calleeName="Meter" @402
+    v13 = Call v5, -, v12 calleeName="asks" @393
+    v14 = Call v10, -, v13 calleeName="print" @387
+    v15 = Builtin builtin=GlobalThis @415
+    v16 = PropGet v15 key="print" [isFreeName] @415
+    v17 = Integer integer=18 @437
+    v18 = Construct v1, -, v17 calleeName="Meter" @431
+    v19 = NewClosure function=f5 @442
+    v20 = Call v3, -, v18, v19 calleeName="hides" @421
+    v21 = Integer integer=19 @490
+    v22 = Construct v1, -, v21 calleeName="Meter" @484
+    v23 = NewClosure function=f6 @495
+    v24 = Call v3, -, v22, v23 calleeName="hides" @474
+    v25 = Call v16, -, v20, v24 calleeName="print" @415
+    v26 = Builtin builtin=GlobalThis @528
+    v27 = PropGet v26 key="print" [isFreeName] @528
+    v28 = Integer integer=20 @549
+    v29 = Construct v1, -, v28 calleeName="Meter" @543
+    v30 = Call v5, -, v29 calleeName="asks" @534
+    v31 = Call v27, -, v30 calleeName="print" @528
+    v32 = Undefined @528
+    Return v32 @528
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f2 name="hides" module=m2 position=101 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|function|f5|f6 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: undefined|null|function|f5|f6):
+    v2 = Undefined @136
+    v3 = Undefined @136
+    v4 = String string="step" @165
+    v5 = FindsDeclaredMember v0 key="step" @136
+    v6 = ToBoolean v5 @136
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @136
+  b1(v7):
+    PropSet v0, v1 key="step" @203
+    v9 = String string="found " @229
+    v10 = PropGet v0 key="step" @240
+    v11 = Call v10, v0 calleeKey="step" calleeName="object.step" @247
+    v12 = Add v9, v11 @240
+    Return v12 @240
+  b2(v13):
+    v14 = String string="- " @181
+    v15 = PropGet v0 key="step" @188
+    v16 = Call v15, v0 calleeKey="step" calleeName="object.step" @195
+    v17 = Add v14, v16 @188
+    Return v17 @188
+}
+function f3 name="asks" module=m2 position=257 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @285
+    v2 = Undefined @285
+    v3 = String string="step" @314
+    v4 = FindsDeclaredMember v0 key="step" @285
+    v5 = ToBoolean v4 @285
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @285
+  b1(v6):
+    v7 = String string="found " @330
+    v8 = PropGet v0 key="step" @341
+    v9 = Call v8, v0 calleeKey="step" calleeName="object.step" @348
+    v10 = Add v7, v9 @341
+    Return v10 @341
+  b2(v11):
+    v12 = String string="- " @363
+    v13 = PropGet v0 key="step" @370
+    v14 = Call v13, v0 calleeKey="step" calleeName="object.step" @377
+    v15 = Add v12, v14 @370
+    Return v15 @370
+}
+function f4 module=m2 position=69 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="step" @90
+    Return v0 @90
+}
+function f5 module=m2 position=442 role=Library thisType={type=anything} results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="own" @463
+    Return v0 @463
+}
+function f6 module=m2 position=495 role=Library thisType={type=anything} results=[{type=anything}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="own" @516
+    Return v0 @516
+}
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private

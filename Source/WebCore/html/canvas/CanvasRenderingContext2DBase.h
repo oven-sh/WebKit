@@ -273,17 +273,17 @@ public:
     Direction direction() const { return state().direction; }
     void setDirection(Direction);
 
-    class FontProxy final : public FontSelectorClient {
+    class FontProxy final : public RefCounted<FontProxy>, public FontSelectorClient {
     public:
-        FontProxy() = default;
+        static Ref<FontProxy> create();
+        Ref<FontProxy> clone() const;
+
         virtual ~FontProxy();
-        FontProxy(const FontProxy&);
-        FontProxy& operator=(const FontProxy&);
 
         bool realized() const { return m_font.hasFontSelector(); }
         void initialize(FontSelector&, const FontCascade&);
         const FontMetrics& metricsOfPrimaryFont() const LIFETIME_BOUND;
-        const FontCascadeDescription& LEGACY_NODELETE fontDescription() const LIFETIME_BOUND;
+        NODELETE const FontCascadeDescription& fontDescription() const LIFETIME_BOUND;
         float width(const TextRun&, GlyphOverflow* = 0) const;
         void drawBidiText(GraphicsContext&, const TextRun&, const FloatPoint&, FontCascade::CustomFontNotReadyAction) const;
 
@@ -302,6 +302,12 @@ public:
         void update(NOESCAPE const ScopedLambda<void(FontCascadeDescription&)>&);
 
     private:
+        FontProxy() = default;
+
+        // Use clone() to create a ref-counted copy.
+        FontProxy(const FontProxy&);
+        FontProxy& operator=(const FontProxy&);
+
         void update(FontSelector&);
         void fontsNeedUpdate(FontSelector&) final;
 
@@ -311,10 +317,25 @@ public:
     struct State final {
         State();
 
+        State clone() const;
+
+        // Explicit copy constructor definition inhibits these,
+        // so we have to explicitly define them.
+        State(State&&) = default;
+        State& operator=(State&&) = default;
+
+        // If the current stroke/fill style is a color, this is the color string before
+        // parsing. We avoid re-parsing if the stroke/fill style is set to the same color.
+        // NOTE: they're set only if the color is cacheable (i.e anything not involving
+        // currentColor or color-scheme dependant colors). Otherwise it's null.
         String unparsedStrokeColor;
         String unparsedFillColor;
+
         CanvasStyle strokeStyle;
         CanvasStyle fillStyle;
+        // CanvasStyle::gradientPatternVersion() when the drawing context brushes were last set to match the fill and
+        // stroke styles, or no version after a style was set. The initial brushes match the initial styles.
+        Markable<CanvasStyleVersion> drawingContextStyleVersion { CanvasStyleVersion { } };
         double lineWidth;
         double miterLimit;
         FloatSize shadowOffset;
@@ -343,24 +364,30 @@ public:
         String lang;
 
         String unparsedFont;
-        FontProxy font;
+        Ref<FontProxy> font;
         // The font description `unparsedFont` was resolved against. Relative values in the font
         // shorthand depend on it, so `font` is stale once it no longer matches the canvas element.
         FontCascadeDescription fontResolutionBase;
+        // Likewise for the root element's font, which root font relative values depend on.
+        FontCascadeDescription rootFontResolutionBase;
 
         RefPtr<CanvasLayerContextSwitcher> targetSwitcher;
 
-        CanvasLineCap LEGACY_NODELETE canvasLineCap() const;
-        CanvasLineJoin LEGACY_NODELETE canvasLineJoin() const;
-        CanvasTextAlign LEGACY_NODELETE canvasTextAlign() const;
-        CanvasTextBaseline LEGACY_NODELETE canvasTextBaseline() const;
-        CanvasFontKerning LEGACY_NODELETE canvasFontKerning() const;
-        CanvasFontStretch LEGACY_NODELETE canvasFontStretch() const;
-        CanvasFontVariantCaps LEGACY_NODELETE canvasFontVariantCaps() const;
-        CanvasTextRendering LEGACY_NODELETE canvasTextRendering() const;
+        CanvasLineCap canvasLineCap() const;
+        CanvasLineJoin canvasLineJoin() const;
+        CanvasTextAlign canvasTextAlign() const;
+        CanvasTextBaseline canvasTextBaseline() const;
+        CanvasFontKerning canvasFontKerning() const;
+        CanvasFontStretch canvasFontStretch() const;
+        CanvasFontVariantCaps canvasFontVariantCaps() const;
+        CanvasTextRendering canvasTextRendering() const;
         String fontString() const;
         String globalCompositeOperationString() const;
         String shadowColorString() const;
+
+    private:
+        // Use clone() to make a copy instead.
+        State(const State&) = default;
     };
     const Vector<State, 1>& stateStack() LIFETIME_BOUND;
 
@@ -376,7 +403,11 @@ protected:
     AtomString effectiveLanguage() const;
 
     GraphicsContext* drawingContext() const;
-    GraphicsContext* effectiveDrawingContext() const;
+    // The drawing context, or the context of the target switcher, with the fill and stroke brushes set to match the
+    // fill and stroke styles.
+    GraphicsContext* effectiveDrawingContext();
+    // The same context without setting the brushes, for uses that don't depend on them.
+    GraphicsContext* effectiveDrawingContextNoSync() const;
     AffineTransform baseTransform() const;
 
     enum class WillUpdateContentsOption {
@@ -406,6 +437,7 @@ protected:
         };
     }
     void willUpdateContents(std::optional<FloatRect>, OptionSet<WillUpdateContentsOption> = defaultWillUpdateContentsOptions());
+    void willUpdateContents(GraphicsContext& effectiveContext, std::optional<FloatRect>, OptionSet<WillUpdateContentsOption> = defaultWillUpdateContentsOptions());
     void willUpdateEntireContents(OptionSet<WillUpdateContentsOption> options = defaultWillUpdateContentsOptions());
 
     virtual std::optional<Style::Filter> setFilterStringWithoutUpdatingStyle(const String&) { return std::nullopt; }
@@ -422,7 +454,7 @@ protected:
 
     bool usesCSSCompatibilityParseMode() const { return m_usesCSSCompatibilityParseMode; }
 
-    void LEGACY_NODELETE updateStateTransform(const AffineTransform&);
+    void updateStateTransform(const AffineTransform&);
 
     RefPtr<ImageBuffer> allocateImageBuffer() const;
     RefPtr<ImageBuffer> createCompatibleImageBuffer(GraphicsContext&, const FloatSize&) const;
@@ -445,26 +477,39 @@ private:
     };
 
     void applyLineDash() const;
+    void invalidateCachedContents(OptionSet<WillUpdateContentsOption>);
+    void notifyCanvasEntireContentsWillChange(ShouldApplyPostProcessingToDirtyRect);
+    GraphicsContext* effectiveDrawingContextSync();
+    // For CanvasFilterContextSwitcher, which sets a target switcher for one draw and then sets back the previous
+    // one. The draw does not save() or restore(), so the target switcher is set without realizeSaves(), in the
+    // state that unrealized saves share with the level below.
+    void setTargetSwitcherForDraw(RefPtr<CanvasLayerContextSwitcher>&&);
     void setShadow(const FloatSize& offset, float blur, const Color&);
     void applyShadow();
-    bool LEGACY_NODELETE shouldDrawShadows() const;
+    NODELETE bool shouldDrawShadows() const;
 
     bool delegatesDisplay() const final;
     bool needsPreparationForDisplay() const final;
     void prepareForDisplay() final;
 
     void clearAccumulatedDirtyRect() final;
-    bool LEGACY_NODELETE isEntireBackingStoreDirty() const;
+    NODELETE bool isEntireBackingStoreDirty() const;
     FloatRect backingStoreBounds() const { return FloatRect { { }, FloatSize { canvasBase().size() } }; }
 
     PixelFormat pixelFormat() const final;
     ColorSpace colorSpace() const final;
     bool willReadFrequently() const final;
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    bool canStoreEDRContent() const { return m_canStoreEDRContent; }
+    bool shouldShowEDRContent() const { return m_shouldShowEDRContent; }
+    PlatformDynamicRangeLimit effectiveDynamicRangeLimit() const;
+    bool isHDR() const final;
+#endif
 
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     void setDynamicRangeLimit(PlatformDynamicRangeLimit) final;
     std::optional<double> getEffectiveDynamicRangeLimitValue() const final;
-    ImageDrawingOptions drawingOptionsForDisplay() const final;
+    RasterDrawingOptions drawingOptionsForDisplay() const final;
 #endif
 
     void realizeSavesLoop();
@@ -514,14 +559,14 @@ private:
 
     Path transformAreaToDevice(const Path&) const;
     Path transformAreaToDevice(const FloatRect&) const;
-    bool LEGACY_NODELETE rectContainsCanvas(const FloatRect&) const;
+    NODELETE bool rectContainsCanvas(const FloatRect&) const;
 
     template<class T> IntRect calculateCompositingBufferRect(const T&, IntSize*);
     void compositeBuffer(ImageBuffer&, const IntRect&, CompositeOperator);
 
-    FloatRect LEGACY_NODELETE inflatedStrokeRect(const FloatRect&) const;
+    NODELETE FloatRect inflatedStrokeRect(const FloatRect&) const;
 
-    template<class T> void fullCanvasCompositedDrawImage(T&, const FloatRect&, const FloatRect&, CompositeOperator, ImageDrawingOptions = { });
+    void fullCanvasCompositedDraw(const FloatRect& destination, CompositeOperator, const auto& draw);
 
     RefPtr<ImageBuffer> surfaceBufferToImageBuffer(SurfaceBuffer) final;
     RefPtr<NativeImage> surfaceBufferToNativeImage(SurfaceBuffer) final;
@@ -557,13 +602,24 @@ private:
     unsigned m_unrealizedSaveCount { 0 };
     bool m_usesCSSCompatibilityParseMode;
     mutable Variant<CachedContentsTransparent, CachedContentsUnknown, CachedContentsImageData> m_cachedContents;
-    CanvasRenderingContext2DSettings m_settings;
+    const CanvasRenderingContext2DSettings m_settings;
     bool m_hasDeferredOperations { false };
     mutable bool m_hasCreatedImageBuffer { false };
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
+    const bool m_canStoreEDRContent;
+    const bool m_shouldShowEDRContent;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
 #endif
 };
+
+// While the version matches, the brushes of the effective drawing context match the styles: a target switcher context
+// copies the brushes of the context it draws into, or draws into it.
+inline GraphicsContext* CanvasRenderingContext2DBase::effectiveDrawingContext()
+{
+    if (state().drawingContextStyleVersion == CanvasStyle::gradientPatternVersion()) [[likely]]
+        return effectiveDrawingContextNoSync();
+    return effectiveDrawingContextSync();
+}
 
 } // namespace WebCore
 

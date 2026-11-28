@@ -79,7 +79,7 @@ void WebPasteboardProxy::readText(IPC::Connection&, const String&, const String&
     if (WKWPE::isUsingWPEPlatformAPI()) {
         auto* clipboard = wpe_display_get_clipboard(wpe_display_get_primary());
         gsize textLength;
-        GUniquePtr<char> text(wpe_clipboard_read_text(clipboard, pasteboardType.utf8().legacyCStringPointer(), &textLength));
+        GUniquePtr<char> text(wpe_clipboard_read_text(clipboard, makeUTF8CString(pasteboardType).legacyCStringPointer(), &textLength));
         completionHandler(String::fromUTF8(unsafeMakeSpan(text.get(), textLength)));
         return;
     }
@@ -100,7 +100,7 @@ void WebPasteboardProxy::readBuffer(IPC::Connection&, const String&, const Strin
 #if ENABLE(WPE_PLATFORM)
     if (WKWPE::isUsingWPEPlatformAPI()) {
         auto* clipboard = wpe_display_get_clipboard(wpe_display_get_primary());
-        if (GRefPtr<GBytes> bytes = adoptGRef(wpe_clipboard_read_bytes(clipboard, pasteboardType.utf8().legacyCStringPointer()))) {
+        if (GRefPtr<GBytes> bytes = adoptGRef(wpe_clipboard_read_bytes(clipboard, makeUTF8CString(pasteboardType).legacyCStringPointer()))) {
             completionHandler(SharedBuffer::create(bytes.get()));
             return;
         }
@@ -122,12 +122,18 @@ void WebPasteboardProxy::writeToClipboard(const String&, SelectionData&& selecti
 #if ENABLE(WPE_PLATFORM)
     if (WKWPE::isUsingWPEPlatformAPI()) {
         GRefPtr<WPEClipboardContent> content = adoptGRef(wpe_clipboard_content_new());
-        if (selectionData.hasText())
-            wpe_clipboard_content_set_text(content.get(), selectionData.text().utf8().legacyCStringPointer());
-        if (selectionData.hasMarkup())
-            setClipboardContentFromSpan(content.get(), "text/html", selectionData.markup().utf8().span());
         if (selectionData.hasURIList())
-            setClipboardContentFromSpan(content.get(), "text/uri-list", selectionData.uriList().utf8().span());
+            setClipboardContentFromSpan(content.get(), "text/uri-list", makeUTF8CString(selectionData.uriList()).span());
+        if (selectionData.hasMarkup())
+            setClipboardContentFromSpan(content.get(), "text/html", makeUTF8CString(selectionData.markup()).span());
+        if (selectionData.hasText())
+            wpe_clipboard_content_set_text(content.get(), makeUTF8CString(selectionData.text()).legacyCStringPointer());
+        if (selectionData.canSmartReplace()) {
+            GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(nullptr, 0));
+            wpe_clipboard_content_set_bytes(content.get(), "application/vnd.wpewebkit.smartpaste", bytes.get());
+        }
+        if (selectionData.hasCustomData())
+            wpe_clipboard_content_set_bytes(content.get(), PasteboardCustomData::wpeType().characters(), selectionData.customData()->createGBytes().get());
 
         auto* clipboard = wpe_display_get_clipboard(wpe_display_get_primary());
         wpe_clipboard_set_content(clipboard, content.get());
@@ -160,26 +166,26 @@ void WebPasteboardProxy::typesSafeForDOMToReadAndWrite(IPC::Connection&, const S
 #if ENABLE(WPE_PLATFORM)
     if (WKWPE::isUsingWPEPlatformAPI()) {
         auto* clipboard = wpe_display_get_clipboard(wpe_display_get_primary());
+        ListHashSet<String> domTypes;
         if (GRefPtr<GBytes> bytes = adoptGRef(wpe_clipboard_read_bytes(clipboard, PasteboardCustomData::wpeType().characters()))) {
-            ListHashSet<String> domTypes;
             Ref buffer = SharedBuffer::create(bytes.get());
             auto customData = PasteboardCustomData::fromSharedBuffer(buffer.get());
             if (customData.origin() == origin) {
                 for (auto& type : customData.orderedTypes())
                     domTypes.add(type);
             }
-
-            for (const char* format : span(wpe_clipboard_get_formats(clipboard))) {
-                String formatString = String::fromUTF8(format);
-                if (formatString == PasteboardCustomData::wpeType())
-                    continue;
-
-                if (Pasteboard::isSafeTypeForDOMToReadAndWrite(formatString))
-                    domTypes.add(formatString);
-            }
-            completionHandler(copyToVector(domTypes));
-            return;
         }
+
+        for (const char* format : span(wpe_clipboard_get_formats(clipboard))) {
+            String formatString = String::fromUTF8(format);
+            if (formatString == PasteboardCustomData::wpeType())
+                continue;
+
+            if (Pasteboard::isSafeTypeForDOMToReadAndWrite(formatString))
+                domTypes.add(formatString);
+        }
+        completionHandler(copyToVector(domTypes));
+        return;
     }
 #endif
     completionHandler({ });
@@ -202,16 +208,16 @@ void WebPasteboardProxy::writeCustomData(IPC::Connection&, const Vector<Pasteboa
             if (std::holds_alternative<Ref<SharedBuffer>>(stringOrBuffer)) {
                 auto buffer = std::get<Ref<SharedBuffer>>(stringOrBuffer);
                 auto bytes = buffer->createGBytes();
-                wpe_clipboard_content_set_bytes(content.get(), type.utf8().legacyCStringPointer(), bytes.get());
+                wpe_clipboard_content_set_bytes(content.get(), makeUTF8CString(type).legacyCStringPointer(), bytes.get());
             } else if (std::holds_alternative<String>(stringOrBuffer)) {
                 if (type == "text/plain"_s)
-                    wpe_clipboard_content_set_text(content.get(), std::get<String>(stringOrBuffer).utf8().legacyCStringPointer());
+                    wpe_clipboard_content_set_text(content.get(), makeUTF8CString(std::get<String>(stringOrBuffer)).legacyCStringPointer());
                 else if (type == "text/html"_s)
-                    setClipboardContentFromSpan(content.get(), "text/html", std::get<String>(stringOrBuffer).utf8().span());
+                    setClipboardContentFromSpan(content.get(), "text/html", makeUTF8CString(std::get<String>(stringOrBuffer)).span());
                 else if (type == "text/uri-list"_s)
-                    setClipboardContentFromSpan(content.get(), "text/uri-list", std::get<String>(stringOrBuffer).utf8().span());
+                    setClipboardContentFromSpan(content.get(), "text/uri-list", makeUTF8CString(std::get<String>(stringOrBuffer)).span());
                 else if (type == "image/svg+xml"_s)
-                    setClipboardContentFromSpan(content.get(), "image/svg+xml", std::get<String>(stringOrBuffer).utf8().span());
+                    setClipboardContentFromSpan(content.get(), "image/svg+xml", makeUTF8CString(std::get<String>(stringOrBuffer)).span());
             }
         });
 
@@ -328,7 +334,7 @@ void WebPasteboardProxy::readBufferFromPasteboard(IPC::Connection& connection, s
         }
 
         auto* clipboard = wpe_display_get_clipboard(wpe_display_get_primary());
-        if (GRefPtr<GBytes> bytes = adoptGRef(wpe_clipboard_read_bytes(clipboard, pasteboardType.utf8().legacyCStringPointer()))) {
+        if (GRefPtr<GBytes> bytes = adoptGRef(wpe_clipboard_read_bytes(clipboard, makeUTF8CString(pasteboardType).legacyCStringPointer()))) {
             completionHandler(SharedBuffer::create(bytes.get()));
             return;
         }

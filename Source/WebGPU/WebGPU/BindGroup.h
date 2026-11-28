@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindGroupLayout.h"
 #import "BindableResource.h"
 #import "ShaderStage.h"
@@ -81,7 +85,7 @@ public:
 
     void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
 
     id<MTLBuffer> vertexArgumentBuffer() const { return m_vertexArgumentBuffer; }
     id<MTLBuffer> fragmentArgumentBuffer() const { return m_fragmentArgumentBuffer; }
@@ -90,14 +94,14 @@ public:
     const Vector<BindableResources>& resources() const LIFETIME_BOUND { return m_resources; }
 
     Device& device() const { return m_device; }
-    static bool LEGACY_NODELETE allowedUsage(const OptionSet<BindGroupEntryUsage>&);
+    NODELETE static bool allowedUsage(const OptionSet<BindGroupEntryUsage>&);
     static NSString* usageName(const OptionSet<BindGroupEntryUsage>&);
-    static uint64_t LEGACY_NODELETE makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WebGPU::TextureAspect);
+    NODELETE static uint64_t makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WebGPU::TextureAspect);
 
     const BindGroupLayout* bindGroupLayout() const { return m_bindGroupLayout.get(); }
 
-    const BufferAndType* LEGACY_NODELETE dynamicBuffer(uint32_t) const;
-    uint32_t LEGACY_NODELETE dynamicOffset(uint32_t bindingIndex, const Vector<uint32_t>*) const;
+    NODELETE const BufferAndType* dynamicBuffer(uint32_t) const;
+    NODELETE uint32_t dynamicOffset(uint32_t bindingIndex, const Vector<uint32_t>*) const;
     bool rebindSamplersIfNeeded() const;
     bool updateExternalTextures(WebGPU::ExternalTexture&) final;
     void releaseDestroyedResources();
@@ -105,8 +109,17 @@ public:
     const SamplersContainer& samplers() const LIFETIME_BOUND { return m_samplers; }
     uint32_t uniqueId() const { return m_uniqueIdentifier; }
     void validatedSuccessfully(uint32_t groupIndex, uint64_t pipelineIndex, uint32_t maxOffset) const;
-    bool LEGACY_NODELETE previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipelineIndex, uint32_t maxOffset) const;
+    NODELETE bool previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipelineIndex, uint32_t maxOffset) const;
     bool hasSamplers() const { return m_samplers.size(); }
+
+    // Counts live RenderBundles holding this bind group; see updateExternalTextures().
+    void addRenderBundleConsumer() const { ++m_renderBundleConsumerCount; }
+    void removeRenderBundleConsumer() const
+    {
+        ASSERT(m_renderBundleConsumerCount);
+        if (m_renderBundleConsumerCount)
+            --m_renderBundleConsumerCount;
+    }
 
 private:
     BindGroup(id<MTLBuffer> vertexArgumentBuffer, id<MTLBuffer> fragmentArgumentBuffer, id<MTLBuffer> computeArgumentBuffer, Vector<BindableResources>&&, const BindGroupLayout&, DynamicBuffersContainer&&, SamplersContainer&&, ShaderStageArray<ExternalTextureIndices>&&, uint32_t uniqueIdentifier, Device&);
@@ -118,13 +131,14 @@ private:
 
     const Ref<Device> m_device;
     Vector<BindableResources> m_resources;
-    RefPtr<const BindGroupLayout> m_bindGroupLayout;
+    const RefPtr<const BindGroupLayout> m_bindGroupLayout;
     DynamicBuffersContainer m_dynamicBuffers;
-    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_dynamicOffsetsIndices;
-    mutable HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_validatedBindGroup;
+    HashMap<uint32_t, uint32_t> m_dynamicOffsetsIndices;
+    mutable HashMap<uint64_t, uint32_t> m_validatedBindGroup;
     SamplersContainer m_samplers;
     ShaderStageArray<ExternalTextureIndices> m_externalTextureIndices;
     uint32_t m_uniqueIdentifier { 0 };
+    mutable size_t m_renderBundleConsumerCount { 0 };
 };
 
 } // namespace WebGPU::Metal

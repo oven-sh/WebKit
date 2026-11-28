@@ -86,7 +86,7 @@ static bool wcrBrowserEngineClientEnabled()
     return [PAL::getWCRBrowserEngineClientClassSingleton() shouldEvaluateURLs];
 }
 
-static RefPtr<ParentalControlsURLFilter>& LEGACY_NODELETE globalFilter()
+NODELETE static RefPtr<ParentalControlsURLFilter>& globalFilter()
 {
     static MainThreadNeverDestroyed<RefPtr<ParentalControlsURLFilter>> filter;
     return filter.get();
@@ -193,7 +193,7 @@ bool ParentalControlsURLFilter::isEnabled() const
 void ParentalControlsURLFilter::isURLAllowed(IsMainFrameLoad isMainFrame, const URL& mainDocumentURL, const URL& url, ParentalControlsContentFilter& filter)
 {
     isURLAllowedImpl(isMainFrame, mainDocumentURL, url, { [protectedThis = Ref { *this }, weakFilter = ThreadSafeWeakPtr { filter }] (bool allowed, NSData *replacementData) mutable {
-        ASSERT(!isMainThread());
+        assertIsCurrent(workQueueSingleton());
         if (RefPtr filter = weakFilter.get())
             filter->didReceiveAllowDecisionOnQueue(allowed, replacementData);
     }, CompletionHandlerCallThread::AnyThread });
@@ -202,7 +202,7 @@ void ParentalControlsURLFilter::isURLAllowed(IsMainFrameLoad isMainFrame, const 
 void ParentalControlsURLFilter::isURLAllowed(IsMainFrameLoad isMainFrame, const URL& mainDocumentURL, const URL& url, CompletionHandler<void(bool, NSData *)>&& completionHandler)
 {
     isURLAllowedImpl(isMainFrame, mainDocumentURL, url, { [protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] (bool allowed, NSData *replacementData) mutable {
-        ASSERT(!isMainThread());
+        assertIsCurrent(workQueueSingleton());
         callOnMainRunLoop([completionHandler = WTF::move(completionHandler), allowed, replacementData = RetainPtr { replacementData }]() mutable {
             completionHandler(allowed, replacementData.get());
         });
@@ -264,7 +264,7 @@ void ParentalControlsURLFilter::allowURL(const ParentalControlsURLFilterParamete
 
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
 void ParentalControlsURLFilter::requestPermissionForURL(const URL& url, const URL& referrerURL, CompletionHandler<void(bool)>&& completionHandler
-#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && HAVE(UI_VIEW)
     , CocoaView*
 #endif
 )

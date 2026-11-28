@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <WebGPU/WebGPUCpp.h>
 #import <utility>
 #import <wtf/CompletionHandler.h>
@@ -52,16 +56,17 @@ public:
 
     ~XRProjectionLayer();
 
-    void LEGACY_NODELETE setLabel(String&&) final;
+    NODELETE void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
-    void LEGACY_NODELETE startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples) final;
+    NODELETE bool isValid() const final;
+    NODELETE void startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples) final;
     void endFrame() final { }
+    void destroy() final;
 
-    id<MTLTexture> LEGACY_NODELETE colorTexture() const;
-    id<MTLTexture> LEGACY_NODELETE depthTexture() const;
-    const std::pair<id<MTLSharedEvent>, uint64_t>& LEGACY_NODELETE completionEvent() const;
-    size_t LEGACY_NODELETE reusableTextureIndex() const;
+    NODELETE id<MTLTexture> colorTexture() const;
+    NODELETE id<MTLTexture> depthTexture() const;
+    NODELETE const std::pair<id<MTLSharedEvent>, uint64_t>& completionEvent() const;
+    NODELETE size_t reusableTextureIndex() const;
     WebGPU::TextureFormat colorFormat() const { return m_colorFormat; }
     std::optional<WebGPU::TextureFormat> optionalDepthStencilFormat() const { return m_optionalDepthStencilFormat; }
     OptionSet<WebGPU::TextureUsage> flags() const { return m_flags; }

@@ -215,11 +215,11 @@ bool AVAudioSessionCaptureDeviceManager::setPreferredAudioSessionDeviceIDs()
         }
     }
     {
-        RELEASE_LOG_INFO(WebRTC, "AVAudioSessionCaptureDeviceManager setting preferred input to '%{public}s'", m_preferredMicrophoneID.utf8());
+        RELEASE_LOG_INFO(WebRTC, "AVAudioSessionCaptureDeviceManager setting preferred input to '%{public}s'", makeUTF8CString(m_preferredMicrophoneID));
 
         NSError *error = nil;
         if (![[PAL::getAVAudioSessionClassSingleton() sharedInstance] setPreferredInput:preferredInputPort error:&error]) {
-            RELEASE_LOG_ERROR(WebRTC, "AVAudioSessionCaptureDeviceManager failed to set preferred input to '%{public}s' with error: %@", m_preferredMicrophoneID.utf8(), error.localizedDescription);
+            RELEASE_LOG_ERROR(WebRTC, "AVAudioSessionCaptureDeviceManager failed to set preferred input to '%{public}s' with error: %@", makeUTF8CString(m_preferredMicrophoneID), error.localizedDescription);
             return false;
         }
     }
@@ -281,8 +281,7 @@ Vector<AVAudioSessionCaptureDevice> AVAudioSessionCaptureDeviceManager::retrieve
 
     auto availableInputs = [m_audioSession availableInputs];
 
-    Vector<AVAudioSessionCaptureDevice> newAudioDevices;
-    newAudioDevices.reserveInitialCapacity(availableInputs.count);
+    Vector<AVAudioSessionCaptureDevice> newAudioDevices(ReserveCapacityTag { }, availableInputs.count);
     for (AVAudioSessionPortDescription *portDescription in availableInputs) {
         auto device = AVAudioSessionCaptureDevice::createInput(portDescription, currentInput);
         newAudioDevices.append(WTF::move(device));

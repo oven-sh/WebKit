@@ -27,6 +27,7 @@
 #if HAVE(SCREEN_CAPTURE_KIT)
 
 #include <WebCore/DisplayCapturePromptType.h>
+#include <WebCore/ScreenCaptureKitSelection.h>
 #include <wtf/AbstractCanMakeCheckedPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -94,32 +95,35 @@ public:
 
     void cancelPicking();
 
-    RetainPtr<SCContentFilter> contentFilter(const CaptureDevice&);
+    ScreenCaptureKitSelection takeContentSelection(const CaptureDevice&);
     RefPtr<ScreenCaptureSessionSource> createSessionSourceForDevice(WeakPtr<ScreenCaptureSessionSourceObserver>, SCContentFilter*, SCStreamConfiguration*, SCStreamDelegate*);
-    void cancelPendingSessionForDevice(const CaptureDevice&);
+    void captureSourceWasDestroyedWithoutSession();
 
     WEBCORE_EXPORT void promptForGetDisplayMedia(DisplayCapturePromptType, CompletionHandler<void(std::optional<CaptureDevice>)>&&);
+    WEBCORE_EXPORT void selectWindowForCapture(uint32_t windowID, CompletionHandler<void(std::optional<CaptureDevice>)>&&);
     WEBCORE_EXPORT void cancelGetDisplayMediaPrompt();
 
 private:
     ScreenCaptureKitSharingSessionManager();
 
     void cleanupAllSessions();
-    void completeDeviceSelection(SCContentFilter*);
+    enum class IsTab : bool { No, Yes };
+    void completeDeviceSelection(SCContentFilter*, IsTab = IsTab::No);
 
     bool promptWithSCContentSharingPicker(DisplayCapturePromptType);
 
-    bool LEGACY_NODELETE promptingInProgress() const;
+    NODELETE bool promptingInProgress() const;
 
     void cleanupSessionSource(ScreenCaptureSessionSource&);
 
     Vector<WeakPtr<ScreenCaptureSessionSource>> m_activeSources;
 
-    RetainPtr<SCContentFilter> m_pendingContentFilter;
+    ScreenCaptureKitSelection m_pendingContentSelection;
 
     RetainPtr<WebDisplayMediaPromptHelper> m_promptHelper;
     CompletionHandler<void(std::optional<CaptureDevice>)> m_completionHandler;
-    std::unique_ptr<RunLoop::Timer> m_promptWatchdogTimer;
+    std::unique_ptr<RunLoop::Timer> m_watchdogTimer;
+    size_t m_requestCount { 0 };
 };
 
 } // namespace WebCore

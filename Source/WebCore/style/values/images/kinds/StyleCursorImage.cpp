@@ -39,8 +39,7 @@
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CursorImage);
 
@@ -102,7 +101,7 @@ Ref<DeprecatedCSSOMValue> CursorImage::computedStyleDeprecatedCSSOMValue(CSSValu
     return computedStyleValue(style)->createDeprecatedCSSOMWrapper(owner);
 }
 
-ImageWithScale CursorImage::selectBestFitImage(const Document& document)
+ImageWithResolution CursorImage::selectBestFitImage(const Document& document)
 {
     using namespace CSS::Literals;
 
@@ -117,5 +116,4 @@ bool CursorImage::usesDataProtocol() const
     return m_originalURL.resolved.protocolIsData();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -1,4 +1,4 @@
 
-Harness Error (FAIL), message = SyntaxError: 'with' statements are not valid in strict mode.
-
+PASS A relative URL in a statically imported CSS module resolves against the URL the request was redirected to
+PASS A relative URL in a dynamically imported CSS module resolves against the URL the request was redirected to
 

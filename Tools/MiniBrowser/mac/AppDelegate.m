@@ -25,6 +25,8 @@
 
 #import "AppDelegate.h"
 
+#import "AutomationConnection.h"
+
 #import "ExtensionManagerWindowController.h"
 #import "SettingsController.h"
 #import "WK1BrowserWindowController.h"
@@ -37,6 +39,9 @@
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WebKit.h>
+#import <WebKit/_WKAutomationSession.h>
+#import <WebKit/_WKAutomationSessionConfiguration.h>
+#import <WebKit/_WKAutomationSessionDelegate.h>
 #import <WebKit/_WKFeature.h>
 #import <WebKit/_WKNotificationData.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
@@ -47,6 +52,8 @@
 static const NSString * const kURLArgumentString = @"--url";
 static const NSString * const kSiteIsolationArgumentString = @"--force-site-isolation";
 static const NSString * const kWebInspectorArgumentString = @"--web-inspector";
+static const NSString * const kAutomationFileDescriptorArgumentString = @"--automation-fd";
+static const NSString * const kDownloadsDirectoryArgumentString = @"--downloads-directory";
 
 static NSString *sTargetURL = nil;
 
@@ -55,6 +62,20 @@ static BOOL sForceSiteIsolationSetting = NO;
 static BOOL sShouldEnableSiteIsolation = NO;
 
 static BOOL sOpenWebInspector = NO;
+
+static const NSTimeInterval windowStateChangeTimeout = 5;
+static const NSTimeInterval windowFramePollInterval = 0.1;
+static const NSTimeInterval windowFrameSettleTime = 0.5;
+
+// When minidriver launches MiniBrowser, it passes one end of the automation connection as --automation-fd <descriptor>.
+static int sAutomationFileDescriptor = -1;
+
+// This reads the arguments itself, because MiniBrowserUserDefaults() needs it before -_parseArguments runs.
+static BOOL isControlledByAutomation(void)
+{
+    NSArray *arguments = [[NSProcessInfo processInfo] arguments];
+    return [arguments containsObject:kAutomationFileDescriptorArgumentString];
+}
 
 enum {
     WebKit1NewWindowTag = 1,
@@ -80,6 +101,12 @@ enum {
 
 @end
 
+@interface BrowserAppDelegate () <AutomationConnectionDelegate, _WKAutomationSessionDelegate> {
+    AutomationConnection *_automationConnection;
+    _WKAutomationSession *_automationSession;
+}
+@end
+
 @implementation BrowserAppDelegate
 
 - (id)init
@@ -95,10 +122,30 @@ enum {
     return self;
 }
 
+NSUserDefaults *MiniBrowserUserDefaults(void)
+{
+    static NSUserDefaults *defaults;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        if (!isControlledByAutomation()) {
+            defaults = NSUserDefaults.standardUserDefaults;
+            return;
+        }
+
+        // Under automation, settings start from their defaults, so that a WebDriver session doesn't
+        // depend on how MiniBrowser was set up by hand. They are kept apart from the user's settings,
+        // and cleared at launch. Settings passed on the command line still apply.
+        NSString *automationSuiteName = @"org.webkit.MiniBrowser.Automation";
+        defaults = [[NSUserDefaults alloc] initWithSuiteName:automationSuiteName];
+        [defaults removePersistentDomainForName:automationSuiteName];
+    });
+    return defaults;
+}
+
 static BOOL enabledForFeature(_WKFeature *feature)
 {
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:feature.key])
-        return [[NSUserDefaults standardUserDefaults] boolForKey:feature.key];
+    if ([MiniBrowserUserDefaults() objectForKey:feature.key])
+        return [MiniBrowserUserDefaults() boolForKey:feature.key];
     return [feature defaultValue];
 }
 
@@ -148,7 +195,7 @@ static BOOL enabledForFeature(_WKFeature *feature)
 
 - (NSDictionary<NSString *, NSNumber *> *)notificationPermissionsForWebsiteDataStore:(WKWebsiteDataStore *)dataStore
 {
-    return [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"NotificationPermissions"];
+    return [MiniBrowserUserDefaults() dictionaryForKey:@"NotificationPermissions"];
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)(void))completionHandler
@@ -278,6 +325,33 @@ static NSNumber *_currentBadge;
 
     const NSUInteger webInspectorIndex = [args indexOfObject:kWebInspectorArgumentString];
     sOpenWebInspector = (webInspectorIndex != NSNotFound);
+
+    const NSUInteger downloadsDirectoryIndex = [args indexOfObject:kDownloadsDirectoryArgumentString];
+    if (downloadsDirectoryIndex != NSNotFound && downloadsDirectoryIndex + 1 < args.count)
+        _downloadsDirectory = [NSURL fileURLWithPath:args[downloadsDirectoryIndex + 1] isDirectory:YES];
+    else
+        _downloadsDirectory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+
+    const NSUInteger automationFileDescriptorIndex = [args indexOfObject:kAutomationFileDescriptorArgumentString];
+    if (automationFileDescriptorIndex != NSNotFound && automationFileDescriptorIndex + 1 < args.count) {
+        NSScanner *scanner = [NSScanner scannerWithString:args[automationFileDescriptorIndex + 1]];
+        int fileDescriptor;
+        if ([scanner scanInt:&fileDescriptor] && scanner.isAtEnd && fileDescriptor >= 0)
+            sAutomationFileDescriptor = fileDescriptor;
+    }
+
+    if (self.isControlledByAutomation) {
+        // Under automation, the automation session opens all windows.
+        _openNewWindowAtStartup = false;
+        // AppKit animates a sheet on the main thread, which blocks for about a quarter of a second
+        // whenever a JavaScript dialog opens or closes.
+        [[NSUserDefaults standardUserDefaults] registerDefaults:@{ @"NSSheetAnimationTime": @0 }];
+    }
+}
+
+- (BOOL)isControlledByAutomation
+{
+    return isControlledByAutomation();
 }
 
 - (WKWebViewConfiguration *)defaultConfiguration
@@ -286,15 +360,17 @@ static NSNumber *_currentBadge;
 
     if (!configuration) {
         configuration = [[WKWebViewConfiguration alloc] init];
-        configuration.websiteDataStore = [self persistentDataStore];
+        configuration.websiteDataStore = self.isControlledByAutomation ? [WKWebsiteDataStore nonPersistentDataStore] : [self persistentDataStore];
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
         _WKProcessPoolConfiguration *processConfiguration = [[_WKProcessPoolConfiguration alloc] init];
         if (_settingsController.perWindowWebProcessesDisabled)
             processConfiguration.usesSingleWebProcess = YES;
-        else
+        else {
             processConfiguration.usesWebProcessCache = YES;
+            processConfiguration.prewarmsProcessesAutomatically = YES;
+        }
 
         configuration.processPool = [[WKProcessPool alloc] _initWithConfiguration:processConfiguration];
 #pragma clang diagnostic pop
@@ -311,7 +387,6 @@ static NSNumber *_currentBadge;
         configuration.preferences._allowsPictureInPictureMediaPlayback = YES;
         configuration.preferences._developerExtrasEnabled = YES;
         configuration.preferences._accessibilityIsolatedTreeEnabled = YES;
-        configuration.preferences._logsPageMessagesToSystemConsoleEnabled = YES;
         configuration.preferences._pushAPIEnabled = YES;
         configuration.preferences._notificationsEnabled = YES;
         configuration.preferences._notificationEventEnabled = YES;
@@ -487,12 +562,20 @@ static NSNumber *_currentBadge;
     [_browserWindowControllers removeObject:window.windowController];
 }
 
+- (NSSet<BrowserWindowController *> *)browserWindowControllers
+{
+    return [_browserWindowControllers copy];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
 {
     WebHistory *webHistory = [[WebHistory alloc] init];
     [WebHistory setOptionalSharedHistory:webHistory];
 
     [self _updateNewWindowKeyEquivalents];
+
+    if (self.isControlledByAutomation)
+        [self _startAutomation];
 
     if (!_openNewWindowAtStartup)
         return;
@@ -637,6 +720,292 @@ static NSNumber *_currentBadge;
 {
     [[self persistentDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^{
         NSLog(@"Did clear default store website data.");
+    }];
+}
+
+#pragma mark Automation
+
+- (void)_startAutomation
+{
+    if (sAutomationFileDescriptor < 0) {
+        NSLog(@"%@ needs a file descriptor.", kAutomationFileDescriptorArgumentString);
+        _exit(EXIT_FAILURE);
+    }
+
+    // Exit when minidriver does, however it exits. macOS has no parent-death signal, so watch
+    // the parent process. This runs off the main thread, so it works even if the main thread hangs.
+    // A parent process ID of 1 means that minidriver has exited already, and launchd adopted
+    // MiniBrowser.
+    pid_t parentProcessID = getppid();
+    if (parentProcessID == 1)
+        _exit(EXIT_SUCCESS);
+    static dispatch_source_t parentExitSource;
+    parentExitSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, parentProcessID, DISPATCH_PROC_EXIT, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
+    dispatch_source_set_event_handler(parentExitSource, ^{
+        _exit(EXIT_SUCCESS);
+    });
+    dispatch_resume(parentExitSource);
+    // The parent may have exited before the source was installed.
+    if (getppid() != parentProcessID)
+        _exit(EXIT_SUCCESS);
+
+    _automationConnection = [[AutomationConnection alloc] initWithFileDescriptor:sAutomationFileDescriptor delegate:self];
+    if (!_automationConnection) {
+        NSLog(@"Failed to open the automation connection on file descriptor %d.", sAutomationFileDescriptor);
+        _exit(EXIT_FAILURE);
+    }
+    [_automationConnection open];
+}
+
+- (_WKAutomationSession *)automationConnection:(AutomationConnection *)connection createSessionWithIdentifier:(NSString *)identifier configuration:(_WKAutomationSessionConfiguration *)configuration
+{
+    _automationSession = [[_WKAutomationSession alloc] initWithConfiguration:configuration];
+    _automationSession.sessionIdentifier = identifier;
+    _automationSession.delegate = self;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [self.defaultConfiguration.processPool _setAutomationSession:_automationSession];
+#pragma clang diagnostic pop
+    return _automationSession;
+}
+
+- (BOOL)automationAcceptsInsecureCertificates
+{
+    return _automationSession.configuration.acceptInsecureCertificates;
+}
+
+- (NSString *)browserNameForAutomationConnection:(AutomationConnection *)connection
+{
+    return @"MiniBrowser";
+}
+
+- (NSString *)browserVersionForAutomationConnection:(AutomationConnection *)connection
+{
+    return [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
+}
+
+- (void)automationConnectionDidClose:(AutomationConnection *)connection
+{
+    // minidriver ended the session, or went away.
+    [NSApp terminate:nil];
+}
+
+- (void)_automationSessionDidDisconnectFromRemote:(_WKAutomationSession *)automationSession
+{
+    // The session ended, for example on Delete Session. minidriver launches a MiniBrowser for each
+    // session, and learns that the session ended when the connection closes.
+    [NSApp terminate:nil];
+}
+
+- (NSWindow *)_frontmostAutomationWindow
+{
+    for (NSWindow *window in [NSApp orderedWindows]) {
+        if (![window.delegate isKindOfClass:[WK2BrowserWindowController class]])
+            continue;
+        if (((WK2BrowserWindowController *)window.delegate).webView.configuration._isControlledByAutomation)
+            return window;
+    }
+    return nil;
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession requestNewWebViewWithOptions:(_WKAutomationSessionBrowsingContextOptions)options completionHandler:(void (^)(WKWebView *))completionHandler
+{
+    WKWebViewConfiguration *configuration = [self.defaultConfiguration copy];
+    configuration._controlledByAutomation = YES;
+
+    WK2BrowserWindowController *controller = [[WK2BrowserWindowController alloc] initWithConfiguration:configuration];
+    [self didCreateBrowserWindowController:controller];
+
+    // This is what Safari does under WebDriver. A new tab opens in the frontmost automation window,
+    // unless that's a popup window, which can't have tabs. The tab isn't selected, so the page in the
+    // selected tab stays visible. A new window comes to the front, and MiniBrowser becomes active, so
+    // that the first click in the window isn't taken by activating it.
+    NSWindow *frontmostWindow = [self _frontmostAutomationWindow];
+    if ((options & _WKAutomationSessionBrowsingContextOptionsPreferNewTab) && frontmostWindow && frontmostWindow.tabbingMode != NSWindowTabbingModeDisallowed) {
+        NSWindowTabGroup *tabGroup = frontmostWindow.tabGroup;
+        NSWindow *selectedWindow = tabGroup.selectedWindow;
+        [tabGroup addWindow:controller.window];
+        tabGroup.selectedWindow = selectedWindow;
+    } else {
+        [controller.window makeKeyAndOrderFront:nil];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+        [self _waitForNotification:NSWindowDidChangeOcclusionStateNotification ofWindow:controller.window until:^{
+            return (BOOL)(controller.window.occlusionState & NSWindowOcclusionStateVisible);
+        } completionHandler:^{
+            completionHandler(controller.webView);
+        }];
+        return;
+    }
+    completionHandler(controller.webView);
+}
+
+- (_WKAutomationSessionBrowsingContextPresentation)_automationSession:(_WKAutomationSession *)automationSession currentPresentationForWebView:(WKWebView *)webView
+{
+    return webView.window.tabGroup.windows.count > 1 ? _WKAutomationSessionBrowsingContextPresentationTab : _WKAutomationSessionBrowsingContextPresentationWindow;
+}
+
+- (WK2BrowserWindowController *)_controllerForAutomationWebView:(WKWebView *)webView
+{
+    id controller = webView.UIDelegate;
+    return [controller isKindOfClass:[WK2BrowserWindowController class]] ? controller : nil;
+}
+
+- (_WKAutomationSessionJavaScriptDialogType)_automationSession:(_WKAutomationSession *)automationSession typeOfCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    WK2BrowserWindowController *controller = [self _controllerForAutomationWebView:webView];
+    return controller ? controller.automationDialogType : _WKAutomationSessionJavaScriptDialogTypeNone;
+}
+
+- (BOOL)_automationSession:(_WKAutomationSession *)automationSession isShowingJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    return [self _automationSession:automationSession typeOfCurrentJavaScriptDialogForWebView:webView] != _WKAutomationSessionJavaScriptDialogTypeNone;
+}
+
+- (NSString *)_automationSession:(_WKAutomationSession *)automationSession messageOfCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    return [self _controllerForAutomationWebView:webView].automationDialogMessage;
+}
+
+- (NSString *)_automationSession:(_WKAutomationSession *)automationSession defaultTextOfCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    return [self _controllerForAutomationWebView:webView].automationDialogDefaultText;
+}
+
+- (NSString *)_automationSession:(_WKAutomationSession *)automationSession userInputOfCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    return [self _controllerForAutomationWebView:webView].automationDialogUserInput;
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession setUserInput:(NSString *)value forCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    [self _controllerForAutomationWebView:webView].automationDialogUserInput = value;
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession acceptCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    [[self _controllerForAutomationWebView:webView] completeAutomationDialogAccepting:YES];
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession dismissCurrentJavaScriptDialogForWebView:(WKWebView *)webView
+{
+    [[self _controllerForAutomationWebView:webView] completeAutomationDialogAccepting:NO];
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession requestSwitchToWebView:(WKWebView *)webView completionHandler:(void (^)(void))completionHandler
+{
+    // Like Safari, select the web view's tab, and bring its window to the front.
+    NSWindow *window = webView.window;
+    window.tabGroup.selectedWindow = window;
+    [window makeKeyAndOrderFront:nil];
+    completionHandler();
+}
+
+- (void)_waitForNotification:(NSNotificationName)name ofWindow:(NSWindow *)window until:(BOOL (^)(void))condition completionHandler:(void (^)(void))completionHandler
+{
+    if (condition()) {
+        completionHandler();
+        return;
+    }
+
+    __block BOOL done = NO;
+    __block id observer = nil;
+    void (^finish)(void) = ^{
+        done = YES;
+        [[NSNotificationCenter defaultCenter] removeObserver:observer];
+        observer = nil;
+        completionHandler();
+    };
+
+    observer = [[NSNotificationCenter defaultCenter] addObserverForName:name object:window queue:nil usingBlock:^(NSNotification *notification) {
+        if (!done && condition())
+            finish();
+    }];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(windowStateChangeTimeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (done)
+            return;
+        NSLog(@"Timed out waiting for %@ of window %@, reporting success anyway.", name, window);
+        finish();
+    });
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession requestHideWindowOfWebView:(WKWebView *)webView completionHandler:(void (^)(void))completionHandler
+{
+    NSWindow *window = webView.window;
+    if (!window || window.isMiniaturized) {
+        completionHandler();
+        return;
+    }
+
+    // To WebDriver, a minimized window isn't maximized, but AppKit keeps the frame of a zoomed window when minimizing it.
+    if (window.isZoomed)
+        [window zoom:nil];
+
+    [self _waitForNotification:NSWindowDidMiniaturizeNotification ofWindow:window until:^{
+        return window.isMiniaturized;
+    } completionHandler:completionHandler];
+    [window miniaturize:nil];
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession requestRestoreWindowOfWebView:(WKWebView *)webView completionHandler:(void (^)(void))completionHandler
+{
+    NSWindow *window = webView.window;
+    if (!window || !window.isMiniaturized) {
+        completionHandler();
+        return;
+    }
+
+    [self _waitForNotification:NSWindowDidDeminiaturizeNotification ofWindow:window until:^{
+        return (BOOL)!window.isMiniaturized;
+    } completionHandler:^{
+        [self _waitForNotification:NSWindowDidChangeOcclusionStateNotification ofWindow:window until:^{
+            return (BOOL)(window.occlusionState & NSWindowOcclusionStateVisible);
+        } completionHandler:completionHandler];
+    }];
+    [window deminiaturize:nil];
+}
+
+- (void)_automationSession:(_WKAutomationSession *)automationSession requestMaximizeWindowOfWebView:(WKWebView *)webView completionHandler:(void (^)(void))completionHandler
+{
+    NSWindow *window = webView.window;
+    if (!window) {
+        completionHandler();
+        return;
+    }
+
+    if (!window.isZoomed)
+        [window zoom:nil];
+    [self _waitForFrameOfWindowToSettle:window completionHandler:completionHandler];
+}
+
+- (void)_waitForFrameOfWindowToSettle:(NSWindow *)window completionHandler:(void (^)(void))completionHandler
+{
+    __block NSRect lastFrame = window.frame;
+    __block NSRect lastVisibleFrame = window.screen.visibleFrame;
+    __block NSUInteger unchangedPolls = 0;
+    __block NSUInteger polls = 0;
+    [NSTimer scheduledTimerWithTimeInterval:windowFramePollInterval repeats:YES block:^(NSTimer *timer) {
+        polls++;
+        NSRect frame = window.frame;
+        NSRect visibleFrame = window.screen.visibleFrame;
+        if (NSEqualRects(frame, lastFrame) && NSEqualRects(visibleFrame, lastVisibleFrame))
+            unchangedPolls++;
+        else {
+            unchangedPolls = 0;
+            lastFrame = frame;
+            lastVisibleFrame = visibleFrame;
+        }
+
+        BOOL settled = unchangedPolls * windowFramePollInterval >= windowFrameSettleTime;
+        if (!settled && polls * windowFramePollInterval < windowStateChangeTimeout)
+            return;
+        if (!settled)
+            NSLog(@"Timed out waiting for the frame of window %@ to settle, reporting success anyway.", window);
+        [timer invalidate];
+        completionHandler();
     }];
 }
 

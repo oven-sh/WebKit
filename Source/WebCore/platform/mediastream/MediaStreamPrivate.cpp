@@ -54,8 +54,7 @@ Ref<MediaStreamPrivate> MediaStreamPrivate::create(Ref<const Logger>&& logger, R
 
 Ref<MediaStreamPrivate> MediaStreamPrivate::create(Ref<const Logger>&& logger, RefPtr<RealtimeMediaSource>&& audioSource, RefPtr<RealtimeMediaSource>&& videoSource)
 {
-    MediaStreamTrackPrivateVector tracks;
-    tracks.reserveInitialCapacity(2);
+    MediaStreamTrackPrivateVector tracks(ReserveCapacityTag { }, 2);
 
     if (audioSource)
         tracks.append(MediaStreamTrackPrivate::create(logger.copyRef(), audioSource.releaseNonNull()));
@@ -96,19 +95,19 @@ MediaStreamPrivate::~MediaStreamPrivate()
 
 void MediaStreamPrivate::addObserver(MediaStreamPrivateObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.add(observer);
 }
 
 void MediaStreamPrivate::removeObserver(MediaStreamPrivateObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.remove(observer);
 }
 
 void MediaStreamPrivate::forEachObserver(NOESCAPE const Function<void(MediaStreamPrivateObserver&)>& apply)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     Ref protectedThis { *this };
     m_observers.forEach(apply);
 }

@@ -93,14 +93,14 @@ public:
 
     void addObserver(CanvasObserver&);
     void removeObserver(CanvasObserver&);
-    bool LEGACY_NODELETE hasObserver(CanvasObserver&) const;
+    NODELETE bool hasObserver(CanvasObserver&) const;
     void notifyObserversContentsWillChange(const FloatRect&);
     void notifyObserversCanvasResized();
     void notifyObserversCanvasDestroyed(); // Must be called in destruction before clearing m_context.
     void addDisplayBufferObserver(CanvasDisplayBufferObserver&);
     void removeDisplayBufferObserver(CanvasDisplayBufferObserver&);
     void notifyObserversCanvasDisplayBufferPrepared();
-    bool hasDisplayBufferObservers() const { return !m_displayBufferObservers.isEmptyIgnoringNullReferences(); }
+    bool hasDisplayBufferObservers() const { return !m_displayBufferObservers.computeIsEmpty(); }
 
     HashSet<Ref<Element>> cssCanvasClients() const;
 
@@ -110,11 +110,16 @@ public:
     void willUpdateContents(const std::optional<FloatRect>& rect) { return willUpdateContents(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
     virtual void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
 
+    // Whether a whole-canvas update with this option was notified and repeating it is a no-op until the canvas is next prepared for display.
+    bool hasPendingEntireContentsUpdate(ShouldApplyPostProcessingToDirtyRect option) const { return m_pendingEntireContentsUpdate == option; }
+    // Const because HTMLCanvasElement::copiedImage() const invalidates it when it creates the copied image.
+    void clearPendingEntireContentsUpdate() const { m_pendingEntireContentsUpdate = std::nullopt; }
+
     bool hasActiveInspectorCanvasCallTracer() const;
 
     bool shouldAccelerate() const;
 
-    WEBCORE_EXPORT static void LEGACY_NODELETE setMaxCanvasAreaForTesting(std::optional<size_t>);
+    NODELETE WEBCORE_EXPORT static void setMaxCanvasAreaForTesting(std::optional<size_t>);
     [[nodiscard]] bool validateArea() const;
 
     virtual void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) = 0;
@@ -139,9 +144,10 @@ protected:
     String lastFillText() const { return m_lastFillText; }
     void addCanvasNeedingPreparationForDisplayOrFlush();
     void removeCanvasNeedingPreparationForDisplayOrFlush();
+    void setPendingEntireContentsUpdate(ShouldApplyPostProcessingToDirtyRect);
 
 private:
-    bool LEGACY_NODELETE shouldInjectNoiseBeforeReadback() const;
+    NODELETE bool shouldInjectNoiseBeforeReadback() const;
 
     mutable IntSize m_size;
     mutable std::unique_ptr<CSSParserContext> m_cssParserContext;
@@ -156,12 +162,13 @@ private:
 
     bool m_originClean { true };
     mutable bool m_hasWarnedExceedsArea { false };
+    mutable std::optional<ShouldApplyPostProcessingToDirtyRect> m_pendingEntireContentsUpdate;
 #if ASSERT_ENABLED
     bool m_didNotifyObserversCanvasDestroyed { false };
 #endif
 };
 
-WebCoreOpaqueRoot LEGACY_NODELETE root(CanvasBase*);
+NODELETE WebCoreOpaqueRoot root(CanvasBase*);
 
 
 inline const CSSParserContext& CanvasBase::cssParserContext() const LIFETIME_BOUND

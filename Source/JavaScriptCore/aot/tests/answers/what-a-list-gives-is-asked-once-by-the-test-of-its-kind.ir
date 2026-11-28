@@ -1,0 +1,93 @@
+# const mixed = [1, "two", 3.5];
+# function total(list) { let sum = 0; let letters = 0; for (let at = 0; at < list.length; at++) { const each = list[at]; if (typeof each === "number") sum += each; else letters += each.length; } return sum + letters; }
+# print(total(mixed));
+# mixed.push(id(true));
+# print(total(mixed));
+# print("went on");
+# `typeof each === "number"` comes before a branch and tests a value that was just read from an array. Neither side is only nullish, so the side that the program names is tested in full,
+# and the other side checks the value against the rest of the type (what-a-list-gives-is-asked-once-by-the-test-of-a-pattern.ir has the other order).
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: CheckProof [[given]] checkedType=undefined|i32|fractional|string {{*}} source=Contents [isLeftToTestBehind]
+# FORM-NEXT: TypeTest [[given]] testedType=i32|fractional [asksInFull]
+# FORM: CheckProof [[given]] checkedType=undefined|string {{*}} source=Contents
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 7.5
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found boolean in
+# ALL-NOT: went on
+# ALL: crashed with
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: 7.5
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found boolean in
+# CALLS-NOT: went on
+# CALLS: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Data data=d0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="print" [isFreeName]
+    v5 = Call v1, -, v2 calleeName="total"
+    v6 = Call v4, -, v5 calleeName="print"
+    v7 = PropGet v2 key="push"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="id" [isFreeName]
+    v10 = Boolean boolean=true
+    v11 = Call v9, -, v10 calleeName="id"
+    v12 = Call v7, v2, v11 calleeKey="push" calleeName="mixed.push"
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="print" [isFreeName]
+    v15 = Call v1, -, v2 calleeName="total"
+    v16 = Call v14, -, v15 calleeName="print"
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="print" [isFreeName]
+    v19 = String string="went on"
+    v20 = Call v18, -, v19 calleeName="print"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="total" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|number|string>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4, v6)
+  b1(v7, v8, v9):
+    LoopHint
+    v11 = PropGet v0 key="length"
+    v12 = Less v9, v11
+    Branch v12 -> taken b2(), notTaken b6()
+  b2():
+    v13 = ElemGet v0, v9
+    v14 = TypeTest v13 testedType=number
+    Branch v14 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v15):
+    v16 = NarrowByTest v13, v15
+    v17 = Add v7, v16
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v18, v8)
+  b4(v19):
+    v20 = NarrowByTest v13, v19
+    v21 = PropGet v20 key="length"
+    v22 = Add v8, v21
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v7, v23)
+  b5(v24, v25):
+    v26 = Increment v9
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v24, v25, v27)
+  b6():
+    v28 = Add v7, v8
+    Return v28
+}
+data d0 root=Array{contents=anything elements=[Number{value=1}, String{value="two"}, Number{value=3.5}]} module=m0
+entry module=m0

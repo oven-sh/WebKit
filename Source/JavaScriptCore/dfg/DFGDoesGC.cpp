@@ -86,6 +86,7 @@ bool doesGC(Graph& graph, Node* node)
     case ArithNegate:
     case ArithIMul:
     case ArithAbs:
+    case ArithSign:
     case ArithMin:
     case ArithMax:
     case ArithPow:
@@ -303,6 +304,7 @@ bool doesGC(Graph& graph, Node* node)
     case CallForwardVarargs:
     case CallObjectConstructor:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CheckTierUpAndOSREnter:
     case CheckTierUpAtReturn:
     case CheckTierUpInLoop:
@@ -352,6 +354,8 @@ bool doesGC(Graph& graph, Node* node)
     case InstanceOfCustom:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case NumberToStringWithRadix:
     case NumberToStringWithValidRadixConstant:
     case ProfileType:
@@ -442,6 +446,7 @@ bool doesGC(Graph& graph, Node* node)
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case NewSymbol:
     case MakeRope:
     case MakeAtomString:
@@ -453,6 +458,7 @@ bool doesGC(Graph& graph, Node* node)
     case GetLazyClosureVar:
     case NewTypedArray:
     case NewTypedArrayBuffer:
+    case GetTypedArrayBuffer:
     case ThrowStaticError:
     case GetPropertyEnumerator:
     case EnumeratorInByVal:

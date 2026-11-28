@@ -1,0 +1,54 @@
+# function either(f) { return f; }  const Met = [five functions that fill no object].map(either).at(-1);  const one = new Met(1);  one.constructor.mark = 1;
+# Five functions meet, which is more than Link tells apart: they are lost, and a `new` of what has met goes by the road of lost functions. What it makes is an object that nobody follows,
+# and the prototype above that object names its maker under `constructor`. So where lost functions are constructed they leave, however many have met: nothing is proven of their parameters.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: result=undefined|int
+# CHECK-NOT: parameter 0 expected=
+# CHECK: function f6 callers-known one-callee
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Call v5, -, v0 calleeName="either"
+    v7 = Call v5, -, v1 calleeName="either"
+    v8 = Call v5, -, v2 calleeName="either"
+    v9 = Call v5, -, v3 calleeName="either"
+    v10 = Call v5, -, v4 calleeName="either"
+    v11 = Integer integer=1
+    v12 = Construct v10, -, v11
+    v13 = PropGet v12 key="constructor"
+    PropSet v13, v11 key="mark"
+    v15 = Undefined
+    Return v15
+}
+function f1 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="either" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

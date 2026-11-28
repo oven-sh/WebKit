@@ -1,0 +1,44 @@
+# function count(members: Map<unknown, unknown>) { let n = 0; members.forEach(() => { n = n + 1; }); return n; }   sink(count);
+# The receiver is written as a Map and nothing is proven of it, and the call stands in no loop. It is handed a closure that was made for it alone, so it is a loop itself, and the guess at the receiver opens.
+# Behind the tests the method of the library is copied to where it is called and the closure's body into its loop, and the closure is never made. (This program holds no library, so the typed arm calls the built-in: what is held here is that the arms open.)
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=Map
+# CHECK: = IsPristine {{*}}builtinClass=Map
+# CHECK: frequency=Rare
+# CHECK: = NewClosure
+# CHECK: = Call {{*}}calleeKey="forEach"
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: = IsPristine
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="n"}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="count" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<anything, anything> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<anything, anything>):
+    v1 = NewObject layout=L0
+    v2 = Integer integer=0
+    PutEnvironmentField v1, v2 layout=L0
+    v4 = PropGet v0 key="forEach"
+    v5 = NewClosure v1 function=f2
+    v6 = Call v4, v0, v5 calleeKey="forEach" calleeName="members.forEach"
+    v7 = GetEnvironmentField v1 layout=L0
+    Return v7
+}
+function f2 module=m0 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = Undefined
+    Return v5
+}

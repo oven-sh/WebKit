@@ -1,0 +1,30 @@
+# a call that is marked as done in place has no closed form by value: the row of the built-in says which operand it calls, with which `this` and which arguments, and that call is built, whatever is withheld
+# callee.$apply() and callee.$apply(receiver) are calls. A list that is not proven to be an array is read in front of the call. A literal is the list. In tail position the forwarded call is the tail call.
+# RUN: walk f2 f3 f4 f6 f7 f10 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[callee_f2]]:
+# CHECK: = Call [[callee_f2]] traits
+# CHECK-LABEL: code f3:Body
+# CHECK: b0([[callee_f3]]: {{*}}, [[receiver_f3]]:
+# CHECK: = Call [[callee_f3]], [[receiver_f3]] traits
+# CHECK-LABEL: code f4:Body
+# CHECK: b0([[callee_f4]]: {{*}}, [[receiver_f4]]: {{*}}, [[given_f4]]:
+# CHECK: [[list_f4]]: Array @Cell = NewArgumentList [[given_f4]] traits
+# CHECK-NEXT: = CallList [[callee_f4]], [[receiver_f4]], [[list_f4]] traits
+# CHECK-LABEL: code f6:Body
+# CHECK: b0([[callee_f6]]: {{*}}, [[receiver_f6]]:
+# CHECK: [[list_f6]]: Array @Cell = NewArray
+# CHECK-NEXT: = CallList [[callee_f6]], [[receiver_f6]], [[list_f6]] traits
+# CHECK-LABEL: code f7:Body
+# CHECK: [[list_f7]]: Array @Cell = NewArgumentList
+# CHECK-NEXT: [[call_f7]]: {{*}} = CallList {{*}}, [[list_f7]] traits{{*}} tail
+# CHECK-NEXT: ReturnCall [[call_f7]]
+# CHECK-LABEL: code f10:Body
+# CHECK: b0([[callee_f10]]: {{*}}, [[receiver_f10]]: {{*}}, [[a_f10]]: {{*}}, [[b_f10]]:
+# CHECK: = Call [[callee_f10]], [[receiver_f10]], [[a_f10]], [[b_f10]] traits
+# RUN(NEVER): walk f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 mechanisms=none
+# NEVER-NOT: isDoneInPlace
+# RUN(ALL): walk f2 f3 f4 f5 f6 f7 f8 f9 f10 f11
+# ALL-NOT: isDoneInPlace
+# ALL-NOT: CallBuiltin
+# PROGRAM-OF: ../../answers/calls-done-in-place-enter-no-function-of-the-library.ir

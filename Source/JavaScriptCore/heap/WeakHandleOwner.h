@@ -33,11 +33,25 @@ class AbstractSlotVisitor;
 
 class JS_EXPORT_PRIVATE WeakHandleOwner {
 public:
+    enum class FinalizeResult : bool {
+        // If the WeakImpl is managed by JSC::Weak, this result should always be returned.
+        KeepImpl,
+        DeallocateImpl,
+    };
+
     WeakHandleOwner() = default;
     virtual ~WeakHandleOwner();
+    // FIXME: These should take a JSValue. The Handle<Unknown> they're passed points at a copy, not at the WeakImpl.
     // reason will only be non-null when generating a debug GC heap snapshot.
     virtual bool isReachableFromOpaqueRoots(Handle<Unknown>, void* context, AbstractSlotVisitor&, ASCIILiteral* reason = nullptr);
-    virtual void finalize(Handle<Unknown>, void* context);
+
+    // The handle is already dead when finalize is called. Thus, it must follow the same rules as any `destroy`: no entering into
+    // JS, allocating GC objects, no looking at GC member values. The last one includes Structure, which means `downcast`/`is`
+    // cannot be used, `static_cast` should be used instead.
+    // WeakSet::finalizeDeadHandles() may run a finalizer off the thread with heap access, so a finalizer must not allocate a handle,
+    // which needs heap access, and may clear other handles only with Weak::clearConcurrently(). That includes not destroying an
+    // object that holds a Weak<>, since ~Weak calls clear().
+    virtual FinalizeResult finalize(Handle<Unknown>, void* context);
 
 private:
     explicit WeakHandleOwner(ClangVTableWorkaroundTag);

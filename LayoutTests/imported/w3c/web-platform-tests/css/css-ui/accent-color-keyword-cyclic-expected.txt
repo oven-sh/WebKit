@@ -1,0 +1,6 @@
+
+PASS AccentColor mirrors accent-color: currentcolor
+PASS accent-color: currentcolor resolves against the element's own color
+PASS accent-color: AccentColor resolves to the parent's accent-color
+PASS Cyclic color: AccentColor with accent-color: currentcolor uses the parent color
+

@@ -49,6 +49,9 @@
 #include <wtf/MachSendRight.h>
 #endif
 
+#if ENABLE(WEBXR_ANCHORS)
+#include "XRAnchorIdentifier.h"
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
 #include "XRHitTestSourceIdentifier.h"
 #include <WebCore/ExceptionOr.h>
@@ -107,6 +110,15 @@ enum class VisibilityState : uint8_t {
 using LayerHandle = int;
 
 #if ENABLE(WEBXR)
+#if ENABLE(WEBXR_ANCHORS)
+using AnchorIdentifier = WebCore::XRAnchorIdentifier;
+
+enum class AnchorTrackingState : uint8_t {
+    Stopped,
+    Paused,
+    Tracking,
+};
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
 using HitTestSource = WebCore::XRHitTestSourceIdentifier;
 using TransientInputHitTestSource = WebCore::XRHitTestSourceIdentifier;
@@ -141,11 +153,17 @@ enum class SessionFeature : uint8_t {
     ReferenceSpaceTypeLocalFloor,
     ReferenceSpaceTypeBoundedFloor,
     ReferenceSpaceTypeUnbounded,
+#if ENABLE(WEBXR_ANCHORS)
+    Anchors,
+#endif
 #if ENABLE(WEBXR_HANDS)
     HandTracking,
 #endif
 #if ENABLE(WEBXR_HIT_TEST)
     HitTest,
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    PlaneDetection,
 #endif
     WebGPU,
 #if ENABLE(WEBXR_LAYERS)
@@ -186,6 +204,10 @@ inline std::optional<SessionFeature> parseSessionFeatureDescriptor(StringView st
         return SessionFeature::ReferenceSpaceTypeBoundedFloor;
     if (equalLettersIgnoringASCIICase(feature, "unbounded"_s))
         return SessionFeature::ReferenceSpaceTypeUnbounded;
+#if ENABLE(WEBXR_ANCHORS)
+    if (equalLettersIgnoringASCIICase(feature, "anchors"_s))
+        return SessionFeature::Anchors;
+#endif
 #if ENABLE(WEBXR_HANDS)
     if (equalLettersIgnoringASCIICase(feature, "hand-tracking"_s))
         return SessionFeature::HandTracking;
@@ -193,6 +215,10 @@ inline std::optional<SessionFeature> parseSessionFeatureDescriptor(StringView st
 #if ENABLE(WEBXR_HIT_TEST)
     if (equalLettersIgnoringASCIICase(feature, "hit-test"_s))
         return SessionFeature::HitTest;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    if (equalLettersIgnoringASCIICase(feature, "plane-detection"_s))
+        return SessionFeature::PlaneDetection;
 #endif
     if (equalLettersIgnoringASCIICase(feature, "webgpu"_s))
         return SessionFeature::WebGPU;
@@ -216,6 +242,10 @@ inline String sessionFeatureDescriptor(SessionFeature sessionFeature)
         return "bounded-floor"_s;
     case SessionFeature::ReferenceSpaceTypeUnbounded:
         return "unbounded"_s;
+#if ENABLE(WEBXR_ANCHORS)
+    case SessionFeature::Anchors:
+        return "anchors"_s;
+#endif
 #if ENABLE(WEBXR_HANDS)
     case SessionFeature::HandTracking:
         return "hand-tracking"_s;
@@ -223,6 +253,10 @@ inline String sessionFeatureDescriptor(SessionFeature sessionFeature)
 #if ENABLE(WEBXR_HIT_TEST)
     case SessionFeature::HitTest:
         return "hit-test"_s;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    case SessionFeature::PlaneDetection:
+        return "plane-detection"_s;
 #endif
     case SessionFeature::WebGPU:
         return "webgpu"_s;
@@ -328,19 +362,40 @@ struct TransientInputHitTestOptions {
 };
 #endif // ENABLE(WEBXR_HIT_TEST)
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+enum class PlaneOrientation : uint8_t {
+    Horizontal,
+    Vertical,
+};
+
+enum class PlaneSemanticLabel : uint8_t {
+    Floor,
+    Wall,
+    Ceiling,
+    Table,
+};
+#endif
+
+struct FloatQuaternion {
+    float x { 0.0f };
+    float y { 0.0f };
+    float z { 0.0f };
+    float w { 1.0f };
+};
+
+struct Pose {
+    WebCore::FloatPoint3D position;
+    FloatQuaternion orientation;
+};
+
+#if ENABLE(WEBXR_ANCHORS)
+struct AnchorState {
+    Pose pose;
+    AnchorTrackingState trackingState { AnchorTrackingState::Stopped };
+};
+#endif
+
 struct FrameData {
-    struct FloatQuaternion {
-        float x { 0.0f };
-        float y { 0.0f };
-        float z { 0.0f };
-        float w { 1.0f };
-    };
-
-    struct Pose {
-        WebCore::FloatPoint3D position;
-        FloatQuaternion orientation;
-    };
-
     struct Fov {
         // In radians
         float up { 0.0f };
@@ -375,6 +430,8 @@ struct FrameData {
 #if PLATFORM(COCOA)
         MachSendRight completionSyncEvent;
 #endif
+
+        WebCore::IntSize physicalSizeForEye(size_t eye) const { return { physicalSize[eye][0], physicalSize[eye][1] }; }
     };
 
 #if OS(ANDROID)
@@ -458,6 +515,16 @@ struct FrameData {
     };
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    struct Plane {
+        uint64_t id { 0 };
+        Pose pose; // In device's tracking space.
+        Vector<WebCore::FloatPoint> polygon;
+        std::optional<PlaneOrientation> orientation;
+        std::optional<PlaneSemanticLabel> semanticLabel;
+    };
+#endif
+
     bool isTrackingValid { false };
     bool isPositionValid { false };
     bool isPositionEmulated { false };
@@ -468,14 +535,26 @@ struct FrameData {
     StageParameters stageParameters;
     Vector<View> views;
     HashMap<LayerHandle, UniqueRef<LayerData>> layers;
+#if ENABLE(WEBXR_ANCHORS)
+    HashMap<AnchorIdentifier, AnchorState> trackedAnchors;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     HashMap<HitTestSource, Vector<HitTestResult>> hitTestResults;
     HashMap<TransientInputHitTestSource, Vector<TransientInputHitTestResult>> transientInputHitTestResults;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    // nullopt means unchanged since the previous frame (or incomplete data), which is distinct from an empty list meaning no planes.
+    std::optional<Vector<Plane>> detectedPlanes;
 #endif
     Vector<InputSource> inputSources;
     XREnvironmentBlendMode environmentBlendMode { XREnvironmentBlendMode::Opaque };
 
     FrameData copy() const;
+};
+
+enum class LayerUpdateMode : uint8_t {
+    Dynamic,
+    Static,
 };
 
 #if ENABLE(WEBXR_LAYERS)
@@ -508,9 +587,10 @@ struct DeviceLayer {
 #if ENABLE(WEBXR_LAYERS)
     bool blendTextureSourceAlpha { false };
     bool forceMonoPresentation { false };
+    bool contentUpdated { true };
     struct QuadLayerData {
         WebCore::FloatSize worldSize;
-        FrameData::Pose poseInLocalSpace;
+        Pose poseInLocalSpace;
     };
     std::optional<QuadLayerData> quadLayerData;
     struct EquirectLayerData {
@@ -518,19 +598,19 @@ struct DeviceLayer {
         float centralHorizontalAngle;
         float upperVerticalAngle;
         float lowerVerticalAngle;
-        FrameData::Pose poseInLocalSpace;
+        Pose poseInLocalSpace;
     };
     std::optional<EquirectLayerData> equirectLayerData;
     struct CylinderLayerData {
         float radius;
         float centralAngle;
         float aspectRatio;
-        FrameData::Pose poseInLocalSpace;
+        Pose poseInLocalSpace;
     };
     std::optional<CylinderLayerData> cylinderLayerData;
     struct CubeLayerData {
         // Cube layers are mono and positioned solely by their orientation relative to the layer's space.
-        FrameData::FloatQuaternion orientation;
+        FloatQuaternion orientation;
     };
     std::optional<CubeLayerData> cubeLayerData;
 #endif
@@ -575,10 +655,14 @@ public:
     virtual void initializeReferenceSpace(ReferenceSpaceType) = 0;
     virtual std::optional<LayerInfo> createLayerProjection(uint32_t width, uint32_t height, bool alpha) = 0;
 #if ENABLE(WEBXR_LAYERS)
-    virtual std::optional<LayerInfo> createCompositionLayer(CompositionLayerType, WebCore::IntSize, LayerLayout) = 0;
+    virtual std::optional<LayerInfo> createCompositionLayer(CompositionLayerType, WebCore::IntSize, LayerLayout, LayerUpdateMode) = 0;
 #endif
     virtual void deleteLayer(LayerHandle) = 0;
 
+#if ENABLE(WEBXR_ANCHORS)
+    virtual void createAnchor(const Pose&, CompletionHandler<void(WebCore::ExceptionOr<AnchorIdentifier>)>&&) = 0;
+    virtual void deleteAnchor(AnchorIdentifier) = 0;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     virtual void requestHitTestSource(const HitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<HitTestSource>)>&&) = 0;
     virtual void deleteHitTestSource(HitTestSource) = 0;
@@ -607,7 +691,7 @@ protected:
     // https://immersive-web.github.io/webxr/#xr-device-concept
     // Each XR device has a list of enabled features for each XRSessionMode in its list of supported modes,
     // which is a list of feature descriptors which MUST be initially an empty list.
-    using FeaturesPerModeMap = HashMap<SessionMode, FeatureList, IntHash<SessionMode>, WTF::StrongEnumHashTraits<SessionMode>>;
+    using FeaturesPerModeMap = HashMap<SessionMode, FeatureList, IntHash<SessionMode>>;
     FeaturesPerModeMap m_enabledFeaturesMap;
     FeaturesPerModeMap m_supportedFeaturesMap;
 

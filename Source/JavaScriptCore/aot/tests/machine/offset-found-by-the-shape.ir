@@ -1,0 +1,14 @@
+# the read of a field that two layouts keep at different offsets calls no stub and names no place of the program: the code finds the offset by the shape word and loads
+# RUN: bytes f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: ReadAtSite
+# CHECK-NOT: SiteCache
+# CHECK-NOT: GetById
+# two shapes at two distances: a table of a byte a shape takes one instruction fewer than a comparison
+# RUN(TABLE): bytes f1:Body mechanisms=none+TypedOperations
+# TABLE-LABEL: unit f1:Body
+# TABLE: constant {{*}}OffsetTable
+# RUN(WITHHELD): bytes f1:Body mechanisms=none
+# WITHHELD-LABEL: unit f1:Body
+# WITHHELD: argument thunk {{*}}GetById
+# PROGRAM-OF: ../walk/typed-operations/offset-found-by-the-shape.ir

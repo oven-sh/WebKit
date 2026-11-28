@@ -68,18 +68,26 @@ enum class BrowsingContextGroupUpdate : uint8_t { None, AddProcess, AddProcessAn
 
 class BrowsingContextGroup : public RefCountedAndCanMakeWeakPtr<BrowsingContextGroup> {
 public:
-    static Ref<BrowsingContextGroup> create(WebCore::CrossOriginMode crossOriginMode) { return adoptRef(*new BrowsingContextGroup(crossOriginMode)); }
+    static Ref<BrowsingContextGroup> create(WebCore::CrossOriginMode crossOriginMode, WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity) { return adoptRef(*new BrowsingContextGroup(crossOriginMode, websiteDataStore, lockdownMode, enhancedSecurity)); }
     ~BrowsingContextGroup();
 
     WebCore::BrowsingContextGroupIdentifier identifier() const { return m_identifier; }
 
     WebCore::CrossOriginMode crossOriginMode() const { return m_crossOriginMode; }
-    bool LEGACY_NODELETE canUseProcessForCrossOriginIsolation(const WebProcessProxy&) const;
+    WebsiteDataStore& websiteDataStore() const { return m_websiteDataStore; }
+    WebProcessProxy::LockdownMode lockdownMode() const { return m_lockdownMode; }
+    EnhancedSecurity enhancedSecurity() const { return m_enhancedSecurity; }
+    NODELETE bool canUseProcessForCrossOriginIsolation(const WebProcessProxy&) const;
+    NODELETE bool canUseProcessForEnhancedSecurity(const WebProcessProxy&, const WebPreferences&) const;
+    NODELETE bool canUseProcess(const WebProcessProxy&, const WebPreferences&) const;
+    NODELETE bool canUseProcessForNavigation(const WebProcessProxy&, const WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity) const;
+    NODELETE bool hasSameModesAs(const BrowsingContextGroup&) const;
 
     void sharedProcessForSite(WebsiteDataStore&, API::WebsitePolicies*, const WebPreferences&, const WebCore::Site&, const WebCore::Site& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, API::PageConfiguration&, IsMainFrame, CompletionHandler<void(FrameProcess*)>&&);
     Ref<FrameProcess> ensureProcessForSite(const WebCore::Site&, const WebCore::Site& mainFrameSite, WebProcessProxy&, const WebPreferences&, LoadedWebArchive = LoadedWebArchive::No, BrowsingContextGroupUpdate = BrowsingContextGroupUpdate::AddProcessAndInjectBrowsingContext);
     RefPtr<FrameProcess> processForSite(const WebCore::Site&);
     RefPtr<FrameProcess> processForSite(const WebCore::Site&, ProcessCrossOriginIsolation);
+    RefPtr<WebProcessProxy> processForNavigationToSite(const WebCore::Site&, ProcessCrossOriginIsolation, const WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity);
     void addFrameProcess(FrameProcess&);
     void addFrameProcessAndInjectPageContextIf(FrameProcess&, Function<bool(WebPageProxy&)>);
     bool addFrameProcessWithoutInjectingPageContext(FrameProcess&);
@@ -91,6 +99,7 @@ public:
     void removePage(WebPageProxy&, ShouldSendCloseMessage = ShouldSendCloseMessage::Yes);
     void closeRemotePagesForPage(WebPageProxy&, ShouldSendCloseMessage = ShouldSendCloseMessage::Yes);
     bool hasMultiplePages() const;
+    bool hasPageOtherThan(const WebPageProxy&) const;
     void forEachPage(NOESCAPE const Function<void(WebPageProxy&)>&);
     bool hasVisiblePage() const;
     void forEachRemotePage(const WebPageProxy&, NOESCAPE const Function<void(RemotePageProxy&)>&);
@@ -101,7 +110,7 @@ public:
     void transitionPageToRemotePage(WebPageProxy&, const WebCore::Site& openerSite);
     void transitionProvisionalPageToRemotePage(ProvisionalPageProxy&, const WebCore::Site& provisionalNavigationFailureSite);
 
-    bool LEGACY_NODELETE hasRemotePages(const WebPageProxy&);
+    NODELETE bool hasRemotePages(const WebPageProxy&);
 
     WebCore::OriginKeyed resolveAgentClusterKeying(const WebCore::SecurityOriginData&, WebCore::OriginKeyed requested);
     std::pair<WebCore::AgentClusterAssignment, RefPtr<AgentClusterKeyingReservation>> assignAgentCluster(const AgentClusterRequest&, AgentClusterKeyingRecording);
@@ -116,13 +125,16 @@ private:
     void removeAgentClusterKeyingReservation(const AgentClusterKeyingReservation&);
     WebCore::AgentClusterIdentifier agentClusterIdentifier(const WebCore::SecurityOriginData&, WebCore::OriginKeyed, const std::optional<WebCore::SecurityOriginData>& crossOriginIsolationKey);
 
-    explicit BrowsingContextGroup(WebCore::CrossOriginMode);
+    BrowsingContextGroup(WebCore::CrossOriginMode, WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity);
 
     RefPtr<FrameProcess> liveSharedProcess();
     void clearSharedProcess();
 
     WebCore::BrowsingContextGroupIdentifier m_identifier { WebCore::BrowsingContextGroupIdentifier::generate() };
     const WebCore::CrossOriginMode m_crossOriginMode;
+    const Ref<WebsiteDataStore> m_websiteDataStore;
+    const WebProcessProxy::LockdownMode m_lockdownMode;
+    const EnhancedSecurity m_enhancedSecurity;
 
     WeakPtr<FrameProcess> m_sharedProcess;
     HashSet<WebCore::Site> m_sharedProcessSites;

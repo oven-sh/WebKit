@@ -1,0 +1,62 @@
+# The list follows from the program alone. A function is an object too, and may have a toString of its own: where a built-in whose receiver is a text would convert it, it is refused.
+# It is taken only as the second argument of replace and replaceAll, which call it.
+# sought: function word() {} word.toString = () => "c"; "abc".indexOf(word) . laid: "abc".replace("c", () => "c")
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /A2/
+# CHECK: text /Babc/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="laid" variable=g0}, {name="sought" variable=g1}]
+entry module=m0
+variable g0 name="laid" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="sought" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    Return v4
+}
+function f1 name="sought" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f4
+    PropSet v0, v1 key="toString"
+    v3 = String string="abc"
+    v4 = PropGet v3 key="indexOf"
+    v5 = Call v4, v3, v0 calleeKey="indexOf"
+    v6 = String string="a"
+    v7 = PropGet v6 key="toUpperCase"
+    v8 = Call v7, v6 calleeKey="toUpperCase"
+    v9 = Builtin builtin=RegExp
+    v10 = Add v8, v5
+    v11 = Construct v9, -, v10
+    Return v11
+}
+function f2 name="laid" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = String string="c"
+    v2 = NewClosure function=f4
+    v3 = PropGet v0 key="replace"
+    v4 = Call v3, v0, v1, v2 calleeKey="replace"
+    v5 = String string="b"
+    v6 = PropGet v5 key="toUpperCase"
+    v7 = Call v6, v5 calleeKey="toUpperCase"
+    v8 = Builtin builtin=RegExp
+    v9 = Add v7, v4
+    v10 = Construct v8, -, v9
+    Return v10
+}
+function f3 name="word" module=m0 position=30 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="letter" module=m0 position=40 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="c"
+    Return v0
+}

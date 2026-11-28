@@ -1,0 +1,80 @@
+# The remainder of a product is asked of one operation that makes no product; the product is made where that operation has no answer. It is made at once where it has another use, where a call stands between the two and where nothing speaks of BigInts.
+# function rest(x, y, m) { const difference = x - y, rest = difference * difference % m; return rest >= 0n ? rest : m + rest; }
+# function both(x, y, m) { const difference = x - y, product = difference * difference, rest = product % m; return rest >= 0n ? rest : product; }
+# function numbers(x, y, m) { const difference = x - y; return difference * difference % m; }
+# function behindCall(x, y, m) { const difference = x - y, product = difference * difference; const rest = product % m(); return rest >= 0n ? rest : 0n; }
+# The operation is asked under the remainder's position; the branch behind it asks whether it had an answer.
+# RUN: emit f1 mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Branch({{*}}, origin = 6) -> {{*}}rare
+# RUN(BOTH): emit f2 mechanisms=all
+# BOTH-LABEL: unit f2:Body
+# BOTH-NOT: origin = 6) -> 
+# RUN(NUMBERS): emit f3 mechanisms=all
+# NUMBERS-LABEL: unit f3:Body
+# NUMBERS-NOT: Branch(
+# RUN(BEHIND): emit f4 mechanisms=all
+# BEHIND-LABEL: unit f4:Body
+# BEHIND-NOT: origin = 7) -> 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="drive" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="rest" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Sub v0, v1
+    v4 = Mul v3, v3
+    v5 = Mod v4, v2
+    v6 = BigInt digits="0"
+    v7 = GreaterEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    v8 = Add v2, v5
+    Return v8
+}
+function f2 name="both" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Sub v0, v1
+    v4 = Mul v3, v3
+    v5 = Mod v4, v2
+    v6 = BigInt digits="0"
+    v7 = GreaterEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    Return v4
+}
+function f3 name="numbers" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Sub v0, v1
+    v4 = Mul v3, v3
+    v5 = Mod v4, v2
+    Return v5
+}
+function f4 name="behindCall" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Sub v0, v1
+    v4 = Mul v3, v3
+    v5 = Call v2, -
+    v6 = Mod v4, v5
+    v7 = BigInt digits="0"
+    v8 = GreaterEq v6, v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Return v6
+  b2():
+    Return v7
+}

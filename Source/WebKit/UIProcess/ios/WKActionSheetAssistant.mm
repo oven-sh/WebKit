@@ -48,6 +48,7 @@
 #import <WebCore/ResolvedCaptionDisplaySettingsOptions.h>
 #import <WebCore/UIViewControllerUtilities.h>
 #import <pal/spi/ios/ManagedConfigurationSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/Markable.h>
 #import <wtf/SoftLinking.h>
@@ -382,12 +383,12 @@ static bool isJavaScriptURL(NSURL *url)
         // <rdar://problem/17049781> Configure the UIAlertController's title appropriately.
     }
 
-    for (_WKElementAction *action in actions) {
+    for (RetainPtr action : makeVector<RetainPtr<_WKElementAction>>(actions)) {
         [_interactionSheet _addActionWithTitle:[action title] style:UIAlertActionStyleDefault handler:^{
             [action _runActionWithElementInfo:_elementInfo.get() forActionSheetAssistant:self];
             [self cleanupSheet];
         } shouldDismissHandler:^{
-            return (BOOL)(!action.dismissalHandler || action.dismissalHandler());
+            return (BOOL)(![action dismissalHandler] || [action dismissalHandler]());
         }];
     }
 
@@ -563,7 +564,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     BOOL isAnimating = elementInfo.isAnimating;
     if (!elementInfo.isAnimatedImage) {
         // If the activated element is not an animated image, but it has animations underneath it, take the "is animating" state from these animations.
-        for (const auto& elementAnimationContext : elementInfo._animationsUnderElement) {
+        for (const auto& elementAnimationContext : borrow(elementInfo._animationsUnderElement)) {
             if (elementAnimationContext.isAnimating) {
                 isAnimating = YES;
                 break;

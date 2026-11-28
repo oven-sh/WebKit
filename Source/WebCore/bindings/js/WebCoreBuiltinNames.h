@@ -69,6 +69,7 @@ namespace WebCore {
     macro(AudioProcessingEvent) \
     macro(AudioScheduledSourceNode) \
     macro(AudioSession) \
+    macro(AudioSinkInfo) \
     macro(AudioWorklet) \
     macro(AudioWorkletGlobalScope) \
     macro(AudioWorkletNode) \
@@ -110,7 +111,6 @@ namespace WebCore {
     macro(Credential) \
     macro(CredentialsContainer) \
     macro(CryptoKey) \
-    macro(CSPViolationReportBody) \
     macro(CSSAnimation) \
     macro(CSSCounterStyleRule) \
     macro(CSSColor) \
@@ -173,11 +173,12 @@ namespace WebCore {
     macro(DecompressionStreamDecoder) \
     macro(DecompressionStreamTransform) \
     macro(DelayNode) \
-    macro(DeprecationReportBody) \
     macro(DeviceMotionEvent) \
     macro(DeviceOrientationEvent) \
     macro(DevicePosture) \
     macro(DigitalCredential) \
+    macro(DocumentPictureInPicture) \
+    macro(DocumentPictureInPictureEvent) \
     macro(DocumentTimeline) \
     macro(DynamicsCompressorNode) \
     macro(ElementImage) \
@@ -355,6 +356,7 @@ namespace WebCore {
     macro(PaymentRequestUpdateEvent) \
     macro(PaymentResponse) \
     macro(PerformanceNavigationTiming) \
+    macro(PhoneNumberPossessionCredential) \
     macro(PictureInPictureEvent) \
     macro(PictureInPictureWindow) \
     macro(PaintWorkletGlobalScope) \
@@ -380,8 +382,6 @@ namespace WebCore {
     macro(PushSubscription) \
     macro(PushSubscriptionChangeEvent) \
     macro(PushSubscriptionOptions) \
-    macro(Report) \
-    macro(ReportBody) \
     macro(ReportingObserver) \
     macro(ResizeObserver) \
     macro(ResizeObserverEntry) \
@@ -426,6 +426,7 @@ namespace WebCore {
     macro(SQLResultSet) \
     macro(SQLResultSetRowList) \
     macro(SQLTransaction) \
+    macro(Scheduler) \
     macro(ScreenLuminance) \
     macro(ScreenOrientation) \
     macro(ScrollTimeline) \
@@ -452,7 +453,6 @@ namespace WebCore {
     macro(StorageManagerFileSystem) \
     macro(Subscriber) \
     macro(SubtleCrypto) \
-    macro(TestReportBody) \
     macro(TextDecoderStream) \
     macro(TextDecoderStreamDecoder) \
     macro(TextDetector) \
@@ -527,6 +527,8 @@ namespace WebCore {
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
     macro(XMLHttpRequest) \
+    macro(XRAnchor) \
+    macro(XRAnchorSet) \
     macro(XRBoundedReferenceSpace) \
     macro(XRCompositionLayer) \
     macro(XRCubeLayer) \
@@ -548,6 +550,8 @@ namespace WebCore {
     macro(XRJointSpace) \
     macro(XRLayer) \
     macro(XRLayerEvent) \
+    macro(XRPlane) \
+    macro(XRPlaneSet) \
     macro(XRPose) \
     macro(XRProjectionLayer) \
     macro(XRQuadLayer) \
@@ -616,11 +620,14 @@ namespace WebCore {
     macro(didDetectExtraBytes) \
     macro(disturbed) \
     macro(document) \
+    macro(documentPictureInPicture) \
     macro(encode) \
     macro(encoding) \
     macro(errorSteps) \
     macro(fatal) \
     macro(fetch) \
+    macro(FetchLaterResult) \
+    macro(fetchLater) \
     macro(fetchRequest) \
     macro(FileReader) \
     macro(FileReaderSync) \
@@ -726,6 +733,7 @@ namespace WebCore {
     macro(response) \
     macro(responseCacheIsValid) \
     macro(retrieveResponse) \
+    macro(scheduler) \
     macro(self) \
     macro(sessionStorage) \
     macro(setBody) \

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeTable.h"
+#include "AOTStubDescriptor.h"
 #include "AOTStubKey.h"
 #include <span>
 
@@ -47,7 +48,6 @@ consteval bool operationFrontEndsAreWellFormed()
 }
 static_assert(operationFrontEndsAreWellFormed());
 
-// Argument 0, the Instance*, is not an operand: a front end reads instanceGPR, and tailCallOperation sets the argument again.
 StubSignature operationFrontEndSignature(unsigned numberOfOperands);
 
 enum class PreludeExit : bool { CallsOperation, Returns };
@@ -55,6 +55,7 @@ enum class PreludeExit : bool { CallsOperation, Returns };
 struct OperationPrelude {
     Entry operation;
     PreludeExit (*emit)(StubAssembler&);
+    StubOwnEffects ownEffects;
 };
 
 std::span<const OperationPrelude> operationPreludes();

@@ -492,7 +492,6 @@
 #include <wtf/FastBitVector.h>
 #include <wtf/FastTLS.h>
 #include <wtf/FlatteningVariantAdaptor.h>
-#include <wtf/GenericHashKey.h>
 #include <wtf/Indenter.h>
 #include <wtf/InlineMap.h>
 #include <wtf/LazyRef.h>
@@ -708,7 +707,7 @@
 #include "Image.h"
 #include "ImageAdapter.h"
 #include "ImageBufferFormat.h"
-#include "ImageDrawingOptions.h"
+#include "ImageDrawDescriptor.h"
 #include "ImageOrientation.h"
 #include "InspectorInstrumentationPublic.h"
 #include "IntSizeHash.h"

@@ -26,6 +26,7 @@
 #include "RenderSVGRoot.h"
 
 #include "BorderShape.h"
+#include "BoxDecorationPainter.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
 #include "LayoutRepainter.h"
@@ -65,7 +66,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGRoot);
 const int defaultWidth = 300;
 const int defaultHeight = 150;
 
-RenderSVGRoot::RenderSVGRoot(SVGSVGElement& element, Style::ComputedStyle&& style)
+RenderSVGRoot::RenderSVGRoot(SVGSVGElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderReplaced(Type::SVGRoot, element, WTF::move(style))
 {
     ASSERT(isRenderSVGRoot());
@@ -297,8 +298,8 @@ void RenderSVGRoot::layoutChildren()
     m_strokeBoundingBox = std::nullopt;
     m_cachedVisualOverflowRect = std::nullopt;
 
-    constexpr auto objectBoundingBoxDecorationWithoutTransformations = SVGBoundingBoxComputation::objectBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IgnoreTransformations;
-    m_objectBoundingBoxWithoutTransformations = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecorationWithoutTransformations);
+    constexpr auto objectBoundingBoxDecorationWithoutTransforms = SVGBoundingBoxComputation::objectBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IgnoreTransforms;
+    m_objectBoundingBoxWithoutTransforms = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecorationWithoutTransforms);
 
     containerLayout.positionChildrenRelativeToContainer();
 }
@@ -349,7 +350,7 @@ void RenderSVGRoot::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     // paints the root's background.
     if (!isDocumentElementRenderer() && !paintInfo.paintBehavior.contains(PaintBehavior::CompositedOverflowScrollContent)) {
         auto overflowBox = visualOverflowRect();
-        flipForWritingMode(overflowBox);
+        blockStartRelativeToPhysical(overflowBox);
         overflowBox.moveBy(adjustedPaintOffset);
         if (!overflowBox.intersects(paintInfo.rect))
             return;
@@ -372,12 +373,11 @@ void RenderSVGRoot::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
 {
     if ((paintInfo.phase == PaintPhase::BlockBackground || paintInfo.phase == PaintPhase::ChildBlockBackground) && usedStyle().visibility() == UsedVisibility::Visible) {
         if (hasVisibleBoxDecorations())
-            paintBoxDecorations(paintInfo, paintOffset);
+            Paint::BoxDecorationPainter { *this, paintInfo, paintOffset }.paintBoxDecorations();
     }
 
-    auto adjustedPaintOffset = paintOffset + location();
     if (paintInfo.phase == PaintPhase::Mask && usedStyle().visibility() == UsedVisibility::Visible) {
-        paintSVGMask(paintInfo, adjustedPaintOffset);
+        paintSVGMask(paintInfo, paintOffset);
         return;
     }
 
@@ -392,7 +392,7 @@ void RenderSVGRoot::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
         // bounds via paintContents below. Skip the interaction-region contribution so the
         // SVG root's border rect doesn't change the interaction-region shape — only the
         // children should contribute to interaction regions.
-        auto borderRect = LayoutRect(adjustedPaintOffset, borderBoxSize());
+        auto borderRect = LayoutRect(paintOffset, borderBoxSize());
         auto usedStyle = this->usedStyle();
         auto borderShape = BorderShape::shapeForBorderRect(usedStyle, borderRect);
         protect(paintInfo.eventRegionContext())->unite(borderShape.deprecatedPixelSnappedRoundedRect(document().deviceScaleFactor()), *this, usedStyle.computedStyle(), false, EventRegionContext::ContributeToInteractionRegions::No);
@@ -430,7 +430,7 @@ void RenderSVGRoot::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
         paintContents(paintInfo, scrolledOffset);
 
     if ((paintInfo.phase == PaintPhase::Outline || paintInfo.phase == PaintPhase::SelfOutline) && hasOutline() && usedStyle().visibility() == UsedVisibility::Visible)
-        paintOutline(paintInfo, LayoutRect(adjustedPaintOffset, borderBoxSize()));
+        paintOutline(paintInfo, LayoutRect(paintOffset, borderBoxSize()));
 }
 
 void RenderSVGRoot::paintContents(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -537,7 +537,7 @@ bool RenderSVGRoot::nodeAtPoint(const HitTestRequest& request, HitTestResult& re
     if ((hitTestAction == HitTestAction::BlockBackground || hitTestAction == HitTestAction::ChildBlockBackground) && visibleToHitTesting(request)) {
         LayoutRect boundsRect(adjustedLocation, borderBoxSize());
         if (locationInContainer.intersects(boundsRect) && hitTestBorderRadius(locationInContainer, accumulatedOffset)) {
-            updateHitTestResult(result, flipForWritingMode(locationInContainer.point() - toLayoutSize(adjustedLocation)));
+            updateHitTestResult(result, physicalToBlockStartRelative(locationInContainer.point() - toLayoutSize(adjustedLocation)));
             if (result.addNodeToListBasedTestResult(protect(nodeForHitTest()).get(), request, locationInContainer, boundsRect) == HitTestProgress::Stop)
                 return true;
         }

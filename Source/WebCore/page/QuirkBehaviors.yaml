@@ -104,9 +104,6 @@ MayNeedToIgnoreContentObservation:
   accessor: shouldIgnoreContentObservationForClick
   export: true
 
-# airindiaexpress.com https://webkit.org/b/317375
-NeedsAirIndiaExpressLayeringQuirk:
-
 # spotify.com rdar://138918575
 NeedsBodyScrollbarWidthNoneDisabledQuirk:
 
@@ -131,6 +128,9 @@ NeedsCNNCaptionQuirk:
   available: cocoa
   export: true
 
+# chatgpt.com rdar://189766320, grok.com rdar://191470125
+NeedsMarginTrimInlineSupportsQuirk:
+
 NeedsLimitedMatroskaSupportQuirk:
   available: "mediaRecorder && cocoaWebMPlayer"
   accessor: needsLimitedMatroskaSupport
@@ -150,6 +150,11 @@ NeedsClaudeSidebarViewportUnitQuirk:
   conditions: [ElementSelector]
   implementation: custom
 
+NeedsOpenRiceAdPopupHeightQuirk:
+  available: iOSFamily
+  conditions: [ElementSelector]
+  implementation: custom
+
 NeedsHideSelectionDuringOverflowScrollQuirk:
   available: iOSFamily
   export: true
@@ -162,10 +167,6 @@ NeedsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk:
 
 NeedsDisableDOMPasteAccessQuirk:
   implementation: custom
-
-# facebook.com https://webkit.org/b/295071
-# FIXME: https://webkit.org/b/295318
-NeedsFacebookRemoveNotSupportedQuirk:
 
 # facebook.com rdar://141103350
 # Matched against the live top URL because quirks are not re-resolved on same-document navigations.
@@ -217,25 +218,9 @@ NeedsGoogleMapsEmbedManipulationSurfaceQuirk:
 NeedsGoogleMapsMagnificationWheelDeltaScalingQuirk:
   available: mac
 
-# maps.google.com rdar://67358928
-NeedsGoogleMapsScrollingQuirk:
-  available: iOSFamily
-
 # translate.google.com rdar://106539018
 NeedsGoogleTranslateScrollingQuirk:
   available: iOSFamily
-
-# netflix.com rdar://178545839
-NeedsNetflixVolumeSliderQuirk:
-  available: "iOS || vision"
-
-# play.geforcenow.com https://webkit.org/b/303622
-# FIXME: Remove as soon as nvidia adjusts the site for Safari. https://webkit.org/b/303718
-NeedsGeforcenowWarningDisplayNoneQuirk:
-
-# Expedia Group sites (hotels.com, expedia.*, orbitz.com, …) rdar://126631968
-NeedsExpediaGroupAnimationQuirk:
-  conditions: [ElementSelector]
 
 # This section is dedicated to UA override for iPad. iPads (but iPad Mini) are sending a desktop user agent
 # to websites. In some cases, the website breaks in some ways, not expecting a touch interface for the website.
@@ -295,6 +280,10 @@ NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk:
   conditions: [SecondaryURL]
   implementation: custom
 
+NeedsStyleSheetInjectedQuirk:
+  parameters: [StyleSheet]
+  implementation: custom
+
 # youtube.com rdar://135886305
 # NOTE: Also remove `BuilderConverter::convertScrollbarWidth` and related code when removing this quirk.
 NeedsScrollbarWidthThinDisabledQuirk:
@@ -307,15 +296,23 @@ NeedsScrollbarWidthThinDisabledQuirk:
 NeedsSeekingSupportDisabledQuirk:
   accessor: needsSeekingSupportDisabled
 
+# youtube.com, google.com: rdar://191425637
+NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk:
+  conditions: [SecondaryURL]
+  conditionsRequired: true
+  implementation: custom
+
+# nest.com, google.com: rdar://73582895
+NeedsSingleOwnerLoginStorageAccessQuirk:
+  conditions: [SecondaryURL]
+  conditionsRequired: true
+  implementation: custom
+
 NeedsSupportsProgressMonitoringQuirk:
   available: mediaSource
   accessor: needsSupportsProgressMonitoring
 
 NeedsSuppressPostLayoutBoundaryEventsQuirk:
-
-# tiktok.com rdar://problem/183445905
-NeedsTikTokCaptchaSliderTouchActionQuirk:
-  conditions: [ElementSelector]
 
 NeedsTikTokCommentsOverflowingContentQuirk:
   conditions: [ElementSelector]
@@ -467,6 +464,8 @@ ShouldDelayReloadWhenRegisteringServiceWorker:
 ShouldDisableAdSkippingInPip:
   available: pipSkipPreroll
   export: true
+
+ShouldDisableCSSSizeShorthandQuirk:
 
 # Microsoft office online generates data URLs with incorrect padding on Safari only (rdar://114573089).
 ShouldDisableDataURLPaddingValidation:
@@ -632,6 +631,11 @@ ShouldIgnoreViewportArgumentsToAvoidEnlargedViewQuirk:
   accessor: shouldIgnoreViewportArgumentsToAvoidEnlargedView
   export: true
 
+# gemini.google.com rdar://190477522
+ShouldIgnoreViewportInteractiveWidgetQuirk:
+  available: metaViewport
+  accessor: shouldIgnoreViewportInteractiveWidget
+
 # slack.com rdar://171190689
 ShouldUseDynamicViewportUnitsAsDefaultQuirk:
   available: metaViewport
@@ -716,10 +720,6 @@ ShouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk:
   accessor: shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreas
   export: true
 
-# webex.com rdar://143715630
-NeedsWebExScrollabilityQuirk:
-  available: appleTV
-
 # rdar://138806698
 ShouldSupportHoverMediaQueriesQuirk:
   available: appleTV
@@ -756,9 +756,6 @@ ShouldAllowNotificationPermissionWithoutUserGesture:
 NeedsInstagramResizingReelsQuirk:
   conditions: [ElementSelector]
   implementation: custom
-
-# yahoo.com rdar://170502516
-NeedsYahooVolumeSliderQuirk:
 
 NeedsChromeOSNavigatorUserAgentQuirk:
   available: iOSFamily
@@ -803,6 +800,14 @@ NeedsStorageAccessOnLoginButtonClickQuirk:
 
 NeedsStorageAccessForYouTubeWatchLaterQuirk:
   conditions: [ElementSelector]
+  implementation: custom
+
+NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk:
+  conditions: [SecondaryURL]
+  conditionsRequired: true
+  implementation: custom
+
+ShouldSkipStorageAccessIframeDomainListQuirk:
   implementation: custom
 
 # Outlook on the web: rdar://187832523

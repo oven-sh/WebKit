@@ -60,6 +60,7 @@ set(WTF_PUBLIC_HEADERS
     CompilationThread.h
     Compiler.h
     CompletionHandler.h
+    CompletionHandlerSwiftSupport.h
     ConcurrentBuffer.h
     ConcurrentPtrHashSet.h
     ConcurrentVector.h
@@ -118,7 +119,6 @@ set(WTF_PUBLIC_HEADERS
     FunctionPtr.h
     FunctionTraits.h
     GenerationalSet.h
-    GenericHashKey.h
     GenericTimeMixin.h
     GetPtr.h
     GlobalVersion.h
@@ -212,6 +212,7 @@ set(WTF_PUBLIC_HEADERS
     NoLock.h
     NoTailCalls.h
     NoVirtualDestructorBase.h
+    NonEscapableBorrow.h
     Nonallocatable.h
     Noncopyable.h
     Nonmovable.h
@@ -309,6 +310,7 @@ set(WTF_PUBLIC_HEADERS
     SchedulePair.h
     Scope.h
     ScopedLambda.h
+    ScopedLeakSanitizerDisabler.h
     ScopedPrintStream.h
     Seconds.h
     SegmentedVector.h
@@ -500,6 +502,7 @@ set(WTF_PUBLIC_HEADERS
     text/StringHasherInlines.h
     text/SuperFastHash.h
     text/StringImpl.h
+    text/StringImplMallocWithBackgroundPrefault.h
     text/StringParsingBuffer.h
     text/StringSearch.h
     text/StringToIntegerConversion.h
@@ -526,6 +529,7 @@ set(WTF_PUBLIC_HEADERS
 
     unicode/CharacterNames.h
     unicode/Collator.h
+    unicode/ListFormatter.h
     unicode/UTF8Conversion.h
 
     unicode/icu/ICUHelpers.h
@@ -707,6 +711,7 @@ set(WTF_SOURCES
 
     unicode/icu/CollatorICU.cpp
     unicode/icu/ICUHelpers.cpp
+    unicode/icu/ListFormatterICU.cpp
 )
 
 if (WIN32)
@@ -865,6 +870,29 @@ if (NOT APPLE AND SWIFT_REQUIRED)
     # an empty stub.
     file(MAKE_DIRECTORY "${WTF_HEADERS_DIR}/ios")
     file(WRITE "${WTF_HEADERS_DIR}/ios/WebCoreThread.h" "")
+endif ()
+
+if (SWIFT_REQUIRED AND APPLE)
+    target_sources(WTF PRIVATE
+        ${WTF_DIR}/wtf/WTFCompletionHandler+Extras.swift
+        ${WTF_DIR}/wtf/wtf.swift
+        ${WTF_DIR}/wtf/cocoa/SoftLinking.swift
+    )
+
+    # WTF's Swift exposes nothing to C++, so there is no interop header to generate.
+    set(WTF_SWIFT_TYPECHECK_SOURCES "")
+    WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WTF wtf
+        "${WTF_HEADERS_DIR}"
+        "WTFSwift-Generated.h")
+
+    # Match the Swift flags WTF.xcconfig sets.
+    webkit_target_add_swift_options(WTF
+        "-enable-library-evolution"
+        "-library-level spi"
+        "-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}"
+        "-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}"
+        "-Xcc -I${CMAKE_BINARY_DIR}"
+    )
 endif ()
 
 if (NOT MSVC)

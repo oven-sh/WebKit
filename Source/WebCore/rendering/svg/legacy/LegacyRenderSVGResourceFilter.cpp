@@ -45,7 +45,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FilterData);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceFilter);
 
-LegacyRenderSVGResourceFilter::LegacyRenderSVGResourceFilter(SVGFilterElement& element, Style::ComputedStyle&& style)
+LegacyRenderSVGResourceFilter::LegacyRenderSVGResourceFilter(SVGFilterElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : LegacyRenderSVGResourceContainer(Type::LegacySVGResourceFilter, element, WTF::move(style))
 {
 }
@@ -117,7 +117,7 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
     }
 
     // Eliminate shear of the absolute transformation matrix, to be able to produce unsheared tile images for feTile.
-    FloatSize filterScale(absoluteTransform.xScale(), absoluteTransform.yScale());
+    FloatSize filterScale = FloatSize(absoluteTransform.xScale(), absoluteTransform.yScale()).expandedTo(context->scaleFactor());
 
     // Determine absolute boundaries of the filter and the drawing region.
     filterData->sourceImageRect = renderer.strokeBoundingBox();
@@ -141,7 +141,7 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
         return { };
     }
 
-    filterData->filter->clampFilterRegionIfNeeded();
+    protect(filterData->filter)->clampFilterRegionIfNeeded();
 
 #if USE(CAIRO)
     auto colorSpace = ColorSpace::SRGB();
@@ -158,21 +158,18 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
         m_rendererFilterDataMap.remove(renderer);
         return { };
     }
-    
-    // If the sourceImageRect is empty, we have something like <g filter=".."/>.
-    // Even if the target objectBoundingBox() is empty, we still have to draw the last effect result image in postApplyResource.
-    if (filterData->sourceImageRect.isEmpty()) {
-        ASSERT(m_rendererFilterDataMap.contains(renderer));
-        filterData->savedContext = context;
-        return { };
-    }
-
-    filterData->targetSwitcher->beginDrawSourceImage(*context);
-
-    filterData->savedContext = context;
-    context = filterData->targetSwitcher->drawingContext(*context);
 
     ASSERT(m_rendererFilterDataMap.contains(renderer));
+
+    filterData->targetSwitcher->beginDrawSourceImage(*context);
+    filterData->savedContext = context;
+
+    // If the sourceImageRect is empty, we have something like <g filter=".."/>.
+    // Even if the target objectBoundingBox() is empty, we still have to draw the last effect result image in postApplyResource.
+    if (filterData->sourceImageRect.isEmpty())
+        return { };
+
+    context = filterData->targetSwitcher->drawingContext(*context);
     return { ApplyResult::ResourceApplied };
 }
 
@@ -248,7 +245,7 @@ void LegacyRenderSVGResourceFilter::markFilterForRepaint(FilterEffect& effect)
             continue;
 
         // Repaint the image on the screen.
-        markClientForInvalidation(objectFilterDataPair.key, RepaintInvalidation);
+        markClientForInvalidation(protect(objectFilterDataPair.key.get()), RepaintInvalidation);
 
         protect(filterData->filter)->clearEffectResult(effect);
     }

@@ -52,6 +52,7 @@ public:
     bool taintsOrigin() const { return m_taintsOrigin; }
     void setTaintsOrigin(bool taintsOrigin) { m_taintsOrigin = taintsOrigin; }
 
+    virtual unsigned numberOfEffectInputs() const { return 1; }
     unsigned numberOfImageInputs() const { return filterType() == FilterEffect::Type::SourceGraphic ? 1 : numberOfEffectInputs(); }
     FilterImageVector takeImageInputs(FilterImageVector& stack) const;
 
@@ -70,9 +71,7 @@ protected:
         return bType && a.operator==(*bType);
     }
 
-    virtual unsigned numberOfEffectInputs() const { return 1; }
-
-    FloatRect LEGACY_NODELETE calculatePrimitiveSubregion(const Filter&, std::span<const FloatRect> inputPrimitiveSubregions, const std::optional<FilterEffectGeometry>&) const;
+    NODELETE FloatRect calculatePrimitiveSubregion(const Filter&, std::span<const FloatRect> inputPrimitiveSubregions, const std::optional<FilterEffectGeometry>&) const;
 
     virtual FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const;
 
@@ -85,7 +84,7 @@ protected:
 
     virtual void transformInputsColorSpace(std::span<const Ref<FilterImage>> inputs) const;
     
-    void LEGACY_NODELETE correctPremultipliedInputs(std::span<const Ref<FilterImage>> inputs) const;
+    NODELETE void correctPremultipliedInputs(std::span<const Ref<FilterImage>> inputs) const;
 
     std::unique_ptr<FilterEffectApplier> createApplier(const Filter&) const;
 

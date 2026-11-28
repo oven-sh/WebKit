@@ -1,0 +1,57 @@
+# an allocation that fails throws, so under a handler it leads to the landing pad of its block
+# for (const read of [r => r.x, r => r.y.z]) { try { read([1]); } catch { } }
+# The call and the allocation of the array stand under the handler.
+# On every edge the state of the iteration has the names that it has in front of the `try`, so no edge brings anything.
+# Edges that bring nothing share one pad.
+# RUN(PADS): emit f0
+# PADS-COUNT-1: , landing pad
+# PADS-NOT: landing pad
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewArray v0, v1 contents=undefined|null|function|f1|f2
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3() handler=b8():
+    Jump -> next b4()
+  b4() handler=b6():
+    v9 = Double number=1
+    v10 = NewArray v9 contents=number
+    v11 = Call v7, -, v10
+    Jump -> next b5()
+  b5() handler=b8():
+    Jump -> next b7()
+  b6() role=CatchHandler handler=b8():
+    v12 = CatchValue
+    Jump -> next b7()
+  b7() handler=b8():
+    Jump -> next b1()
+  b8() role=IterationCleanup subject=v3:
+    v13 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v13
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    v2 = PropGet v1 key="z"
+    Return v2
+}

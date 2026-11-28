@@ -392,8 +392,22 @@ def _CheckExportValidity(input_api, output_api):
 def _CheckTabsInSourceFiles(input_api, output_api):
     """Forbids tab characters in source files due to a WebKit repo requirement."""
 
+    def is_crowbar_upstream_code(f):
+        # Crowbar (crowbar.txtpb) copies upstream code byte for byte, so its
+        # tabs cannot be removed without carrying a patch for them.
+        directory = input_api.os_path.dirname(f.LocalPath())
+        while directory:
+            if input_api.os_path.exists(
+                    input_api.os_path.join(input_api.PresubmitLocalPath(), directory,
+                                           'crowbar.txtpb')):
+                return True
+            directory = input_api.os_path.dirname(directory)
+        return False
+
     def implementation_and_headers_including_third_party(f):
         # Check third_party files too, because WebKit's checks don't make exceptions.
+        if is_crowbar_upstream_code(f):
+            return False
         return input_api.FilterSourceFile(
             f,
             files_to_check=(r'.+%s' % _IMPLEMENTATION_AND_HEADER_EXTENSIONS,),
@@ -403,7 +417,7 @@ def _CheckTabsInSourceFiles(input_api, output_api):
     for f in input_api.AffectedSourceFiles(implementation_and_headers_including_third_party):
         for (num, line) in f.ChangedContents():
             if '\t' in line:
-                files_with_tabs.append(f)
+                files_with_tabs.append(f.LocalPath())
                 break
 
     if files_with_tabs:

@@ -83,7 +83,7 @@ struct CSSCustomPropertySyntax {
 
     static CSSCustomPropertySyntax universal() { return { }; }
 
-    bool LEGACY_NODELETE containsUnknownType() const;
+    NODELETE bool containsUnknownType() const;
 
 private:
     template<typename CharacterType> static std::optional<Component> parseComponent(std::span<const CharacterType>);
@@ -96,5 +96,9 @@ void serializeCustomPropertySyntax(StringBuilder&, const CSSCustomPropertySyntax
 // Serializes to the <css-type> form used in @function preludes: a single component is bare, while a
 // multi-component syntax is wrapped in type(). Must not be called on the universal syntax.
 void serializeCustomPropertySyntaxAsCSSType(StringBuilder&, const CSSCustomPropertySyntax&);
+
+// MARK: - Hashing
+
+void add(Hasher&, const CSSCustomPropertySyntax::Component&);
 
 }

@@ -20,43 +20,66 @@ public:
     explicit ArrayAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     const ArrayStorageForm& formAtAllocation(const Type& array) const;
-    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, bool hasHoles = false);
+    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
 
     CellPointer newLiteral(const ValueContext&);
-    // The one user of such a value is a literal that computes it behind its allocation, where the value goes straight into the array: no register holds it across the call.
-    bool isComputedBehindAllocation(ValueID);
+    bool isLeftToSpreadRightBehind(BlockID, ValueID literal, const Operation&, std::span<const ValueID> behind);
+    bool isLeftToListCall(BlockID, ValueID literal, const Operation&);
+    void appendRestListUnlessUsedAsLiteral(const ValueContext& append);
+    bool isCallThatReturns(BlockID, ValueID call);
+    void bearLiteralHoldingList(const ValueContext& spread, LValue iterable, StubKey appendsAsWritten);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
     CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, BuiltinID calledBuiltin);
-    // `[...source]`: the AppendElements that comes right behind an empty literal with storage for any value and a planned capacity. The literal is then made with those elements,
-    // by the code of the literal, and the append has no code.
-    std::optional<ValueID> appendThatFillsLiteral(BlockID, ValueID literal);
-    std::optional<ValueID> membersThatFillLiteral(BlockID, ValueID literal);
-    // Cleared: every element is a hole. Not cleared: whoever asks fills all of them before anything else runs, so nobody sees what lies there.
     enum class ElementsBelowLength : bool { Cleared, NotCleared };
-    CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared);
+    enum class LengthIsSetBy : bool { Allocation, Caller };
+    CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared, LengthIsSetBy = LengthIsSetBy::Allocation);
+    std::optional<Pointer> profileOfListsOfLengthAtSite(Origin, const ArrayStorageForm& seed);
+    CellPointer allocateArrayOfHolesAtSite(const ValueContext&, Integer length, const ArrayStorageForm& seed, Pointer profile, LBasicBlock slowPath);
+    CellPointer bearArrayOfLength(const OperationContext&, const ArrayStorageForm&, Integer length);
+    CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);
+    std::optional<Pointer> emptyArraySiteProfile(Origin);
+    void countEmptyArrayAtSite(const OperationContext&, Pointer profile, CellPointer list);
+    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, std::optional<Pointer> profile, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
+    void setLengthOfNewArray(CellPointer, Integer length);
 
-    CellPointer allocateEmptyArrayWithStorage(const OperationContext&, Integer header, Integer capacity, LBasicBlock slowPath);
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);
-    Integer headerOfNewArray(const ArrayStorageForm&);
 
 private:
     using RawElements = Vector<Operand, 16>;
 
     CellPointer newLiteralWithHoles(const ValueContext&);
-    CellPointer newLiteralWithCapacity(const ValueContext&);
-    CellPointer newLiteralAtSite(const ValueContext&, StaticsOffset);
-    const ArrayStorageForm& formOfEmptyLiteral(ValueID literal, const Type& array);
+    std::optional<Integer> takeRoomAskedRightBehind(const ValueContext&);
+    std::optional<EmptyArray> emptyArrayWithPushCapacity(BlockID, ValueID literal);
+    ArrayStorage storageThatLiteralNames(ValueID literal, const Operation&);
+    CellPointer newLiteralAsWritten(const ValueContext&);
+    CellPointer useRestListAsLiteral(const ValueContext&, ValueID restList);
+    ValueID findAppendOfRestList(const ValueContext& literal);
+    ValueID restListUsedOnce(ValueID);
+    struct AppendedBehindSpread {
+        uint32_t room { 0 };
+        bool holdsWhatIsNoNumber { false };
+    };
+    std::optional<AppendedBehindSpread> findWhatIsAppendedBehindSpread(BlockID, ValueID literal, ValueID spread);
+    CellPointer newLiteralWithRoom(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, Integer room);
+    CellPointer newLiteralAtSite(const ValueContext&, const ArrayStorageForm& seed, std::span<const uint32_t> site);
+    CellPointer newNumberLiteral(const OperationContext&, std::span<const ValueID> elements);
+    CellPointer newLiteralOfRawElements(const OperationContext&, const ArrayStorageForm&, std::span<const Operand> rawElements);
+    Word32 shapeAtSite(Pointer profile);
+    RawElements numbersOf(std::span<const Operand> int32s);
+    std::optional<Pointer> numberLiteralProfile(const OperationContext&);
+    CellPointer newProfiledInt32Literal(const OperationContext&, std::span<const ValueID> elements, std::span<const Operand> int32s, Pointer profile);
+    CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, bool hasPropertyRoom = false);
+    bool isFirstOfGroup(const ValueContext& literal);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
-    const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array);
-    bool storesElementsBehindAllocation(std::span<const ValueID> elements, const ArrayStorageForm&);
-    CellPointer newArrayStoredBehindAllocation(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
+    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray = nullptr);
+    const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray);
     CellPointer newDoubleLiteral(const OperationContext&, std::span<const Number> numbersOrMarkers, uint32_t isNumberMask);
     CellPointer callNewEmptyArray(const OperationContext&, EmptyArray);
     CellPointer callNewArrayWithLength(const OperationContext&, const ArrayStorageForm&, Integer lengthAndCapacity);
 
     RawElements rawElementsOf(std::span<const ValueID> elements, const ArrayStorageForm&, LBasicBlock doesNotFit);
-    void storeElements(CellPointer newArray, const ArrayStorageForm&, std::span<const Operand> rawElements, std::span<const uint32_t> indexes);
+    void storeElements(const OperationContext&, CellPointer newArray, const ArrayStorageForm&, std::span<const Operand> rawElements, std::span<const uint32_t> indexes);
     Number numberOrMarker(ValueID);
     bool isNumberOrMarker(ValueID);
 };

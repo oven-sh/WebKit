@@ -29,10 +29,9 @@
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserOptions.h"
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
-std::optional<CSS::SymbolRaw> LEGACY_NODELETE validatedRange(CSS::SymbolRaw value, CSSPropertyParserOptions)
+NODELETE std::optional<CSS::SymbolRaw> validatedRange(CSS::SymbolRaw value, CSSPropertyParserOptions)
 {
     return value;
 }
@@ -50,5 +49,4 @@ std::optional<CSS::SymbolRaw> SymbolKnownTokenTypeIdentConsumer::consume(CSSPars
     return std::nullopt;
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

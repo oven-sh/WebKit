@@ -1,0 +1,29 @@
+# let x = t; do { r = b(x); x = !t; door(x); } while (r === null); return a;
+# v5 goes round to v3, which v4 reads in front of it. Where the way comes by the door v6 nobody has marked v5: the door waits. Then v4 marks v3, v3 marks v5, and v5 calls for its door.
+# RUN: sweep-code
+# CHECK: v5: boolean @Boolean = LogicalNot v2
+# CHECK-NEXT: v6 @Void = CheckProof v5
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Jump -> next b1(v2)
+#   b1(v3: boolean @Boolean) isInLoop=true isLoopHead=true:
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: boolean @Boolean = LogicalNot v2
+#     v6 @Void = CheckProof v5 checkedType=true typeWithoutProof=boolean source=Field [goesWithItsValue]
+#     v7: boolean @Boolean = TypeTest v4 testedType=null
+#     Branch v7 -> taken b1(v5), notTaken b2()
+#   b2():
+#     Return v0
+# }
+# -- end of code

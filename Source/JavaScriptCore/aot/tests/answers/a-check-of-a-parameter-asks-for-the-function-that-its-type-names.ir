@@ -1,0 +1,90 @@
+# function made() { this.x = 1; }
+# function take(value) { return value; }
+# const first = new made();
+# print(typeof id(take)(given === 1 ? made : given), first.x);
+# print("went on");
+# The fault is written by hand in the IR below: `function f2 name="take" .. parameters=[{type=undefined|f1 flags=[IsFromCompiler]}]`.
+# The front end claims that the parameter holds undefined or a closure of `made`, and the function is called indirectly with whatever the shell's `given` selects.
+# `made` has met no other function, so nothing of it is in the queue from the start, and the body of `take` names it only in the type of its parameter.
+# A unit's checks may name only what the unit references. If that type did not count as a reference, the check would accept any function, and a function of the shell would pass.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(FORM): walk f2 mechanisms=all-Inlining
+# FORM: CheckProof {{*}} checkedType=undefined|f1 typeWithoutProof={{*}}
+# RUN(ITSELF): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 1;
+# ITSELF: function 1
+# ITSELF-NEXT: went on
+# RUN(UNDEFINED): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = undefined;
+# UNDEFINED: undefined 1
+# UNDEFINED-NEXT: went on
+# RUN(OFSHELL): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = function () { };
+# OFSHELL: bun: internal AOT error: type check failed
+# OFSHELL-NEXT: found function in
+# OFSHELL-NOT: went on
+
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="made" module=m0 position=116 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Construct v1 calleeName="made" @262
+    v5 = Builtin builtin=GlobalThis @309
+    v6 = PropGet v5 key="print" [isFreeName] @309
+    v7 = Builtin builtin=GlobalThis @322
+    v8 = PropGet v7 key="id" [isFreeName] @322
+    v9 = Call v8, -, v3 calleeName="id" @322
+    v10 = Builtin builtin=GlobalThis @331
+    v11 = PropGet v10 key="given" [isFreeName] @331
+    v12 = Integer integer=1 @341
+    v13 = StrictEq v11, v12 @341
+    Branch v13 -> taken b2(v1), notTaken b1() @341
+  b1():
+    v14 = Builtin builtin=GlobalThis @374
+    v15 = PropGet v14 key="given" [isFreeName] @374
+    Jump -> next b2(v15) @374
+  b2(v16):
+    v17 = Call v9, -, v16 @329
+    v18 = TypeOf v17 @315
+    v19 = PropGet v4 key="x" @382
+    v20 = Call v6, -, v18, v19 calleeName="print" @309
+    v21 = Builtin builtin=GlobalThis @403
+    v22 = PropGet v21 key="print" [isFreeName] @403
+    v23 = String string="went on" @409
+    v24 = Call v22, -, v23 calleeName="print" @403
+    v25 = Undefined @403
+    Return v25 @403
+}
+function f1 name="made" module=m0 position=116 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = Integer integer=1 @152
+    PropSet v0, v1 key="x" @143
+    v3 = Undefined @143
+    Return v3 @143
+}
+function f2 name="take" module=m0 position=199 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|f1 flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|f1):
+    Return v0 @234
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

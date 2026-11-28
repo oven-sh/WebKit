@@ -41,12 +41,12 @@ public:
         ASSERT(graph.m_form == ThreadedCPS || graph.m_form == LoadStore);
     }
 
-    static bool isNodeCloneable(Graph&, UncheckedKeyHashSet<Node*>&, Node*);
+    static bool isNodeCloneable(Graph&, HashSet<Node*>&, Node*);
 
 #if ASSERT_ENABLED
-    static UncheckedKeyHashSet<Node*>& debugVisitingSet()
+    static HashSet<Node*>& debugVisitingSet()
     {
-        static LazyNeverDestroyed<ThreadSpecific<UncheckedKeyHashSet<Node*>, WTF::CanBeGCThread::True>> s_visitingSet;
+        static LazyNeverDestroyed<ThreadSpecific<HashSet<Node*>, WTF::CanBeGCThread::True>> s_visitingSet;
         static std::once_flag onceFlag;
         std::call_once(onceFlag, [] {
             s_visitingSet.construct();
@@ -68,8 +68,8 @@ private:
 
     Graph& m_graph;
     BlockInsertionSet m_blockInsertionSet;
-    UncheckedKeyHashMap<Node*, Node*> m_nodeClones;
-    UncheckedKeyHashMap<BasicBlock*, BasicBlock*> m_blockClones;
+    HashMap<Node*, Node*> m_nodeClones;
+    HashMap<BasicBlock*, BasicBlock*> m_blockClones;
 };
 
 template<typename CustomizeSuccessors>
@@ -154,6 +154,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(ArithPow, Common) \
     CLONE_STATUS(ArithRandom, Common) \
     CLONE_STATUS(ArithRound, Common) \
+    CLONE_STATUS(ArithSign, Common) \
     CLONE_STATUS(ArithSqrt, Common) \
     CLONE_STATUS(ArithSub, Common) \
     CLONE_STATUS(ArithTrunc, Common) \
@@ -182,6 +183,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(CallCustomAccessorGetter, Common) \
     CLONE_STATUS(CallDirectEval, Common) \
     CLONE_STATUS(CallVarargs, Special) \
+    CLONE_STATUS(CallVarargsWithSpread, Special) \
     CLONE_STATUS(Check, Common) \
     CLONE_STATUS(CheckArray, Common) \
     CLONE_STATUS(CheckBadValue, Common) \
@@ -259,6 +261,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(GetRegExpObjectLastIndex, Common) \
     CLONE_STATUS(GetScope, Common) \
     CLONE_STATUS(GetEvalScope, Common) \
+    CLONE_STATUS(GetTypedArrayBuffer, Common) \
     CLONE_STATUS(GetUndetachedTypeArrayLength, Common) \
     CLONE_STATUS(GlobalIsNaN, Common) \
     CLONE_STATUS(HasOwnProperty, Common) \
@@ -281,6 +284,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(Jump, Common) \
     CLONE_STATUS(LoadMapValue, Common) \
     CLONE_STATUS(LoadVarargs, Special) \
+    CLONE_STATUS(LoadVarargsWithSpread, Special) \
     CLONE_STATUS(LogicalNot, Common) \
     CLONE_STATUS(LoopHint, Common) \
     CLONE_STATUS(MakeAtomString, Common) \
@@ -305,6 +309,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(NewPromise, Common) \
     CLONE_STATUS(NewMap, Common) \
     CLONE_STATUS(NewObject, Common) \
+    CLONE_STATUS(NewProxyObject, Common) \
     CLONE_STATUS(NewRegExp, Common) \
     CLONE_STATUS(NewRegExpUntyped, Common) \
     CLONE_STATUS(NewSet, Common) \
@@ -395,6 +400,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(ValueSub, Common) \
     CLONE_STATUS(ValueToInt32, Common) \
     CLONE_STATUS(VarargsLength, Special) \
+    CLONE_STATUS(VarargsLengthWithSpread, Special) \
     CLONE_STATUS(ZombieHint, Common)
 
 } } // namespace JSC::DFG

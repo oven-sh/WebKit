@@ -47,7 +47,7 @@ using namespace WebCore;
 
 static constexpr uint32_t sampleRate = 48000;
 
-static Ref<AudioInfo> makeDecodedAudioInfo(uint32_t channels, AudioSampleFormat sampleFormat = AudioSampleFormat::F32)
+static Ref<AudioInfo> makeDecodedAudioInfo(uint32_t channels, AudioSampleFormat sampleFormat = AudioSampleFormat::F32, std::optional<MediaChannelLayout> channelLayout = std::nullopt)
 {
     return AudioInfo::create({
         {
@@ -57,12 +57,13 @@ static Ref<AudioInfo> makeDecodedAudioInfo(uint32_t channels, AudioSampleFormat 
             .channels = channels,
             .framesPerPacket = 1,
             .bitDepth = 32,
-            .sampleFormat = sampleFormat
+            .sampleFormat = sampleFormat,
+            .channelLayout = channelLayout
         }
     });
 }
 
-static Ref<VideoInfo> makeDecodedVideoInfo(FloatSize size, std::optional<VideoPixelFormat> pixelFormat = VideoPixelFormat::I420)
+static Ref<VideoInfo> makeDecodedVideoInfo(FloatSize size, std::optional<VideoPixelFormat> pixelFormat = VideoPixelFormat::I420, bool isFullRange = false)
 {
     return VideoInfo::create({
         {
@@ -71,6 +72,7 @@ static Ref<VideoInfo> makeDecodedVideoInfo(FloatSize size, std::optional<VideoPi
             .size = size,
             .displaySize = size,
             .bitDepth = 8,
+            .colorSpace = { .fullRange = isFullRange },
             .pixelFormat = pixelFormat
         }
     });
@@ -158,6 +160,130 @@ TEST(DecodedMediaSamplesBlock, AudioRejectsInvalidData)
     MediaSamplesBlock::SamplesVector items;
     items.append(makeAudioItem(MediaTime::zeroTime(), { 0.f, 0.f }, 2));
     EXPECT_FALSE(!!toCMSampleBuffer(MediaSamplesBlock { integerInfo.ptr(), WTF::move(items) }));
+}
+
+static RetainPtr<CMFormatDescriptionRef> decodedAudioFormatDescription(uint32_t channels, const MediaChannelLayout& channelLayout)
+{
+    Ref info = makeDecodedAudioInfo(channels, AudioSampleFormat::F32, channelLayout);
+    MediaSamplesBlock::SamplesVector items;
+    items.append(makeAudioItem(MediaTime::zeroTime(), Vector<float>(FillWith { }, channels * 2, 0.f), channels));
+    auto result = toCMSampleBuffer(MediaSamplesBlock { info.ptr(), WTF::move(items) });
+    if (!result)
+        return nullptr;
+    return PAL::CMSampleBufferGetFormatDescription(result->get());
+}
+
+static Vector<AudioChannelLabel> channelLabels(const AudioChannelLayout& layout)
+{
+    EXPECT_EQ(static_cast<AudioChannelLayoutTag>(kAudioChannelLayoutTag_UseChannelDescriptions), layout.mChannelLayoutTag);
+    auto descriptions = unsafeMakeSpan(layout.mChannelDescriptions, layout.mNumberChannelDescriptions);
+    return Vector<AudioChannelLabel>(descriptions.size(), [&](size_t index) {
+        return descriptions[index].mChannelLabel;
+    });
+}
+
+TEST(DecodedMediaSamplesBlock, AudioChannelLayout)
+{
+    // 5.1: the surround channels are the back channels.
+    constexpr MediaChannelLayout surround { .kind = MediaChannelLayout::Kind::Positional, .mask = 0x3F };
+    RetainPtr format = decodedAudioFormatDescription(6, surround);
+    ASSERT_TRUE(!!format);
+    size_t layoutSize = 0;
+    const AudioChannelLayout* layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(channelLabels(*layout), (Vector<AudioChannelLabel> { kAudioChannelLabel_Left, kAudioChannelLabel_Right, kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen, kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround }));
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), surround);
+
+    // 7.1: the surround channels are the side channels, and the back channels are rear surround channels.
+    constexpr MediaChannelLayout surround71 { .kind = MediaChannelLayout::Kind::Positional, .mask = 0x63F };
+    format = decodedAudioFormatDescription(8, surround71);
+    ASSERT_TRUE(!!format);
+    layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(channelLabels(*layout), (Vector<AudioChannelLabel> { kAudioChannelLabel_Left, kAudioChannelLabel_Right, kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen, kAudioChannelLabel_RearSurroundLeft, kAudioChannelLabel_RearSurroundRight, kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround }));
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), surround71);
+
+    // A single channel without a position is mono.
+    constexpr MediaChannelLayout mono { .kind = MediaChannelLayout::Kind::Discrete };
+    format = decodedAudioFormatDescription(1, mono);
+    ASSERT_TRUE(!!format);
+    layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format.get(), &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(static_cast<AudioChannelLayoutTag>(kAudioChannelLayoutTag_Mono), layout->mChannelLayoutTag);
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), mono);
+
+    // A single channel at the front center is the center channel.
+    constexpr MediaChannelLayout center { .kind = MediaChannelLayout::Kind::Positional, .mask = webAudioChannelBit(WebAudioChannel::FrontCenter) };
+    format = decodedAudioFormatDescription(1, center);
+    ASSERT_TRUE(!!format);
+    layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format.get(), &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(channelLabels(*layout), (Vector<AudioChannelLabel> { kAudioChannelLabel_Center }));
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), center);
+
+    constexpr MediaChannelLayout discrete { .kind = MediaChannelLayout::Kind::Discrete };
+    format = decodedAudioFormatDescription(4, discrete);
+    ASSERT_TRUE(!!format);
+    layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(static_cast<AudioChannelLayoutTag>(kAudioChannelLayoutTag_DiscreteInOrder | 4), layout->mChannelLayoutTag);
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), discrete);
+
+    // First order ambisonics.
+    constexpr MediaChannelLayout ambisonic { .kind = MediaChannelLayout::Kind::Ambisonic };
+    EXPECT_EQ(ambisonic.ambisonicOrder(4), 1u);
+    format = decodedAudioFormatDescription(4, ambisonic);
+    ASSERT_TRUE(!!format);
+    layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(static_cast<AudioChannelLayoutTag>(kAudioChannelLayoutTag_HOA_ACN_SN3D | 4), layout->mChannelLayoutTag);
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), ambisonic);
+
+    // Second order ambisonics with a non-diegetic stereo pair.
+    constexpr MediaChannelLayout ambisonicWithStereo { .kind = MediaChannelLayout::Kind::Ambisonic, .mask = MediaChannelLayout::nonDiegeticStereoMask };
+    EXPECT_EQ(ambisonicWithStereo.ambisonicOrder(11), 2u);
+    format = decodedAudioFormatDescription(11, ambisonicWithStereo);
+    ASSERT_TRUE(!!format);
+    layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
+    ASSERT_NE(nullptr, layout);
+    EXPECT_EQ(static_cast<AudioChannelLayoutTag>(kAudioChannelLayoutTag_UseChannelDescriptions), layout->mChannelLayoutTag);
+    ASSERT_EQ(11u, layout->mNumberChannelDescriptions);
+    auto descriptions = unsafeMakeSpan(layout->mChannelDescriptions, layout->mNumberChannelDescriptions);
+    for (uint32_t index = 0; index < 9; ++index)
+        EXPECT_EQ(kAudioChannelLabel_HOA_ACN_0 + index, descriptions[index].mChannelLabel);
+    EXPECT_EQ(static_cast<AudioChannelLabel>(kAudioChannelLabel_Left), descriptions[9].mChannelLabel);
+    EXPECT_EQ(static_cast<AudioChannelLabel>(kAudioChannelLabel_Right), descriptions[10].mChannelLabel);
+    EXPECT_EQ(mediaChannelLayoutFromChannelLayout(*layout), ambisonicWithStereo);
+}
+
+TEST(DecodedMediaSamplesBlock, AudioChannelLayoutRoundTrip)
+{
+    // Every positional layout converts to a CoreAudio layout and back unchanged.
+    size_t failures = 0;
+    for (uint32_t mask = 1; mask < (1U << numberOfWebAudioChannels); ++mask) {
+        MediaChannelLayout positional { .kind = MediaChannelLayout::Kind::Positional, .mask = mask };
+        auto layout = channelLayoutFromMediaChannelLayout(positional, static_cast<uint32_t>(std::popcount(mask)));
+        if (!layout.first || mediaChannelLayoutFromChannelLayout(*layout.first) != positional)
+            ++failures;
+    }
+    EXPECT_EQ(0u, failures);
+}
+
+TEST(DecodedMediaSamplesBlock, AudioRejectsInvalidChannelLayout)
+{
+    // The mask must have one bit per channel.
+    EXPECT_FALSE(!!decodedAudioFormatDescription(6, { .kind = MediaChannelLayout::Kind::Positional, .mask = 0x0F }));
+    // Only the 18 Web Audio channels are defined.
+    EXPECT_FALSE(!!decodedAudioFormatDescription(1, { .kind = MediaChannelLayout::Kind::Positional, .mask = 1U << 18 }));
+    // Channels without speaker positions have no mask.
+    EXPECT_FALSE(!!decodedAudioFormatDescription(2, { .kind = MediaChannelLayout::Kind::Discrete, .mask = 0x3 }));
+    // Ambisonic components must fill an order: 1, 4, 9, 16... channels.
+    EXPECT_FALSE(!!decodedAudioFormatDescription(5, { .kind = MediaChannelLayout::Kind::Ambisonic }));
+    EXPECT_FALSE(!!decodedAudioFormatDescription(4, { .kind = MediaChannelLayout::Kind::Ambisonic, .mask = MediaChannelLayout::nonDiegeticStereoMask }));
+    EXPECT_FALSE(!!decodedAudioFormatDescription(2, { .kind = MediaChannelLayout::Kind::Ambisonic, .mask = MediaChannelLayout::nonDiegeticStereoMask }));
+    // The only non-diegetic channels are a stereo pair.
+    EXPECT_FALSE(!!decodedAudioFormatDescription(5, { .kind = MediaChannelLayout::Kind::Ambisonic, .mask = webAudioChannelBit(WebAudioChannel::FrontCenter) }));
+    EXPECT_FALSE(MediaChannelLayout { .kind = MediaChannelLayout::Kind::Ambisonic }.isValid(std::numeric_limits<uint32_t>::max()));
 }
 
 TEST(DecodedMediaSamplesBlock, AudioRejectsMismatchedFormatDescription)
@@ -278,11 +404,294 @@ TEST(DecodedMediaSamplesBlock, VideoRejectsInvalidData)
     wrongSize.append(makeI420Item(MediaTime::zeroTime(), 8, 8, 0, 0, 0));
     EXPECT_FALSE(!!toCMSampleBuffer(MediaSamplesBlock { info.ptr(), WTF::move(wrongSize) }));
 
-    // Only 8-bit 4:2:0 is supported.
-    Ref unsupported = makeDecodedVideoInfo(FloatSize(16, 16), VideoPixelFormat::I444);
+    Ref unsupported = makeDecodedVideoInfo(FloatSize(16, 16), VideoPixelFormat::NV12);
     MediaSamplesBlock::SamplesVector items;
     items.append(makeI420Item(MediaTime::zeroTime(), 16, 16, 0, 0, 0));
     EXPECT_FALSE(!!toCMSampleBuffer(MediaSamplesBlock { unsupported.ptr(), WTF::move(items) }));
+
+    // The data size must match the frame size of the pixel format.
+    Ref tenBit = makeDecodedVideoInfo(FloatSize(16, 16), VideoPixelFormat::I420P10);
+    MediaSamplesBlock::SamplesVector eightBitItems;
+    eightBitItems.append(makeI420Item(MediaTime::zeroTime(), 16, 16, 0, 0, 0));
+    EXPECT_FALSE(!!toCMSampleBuffer(MediaSamplesBlock { tenBit.ptr(), WTF::move(eightBitItems) }));
+}
+
+// The samples are stored in the low bits: luma is y, and the chroma planes are u and v plus a pattern.
+static MediaSamplesBlock::MediaSampleItem makeTenBitItem(size_t width, size_t height, size_t chromaWidth, size_t chromaHeight, uint16_t y, uint16_t u, uint16_t v)
+{
+    Vector<uint16_t> samples(FillWith { }, width * height, y);
+    samples.appendUsingFunctor(chromaWidth * chromaHeight, [&](size_t i) {
+        return static_cast<uint16_t>(u + i % 16);
+    });
+    samples.appendUsingFunctor(chromaWidth * chromaHeight, [&](size_t i) {
+        return static_cast<uint16_t>(v + i % 16);
+    });
+    return {
+        .presentationTime = MediaTime::zeroTime(),
+        .duration = MediaTime(1, 30),
+        .data = SharedBuffer::create(Vector<uint8_t>(asByteSpan(samples.span()))),
+        .flags = MediaSample::IsSync
+    };
+}
+
+static uint16_t sixteenBitSample(const uint8_t* row, size_t index)
+{
+    return row[2 * index] | (row[2 * index + 1] << 8);
+}
+
+static void checkTenBitFrame(VideoPixelFormat format, size_t width, size_t height, bool isFullRange, OSType expectedPixelFormat)
+{
+    size_t chromaWidth = (width + 1) / 2;
+    size_t chromaHeight = format == VideoPixelFormat::I422P10 ? height : (height + 1) / 2;
+    Ref info = makeDecodedVideoInfo(FloatSize(static_cast<float>(width), static_cast<float>(height)), format, isFullRange);
+    MediaSamplesBlock::SamplesVector items;
+    items.append(makeTenBitItem(width, height, chromaWidth, chromaHeight, 700, 300, 800));
+    auto result = toCMSampleBuffer(MediaSamplesBlock { info.ptr(), WTF::move(items) });
+    ASSERT_TRUE(!!result);
+    RetainPtr sampleBuffer = *result;
+
+    CVImageBufferRef imageBuffer = PAL::CMSampleBufferGetImageBuffer(sampleBuffer);
+    ASSERT_NE(nullptr, imageBuffer);
+    EXPECT_EQ(width, CVPixelBufferGetWidth(imageBuffer));
+    EXPECT_EQ(height, CVPixelBufferGetHeight(imageBuffer));
+    EXPECT_EQ(expectedPixelFormat, CVPixelBufferGetPixelFormatType(imageBuffer));
+
+    CMVideoFormatDescriptionRef description = PAL::CMSampleBufferGetFormatDescription(sampleBuffer);
+    ASSERT_NE(nullptr, description);
+    EXPECT_EQ(expectedPixelFormat, PAL::CMFormatDescriptionGetMediaSubType(description));
+
+    ASSERT_EQ(kCVReturnSuccess, CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly));
+    auto unlock = makeScopeExit([&] {
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+    });
+
+    // The pixel buffer stores the samples in the high bits.
+    auto* luma = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 0));
+    size_t lumaStride = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 0);
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column)
+            ASSERT_EQ(static_cast<uint16_t>(700 << 6), sixteenBitSample(luma + row * lumaStride, column));
+    }
+
+    auto* chroma = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 1));
+    size_t chromaStride = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 1);
+    for (size_t row = 0; row < chromaHeight; ++row) {
+        for (size_t column = 0; column < chromaWidth; ++column) {
+            size_t index = row * chromaWidth + column;
+            ASSERT_EQ(static_cast<uint16_t>((300 + index % 16) << 6), sixteenBitSample(chroma + row * chromaStride, 2 * column));
+            ASSERT_EQ(static_cast<uint16_t>((800 + index % 16) << 6), sixteenBitSample(chroma + row * chromaStride, 2 * column + 1));
+        }
+    }
+}
+
+TEST(DecodedMediaSamplesBlock, TenBitVideoToCMSampleBuffer)
+{
+    checkTenBitFrame(VideoPixelFormat::I420P10, 64, 48, false, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
+    checkTenBitFrame(VideoPixelFormat::I420P10, 33, 17, false, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
+    checkTenBitFrame(VideoPixelFormat::I420P10, 64, 48, true, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange);
+    checkTenBitFrame(VideoPixelFormat::I422P10, 64, 48, false, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange);
+    checkTenBitFrame(VideoPixelFormat::I422P10, 33, 17, false, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange);
+}
+
+static uint8_t alphaPattern(size_t column, size_t row)
+{
+    return static_cast<uint8_t>(column * 7 + row * 3);
+}
+
+// Luma is y, both chroma planes are 128 and the alpha follows alphaPattern().
+static MediaSamplesBlock::MediaSampleItem makeI420AItem(size_t width, size_t height, uint8_t y)
+{
+    size_t chromaSize = ((width + 1) / 2) * ((height + 1) / 2);
+    Vector<uint8_t> bytes(FillWith { }, width * height, y);
+    bytes.appendUsingFunctor(2 * chromaSize, [](size_t) {
+        return 128;
+    });
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column)
+            bytes.append(alphaPattern(column, row));
+    }
+    return {
+        .presentationTime = MediaTime::zeroTime(),
+        .duration = MediaTime(1, 30),
+        .data = SharedBuffer::create(WTF::move(bytes)),
+        .flags = MediaSample::IsSync
+    };
+}
+
+static uint16_t tenBitSample(const uint8_t* row, size_t index)
+{
+    return (row[2 * index] | (row[2 * index + 1] << 8)) >> 6;
+}
+
+static void checkI420AFrame(size_t width, size_t height, bool isFullRange)
+{
+    Ref info = makeDecodedVideoInfo(FloatSize(static_cast<float>(width), static_cast<float>(height)), VideoPixelFormat::I420A, isFullRange);
+    MediaSamplesBlock::SamplesVector items;
+    items.append(makeI420AItem(width, height, 255));
+    auto result = toCMSampleBuffer(MediaSamplesBlock { info.ptr(), WTF::move(items) });
+    ASSERT_TRUE(!!result);
+    RetainPtr sampleBuffer = *result;
+
+    CVImageBufferRef imageBuffer = PAL::CMSampleBufferGetImageBuffer(sampleBuffer.get());
+    ASSERT_NE(nullptr, imageBuffer);
+    EXPECT_EQ(width, CVPixelBufferGetWidth(imageBuffer));
+    EXPECT_EQ(height, CVPixelBufferGetHeight(imageBuffer));
+    EXPECT_EQ(isFullRange ? static_cast<OSType>('x0a8') : static_cast<OSType>(kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar), CVPixelBufferGetPixelFormatType(imageBuffer));
+    EXPECT_TRUE(CFEqual(kCVImageBufferAlphaChannelMode_StraightAlpha, CVBufferGetAttachment(imageBuffer, kCVImageBufferAlphaChannelModeKey, nullptr)));
+
+    CMVideoFormatDescriptionRef description = PAL::CMSampleBufferGetFormatDescription(sampleBuffer.get());
+    ASSERT_NE(nullptr, description);
+    EXPECT_EQ(CVPixelBufferGetPixelFormatType(imageBuffer), PAL::CMFormatDescriptionGetMediaSubType(description));
+    EXPECT_EQ(kCFBooleanTrue, PAL::CMFormatDescriptionGetExtension(description, PAL::kCMFormatDescriptionExtension_ContainsAlphaChannel));
+    EXPECT_TRUE(CFEqual(PAL::kCMFormatDescriptionAlphaChannelMode_StraightAlpha, PAL::CMFormatDescriptionGetExtension(description, PAL::kCMFormatDescriptionExtension_AlphaChannelMode)));
+
+    ASSERT_EQ(kCVReturnSuccess, CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly));
+    auto unlock = makeScopeExit([&] {
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+    });
+
+    auto* luma = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 0));
+    size_t lumaStride = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 0);
+    auto* chroma = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 1));
+    size_t chromaStride = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 1);
+    size_t chromaWidth = (width + 1) / 2;
+    size_t chromaHeight = (height + 1) / 2;
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column) {
+            if (isFullRange)
+                ASSERT_EQ(940, tenBitSample(luma + row * lumaStride, column));
+            else
+                ASSERT_EQ(255, luma[row * lumaStride + column]);
+        }
+    }
+    for (size_t row = 0; row < chromaHeight; ++row) {
+        for (size_t column = 0; column < 2 * chromaWidth; ++column) {
+            if (isFullRange)
+                ASSERT_EQ(512, tenBitSample(chroma + row * chromaStride, column));
+            else
+                ASSERT_EQ(128, chroma[row * chromaStride + column]);
+        }
+    }
+
+    auto* alpha = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 2));
+    size_t alphaStride = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 2);
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column)
+            ASSERT_EQ(alphaPattern(column, row), alpha[row * alphaStride + column]);
+    }
+}
+
+TEST(DecodedMediaSamplesBlock, VideoWithAlphaToCMSampleBuffer)
+{
+    checkI420AFrame(64, 48, false);
+    checkI420AFrame(33, 17, false);
+}
+
+TEST(DecodedMediaSamplesBlock, VideoWithAlphaFullRangeToCMSampleBuffer)
+{
+    checkI420AFrame(64, 48, true);
+    checkI420AFrame(33, 17, true);
+}
+
+struct PlanarAlphaFrame {
+    VideoPixelFormat format;
+    bool isFullRange;
+    OSType expectedPixelFormat;
+    bool isTenBitPixelBuffer;
+    uint16_t y;
+    uint16_t expectedY;
+    uint16_t chroma;
+    uint16_t expectedChroma;
+};
+
+// Luma is y, both chroma planes are chroma and the alpha follows alphaPattern() at the format's bit depth.
+static MediaSamplesBlock::MediaSampleItem makePlanarAlphaItem(const PlanarAlphaFrame& frame, size_t width, size_t height)
+{
+    auto layout = planarYUVFormatLayout(pixelFormatWithoutAlpha(frame.format));
+    size_t chromaSize = PlanarImageConverter::chromaWidth(layout->subsampling, width) * PlanarImageConverter::chromaHeight(layout->subsampling, height);
+    Vector<uint8_t> bytes;
+    auto append = [&](uint16_t sample) {
+        bytes.append(sample & 0xff);
+        if (layout->format.sampleSize() > 1)
+            bytes.append(sample >> 8);
+    };
+    for (size_t i = 0; i < width * height; ++i)
+        append(frame.y);
+    for (size_t i = 0; i < 2 * chromaSize; ++i)
+        append(frame.chroma);
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column)
+            append(alphaPattern(column, row) << (layout->format.bitDepth - 8));
+    }
+    return {
+        .presentationTime = MediaTime::zeroTime(),
+        .duration = MediaTime(1, 30),
+        .data = SharedBuffer::create(WTF::move(bytes)),
+        .flags = MediaSample::IsSync
+    };
+}
+
+static void checkPlanarAlphaFrame(const PlanarAlphaFrame& frame, size_t width, size_t height)
+{
+    Ref info = makeDecodedVideoInfo(FloatSize(static_cast<float>(width), static_cast<float>(height)), frame.format, frame.isFullRange);
+    MediaSamplesBlock::SamplesVector items;
+    items.append(makePlanarAlphaItem(frame, width, height));
+    auto result = toCMSampleBuffer(MediaSamplesBlock { info.ptr(), WTF::move(items) });
+    ASSERT_TRUE(!!result);
+    RetainPtr sampleBuffer = *result;
+
+    CVImageBufferRef imageBuffer = PAL::CMSampleBufferGetImageBuffer(sampleBuffer);
+    ASSERT_NE(nullptr, imageBuffer);
+    EXPECT_EQ(frame.expectedPixelFormat, CVPixelBufferGetPixelFormatType(imageBuffer));
+
+    ASSERT_EQ(kCVReturnSuccess, CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly));
+    auto unlock = makeScopeExit([&] {
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+    });
+
+    auto sampleAt = [&](size_t plane, size_t row, size_t index) -> uint16_t {
+        auto* data = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, plane)) + row * CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, plane);
+        return frame.isTenBitPixelBuffer ? tenBitSample(data, index) : data[index];
+    };
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column)
+            ASSERT_EQ(frame.expectedY, sampleAt(0, row, column));
+    }
+    for (size_t row = 0; row < CVPixelBufferGetHeightOfPlane(imageBuffer, 1); ++row) {
+        for (size_t column = 0; column < 2 * CVPixelBufferGetWidthOfPlane(imageBuffer, 1); ++column)
+            ASSERT_EQ(frame.expectedChroma, sampleAt(1, row, column));
+    }
+
+    auto* alpha = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 2));
+    size_t alphaStride = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 2);
+    for (size_t row = 0; row < height; ++row) {
+        for (size_t column = 0; column < width; ++column)
+            ASSERT_EQ(alphaPattern(column, row), alpha[row * alphaStride + column]);
+    }
+}
+
+// 10-bit video range samples are copied unchanged and 8-bit full range ones widened to 10-bit video range.
+TEST(DecodedMediaSamplesBlock, PlanarAlphaFormatsToCMSampleBuffer)
+{
+    static constexpr std::array frames {
+        PlanarAlphaFrame { VideoPixelFormat::I420AP10, false, 'x0a8', true, 700, 700, 300, 300 },
+        PlanarAlphaFrame { VideoPixelFormat::I422A, false, 'v2a8', false, 200, 200, 100, 100 },
+        PlanarAlphaFrame { VideoPixelFormat::I422A, true, 'x2a8', true, 255, 940, 128, 512 },
+        PlanarAlphaFrame { VideoPixelFormat::I422AP10, false, 'x2a8', true, 700, 700, 300, 300 },
+    };
+    for (auto& frame : frames) {
+        checkPlanarAlphaFrame(frame, 64, 48);
+        checkPlanarAlphaFrame(frame, 33, 17);
+    }
+}
+
+TEST(DecodedMediaSamplesBlock, VideoWithAlphaRejectsInvalidData)
+{
+    // The data must hold the alpha plane.
+    Ref info = makeDecodedVideoInfo(FloatSize(16, 16), VideoPixelFormat::I420A);
+    MediaSamplesBlock::SamplesVector items;
+    items.append(makeI420Item(MediaTime::zeroTime(), 16, 16, 0, 0, 0));
+    EXPECT_FALSE(!!toCMSampleBuffer(MediaSamplesBlock { info.ptr(), WTF::move(items) }));
 }
 
 TEST(DecodedMediaSamplesBlock, VideoFormatDescriptionFromTrackInfo)
@@ -292,7 +701,34 @@ TEST(DecodedMediaSamplesBlock, VideoFormatDescriptionFromTrackInfo)
     ASSERT_NE(nullptr, description.get());
     EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange), PAL::CMFormatDescriptionGetMediaSubType(description.get()));
 
-    EXPECT_EQ(nullptr, createFormatDescriptionFromTrackInfo(makeDecodedVideoInfo(FloatSize(64, 48), VideoPixelFormat::I422).get()).get());
+    auto subType = [](VideoPixelFormat format, bool isFullRange) -> FourCharCode {
+        RetainPtr description = createFormatDescriptionFromTrackInfo(makeDecodedVideoInfo(FloatSize(64, 48), format, isFullRange));
+        return description ? PAL::CMFormatDescriptionGetMediaSubType(description) : 0;
+    };
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange), subType(VideoPixelFormat::I420P10, false));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_420YpCbCr10BiPlanarFullRange), subType(VideoPixelFormat::I420P10, true));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange), subType(VideoPixelFormat::I422P10, false));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange), subType(VideoPixelFormat::I422, false));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_444YpCbCr8BiPlanarFullRange), subType(VideoPixelFormat::I444, true));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange), subType(VideoPixelFormat::I444P10, false));
+    // 12-bit samples go into the 10-bit formats.
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange), subType(VideoPixelFormat::I420P12, false));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_422YpCbCr10BiPlanarFullRange), subType(VideoPixelFormat::I422P12, true));
+    EXPECT_EQ(static_cast<FourCharCode>(kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange), subType(VideoPixelFormat::I444P12, false));
+    EXPECT_EQ(0u, subType(VideoPixelFormat::NV12, false));
+}
+
+TEST(DecodedMediaSamplesBlock, VideoWithAlphaFormatDescriptionFromTrackInfo)
+{
+    for (bool isFullRange : { false, true }) {
+        RetainPtr description = createFormatDescriptionFromTrackInfo(makeDecodedVideoInfo(FloatSize(64, 48), VideoPixelFormat::I420A, isFullRange).get());
+        ASSERT_NE(nullptr, description.get());
+        EXPECT_EQ(isFullRange ? static_cast<FourCharCode>('x0a8') : static_cast<FourCharCode>(kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar), PAL::CMFormatDescriptionGetMediaSubType(description.get()));
+        EXPECT_EQ(kCFBooleanTrue, PAL::CMFormatDescriptionGetExtension(description.get(), PAL::kCMFormatDescriptionExtension_ContainsAlphaChannel));
+        EXPECT_TRUE(CFEqual(PAL::kCMFormatDescriptionAlphaChannelMode_StraightAlpha, PAL::CMFormatDescriptionGetExtension(description.get(), PAL::kCMFormatDescriptionExtension_AlphaChannelMode)));
+        // The pixel data is always video range.
+        EXPECT_EQ(nullptr, PAL::CMFormatDescriptionGetExtension(description.get(), PAL::kCMFormatDescriptionExtension_FullRangeVideo));
+    }
 }
 
 } // namespace TestWebKitAPI

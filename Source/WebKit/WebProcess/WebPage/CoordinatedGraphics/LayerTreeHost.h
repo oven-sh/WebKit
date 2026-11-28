@@ -95,10 +95,15 @@ private:
     void notifyCompositionRequired() override;
     bool isCompositionRequiredOrOngoing() const override;
     void requestComposition(WebCore::CompositionReason) override;
+    void didChangeLayerPendingScrollingPosition(WebCore::CoordinatedPlatformLayer&) override;
+    void didApplyLayerScrollingPositions() override;
     RunLoop* compositingRunLoop() const override;
     int maxTextureSize() const override;
     void willPaintTile() override;
     void didPaintTile() override;
+#if USE(SKIA)
+    void didPaintPreRenderedTile(WebCore::CoordinatedPlatformLayer&) override;
+#endif
 
     // GraphicsLayerFactory
     Ref<WebCore::GraphicsLayer> createGraphicsLayer(WebCore::GraphicsLayer::Type, WebCore::GraphicsLayerClient&) override;
@@ -153,6 +158,7 @@ private:
     const RefPtr<ThreadedCompositor> m_compositor;
     std::unique_ptr<WebCore::CoordinatedTileManager> m_tileManager;
     HashMap<uint64_t, Ref<WebCore::CoordinatedImageBackingStore>> m_imageBackingStores;
+    uint64_t m_renderingUpdateID { 0 };
 
 #if PLATFORM(GTK)
     bool m_transientZoom { false };

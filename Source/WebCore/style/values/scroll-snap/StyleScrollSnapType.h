@@ -27,8 +27,7 @@
 #include <WebCore/RenderStyleConstants.h>
 #include <WebCore/StyleValueTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'scroll-snap-type'> = none | [ x | y | block | inline | both ] [ mandatory | proximity ]?@(default=proximity)
 // https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-snap-type
@@ -74,9 +73,8 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<ScrollSnapType> { ScrollSnapType LEGACY_NODELETE operator()(BuilderState&, const CSSValue&); };
+template<> struct CSSValueConversion<ScrollSnapType> { NODELETE ScrollSnapType operator()(BuilderState&, const CSSValue&); };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::ScrollSnapType)

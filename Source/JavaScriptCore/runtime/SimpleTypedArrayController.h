@@ -54,12 +54,13 @@ public:
     JSArrayBuffer* toJS(JSGlobalObject*, JSGlobalObject*, ArrayBuffer&) final;
     void registerWrapper(JSGlobalObject*, ArrayBuffer&, JSArrayBuffer&) final;
     bool isAtomicsWaitAllowedOnCurrentThread() final;
+    bool isWrapperCachedInArrayBuffer() const final { return true; }
 
 private:
     class JSArrayBufferOwner final : public WeakHandleOwner {
     public:
         bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor&, ASCIILiteral* reason) final;
-        void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+        FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
     };
 
     JSArrayBufferOwner m_owner;

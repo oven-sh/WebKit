@@ -77,6 +77,28 @@ PlatformXR::LayerHandle XRCompositionLayer::layerHandle() const
     return m_backing->handle();
 }
 
+// https://www.w3.org/TR/webxrlayers-1/#dom-xrcompositionlayer-destroy
+void XRCompositionLayer::destroy()
+{
+    if (m_destroyed)
+        return;
+    m_destroyed = true;
+
+    destroyResources();
+
+    if (RefPtr session = m_session)
+        session->layerDestroyed(*this);
+}
+
+// https://www.w3.org/TR/webxrlayers-1/#destroy-the-resources-for-a-layer
+void XRCompositionLayer::destroyResources()
+{
+    m_backing->invalidateTextures();
+    m_colorTextures.clear();
+    m_depthStencilTextures.clear();
+    m_backing->releaseResources();
+}
+
 void XRCompositionLayer::setColorTextures(Vector<RefPtr<WebGLOpaqueTexture>>&& colorTextures)
 {
     m_colorTextures = WTF::move(colorTextures);
@@ -101,11 +123,7 @@ const WebXRSpace& XRCompositionLayer::space() const
 
 void XRCompositionLayer::setSpace(WebXRSpace& space)
 {
-    if (m_space == &space)
-        return;
-
     m_space = space;
-    setNeedsRedraw(true);
 }
 
 const WebXRRigidTransform& XRCompositionLayer::transform() const
@@ -116,16 +134,14 @@ const WebXRRigidTransform& XRCompositionLayer::transform() const
 
 void XRCompositionLayer::setTransform(WebXRRigidTransform& transform)
 {
-    if (m_transform == &transform)
-        return;
-
     m_transform = transform;
-    setNeedsRedraw(true);
 }
 
 void XRCompositionLayer::startFrame(PlatformXR::FrameData& frameData)
 {
 #if PLATFORM(GTK) || PLATFORM(WPE)
+    m_contentUpdatedThisFrame = false;
+
     auto it = frameData.layers.find(m_backing->handle());
     if (it == frameData.layers.end())
         return;
@@ -136,7 +152,7 @@ void XRCompositionLayer::startFrame(PlatformXR::FrameData& frameData)
 #endif
 }
 
-std::optional<PlatformXR::FrameData::Pose> computeXRCompositionLayerPose(const TransformationMatrix& spaceTransform, const TransformationMatrix* layerTransform)
+std::optional<PlatformXR::Pose> computeXRCompositionLayerPose(const TransformationMatrix& spaceTransform, const TransformationMatrix* layerTransform)
 {
     // nativeOrigin() returns the transform that maps from the layer's reference space into the session's local space.
     auto transformInLocalSpace = layerTransform ? spaceTransform * *layerTransform : spaceTransform;
@@ -144,7 +160,7 @@ std::optional<PlatformXR::FrameData::Pose> computeXRCompositionLayerPose(const T
     if (!transformInLocalSpace.decompose4(decomposed))
         return std::nullopt;
 
-    return PlatformXR::FrameData::Pose {
+    return PlatformXR::Pose {
         .position = { static_cast<float>(decomposed.translateX), static_cast<float>(decomposed.translateY), static_cast<float>(decomposed.translateZ) },
         .orientation = { static_cast<float>(decomposed.quaternion.x), static_cast<float>(decomposed.quaternion.y), static_cast<float>(decomposed.quaternion.z), static_cast<float>(decomposed.quaternion.w) },
     };
@@ -153,15 +169,17 @@ std::optional<PlatformXR::FrameData::Pose> computeXRCompositionLayerPose(const T
 void XRCompositionLayer::recomputePose()
 {
     std::optional<TransformationMatrix> spaceTransform;
-    if (m_space)
-        spaceTransform = m_space->nativeOrigin();
+    RefPtr space = m_space;
+    if (space)
+        spaceTransform = space->nativeOrigin();
     if (!spaceTransform)
         spaceTransform = TransformationMatrix();
 
-    auto pose = computeXRCompositionLayerPose(*spaceTransform, m_transform ? &m_transform->rawTransform() : nullptr);
+    RefPtr transform = m_transform;
+    auto pose = computeXRCompositionLayerPose(*spaceTransform, transform ? &transform->rawTransform() : nullptr);
     if (!pose) {
         RELEASE_LOG_ERROR(XR, "Failed to decompose space transform, using identity transform for layer pose");
-        m_poseInLocalSpace = PlatformXR::FrameData::Pose { .position = { 0, 0, 0 }, .orientation = { 0, 0, 0, 1 } };
+        m_poseInLocalSpace = PlatformXR::Pose { .position = { 0, 0, 0 }, .orientation = { 0, 0, 0, 1 } };
         return;
     }
     m_poseInLocalSpace = *pose;
@@ -175,6 +193,7 @@ PlatformXR::DeviceLayer XRCompositionLayer::endFrame()
 
     layerData.handle = m_backing->handle();
     layerData.visible = true;
+    layerData.contentUpdated = std::exchange(m_contentUpdatedThisFrame, false);
 
     recomputePose();
 

@@ -62,7 +62,7 @@ private:
     FloatRect handlePartialDisplayContentUpdate(Layout::InlineLayoutResult&&, InlineContent&, const Layout::InlineDamage*) const;
     FloatRect appendToTruncatedDisplayContent(Layout::InlineLayoutResult&&, InlineContent&, const Layout::InlineDamage&) const;
 
-    const RenderBlockFlow& m_blockFlow;
+    const CheckedRef<const RenderBlockFlow> m_blockFlow;
 };
 
 }

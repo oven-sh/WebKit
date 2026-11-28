@@ -126,11 +126,12 @@ public:
     void breakpointActionSound(JSC::BreakpointActionID) final;
     void breakpointActionProbe(JSC::JSGlobalObject*, JSC::BreakpointActionID, unsigned batchId, unsigned sampleId, JSC::JSValue sample) final;
     void didDeferBreakpointPause(JSC::BreakpointID) final;
+    void didDropPauseAtNextOpportunity() final;
 
-    bool LEGACY_NODELETE isPaused() const;
-    bool LEGACY_NODELETE breakpointsActive() const;
+    NODELETE bool isPaused() const;
+    NODELETE bool breakpointsActive() const;
 
-    void LEGACY_NODELETE setSuppressAllPauses(bool);
+    NODELETE void setSuppressAllPauses(bool);
 
     void handleConsoleAssert(const String& message);
 
@@ -250,14 +251,14 @@ private:
     RefPtr<JSON::Object> buildExceptionPauseReason(JSC::JSValue exception, const InjectedScript&);
 
     using AsyncCallIdentifier = std::pair<unsigned, uint64_t>;
-    static AsyncCallIdentifier LEGACY_NODELETE asyncCallIdentifier(AsyncCallType, uint64_t callbackId);
+    NODELETE static AsyncCallIdentifier asyncCallIdentifier(AsyncCallType, uint64_t callbackId);
 
     const UniqueRef<DebuggerFrontendDispatcher> m_frontendDispatcher;
     const Ref<DebuggerBackendDispatcher> m_backendDispatcher;
 
     JSC::Debugger& m_debugger;
     const CheckedRef<InjectedScriptManager> m_injectedScriptManager;
-    UncheckedKeyHashMap<JSC::SourceID, JSC::Debugger::Script> m_scripts;
+    HashMap<JSC::SourceID, JSC::Debugger::Script> m_scripts;
 
     struct BlackboxedScript {
         String url;
@@ -266,9 +267,9 @@ private:
 
         // This is only used to restrict where within the script to ignore pausing.
         // Put another way, it doesn't change whether the script is blackboxed.
-        UncheckedKeyHashSet<JSC::Debugger::BlackboxRange> ranges;
+        HashSet<JSC::Debugger::BlackboxRange> ranges;
 
-        inline bool LEGACY_NODELETE operator==(const BlackboxedScript& other) const
+        NODELETE inline bool operator==(const BlackboxedScript& other) const
         {
             return url == other.url
                 && caseSensitive == other.caseSensitive
@@ -282,13 +283,13 @@ private:
     };
     Vector<BlackboxedScript> m_blackboxedScripts;
 
-    UncheckedKeyHashSet<Listener*> m_listeners;
+    HashSet<Listener*> m_listeners;
 
     JSC::JSGlobalObject* m_pausedGlobalObject { nullptr };
     JSC::Strong<JSC::Unknown> m_currentCallStack;
 
-    UncheckedKeyHashMap<Protocol::Debugger::BreakpointId, ProtocolBreakpoint> m_protocolBreakpointForProtocolBreakpointID;
-    UncheckedKeyHashMap<Protocol::Debugger::BreakpointId, JSC::BreakpointsVector> m_debuggerBreakpointsForProtocolBreakpointID;
+    HashMap<Protocol::Debugger::BreakpointId, ProtocolBreakpoint> m_protocolBreakpointForProtocolBreakpointID;
+    HashMap<Protocol::Debugger::BreakpointId, JSC::BreakpointsVector> m_debuggerBreakpointsForProtocolBreakpointID;
     JSC::BreakpointID m_nextDebuggerBreakpointID { JSC::noBreakpointID + 1 };
 
     RefPtr<JSC::Breakpoint> m_continueToLocationDebuggerBreakpoint;
@@ -301,7 +302,7 @@ private:
     DebuggerFrontendDispatcher::Reason m_lastPauseReason;
     RefPtr<JSON::Object> m_lastPauseData;
 
-    UncheckedKeyHashMap<AsyncCallIdentifier, RefPtr<AsyncStackTrace>> m_pendingAsyncCalls;
+    HashMap<AsyncCallIdentifier, RefPtr<AsyncStackTrace>> m_pendingAsyncCalls;
     Vector<AsyncCallIdentifier> m_currentAsyncCallIdentifierStack;
     int m_asyncStackTraceDepth { 0 };
 
@@ -317,7 +318,7 @@ private:
         RefPtr<JSC::Breakpoint> specialBreakpoint;
 
         // Avoid having to (re)match the searcher each time a function as called.
-        UncheckedKeyHashSet<String> knownMatchingSymbols;
+        HashSet<String> knownMatchingSymbols;
 
         inline bool operator==(const SymbolicBreakpoint& other) const
         {

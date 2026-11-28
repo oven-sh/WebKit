@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <optional>
 
 namespace WebGPU::Metal {
@@ -42,11 +46,11 @@ public:
     };
 
 protected:
-    bool LEGACY_NODELETE prepareTheEncoderState() const;
+    NODELETE bool prepareTheEncoderState() const;
     NSString* encoderStateName() const;
     // The size of the buffer range at the offset: the size, or the rest of the buffer for std::nullopt.
     // std::nullopt when the range does not fit in the buffer.
-    static std::optional<uint64_t> LEGACY_NODELETE bufferRangeSize(const Buffer&, uint64_t offset, std::optional<uint64_t> size);
+    NODELETE static std::optional<uint64_t> bufferRangeSize(const Buffer&, uint64_t offset, std::optional<uint64_t> size);
 
     EncoderState m_state { EncoderState::Open };
 };

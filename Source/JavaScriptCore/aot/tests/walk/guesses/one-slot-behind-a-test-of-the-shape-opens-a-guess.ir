@@ -1,0 +1,43 @@
+# one read of a slot pays for a test of the shape, outside a loop too: the test, the look and the load are a cache whose shape is known when the program is built.
+# The stretch ends behind that read: `z` is no field, and nobody calls what he expects not to be there: the two reads of it stay closed either way.
+# A guess of one read is ONE operation, which makes both tests and does the closed read where either fails: no block is added, and nothing is built twice
+# function list(o: Point) { return [o.x, o.z(), o.z()]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="x" receivers=[L0] level=Expected
+# CHECK: = PropGet {{*}}key="z"
+# RUN(BLOCKS): walk f1 mechanisms=none+TypedOperations+Guesses
+# BLOCKS-NOT: Branch
+# BLOCKS-NOT: = ShapeTest
+# BLOCKS-NOT: = PropGet {{*}}key="x"
+# RUN(ONCE): walk f1 mechanisms=none+TypedOperations+Guesses
+# ONCE-COUNT-2: = PropGet {{*}}key="z"
+# ONCE-NOT: = PropGet {{*}}key="z"
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    Return v8
+}
+function f1 name="list" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="x"
+    v3 = PropGet v1 key="z"
+    v4 = Call v3, v1
+    v5 = PropGet v1 key="z"
+    v6 = Call v5, v1
+    v7 = NewArray v2, v4, v6 contents=anything
+    Return v7
+}

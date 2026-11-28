@@ -1,0 +1,70 @@
+# function row(text: string, above: number[], first: number): number[] {
+#   const current: number[] = [first];
+#   for (let j = 1; j <= text.length; j++) current.push(Math.min(above[j] + 1, current[j - 1] + (text[j - 1] === "x" ? 0 : 1)));
+#   return current;
+# }
+# RUN: walk f1 mechanisms=all
+# CHECK: arrayStorage=Double
+# CHECK: ExtendArrayLength
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="axbxc"
+    v2 = Integer integer=1
+    v3 = Integer integer=3
+    v4 = NewArray v2, v3, v2, v3, v2, v3, v2 contents=number
+    v5 = Call v0, -, v1, v4, v3 calleeName="row" [isNeverInlined]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v8
+}
+function f1 name="row" module=m0 position=10 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string}, {type=undefined|null|Array<number>}, {type=number}] results=[{type=undefined|null|Array<number>}] {
+  b0(v0: undefined|null|string, v1: undefined|null|Array<number>, v2: number):
+    v3 = NewArray v2 contents=number
+    v4 = Convert v3 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v5 = Integer integer=1
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v6)
+  b1(v7: number):
+    LoopHint
+    v9 = PropGet v0 key="length"
+    v10 = LessEq v7, v9
+    Branch v10 -> taken b2(), notTaken b6()
+  b2():
+    v11 = PropGet v4 key="push"
+    v12 = Builtin builtin=Math
+    v13 = Builtin builtin=MathMin
+    v14 = ElemGet v1, v7
+    v15 = Integer integer=1
+    v16 = Add v14, v15
+    v17 = Integer integer=1
+    v18 = Sub v7, v17
+    v19 = ElemGet v4, v18
+    v20 = Integer integer=1
+    v21 = Sub v7, v20
+    v22 = ElemGet v0, v21
+    v23 = String string="x"
+    v24 = StrictEq v22, v23
+    Branch v24 -> taken b3(), notTaken b4()
+  b3():
+    v25 = Integer
+    Jump -> next b5(v25)
+  b4():
+    v26 = Integer integer=1
+    Jump -> next b5(v26)
+  b5(v27):
+    v28 = Add v19, v27
+    v29 = Call v13, v12, v16, v28 calleeName="Math.min"
+    v30 = Convert v29 declared={type=number}
+    v31 = Call v11, v4, v30 calleeKey="push"
+    v32 = Convert v31 declared={type=number}
+    v33 = Increment v7
+    v34 = Convert v33 declared={type=number}
+    Jump -> next b1(v34)
+  b6():
+    Return v4
+}

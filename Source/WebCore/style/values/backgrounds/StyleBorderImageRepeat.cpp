@@ -29,12 +29,11 @@
 #include "CSSBorderImageRepeatValue.h"
 #include "StyleKeyword+CSSValueConversion.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Conversion
 
-static CSS::BorderImageRepeat::Value LEGACY_NODELETE toCSSBorderImageRepeatValue(const BorderImageRepeat::Value& value)
+NODELETE static CSS::BorderImageRepeat::Value toCSSBorderImageRepeatValue(const BorderImageRepeat::Value& value)
 {
     switch (value) {
     case NinePieceImageRule::Stretch: return CSS::Keyword::Stretch { };
@@ -85,5 +84,4 @@ auto CSSValueCreation<BorderImageRepeat>::operator()(CSSValuePool&, const Style:
     return CSSBorderImageRepeatValue::create(toCSS(value, style));
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

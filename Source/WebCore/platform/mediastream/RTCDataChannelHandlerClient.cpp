@@ -35,7 +35,7 @@
 namespace WebCore {
 
 static Lock s_rtcDataChannelHandlerClientsLock;
-static HashMap<RTCDataChannelLocalIdentifier, std::pair<std::optional<ScriptExecutionContextIdentifier>, WeakPtr<RTCDataChannelHandlerClient>>>& LEGACY_NODELETE rtcDataChannelHandlerClients() WTF_REQUIRES_LOCK(s_rtcDataChannelHandlerClientsLock)
+NODELETE static HashMap<RTCDataChannelLocalIdentifier, std::pair<std::optional<ScriptExecutionContextIdentifier>, WeakPtr<RTCDataChannelHandlerClient>>>& rtcDataChannelHandlerClients() WTF_REQUIRES_LOCK(s_rtcDataChannelHandlerClientsLock)
 {
     static NeverDestroyed<HashMap<RTCDataChannelLocalIdentifier, std::pair<std::optional<ScriptExecutionContextIdentifier>, WeakPtr<RTCDataChannelHandlerClient>>>> map;
     return map;
@@ -43,7 +43,7 @@ static HashMap<RTCDataChannelLocalIdentifier, std::pair<std::optional<ScriptExec
 
 void RTCDataChannelHandlerClient::peerConnectionIsClosing(RTCDataChannelIdentifier identifier)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RefPtr<RTCDataChannelHandlerClient> mainThreadClient;
     {
         Locker locker { s_rtcDataChannelHandlerClientsLock };

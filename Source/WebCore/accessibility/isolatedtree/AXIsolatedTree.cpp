@@ -167,7 +167,7 @@ void AXIsolatedTree::createEmptyContent(AccessibilityObject& axRoot)
     // derived dynamically from the tree's frame geometry, so we don't need to cache it.
     rootData.setProperty(AXProperty::ScreenRelativePosition, axRoot.screenRelativePosition());
 #endif
-    NodeChange rootAppend { WTF::move(rootData), axRoot.wrapper(), nextChangeSequence() };
+    SUPPRESS_FORWARD_DECL_ARG NodeChange rootAppend { WTF::move(rootData), axRoot.wrapper(), nextChangeSequence() };
 
     RefPtr axWebArea = Accessibility::findUnignoredChild(axRoot, [] (auto& object) {
         return object->isWebArea();
@@ -179,15 +179,14 @@ void AXIsolatedTree::createEmptyContent(AccessibilityObject& axRoot)
     }
     auto webAreaData = createIsolatedObjectData(*axWebArea, *this);
     webAreaData.setProperty(AXProperty::ScreenRelativePosition, axWebArea->screenRelativePosition());
-    NodeChange webAreaAppend { WTF::move(webAreaData), axWebArea->wrapper(), nextChangeSequence() };
+    SUPPRESS_FORWARD_DECL_ARG NodeChange webAreaAppend { WTF::move(webAreaData), axWebArea->wrapper(), nextChangeSequence() };
 
     m_nodeMap.set(axRoot.objectID(), ParentChildrenIDs { std::nullopt, { axWebArea->objectID() } });
     m_nodeMap.set(axWebArea->objectID(), ParentChildrenIDs { axRoot.objectID(), { } });
 
     setPendingRootNodeID(axRoot.objectID());
     markDirtyAndGetWorkingChanges().focusedNodeID = Markable<AXID> { axWebArea->objectID() };
-    Vector<NodeChange> appends;
-    appends.reserveInitialCapacity(2);
+    Vector<NodeChange> appends(ReserveCapacityTag { }, 2);
     appends.append(WTF::move(rootAppend));
     appends.append(WTF::move(webAreaAppend));
     queueAppendsAndRemovals(WTF::move(appends), { });
@@ -208,7 +207,7 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::create(AXObjectCache& axObjectCache)
         return nullptr;
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8(), document->isTopDocument());
+        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", makeUTF8CString(axObjectCache.debugDescription()), document->isTopDocument());
 
     if (!Accessibility::inRenderTreeOrStyleUpdate(*document))
         document->updateLayoutIgnorePendingStylesheets();
@@ -374,7 +373,7 @@ std::optional<AXIsolatedTree::NodeChange> AXIsolatedTree::nodeChangeForObject(Re
         iterator->value.parentID = parentID;
     }
 
-    NodeChange nodeChange { WTF::move(data), axObject->wrapper(), sequence.value_or(nextChangeSequence()) };
+    SUPPRESS_FORWARD_DECL_ARG NodeChange nodeChange { WTF::move(data), axObject->wrapper(), sequence.value_or(nextChangeSequence()) };
 
     if (axObject->isRoot())
         setPendingRootNodeID(axObject->objectID());
@@ -419,8 +418,8 @@ void AXIsolatedTree::queueChange(NodeChange&& nodeChange)
         pending.childrenUpdates.append({ *parentID, WTF::move(siblingsIDs) });
     }
 
-    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8());
-    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8());
+    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", makeUTF8CString(objectID.loggingString()));
+    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", makeUTF8CString(objectID.loggingString()));
     auto childrenIDs = m_nodeMap.get(objectID).childrenIDs;
     pending.childrenUpdates.append({ objectID, WTF::move(childrenIDs) });
 }
@@ -454,7 +453,7 @@ void AXIsolatedTree::addUnconnectedNode(Ref<AccessibilityObject> axObject)
     // Instead, just directly create and queue the node change so m_readerThreadNodeMap can hold a reference
     // to it. It will be removed from m_readerThreadNodeMap when the corresponding DOM element, renderer, or
     // other entity is removed from the page.
-    NodeChange nodeChange { createIsolatedObjectData(axObject, *this), axObject->wrapper(), nextChangeSequence() };
+    SUPPRESS_FORWARD_DECL_ARG NodeChange nodeChange { createIsolatedObjectData(axObject, *this), axObject->wrapper(), nextChangeSequence() };
     auto& workingChanges = markDirtyAndGetWorkingChanges();
     workingChanges.appends.append(WTF::move(nodeChange));
 #if ASSERT_ENABLED
@@ -495,8 +494,7 @@ Vector<AXIsolatedTree::NodeChange> AXIsolatedTree::resolveAppends()
 
     auto lastFeedbackTime = MonotonicTime::now();
     double counter = 0;
-    Vector<NodeChange> resolvedAppends;
-    resolvedAppends.reserveInitialCapacity(m_unresolvedPendingAppends.size());
+    Vector<NodeChange> resolvedAppends(ReserveCapacityTag { }, m_unresolvedPendingAppends.size());
     // The process of resolving appends can add more IDs to m_unresolvedPendingAppends as we iterate over it, so
     // iterate over an exchanged map instead. Any late-appended IDs will get picked up in the next cycle.
     auto unresolvedPendingAppends = std::exchange(m_unresolvedPendingAppends, { });
@@ -535,7 +533,7 @@ void AXIsolatedTree::queueAppendsAndRemovals(Vector<NodeChange>&& appends, Vecto
         queueChange(WTF::move(append));
 
     for (const auto& axID : parentUpdateIDs) {
-        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8());
+        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", makeUTF8CString(axID.loggingString()));
         markDirtyAndGetWorkingChanges().parentUpdates.set(axID, *m_nodeMap.get(axID).parentID);
     }
 
@@ -563,8 +561,7 @@ void AXIsolatedTree::collectNodeChangesForSubtree(AccessibilityObject& axObject)
     if (iterator == m_nodeMap.end()) {
         m_unresolvedPendingAppends.set(axObject.objectID(), nextChangeSequence());
 
-        Vector<AXID> axChildrenIDs;
-        axChildrenIDs.reserveInitialCapacity(axChildrenCopy.size());
+        Vector<AXID> axChildrenIDs(ReserveCapacityTag { }, axChildrenCopy.size());
         for (const auto& axChild : axChildrenCopy) {
             if (axChild.ptr() == &axObject) {
                 AX_ASSERT_NOT_REACHED();
@@ -683,8 +680,7 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
     if (isUpdatingSubtree())
         return;
 
-    AXPropertyVector properties;
-    properties.reserveInitialCapacity(propertySet.size());
+    AXPropertyVector properties(ReserveCapacityTag { }, propertySet.size());
     for (const auto& property : propertySet) {
         AXLOG(makeString("Property: "_s, property));
         switch (property) {
@@ -1354,10 +1350,8 @@ void AXIsolatedTree::updateFrameGeometryAndScrollPositionIfNeeded(AXObjectCache&
 {
     if (std::optional geometry = cache.getAndUpdateFrameGeometry()) {
         IntPoint viewOriginScrollPosition;
-        if (CheckedPtr view = protect(cache.document())->view()) {
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST viewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
-        }
+        if (CheckedPtr view = protect(cache.document())->view())
+            viewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
         setFrameGeometry(AXFrameGeometry { *geometry }, viewOriginScrollPosition);
     }
 }
@@ -1893,7 +1887,7 @@ void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
     AX_ASSERT(!isMainThread());
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8());
+        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", makeUTF8CString(treeID().loggingString()));
 
     // Any structural change can affect some ancestor's stitchedUnignoredChildren result.
     // Property changes that could affect the unignored-children result (IsIgnored, StitchGroups, etc.)
@@ -2052,7 +2046,7 @@ void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
     }
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8());
+        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", makeUTF8CString(treeID().loggingString()));
 }
 
 void AXIsolatedTree::sortedLiveRegionsDidChange(Vector<AXID> liveRegionIDs)
@@ -2171,7 +2165,7 @@ void AXIsolatedTree::processQueuedNodeUpdates()
     SetForScope processingScope(m_isProcessingQueuedNodeUpdates, true);
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache }->debugDescription().utf8() : "null"_s);
+        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? makeUTF8CString(CheckedPtr { cache }->debugDescription()) : "null"_s);
 
     for (const auto& nodeIDs : m_needsNodeRemoval)
         removeNode(nodeIDs.key, nodeIDs.value);
@@ -2335,7 +2329,7 @@ void setPropertyIn(AXProperty property, AXPropertyValueVariant&& value, AXProper
         properties.append(std::pair(property, WTF::move(value)));
 }
 
-static bool LEGACY_NODELETE shouldCacheElementName(ElementName name)
+NODELETE static bool shouldCacheElementName(ElementName name)
 {
     switch (name) {
     case ElementName::HTML_area:
@@ -2674,7 +2668,7 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         if (object.isARIATreeGridRow()) {
             setProperty(AXProperty::IsARIATreeGridRow, true);
             setObjectVectorProperty(AXProperty::DisclosedRows, object.disclosedRows());
-            setObjectProperty(AXProperty::DisclosedByRow, object.disclosedByRow());
+            setObjectProperty(AXProperty::DisclosedByRow, object.disclosedByRow().get());
         } else if (object.isARIAGridRow())
             setProperty(AXProperty::IsARIAGridRow, true);
 
@@ -2727,16 +2721,16 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
                 if (auto radicand = object.mathRadicand())
                     setObjectVectorProperty(AXProperty::MathRadicand, *radicand);
 
-                setObjectProperty(AXProperty::MathRootIndexObject, object.mathRootIndexObject());
+                setObjectProperty(AXProperty::MathRootIndexObject, object.mathRootIndexObject().get());
             }
 
-            setObjectProperty(AXProperty::MathUnderObject, object.mathUnderObject());
-            setObjectProperty(AXProperty::MathOverObject, object.mathOverObject());
-            setObjectProperty(AXProperty::MathNumeratorObject, object.mathNumeratorObject());
-            setObjectProperty(AXProperty::MathDenominatorObject, object.mathDenominatorObject());
-            setObjectProperty(AXProperty::MathBaseObject, object.mathBaseObject());
-            setObjectProperty(AXProperty::MathSubscriptObject, object.mathSubscriptObject());
-            setObjectProperty(AXProperty::MathSuperscriptObject, object.mathSuperscriptObject());
+            setObjectProperty(AXProperty::MathUnderObject, object.mathUnderObject().get());
+            setObjectProperty(AXProperty::MathOverObject, object.mathOverObject().get());
+            setObjectProperty(AXProperty::MathNumeratorObject, object.mathNumeratorObject().get());
+            setObjectProperty(AXProperty::MathDenominatorObject, object.mathDenominatorObject().get());
+            setObjectProperty(AXProperty::MathBaseObject, object.mathBaseObject().get());
+            setObjectProperty(AXProperty::MathSubscriptObject, object.mathSubscriptObject().get());
+            setObjectProperty(AXProperty::MathSuperscriptObject, object.mathSuperscriptObject().get());
             setMathscripts(AXProperty::MathPrescripts, object);
             setMathscripts(AXProperty::MathPostscripts, object);
         }

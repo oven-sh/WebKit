@@ -1,0 +1,7 @@
+# The body of a file that has a start is entered by the run time alone, by the number of its closure. Its entry by value is no unit and has no bytes: the word of the closure leads to one stub for all such files,
+# which takes the number of the start out of a word of the instance that the run time has written, and stops where nobody has.
+# RUN: units-with-code f4:GenericCallEntry mechanisms=all
+# CHECK: unit f4:GenericCallEntry fused into f4:ModuleStart, 0 bytes
+# RUN(NONE): units-with-code f4:GenericCallEntry mechanisms=none
+# NONE: unit f4:GenericCallEntry fused into f4:ModuleStart, 0 bytes
+# PROGRAM-OF: ../plan/commonjs-file-has-a-start.ir

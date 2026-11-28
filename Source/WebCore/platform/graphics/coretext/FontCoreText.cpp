@@ -541,6 +541,17 @@ RefPtr<Font> Font::createFontWithoutSynthesizableFeatures() const
     return createDerivativeFont(newCTFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), protect(m_platformData.customPlatformData()).get(), m_platformData.metricsOverrides());
 }
 
+const Font& Font::nonSyntheticBoldFont() const
+{
+    if (!m_platformData.syntheticBold())
+        return *this;
+    DerivedFonts& derivedFontData = ensureDerivedFontData();
+    if (!derivedFontData.nonSyntheticBoldFont)
+        derivedFontData.nonSyntheticBoldFont = create(FontPlatformData::cloneWithSyntheticBold(m_platformData, false), origin(), isInterstitial() ? IsInterstitial::Yes : IsInterstitial::No, visibility(), isTextOrientationFallback() ? IsOrientationFallback::Yes : IsOrientationFallback::No);
+    ASSERT(derivedFontData.nonSyntheticBoldFont != this);
+    return *derivedFontData.nonSyntheticBoldFont;
+}
+
 RefPtr<Font> Font::platformCreateScaledFont(const FontDescription&, float scaleFactor) const
 {
     float size = m_platformData.size() * scaleFactor;
@@ -882,12 +893,12 @@ Font::ComplexColorFormatGlyphs Font::ComplexColorFormatGlyphs::createWithRelevan
     return { true, glyphCount };
 }
 
-bool LEGACY_NODELETE Font::ComplexColorFormatGlyphs::hasValueFor(Glyph glyph) const
+NODELETE bool Font::ComplexColorFormatGlyphs::hasValueFor(Glyph glyph) const
 {
     return m_bits.contains(bitForInitialized(glyph));
 }
 
-bool LEGACY_NODELETE Font::ComplexColorFormatGlyphs::get(Glyph glyph) const
+NODELETE bool Font::ComplexColorFormatGlyphs::get(Glyph glyph) const
 {
     ASSERT(hasValueFor(glyph));
     return m_bits.contains(bitForValue(glyph));

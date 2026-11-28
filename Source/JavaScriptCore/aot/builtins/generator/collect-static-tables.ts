@@ -64,9 +64,7 @@ const builtinCodeGenerator = "JSBuiltin";
 
 const beginPattern = /^@begin\s+([:\w]+)\s*\d*$/;
 const conditionPattern = /^#if\s+(!?)OS\((WINDOWS|DARWIN|LINUX)\)$/;
-// A row that only some builds of the host have. b.leftOut() lists the names that are defined.
 const definedPattern = /^#if\s+(!?)defined\((\w+)\)$/;
-// A row that an engine built without the feature leaves out. The table has it: MayBeAbsent says that a realm may lack it.
 const enabledPattern = /^#if\s+ENABLE\(\w+\)$/;
 
 const platformsByOS: Readonly<Record<string, readonly TargetPlatform[]>> = {
@@ -285,6 +283,7 @@ function memberOf(
       platforms: entry.platforms,
       ...symbolColumnsOf(entry),
       ...(entry.attributes.includes(constructableWord) ? { constructable: true } : {}),
+      canBeListed: !entry.attributes.includes("DontEnum"),
       ...(meanings.some(meaning => meaning.isAddedAtFirstRead === true)
         ? { addedAtFirstRead: true, ...(entry.attributes.includes("DontEnum") ? {} : { addedAsEnumerable: true }) }
         : {}),
@@ -311,7 +310,6 @@ function readTableFile(path: string, texts: Map<string, string | null>): string 
 
 const keyOf = ({ file, name }: FunctionRef): string => `${file}\t${name}`;
 
-/** The functions that a written declaration implements an overload with, lists in callsFunctions or leaves out. */
 function findNamedFunctions(declared: readonly SourcedDeclaration[]): Set<string> {
   const named = new Set<string>();
   for (const { declaration } of declared) {
@@ -332,7 +330,6 @@ function findNamedFunctions(declared: readonly SourcedDeclaration[]): Set<string
   return named;
 }
 
-// create_hash_table names the code of a JSBuiltin row after the table: jsBufferConstructorTable, from: jsBufferConstructorFromCodeGenerator.
 function codeOfRow(table: string, key: string, origin: Origin): FunctionRef {
   const file = cap(table.replace(/Table$/, "")).replace(/^Js(?=[A-Z])/, "JS");
   return { file: origin === "Host" ? `builtins/${file}` : file, name: key };

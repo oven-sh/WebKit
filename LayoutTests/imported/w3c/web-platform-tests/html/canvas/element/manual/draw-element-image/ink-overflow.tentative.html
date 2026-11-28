@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/html/canvas/resources/draw-element-image-styles.css" />
 <script src="/html/canvas/resources/color-grid-component.js"></script>
 <script src="/common/reftest-wait.js"></script>
+<script src="/html/canvas/resources/wait-for-canvas-paint.js"></script>
 
 <style>
   body {
@@ -37,31 +38,31 @@
 </style>
 
 <canvas content=drawable>
-  <div class="draw-element-wrapper box-shadow" outset="50" offset="20">
+  <div drawable class="draw-element-wrapper box-shadow" outset="50" offset="20">
     <color-grid></color-grid>
   </div>
 </canvas>
 
 <canvas content=drawable>
-  <div class="draw-element-wrapper box-shadow" outset="50" offset="-50">
+  <div drawable class="draw-element-wrapper box-shadow" outset="50" offset="-50">
     <color-grid></color-grid>
   </div>
 </canvas>
 
 <canvas content=drawable>
-  <div class="draw-element-wrapper outline" xscale="1" yscale="1" outset="10" offset="30">
+  <div drawable class="draw-element-wrapper outline" xscale="1" yscale="1" outset="10" offset="30">
     <color-grid></color-grid>
   </div>
 </canvas>
 
 <canvas content=drawable>
-  <div class="draw-element-wrapper outline" outset="10" offset="-10">
+  <div drawable class="draw-element-wrapper outline" outset="10" offset="-10">
     <color-grid></color-grid>
   </div>
 </canvas>
 
 <canvas content=drawable>
-  <div class="draw-element-wrapper outline" outset="-10" offset="20">
+  <div drawable class="draw-element-wrapper outline" outset="-10" offset="20">
     <color-grid></color-grid>
   </div>
 </canvas>
@@ -75,6 +76,7 @@
   Promise.all(Array.from(document.querySelectorAll("canvas")).map(async cvs => {
     await resizeToPixelGrid(cvs);
     await new Promise(setTimeout);
+    await waitForCanvasPaint(cvs);
 
     const target = cvs.firstElementChild;
     const targetStyle = getComputedStyle(target);

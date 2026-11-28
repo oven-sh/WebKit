@@ -37,6 +37,7 @@
 #include "ContentExtensionError.h"
 #include "ContentRuleListResults.h"
 #include "ContentSecurityPolicy.h"
+#include "CrossOriginEmbedderPolicy.h"
 #include "CrossOriginOpenerPolicy.h"
 #include "CustomHeaderFields.h"
 #include "DNS.h"
@@ -48,6 +49,7 @@
 #include "DocumentQuirks.h"
 #include "DocumentResourceLoader.h"
 #include "DocumentSecurityOrigin.h"
+#include "DocumentSettingsValues.h"
 #include "DocumentView.h"
 #include "DocumentWindow.h"
 #include "DocumentWriter.h"
@@ -110,6 +112,7 @@
 #include "ViewTransition.h"
 #include "ViolationReportType.h"
 #include <wtf/Assertions.h>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -153,7 +156,7 @@
 namespace WebCore {
 
 #if ENABLE(CONTENT_FILTERING)
-static bool& LEGACY_NODELETE contentFilterInDocumentLoader()
+NODELETE static bool& contentFilterInDocumentLoader()
 {
     static bool filter = false;
     RELEASE_ASSERT(isMainThread());
@@ -173,7 +176,7 @@ static void setAllDefersLoading(const ResourceLoaderMap& loaders, bool defers)
         loader->setDefersLoading(defers);
 }
 
-static HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>& LEGACY_NODELETE scriptExecutionContextIdentifierToLoaderMap()
+NODELETE static HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>& scriptExecutionContextIdentifierToLoaderMap()
 {
     static MainThreadNeverDestroyed<HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>> map;
     return map.get();
@@ -440,7 +443,7 @@ static void hideRedirectTimingForNoReferrerNavigation(const DocumentLoader& load
 
 void DocumentLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetrics& fetchMetrics, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 #if ENABLE(CONTENT_FILTERING)
     if (RefPtr contentFilter = m_contentFilter; contentFilter && !contentFilter->continueAfterNotifyFinished(resource))
         return;
@@ -483,7 +486,7 @@ void DocumentLoader::notifyFinished(CachedResource& resource, const NetworkLoadM
 
 void DocumentLoader::finishedLoading()
 {
-    // If the prefetch response was not successful, remove the failed prefetch from the memory cache and retry the navigation as a continuing load.
+    // If the prefetch response can't serve this navigation, remove the prefetch from the memory cache and retry the navigation as a continuing load.
     if (m_prefetchResponseFailed) {
         RefPtr frame = m_frame;
         if (!frame)
@@ -500,6 +503,8 @@ void DocumentLoader::finishedLoading()
         FrameLoadRequest frameLoadRequest { document.copyRef(), protect(document->securityOrigin()), WTF::move(request), { }, InitiatedByMainFrame::Unknown };
         frameLoadRequest.setIsRequestFromClientOrUserInput();
         frameLoadRequest.setShouldTreatAsContinuingLoad(ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted);
+        if (auto navigationID = takeNavigationID())
+            frameLoadRequest.setNavigationID(*navigationID);
         frame->loader().load(WTF::move(frameLoadRequest));
         return;
     }
@@ -800,7 +805,7 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
     if (!newRequest.url().host().isEmpty() && SecurityOrigin::shouldIgnoreHost(newRequest.url())) {
         auto url = newRequest.url();
         url.removeHostAndPort();
-        newRequest.setURL(WTF::move(url));
+        newRequest.setURL(WTF::move(url), newRequest.didFilterLinkDecoration());
     }
 
 #if ENABLE(CONTENT_FILTERING)
@@ -871,7 +876,7 @@ std::optional<CrossOriginOpenerPolicyEnforcementResult> DocumentLoader::doCrossO
 
     auto currentCoopEnforcementResult = CrossOriginOpenerPolicyEnforcementResult::from(document->url(), document->securityOrigin(), document->crossOriginOpenerPolicy(), m_triggeringAction.requester(), openerURL);
 
-    auto newCoopEnforcementResult = WebCore::doCrossOriginOpenerHandlingOfResponse(*document, response, m_triggeringAction.requester(), protect(contentSecurityPolicy()).get(), frame->effectiveSandboxFlags(), m_request.httpReferrer(), frameLoader()->stateMachine().isDisplayingInitialEmptyDocument(), currentCoopEnforcementResult);
+    auto newCoopEnforcementResult = WebCore::doCrossOriginOpenerHandlingOfResponse(*document, response, m_triggeringAction.requester(), protect(contentSecurityPolicy()).get(), frame->effectiveSandboxFlags(), m_request.httpReferrer(), frameLoader()->stateMachine().isDisplayingInitialEmptyDocument(), currentCoopEnforcementResult, credentiallessSupport(document->settingsValues()));
     if (!newCoopEnforcementResult) {
         cancelMainResourceLoad(protect(frameLoader())->cancelledError(m_request));
         return std::nullopt;
@@ -964,7 +969,7 @@ void DocumentLoader::responseReceived(const CachedResource& resource, const Reso
         protect(contentSecurityPolicy())->didReceiveHeaders(ContentSecurityPolicyResponseHeaders { response }, m_request.httpReferrer(), ContentSecurityPolicy::ReportParsingErrors::No);
     }
     if (frame && frame->document() && frame->document()->settings().crossOriginOpenerPolicyEnabled())
-        m_responseCOOP = obtainCrossOriginOpenerPolicy(response);
+        m_responseCOOP = obtainCrossOriginOpenerPolicy(response, credentiallessSupport(frame->document()->settingsValues()));
 
     // https://w3c.github.io/webappsec-subresource-integrity/#parse-integrity-policy-headers
     m_integrityPolicy = processIntegrityPolicy(response, HTTPHeaderName::IntegrityPolicy);
@@ -1031,14 +1036,14 @@ void DocumentLoader::responseReceived(ResourceResponse&& response, CompletionHan
         ReportingClient* reportingClient = nullptr;
         if (frame && frame->document())
             reportingClient = frame->document();
-        ContentSecurityPolicy contentSecurityPolicy(URL { url }, this, reportingClient);
-        contentSecurityPolicy.didReceiveHeaders(ContentSecurityPolicyResponseHeaders { response }, m_request.httpReferrer());
-        if (frame && !contentSecurityPolicy.allowFrameAncestors(*frame, url)) {
+        auto contentSecurityPolicy = makeUnique<ContentSecurityPolicy>(URL { url }, this, reportingClient);
+        contentSecurityPolicy->didReceiveHeaders(ContentSecurityPolicyResponseHeaders { response }, m_request.httpReferrer());
+        if (frame && !contentSecurityPolicy->allowFrameAncestors(*frame, url)) {
             stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(identifier, response);
             return;
         }
 
-        if (frame && !contentSecurityPolicy.overridesXFrameOptions()) {
+        if (frame && !contentSecurityPolicy->overridesXFrameOptions()) {
             String frameOptions = response.httpHeaderFields().get(HTTPHeaderName::XFrameOptions);
             if (!frameOptions.isNull()) {
                 if (protect(frameLoader())->shouldInterruptLoadForXFrameOptions(frameOptions, url, identifier)) {
@@ -1344,7 +1349,7 @@ static inline bool shouldUseActiveServiceWorkerFromParent(const Document& docume
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-static inline bool LEGACY_NODELETE shouldEnableResourceMonitor(const Frame& frame)
+NODELETE static inline bool shouldEnableResourceMonitor(const Frame& frame)
 {
     if (frame.isMainFrame())
         return false;
@@ -1482,7 +1487,7 @@ void DocumentLoader::commitData(const SharedBuffer& data)
         for (auto& pendingStyleSheet : m_pendingNamedContentExtensionStyleSheets)
             extensionStyleSheets->maybeAddContentExtensionSheet(pendingStyleSheet.key, Ref { pendingStyleSheet.value });
         for (auto& pendingSelectorEntry : m_pendingContentExtensionDisplayNoneSelectors) {
-            for (const auto& pendingSelector : pendingSelectorEntry.value)
+            for (const auto& pendingSelector : borrow(pendingSelectorEntry.value))
                 extensionStyleSheets->addDisplayNoneSelector(pendingSelectorEntry.key, pendingSelector.first, pendingSelector.second);
         }
         m_pendingNamedContentExtensionStyleSheets.clear();
@@ -1548,8 +1553,10 @@ void DocumentLoader::checkLoadComplete()
     if (!m_frame || isLoading())
         return;
 
-    ASSERT(this == frameLoader()->activeDocumentLoader());
-    protect(protect(*m_frame)->document()->window())->finishedLoading();
+    if (this != frameLoader()->activeDocumentLoader())
+        return;
+
+    protect(protect(*m_frame)->document()->window())->runPrintWhenLoadedSteps();
 }
 
 void DocumentLoader::applyPoliciesToSettings()
@@ -1572,7 +1579,7 @@ void DocumentLoader::applyPoliciesToSettings()
     });
 }
 
-ColorSchemePreference LEGACY_NODELETE DocumentLoader::colorSchemePreference() const
+NODELETE ColorSchemePreference DocumentLoader::colorSchemePreference() const
 {
     return m_colorSchemePreference;
 }
@@ -2037,7 +2044,7 @@ URL DocumentLoader::documentURL() const
 // FIXME: This method seems to violate the encapsulation of this class.
 void DocumentLoader::setResponseMIMEType(const String& responseMIMEType)
 {
-    m_response.setMimeType(String { responseMIMEType });
+    m_response.setMimeType(extractMIMETypeFromMediaType(responseMIMEType));
 }
 
 #endif
@@ -2178,7 +2185,7 @@ bool DocumentLoader::maybeLoadEmpty()
     }
 
     SetForScope isInFinishedLoadingOfEmptyDocument { m_isInFinishedLoadingOfEmptyDocument, true };
-    m_isInitialAboutBlank = isDisplayingInitialEmptyDocument ? IsInitialAboutBlank::Yes : IsInitialAboutBlank::No;
+    m_isInitialAboutBlank = isDisplayingInitialEmptyDocument && m_isContinuingLoad == ShouldTreatAsContinuingLoad::No ? IsInitialAboutBlank::Yes : IsInitialAboutBlank::No;
     finishedLoading();
     return true;
 }
@@ -2187,6 +2194,7 @@ void DocumentLoader::loadErrorDocument()
 {
     m_response = ResourceResponse(URL { m_request.url() }, String { textHTMLContentTypeAtom() }, 0, "UTF-8"_s);
     SetForScope isInFinishedLoadingOfEmptyDocument { m_isInFinishedLoadingOfEmptyDocument, true };
+    SetForScope isLoadingErrorDocument { m_isLoadingErrorDocument, true };
 
     commitIfReady();
     if (!frameLoader())
@@ -2433,7 +2441,7 @@ void DocumentLoader::loadMainResource(ResourceRequest&& request)
     // the fragment identifier, so add that back in.
     // Otherwise, if the main resource was loaded from a prefetch, we need to conserve the redirect URL here
     if (equalIgnoringFragmentIdentifier(m_request.url(), updatedRequest.url()) || (m_mainResource && m_mainResource->options().cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch))
-        updatedRequest.setURL(URL { m_request.url() });
+        updatedRequest.setURL(URL { m_request.url() }, m_request.didFilterLinkDecoration());
     setRequest(WTF::move(updatedRequest));
 }
 
@@ -2484,7 +2492,7 @@ void DocumentLoader::willContinueMainResourceLoadAfterRedirect(const ResourceReq
 
 void DocumentLoader::clearMainResource()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (m_mainResource && m_mainResource->hasClient(*this))
         protect(*m_mainResource)->removeClient(*this);
 #if ENABLE(CONTENT_FILTERING)

@@ -1,0 +1,55 @@
+# a row of `||` over comparisons of one value with constants, whose value is taken, ends its first block in one Switch: every listed case brings the last join true, whatever else brings it false
+# function isKind(kind) { return kind === 1 || kind === 4 || kind === 9; }   as lower/expression/logical.rs writes it: each operator has a join of its own, and the next one asks there
+# f1 is handed to code that nobody has seen, so nothing is known of `kind`
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: Switch {{*}}cases=[1, 4, 9] -> case [[listed]](), case [[listed]](), case [[listed]](), otherwise [[rest]]()
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: Branch
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: Switch {{*}}cases=[1, 4, 9]
+# RUN(SHELL): run-in-shell globalThis.sink = isKind => { print([0, 1, 2, 4, 9, 10, -0, 1.5, 4.0, NaN, "1", null, undefined, {}].map(value => isKind(value)).join()); };
+# SHELL: false,true,false,true,true,false,false,false,true,false,false,false,false,false
+# SHELL-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="isKind" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b4(v4)
+  b2(v5):
+    Jump -> next b3()
+  b3():
+    v6 = Integer integer=4
+    v7 = StrictEq v0, v6
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = ToBoolean v8
+    Branch v9 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v10):
+    Jump -> next b8(v10)
+  b6(v11):
+    Jump -> next b7()
+  b7():
+    v12 = Integer integer=9
+    v13 = StrictEq v0, v12
+    Jump -> next b8(v13)
+  b8(v14):
+    Return v14
+}

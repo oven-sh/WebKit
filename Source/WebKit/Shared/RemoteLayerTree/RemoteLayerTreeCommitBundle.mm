@@ -75,7 +75,7 @@ String MainFrameData::description() const
     ts.dumpProperty("viewportMetaTagWidthWasExplicit"_s, viewportMetaTagWidthWasExplicit);
     ts.dumpProperty("viewportMetaTagCameFromImageDocument"_s, viewportMetaTagCameFromImageDocument);
     ts.dumpProperty("allowsUserScaling"_s, allowsUserScaling);
-    ts.dumpProperty("avoidsUnsafeArea"_s, avoidsUnsafeArea);
+    ts.dumpProperty("viewportFitEdges"_s, viewportFitEdges);
     ts.dumpProperty("isInStableState"_s, isInStableState);
 
     ts.endGroup();
@@ -92,6 +92,9 @@ String RemoteLayerTreeCommitBundle::description() const
 
     ts.dumpProperty("transactionID"_s, transactionID);
     ts.dumpProperty("startTime"_s, startTime.secondsSinceEpoch().milliseconds());
+
+    if (!fixedContainerEdges.isEmpty())
+        ts.dumpProperty("fixedContainerEdges"_s, fixedContainerEdges.size());
 
     if (editorState) {
         TextStream::GroupScope scope(ts);

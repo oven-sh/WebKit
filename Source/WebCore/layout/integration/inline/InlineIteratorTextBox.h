@@ -28,9 +28,7 @@
 #include <WebCore/InlineIteratorBox.h>
 #include <WebCore/RenderText.h>
 
-namespace WebCore {
-
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 class TextBoxIterator;
 
@@ -49,14 +47,14 @@ public:
 
     TextBoxSelectableRange selectableRange() const;
 
-    const FontCascade& LEGACY_NODELETE fontCascade() const;
+    NODELETE const FontCascade& fontCascade() const;
 
     TextRun textRun(TextRunMode = TextRunMode::Painting) const;
 
     const RenderText& renderer() const { return downcast<RenderText>(Box::renderer()); }
 
     // This returns the next text box generated for the same RenderText/Layout::InlineTextBox.
-    TextBoxIterator LEGACY_NODELETE nextTextBox() const;
+    NODELETE TextBoxIterator nextTextBox() const;
 };
 
 // Text boxes generated for one RenderText, in display order.
@@ -112,10 +110,6 @@ inline TextBoxSelectableRange TextBox::selectableRange() const
     auto extraTrailingLength = [&] -> unsigned {
         if (textContent.hasHyphen())
             return protect(box.style())->hyphenString().length();
-        if (downcast<Layout::InlineTextBox>(box.layoutBox()).isCombined()) {
-            ASSERT(textContent.renderedContent().length() >= length());
-            return textContent.renderedContent().length() - length();
-        }
         return 0;
     };
     return {
@@ -128,7 +122,6 @@ inline TextBoxSelectableRange TextBox::selectableRange() const
     };
 }
 
-}
 }
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::InlineIterator::TextBox)

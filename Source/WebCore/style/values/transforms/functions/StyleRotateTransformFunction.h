@@ -28,8 +28,7 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 #include <WebCore/StyleTransformFunctionBase.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // rotate() = rotate( [ <angle> | <zero> ] )
 // https://drafts.csswg.org/css-transforms/#funcdef-transform-rotate
@@ -44,8 +43,8 @@ namespace Style {
 
 class RotateTransformFunction final : public TransformFunctionBase {
 public:
-    static Ref<const RotateTransformFunction> LEGACY_NODELETE create(Angle<>, TransformFunctionBase::Type);
-    static Ref<const RotateTransformFunction> LEGACY_NODELETE create(Number<>, Number<>, Number<>, Angle<>, TransformFunctionBase::Type);
+    NODELETE static Ref<const RotateTransformFunction> create(Angle<>, TransformFunctionBase::Type);
+    NODELETE static Ref<const RotateTransformFunction> create(Number<>, Number<>, Number<>, Angle<>, TransformFunctionBase::Type);
 
     Ref<const TransformFunctionBase> clone() const override;
     Ref<TransformOperation> toPlatform(const FloatSize&, ZoomFactor) const override;
@@ -79,7 +78,6 @@ private:
     Angle<> m_angle;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_TRANSFORM_FUNCTION(WebCore::Style::RotateTransformFunction, WebCore::Style::TransformFunctionBase::isRotateTransformFunctionType)

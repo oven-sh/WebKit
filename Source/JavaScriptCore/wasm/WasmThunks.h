@@ -33,9 +33,19 @@
 #include "WasmJS.h"
 #include <wtf/TZoneMalloc.h>
 
-namespace JSC { namespace Wasm {
+namespace JSC {
+
+class CCallHelpers;
+
+namespace Wasm {
 
 typedef MacroAssemblerCodeRef<JITThunkPtrTag> (*ThunkGenerator)(const AbstractLocker&);
+
+// What three of the thunks below consist of. An image has its own copies (ImageStub).
+void emitThrowExceptionFromWasm(CCallHelpers&);
+// A jump to the code above follows.
+void emitPrepareToThrowStackOverflowFromWasm(CCallHelpers&);
+void emitCatchInWasm(CCallHelpers&);
 
 MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromWasmThunkGenerator(const AbstractLocker&);
 MacroAssemblerCodeRef<JITThunkPtrTag> throwStackOverflowFromWasmThunkGenerator(const AbstractLocker&);
@@ -64,8 +74,8 @@ class Thunks {
     WTF_MAKE_TZONE_ALLOCATED(Thunks);
     WTF_MAKE_NONCOPYABLE(Thunks);
 public:
-    static void LEGACY_NODELETE initialize();
-    static Thunks& LEGACY_NODELETE singleton();
+    NODELETE static void initialize();
+    NODELETE static Thunks& singleton();
 
     MacroAssemblerCodeRef<JITThunkPtrTag> stub(ThunkGenerator);
     MacroAssemblerCodeRef<JITThunkPtrTag> stub(const AbstractLocker&, ThunkGenerator);
@@ -74,7 +84,7 @@ public:
 private:
     Thunks() = default;
 
-    UncheckedKeyHashMap<ThunkGenerator, MacroAssemblerCodeRef<JITThunkPtrTag>> m_stubs WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<ThunkGenerator, MacroAssemblerCodeRef<JITThunkPtrTag>> m_stubs WTF_GUARDED_BY_LOCK(m_lock);
     Lock m_lock;
 };
 

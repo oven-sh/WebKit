@@ -30,25 +30,25 @@
 #include "InlineLineBuilder.h"
 #include <WebCore/InlineDisplayLine.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineLayoutState;
 class LineBox;
 
 class InlineDisplayLineBuilder {
 public:
-    InlineDisplayLineBuilder(InlineFormattingContext&, const ConstraintsForInlineContent&);
+    NODELETE InlineDisplayLineBuilder(InlineFormattingContext&, const ConstraintsForInlineContent&);
 
     InlineDisplay::Line build(const LineLayoutResult&, const LineBox&, bool lineIsFullyTruncatedInBlockDirection) const;
 
-    static std::optional<InlineDisplay::Line::Ellipsis> placeTrailingEllipsisIfNeeded(LineEndingTruncationPolicy, const std::optional<BlockOverflowEllipsis>&, InlineDisplay::Line&, std::span<InlineDisplay::Box>, bool isLegacyLineClamp);
+    static std::optional<InlineDisplay::Line::Ellipsis> placeTrailingEllipsisIfNeeded(LineEndingTruncationPolicy, const Style::ComputedStyle& styleForTruncation, const std::optional<BlockOverflowEllipsis>&, InlineDisplay::Line&, std::span<InlineDisplay::Box>, bool isLegacyLineClamp);
     static void addLegacyLineClampTrailingLinkBoxIfApplicable(const InlineFormattingContext&, const InlineLayoutState&, InlineDisplay::Content&);
-    static bool LEGACY_NODELETE hasTrailingLineWithBlockContent(const InlineDisplay::Lines&);
+    NODELETE static bool hasTrailingLineWithBlockContent(const InlineDisplay::Lines&);
 
 private:
     struct EnclosingLineGeometry {
-        InlineDisplay::Line::EnclosingTopAndBottom enclosingTopAndBottom;
+        InlineDisplay::Line::EnclosingTopAndBottom enclosingBorderBoxTopAndBottom;
+        InlineDisplay::Line::EnclosingTopAndBottom enclosingContentAreaTopAndBottom;
         InlineRect contentOverflowRect;
     };
     EnclosingLineGeometry collectEnclosingLineGeometry(const LineLayoutResult&, const LineBox&, const InlineRect& lineBoxRect) const;
@@ -64,5 +64,3 @@ private:
 };
 
 }
-}
-

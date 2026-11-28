@@ -1,0 +1,60 @@
+# `o.x` with x?: ONE read of the object, outside of a loop, in a function of a file that the checker has checked: one operation that asks for the shape, loads, and looks at the cell only where it finds the slot empty.
+# No test stands in front of it, no arm beside it, nothing meets behind it.
+# function one(o: Options) { return o.x; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlotOrUndefined {{*}}key="x"{{*}}level=Expected
+# RUN(ALONE): walk f1 mechanisms=none+TypedOperations+Guesses
+# ALONE-NOT: Test
+# ALONE-NOT: HasNoFieldOutsideSlot
+# ALONE-NOT: HasLayoutPrototype
+# ALONE-NOT: = PropGet
+# ALONE-NOT: Branch
+# `o.x ? .. : ..`: what is read goes into a test and nowhere else: one operation all the same
+# RUN(TRUTH): walk f3 mechanisms=none+TypedOperations+Guesses
+# TRUTH-LABEL: code f3:Body
+# TRUTH: = GetSlotOrUndefined {{*}}key="x"{{*}}level=Expected
+# TRUTH-NOT: = PropGet
+# RUN(UNCHECKED): walk f2 mechanisms=none+TypedOperations+Guesses
+# UNCHECKED-LABEL: code f2:Body
+# UNCHECKED: = GetSlotOrUndefined {{*}}key="x"{{*}}level=Expected
+# UNCHECKED-NOT: = PropGet
+
+layout L0 name="Options" module=m0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="y"
+    v6 = FinishObject v4
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f2
+    v9 = Call v1, -, v8
+    v10 = NewClosure function=f3
+    v11 = Call v1, -, v10
+    Return v11
+}
+function f1 name="one" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="x"
+    Return v2
+}
+function f2 name="unchecked" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="x"
+    Return v2
+}
+function f3 name="truth" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="x"
+    v3 = ToBoolean v2
+    Return v3
+}

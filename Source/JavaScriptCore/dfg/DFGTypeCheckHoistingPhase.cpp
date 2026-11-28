@@ -70,7 +70,7 @@ struct CheckData {
     {
     }
 
-    void LEGACY_NODELETE disableCheckArrayHoisting()
+    NODELETE void disableCheckArrayHoisting()
     {
         m_arrayModeIsValid = false;
         m_arrayModeHoistingOkay = false;
@@ -127,7 +127,7 @@ public:
                     // If the basic block previously only had the SetArgumentDefinitely as its
                     // variable-at-tail, then replace it with this GetLocal.
                     VariableAccessData* variable = node->variableAccessData();
-                    UncheckedKeyHashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
+                    HashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
                     if (iter == m_map.end())
                         break;
                     if (!iter->value.m_structure && !iter->value.m_arrayModeIsValid)
@@ -187,7 +187,7 @@ public:
                     
                 case SetLocal: {
                     VariableAccessData* variable = node->variableAccessData();
-                    UncheckedKeyHashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
+                    HashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
                     if (iter == m_map.end())
                         break;
                     if (!iter->value.m_structure && !iter->value.m_arrayModeIsValid)
@@ -231,7 +231,7 @@ public:
     }
 
 private:
-    void LEGACY_NODELETE clearVariableVotes()
+    NODELETE void clearVariableVotes()
     { 
         for (unsigned i = m_graph.m_variableAccessData.size(); i--;) {
             VariableAccessData* variable = &m_graph.m_variableAccessData[i];
@@ -471,7 +471,7 @@ private:
                 continue;
             if (TypeCheck::hasEnoughVotesToHoist(variable))
                 continue;
-            UncheckedKeyHashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
+            HashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
             if (iter == m_map.end())
                 continue;
             TypeCheck::disableHoisting(iter->value);
@@ -500,7 +500,7 @@ private:
                 if (!node)
                     continue;
                 VariableAccessData* variable = node->variableAccessData();
-                UncheckedKeyHashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
+                HashMap<VariableAccessData*, CheckData>::iterator iter = m_map.find(variable);
                 if (iter == m_map.end())
                     continue;
                 if (!TypeCheck::isValidToHoist(iter->value))
@@ -516,12 +516,12 @@ private:
 
     void disableCheckArrayHoisting(VariableAccessData* variable)
     {
-        UncheckedKeyHashMap<VariableAccessData*, CheckData>::AddResult result = m_map.add(variable, CheckData());
+        HashMap<VariableAccessData*, CheckData>::AddResult result = m_map.add(variable, CheckData());
         result.iterator->value.disableCheckArrayHoisting();
     }
 
     template <typename TypeCheck>
-    bool LEGACY_NODELETE shouldConsiderForHoisting(VariableAccessData* variable)
+    NODELETE bool shouldConsiderForHoisting(VariableAccessData* variable)
     {
         if (!variable->shouldUnboxIfPossible())
             return false;
@@ -534,7 +534,7 @@ private:
     
     void noticeStructureCheck(VariableAccessData* variable, RegisteredStructure structure)
     {
-        UncheckedKeyHashMap<VariableAccessData*, CheckData>::AddResult result = m_map.add(variable, CheckData(structure.get()));
+        HashMap<VariableAccessData*, CheckData>::AddResult result = m_map.add(variable, CheckData(structure.get()));
         if (result.isNewEntry)
             return;
         if (result.iterator->value.m_structure == structure.get())
@@ -581,7 +581,7 @@ private:
 
     void noticeCheckArray(VariableAccessData* variable, ArrayMode arrayMode)
     {
-        UncheckedKeyHashMap<VariableAccessData*, CheckData>::AddResult result = m_map.add(variable, CheckData(arrayMode));
+        HashMap<VariableAccessData*, CheckData>::AddResult result = m_map.add(variable, CheckData(arrayMode));
         if (result.isNewEntry)
             return;
         if (!result.iterator->value.m_arrayModeHoistingOkay)
@@ -598,7 +598,7 @@ private:
 
     void noticeStructureCheckAccountingForArrayMode(VariableAccessData* variable, RegisteredStructure structure)
     {
-        UncheckedKeyHashMap<VariableAccessData*, CheckData>::iterator result = m_map.find(variable);
+        HashMap<VariableAccessData*, CheckData>::iterator result = m_map.find(variable);
         if (result == m_map.end())
             return;
         if (!result->value.m_arrayModeHoistingOkay || !result->value.m_arrayModeIsValid)
@@ -614,7 +614,7 @@ private:
             noticeStructureCheckAccountingForArrayMode(variable, set.at(i));
     }
 
-    UncheckedKeyHashMap<VariableAccessData*, CheckData> m_map;
+    HashMap<VariableAccessData*, CheckData> m_map;
 };
 
 bool performTypeCheckHoisting(Graph& graph)
@@ -623,12 +623,12 @@ bool performTypeCheckHoisting(Graph& graph)
 }
 
 struct ArrayTypeCheck {
-    static bool LEGACY_NODELETE isValidToHoist(CheckData& checkData)
+    NODELETE static bool isValidToHoist(CheckData& checkData)
     {
         return checkData.m_arrayModeIsValid;
     }
 
-    static void LEGACY_NODELETE disableHoisting(CheckData& checkData)
+    NODELETE static void disableHoisting(CheckData& checkData)
     {
         checkData.disableCheckArrayHoisting();
     }
@@ -639,40 +639,40 @@ struct ArrayTypeCheck {
         return !checkData.m_arrayMode.structureWouldPassArrayModeFiltering(value.asCell()->structure());
     }
 
-    static bool LEGACY_NODELETE hasEnoughVotesToHoist(VariableAccessData* variable)
+    NODELETE static bool hasEnoughVotesToHoist(VariableAccessData* variable)
     {
         return variable->voteRatio() >= Options::checkArrayVoteRatioForHoisting();
     }
 
-    static bool LEGACY_NODELETE hoistingPreviouslyFailed(VariableAccessData* variable)
+    NODELETE static bool hoistingPreviouslyFailed(VariableAccessData* variable)
     {
         return variable->checkArrayHoistingFailed();
     }
 };
 
 struct StructureTypeCheck {
-    static bool LEGACY_NODELETE isValidToHoist(CheckData& checkData)
+    NODELETE static bool isValidToHoist(CheckData& checkData)
     {
         return checkData.m_structure;
     }
 
-    static void LEGACY_NODELETE disableHoisting(CheckData& checkData)
+    NODELETE static void disableHoisting(CheckData& checkData)
     {
         checkData.m_structure = nullptr;
     }
 
-    static bool LEGACY_NODELETE isContravenedByValue(CheckData& checkData, JSValue value)
+    NODELETE static bool isContravenedByValue(CheckData& checkData, JSValue value)
     {
         ASSERT(value.isCell());
         return checkData.m_structure != value.asCell()->structure();
     }
 
-    static bool LEGACY_NODELETE hasEnoughVotesToHoist(VariableAccessData* variable)
+    NODELETE static bool hasEnoughVotesToHoist(VariableAccessData* variable)
     {
         return variable->voteRatio() >= Options::structureCheckVoteRatioForHoisting();
     }
 
-    static bool LEGACY_NODELETE hoistingPreviouslyFailed(VariableAccessData* variable)
+    NODELETE static bool hoistingPreviouslyFailed(VariableAccessData* variable)
     {
         return variable->structureCheckHoistingFailed();
     }

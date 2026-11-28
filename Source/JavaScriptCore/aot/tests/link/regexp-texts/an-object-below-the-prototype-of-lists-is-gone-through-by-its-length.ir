@@ -1,0 +1,82 @@
+# The list follows from the program alone. An object below Array.prototype that is no list finds the iterator, toString and join of lists there, and they go through it by its length: it is asked about wherever such an object is handed on.
+# So it is with an object below a list.
+# export function below() { const bag = Object.create(Array.prototype); bag.length = 3000000; return new RegExp("x".toUpperCase() + [...bag].length); }
+# export function under() { const long = []; long.length = 3000000; return new RegExp("y".toUpperCase() + [...Object.create(long)].length); }
+# export function words() { const bag = Object.create(Array.prototype); bag.length = 3000000; return new RegExp("z".toUpperCase() + ("" + bag).length); }
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: 3000000
+# CHECK-NOT: 2999999
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="below" variable=g0}, {name="under" variable=g1}, {name="words" variable=g2}]
+entry module=m0
+variable g0 name="below" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="under" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="words" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = NewClosure function=f3
+    PutModuleVariable v4 variable=g2
+    v6 = Undefined
+    Return v6
+}
+function f1 name="below" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectCreate
+    v1 = Builtin builtin=Array
+    v2 = PropGet v1 key="prototype"
+    v3 = Call v0, -, v2
+    v4 = Integer integer=3000000
+    PropSet v3, v4 key="length"
+    v6 = NewArray contents=anything
+    AppendSpread v6, v3
+    v8 = PropGet v6 key="length"
+    v9 = String string="x"
+    v10 = PropGet v9 key="toUpperCase"
+    v11 = Call v10, v9 calleeKey="toUpperCase"
+    v12 = Add v11, v8
+    v13 = Builtin builtin=RegExp
+    v14 = Construct v13, -, v12
+    Return v14
+}
+function f2 name="under" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectCreate
+    v1 = NewArray contents=anything
+    v2 = Integer integer=3000000
+    PropSet v1, v2 key="length"
+    v4 = Call v0, -, v1
+    v5 = NewArray contents=anything
+    AppendSpread v5, v4
+    v7 = PropGet v5 key="length"
+    v8 = String string="y"
+    v9 = PropGet v8 key="toUpperCase"
+    v10 = Call v9, v8 calleeKey="toUpperCase"
+    v11 = Add v10, v7
+    v12 = Builtin builtin=RegExp
+    v13 = Construct v12, -, v11
+    Return v13
+}
+function f3 name="words" module=m0 position=30 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectCreate
+    v1 = Builtin builtin=Array
+    v2 = PropGet v1 key="prototype"
+    v3 = Call v0, -, v2
+    v4 = Integer integer=3000000
+    PropSet v3, v4 key="length"
+    v6 = String string=""
+    v7 = Add v6, v3
+    v8 = PropGet v7 key="length"
+    v9 = String string="z"
+    v10 = PropGet v9 key="toUpperCase"
+    v11 = Call v10, v9 calleeKey="toUpperCase"
+    v12 = Add v11, v8
+    v13 = Builtin builtin=RegExp
+    v14 = Construct v13, -, v12
+    Return v14
+}

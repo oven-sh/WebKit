@@ -1,0 +1,56 @@
+# `h.call(o, 1)` is a call by name on what lies at h. If a set of two closures were an unknown function there, the receiver and every argument would be handed to code that nobody sees: one listener more, and an emitter is out of sight.
+# Each member is asked as the one closure is asked: Function.prototype.call enters it with the shifted arguments.
+# function take(h, o) { return h.call(o, 1); }  const o = { x: 1 };  take(first, o);  take(second, o);
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: parameter 1 {{*}}proven=L0
+# CHECK: function f2
+# CHECK-NEXT: parameter 0 expected=L0
+# CHECK-NEXT: parameter 1 expected=i32
+# CHECK: function f3
+# CHECK-NEXT: parameter 0 expected=L0
+# CHECK-NEXT: parameter 1 expected=i32
+# CHECK: layout L0 changes=[]
+# Who else may call the two is not known by this: what arrives is expected of them, and proven of neither.
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f2 callers-known
+# NEVER-NOT: function f3 callers-known
+# NEVER-NOT: unreached
+# RUN(ORDER): link functions layouts mechanisms=all oldest-first
+# ORDER: parameter 1 {{*}}proven=L0
+# ORDER: layout L0 changes=[]
+# RUN(SCATTERED): link functions layouts mechanisms=all scattered
+# SCATTERED: parameter 1 {{*}}proven=L0
+# SCATTERED: layout L0 changes=[]
+
+layout L0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v0, -, v1, v5 calleeName="take"
+    v7 = Call v0, -, v2, v5 calleeName="take"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="take" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="call"
+    v3 = Integer integer=1
+    v4 = Call v2, v0, v1, v3 calleeKey="call" calleeName="h.call"
+    Return v4
+}
+function f2 name="first" module=m0 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="second" module=m0 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

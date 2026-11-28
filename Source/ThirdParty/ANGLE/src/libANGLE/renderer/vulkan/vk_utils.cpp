@@ -1194,6 +1194,13 @@ PFN_vkGetAndroidHardwareBufferPropertiesANDROID vkGetAndroidHardwareBufferProper
 PFN_vkGetMemoryAndroidHardwareBufferANDROID vkGetMemoryAndroidHardwareBufferANDROID = nullptr;
 #    endif
 
+// VK_KHR_pipeline_binary
+PFN_vkGetPipelineKeyKHR vkGetPipelineKeyKHR                           = nullptr;
+PFN_vkCreatePipelineBinariesKHR vkCreatePipelineBinariesKHR           = nullptr;
+PFN_vkDestroyPipelineBinaryKHR vkDestroyPipelineBinaryKHR             = nullptr;
+PFN_vkGetPipelineBinaryDataKHR vkGetPipelineBinaryDataKHR             = nullptr;
+PFN_vkReleaseCapturedPipelineDataKHR vkReleaseCapturedPipelineDataKHR = nullptr;
+
 #    define GET_INSTANCE_FUNC(vkName)                                                              \
         do                                                                                         \
         {                                                                                          \
@@ -1234,16 +1241,28 @@ PFN_vkCmdSetPatchControlPointsEXT vkCmdSetPatchControlPointsEXT           = null
 PFN_vkCmdSetPrimitiveRestartEnableEXT vkCmdSetPrimitiveRestartEnableEXT   = nullptr;
 PFN_vkCmdSetRasterizerDiscardEnableEXT vkCmdSetRasterizerDiscardEnableEXT = nullptr;
 
+// VK_EXT_extended_dynamic_state3
+PFN_vkCmdSetColorWriteMaskEXT vkCmdSetColorWriteMaskEXT                       = nullptr;
+PFN_vkCmdSetColorBlendEnableEXT vkCmdSetColorBlendEnableEXT                   = nullptr;
+PFN_vkCmdSetColorBlendEquationEXT vkCmdSetColorBlendEquationEXT               = nullptr;
+PFN_vkCmdSetSampleMaskEXT vkCmdSetSampleMaskEXT                               = nullptr;
+PFN_vkCmdSetAlphaToCoverageEnableEXT vkCmdSetAlphaToCoverageEnableEXT         = nullptr;
+PFN_vkCmdSetRasterizationSamplesEXT vkCmdSetRasterizationSamplesEXT           = nullptr;
+PFN_vkCmdSetAlphaToOneEnableEXT vkCmdSetAlphaToOneEnableEXT                   = nullptr;
+PFN_vkCmdSetDepthClipNegativeOneToOneEXT vkCmdSetDepthClipNegativeOneToOneEXT = nullptr;
+PFN_vkCmdSetDepthClampEnableEXT vkCmdSetDepthClampEnableEXT                   = nullptr;
+PFN_vkCmdSetPolygonModeEXT vkCmdSetPolygonModeEXT                             = nullptr;
+PFN_vkCmdSetLogicOpEnableEXT vkCmdSetLogicOpEnableEXT                         = nullptr;
+PFN_vkCmdSetColorBlendAdvancedEXT vkCmdSetColorBlendAdvancedEXT               = nullptr;
+PFN_vkCmdSetLineRasterizationModeEXT vkCmdSetLineRasterizationModeEXT         = nullptr;
+PFN_vkCmdSetLineStippleEnableEXT vkCmdSetLineStippleEnableEXT                 = nullptr;
+
 // VK_EXT_vertex_input_dynamic_state
 PFN_vkCmdSetVertexInputEXT vkCmdSetVertexInputEXT = nullptr;
 
 // VK_KHR_dynamic_rendering
 PFN_vkCmdBeginRenderingKHR vkCmdBeginRenderingKHR = nullptr;
 PFN_vkCmdEndRenderingKHR vkCmdEndRenderingKHR     = nullptr;
-
-// VK_KHR_dynamic_rendering_local_read
-PFN_vkCmdSetRenderingAttachmentLocationsKHR vkCmdSetRenderingAttachmentLocationsKHR       = nullptr;
-PFN_vkCmdSetRenderingInputAttachmentIndicesKHR vkCmdSetRenderingInputAttachmentIndicesKHR = nullptr;
 
 // VK_KHR_fragment_shading_rate
 PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR vkGetPhysicalDeviceFragmentShadingRatesKHR = nullptr;
@@ -1369,6 +1388,40 @@ void InitExtendedDynamicState2EXTFunctions(VkDevice device)
     GET_DEVICE_FUNC(vkCmdSetRasterizerDiscardEnableEXT);
 }
 
+// VK_EXT_extended_dynamic_state3
+void InitExtendedDynamicState3EXTFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkCmdSetColorWriteMaskEXT);
+    GET_DEVICE_FUNC(vkCmdSetColorBlendEnableEXT);
+    GET_DEVICE_FUNC(vkCmdSetColorBlendEquationEXT);
+    GET_DEVICE_FUNC(vkCmdSetSampleMaskEXT);
+    GET_DEVICE_FUNC(vkCmdSetAlphaToCoverageEnableEXT);
+    GET_DEVICE_FUNC(vkCmdSetRasterizationSamplesEXT);
+    GET_DEVICE_FUNC(vkCmdSetAlphaToOneEnableEXT);
+    GET_DEVICE_FUNC(vkCmdSetDepthClampEnableEXT);
+    GET_DEVICE_FUNC(vkCmdSetPolygonModeEXT);
+    GET_DEVICE_FUNC(vkCmdSetLogicOpEnableEXT);
+}
+
+// VK_EXT_extended_dynamic_state3 + VK_EXT_depth_clip_control
+void InitExtendedDynamicState3EXTWithDepthClipControlEXTFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkCmdSetDepthClipNegativeOneToOneEXT);
+}
+
+// VK_EXT_extended_dynamic_state3 + VK_EXT_blend_operation_advanced
+void InitExtendedDynamicState3EXTWithBlendOperationAdvancedEXTFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkCmdSetColorBlendAdvancedEXT);
+}
+
+// VK_EXT_extended_dynamic_state3 + VK_EXT_line_rasterization
+void InitExtendedDynamicState3EXTWithLineRasterizationEXTFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkCmdSetLineRasterizationModeEXT);
+    GET_DEVICE_FUNC(vkCmdSetLineStippleEnableEXT);
+}
+
 // VK_EXT_vertex_input_dynamic_state
 void InitVertexInputDynamicStateEXTFunctions(VkDevice device)
 {
@@ -1380,13 +1433,6 @@ void InitDynamicRenderingFunctions(VkDevice device)
 {
     GET_DEVICE_FUNC(vkCmdBeginRenderingKHR);
     GET_DEVICE_FUNC(vkCmdEndRenderingKHR);
-}
-
-// VK_KHR_dynamic_rendering_local_read
-void InitDynamicRenderingLocalReadFunctions(VkDevice device)
-{
-    GET_DEVICE_FUNC(vkCmdSetRenderingAttachmentLocationsKHR);
-    GET_DEVICE_FUNC(vkCmdSetRenderingInputAttachmentIndicesKHR);
 }
 
 // VK_KHR_fragment_shading_rate
@@ -1455,6 +1501,15 @@ void InitExternalMemoryHostFunctions(VkDevice device)
 void InitBufferDeviceAddressFunctions(VkDevice device)
 {
     GET_DEVICE_FUNC(vkGetBufferDeviceAddressKHR);
+}
+
+void InitPipelineBinaryKHRFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkGetPipelineKeyKHR);
+    GET_DEVICE_FUNC(vkCreatePipelineBinariesKHR);
+    GET_DEVICE_FUNC(vkDestroyPipelineBinaryKHR);
+    GET_DEVICE_FUNC(vkGetPipelineBinaryDataKHR);
+    GET_DEVICE_FUNC(vkReleaseCapturedPipelineDataKHR);
 }
 
 #    undef GET_INSTANCE_FUNC

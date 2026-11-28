@@ -1,0 +1,167 @@
+# function width(text: string, at: number) { return text.charCodeAt(at) === 13 ? 2 : 1; }
+# function count(text: string, from: number) { let found = 0; for (let at = from; at < text.length; at += width(text, at)) found++; return found; }
+# function stride(at: number) { return (at & 1) + 1073741823; }
+# function hops(from: number) { let last = -1; for (let at = from; at < 5000000000; at += stride(at)) last = at; return last; }
+# The counter is stepped by what a call gives. An int32 and an int32 make more than an int32, so no look closes the loop on int32s, and the counter ran on doubles.
+# It is asked for the int32 in front of the loop and again on the way round; what is none there goes on in the loop as it is written, with what has come round: hops(0) leaves its fast loop at 3221225471.
+# RUN: walk f3 f4 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: @Int64 = Add {{*}}form=Integers
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK-LABEL: code f4:Body
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: @Int64 = Add {{*}}form=Integers
+# CHECK: = TypeTest {{*}}testedType=i32
+# RUN(SHELL): run-in-shell let asked = 0; const all = ["a\rb\rc", 0, "a\rb\rc", 1.5, "a\rb\rc", -0, 0, 0.5, 2147483647]; globalThis.hidden = () => all[asked++]; globalThis.sink = (...found) => { print(found.join(" ")); };
+# SHELL: 3 2 3 4294967295 4294967295.5 4294967295
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="width" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="stride" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @506
+    v5 = PropGet v4 key="sink" [isFreeName] @506
+    v6 = Builtin builtin=String @517
+    v7 = Builtin builtin=GlobalThis @524
+    v8 = PropGet v7 key="hidden" [isFreeName] @524
+    v9 = Call v8 calleeName="hidden" @524
+    v10 = Call v6, -, v9 calleeName="String" @517
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @517
+    v12 = Builtin builtin=Number @535
+    v13 = Builtin builtin=GlobalThis @542
+    v14 = PropGet v13 key="hidden" [isFreeName] @542
+    v15 = Call v14 calleeName="hidden" @542
+    v16 = Call v12, -, v15 calleeName="Number" @535
+    v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody @535
+    v18 = Call v1, -, v11, v17 calleeName="count" @511
+    v19 = Builtin builtin=String @560
+    v20 = Builtin builtin=GlobalThis @567
+    v21 = PropGet v20 key="hidden" [isFreeName] @567
+    v22 = Call v21 calleeName="hidden" @567
+    v23 = Call v19, -, v22 calleeName="String" @560
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v25 = Builtin builtin=Number @578
+    v26 = Builtin builtin=GlobalThis @585
+    v27 = PropGet v26 key="hidden" [isFreeName] @585
+    v28 = Call v27 calleeName="hidden" @585
+    v29 = Call v25, -, v28 calleeName="Number" @578
+    v30 = Convert v29 declared={type=number} illTypedCause=DeclarationWithoutBody @578
+    v31 = Call v1, -, v24, v30 calleeName="count" @554
+    v32 = Builtin builtin=String @603
+    v33 = Builtin builtin=GlobalThis @610
+    v34 = PropGet v33 key="hidden" [isFreeName] @610
+    v35 = Call v34 calleeName="hidden" @610
+    v36 = Call v32, -, v35 calleeName="String" @603
+    v37 = Convert v36 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @603
+    v38 = Builtin builtin=Number @621
+    v39 = Builtin builtin=GlobalThis @628
+    v40 = PropGet v39 key="hidden" [isFreeName] @628
+    v41 = Call v40 calleeName="hidden" @628
+    v42 = Call v38, -, v41 calleeName="Number" @621
+    v43 = Convert v42 declared={type=number} illTypedCause=DeclarationWithoutBody @621
+    v44 = Call v1, -, v37, v43 calleeName="count" @597
+    v45 = Builtin builtin=Number @645
+    v46 = Builtin builtin=GlobalThis @652
+    v47 = PropGet v46 key="hidden" [isFreeName] @652
+    v48 = Call v47 calleeName="hidden" @652
+    v49 = Call v45, -, v48 calleeName="Number" @645
+    v50 = Convert v49 declared={type=number} illTypedCause=DeclarationWithoutBody @645
+    v51 = Call v3, -, v50 calleeName="hops" @640
+    v52 = Builtin builtin=Number @669
+    v53 = Builtin builtin=GlobalThis @676
+    v54 = PropGet v53 key="hidden" [isFreeName] @676
+    v55 = Call v54 calleeName="hidden" @676
+    v56 = Call v52, -, v55 calleeName="Number" @669
+    v57 = Convert v56 declared={type=number} illTypedCause=DeclarationWithoutBody @669
+    v58 = Call v3, -, v57 calleeName="hops" @664
+    v59 = Builtin builtin=Number @693
+    v60 = Builtin builtin=GlobalThis @700
+    v61 = PropGet v60 key="hidden" [isFreeName] @700
+    v62 = Call v61 calleeName="hidden" @700
+    v63 = Call v59, -, v62 calleeName="Number" @693
+    v64 = Convert v63 declared={type=number} illTypedCause=DeclarationWithoutBody @693
+    v65 = Call v3, -, v64 calleeName="hops" @688
+    v66 = Call v5, -, v18, v31, v44, v51, v58, v65 calleeName="sink" @506
+    v67 = Undefined @506
+    Return v67 @506
+}
+function f1 name="width" module=m0 position=84 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = PropGet v0 key="charCodeAt" @134
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt" calleeName="text.charCodeAt" @139
+    v4 = Convert v3 declared={type=number} illTypedCause=DeclarationWithoutBody @134
+    v5 = Integer integer=13 @158
+    v6 = StrictEq v4, v5 @158
+    Branch v6 -> taken b1(), notTaken b2() @158
+  b1():
+    v7 = Integer integer=2 @163
+    Jump -> next b3(v7) @163
+  b2():
+    v8 = Integer integer=1 @167
+    Jump -> next b3(v8) @167
+  b3(v9):
+    Return v9 @167
+}
+function f2 name="stride" module=m0 position=318 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1 @361
+    v2 = BitAnd v0, v1 @361
+    v3 = Integer integer=1073741823 @366
+    v4 = Add v2, v3 @366
+    Return v4 @366
+}
+function f3 name="count" module=m0 position=172 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = Integer @229
+    v3 = Convert v2 declared={type=number} @229
+    v4 = Convert v1 declared={type=number} @246
+    Jump -> next b1(v3, v4) @241
+  b1(v5: number, v6: number):
+    LoopHint @241
+    v8 = PropGet v0 key="length" @257
+    v9 = Less v6, v8 @257
+    Branch v9 -> taken b2(), notTaken b3() @257
+  b2():
+    v10 = Increment v5 @293
+    v11 = Convert v10 declared={type=number} @293
+    v12 = GetModuleVariable variable=g0 @276
+    v13 = Call v12, -, v0, v6 calleeName="width" @276
+    v14 = Add v6, v13 @276
+    v15 = Convert v14 declared={type=number} @270
+    Jump -> next b1(v11, v15) @270
+  b3():
+    Return v5 @309
+}
+function f4 name="hops" module=m0 position=380 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=-1 @421
+    v2 = Convert v1 declared={type=number} @421
+    v3 = Convert v0 declared={type=number} @439
+    Jump -> next b1(v2, v3) @434
+  b1(v4: number, v5: number):
+    LoopHint @434
+    v7 = Integer integer=5000000000 @450
+    v8 = Less v5, v7 @450
+    Branch v8 -> taken b2(), notTaken b3() @450
+  b2():
+    v9 = Convert v5 declared={type=number} @480
+    v10 = GetModuleVariable variable=g1 @468
+    v11 = Call v10, -, v5 calleeName="stride" @468
+    v12 = Add v5, v11 @468
+    v13 = Convert v12 declared={type=number} @462
+    Jump -> next b1(v9, v13) @462
+  b3():
+    Return v4 @498
+}

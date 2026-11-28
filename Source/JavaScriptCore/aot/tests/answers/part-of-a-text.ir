@@ -1,0 +1,139 @@
+# function pair(a, b, n: number) { return a + "," + b + n; }   function templated(a, b, n: number) { return `${a},${b}${n}`; }
+# function inLoop(x, n: number) { let last = ""; for (let i = 0; i < 16; i++) last = x + ","; return last + n; }   function parsed(a, n: number) { return a + "," + n; }
+# function behindCall(n: number, next) { return `${n}${next() as number}`; }
+# function textThenCall(n: number, next) { return `${n}` + (next() as number); }
+# function text(a, n: number) { return "" + a + n; }   function alone(a, n: number) { return `${a}` + (n + 1); }
+# RUN(ANSWER): run-in-shell globalThis.log = ""; globalThis.first = () => "four"; first[Symbol.toPrimitive] = (hint) => { log += hint[0]; return "F"; }; globalThis.second = 3; globalThis.third = () => true; globalThis.show = (text) => print(text + " " + log);
+# ANSWER: F,33|3,FF|F,33|3,FF|F,3|3,F|3four|3true|a,2|2,a|3four|3true|F3|33|F4|34 dddsssdddddddddddddddddds
+# ANSWER-NEXT: exited with 0
+
+variable g0 name="pair" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="templated" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="inLoop" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="behindCall" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="parsed" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="textThenCall" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="text" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="alone" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="first" [isFreeName]
+    v2 = PropGet v0 key="second" [isFreeName]
+    v3 = PropGet v0 key="third" [isFreeName]
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v1, v2, v2 calleeName="pair"
+    v6 = Call v4, -, v2, v1, v1 calleeName="pair"
+    v7 = GetModuleVariable variable=g1
+    v8 = Call v7, -, v1, v2, v2 calleeName="templated"
+    v9 = Call v7, -, v2, v1, v1 calleeName="templated"
+    v10 = GetModuleVariable variable=g2
+    v11 = Call v10, -, v1, v2 calleeName="inLoop"
+    v12 = Call v10, -, v2, v1 calleeName="inLoop"
+    v13 = GetModuleVariable variable=g3
+    v14 = Call v13, -, v2, v1 calleeName="behindCall"
+    v15 = Call v13, -, v2, v3 calleeName="behindCall"
+    v16 = Builtin builtin=JSON
+    v17 = PropGet v16 key="parse"
+    v18 = String string="[\"a\",2]"
+    v19 = Call v17, v16, v18 calleeKey="parse" calleeName="JSON.parse"
+    v20 = Integer
+    v21 = ElemGet v19, v20
+    v22 = Integer integer=1
+    v23 = ElemGet v19, v22
+    v24 = GetModuleVariable variable=g4
+    v25 = Call v24, -, v21, v23 calleeName="parsed"
+    v26 = Call v24, -, v23, v21 calleeName="parsed"
+    v27 = GetModuleVariable variable=g5
+    v28 = Call v27, -, v2, v1 calleeName="textThenCall"
+    v29 = Call v27, -, v2, v3 calleeName="textThenCall"
+    v30 = GetModuleVariable variable=g6
+    v31 = Call v30, -, v1, v2 calleeName="text"
+    v32 = Call v30, -, v2, v2 calleeName="text"
+    v33 = GetModuleVariable variable=g7
+    v34 = Call v33, -, v1, v2 calleeName="alone"
+    v35 = Call v33, -, v2, v2 calleeName="alone"
+    v36 = String string="|"
+    v37 = Strcat v5, v36, v6, v36, v8, v36, v9, v36, v11, v36, v12, v36, v14, v36, v15, v36, v25, v36, v26, v36, v28, v36, v29, v36, v31, v36, v32, v36, v34, v36, v35
+    v38 = PropGet v0 key="show" [isFreeName]
+    v39 = Call v38, -, v37 calleeName="show"
+    Return v39
+}
+function f1 name="pair" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = String string=","
+    v4 = Add v0, v3
+    v5 = Add v4, v1
+    v6 = Add v5, v2
+    Return v6
+}
+function f2 name="templated" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = ToString v0
+    v4 = String string=","
+    v5 = ToString v1
+    v6 = ToString v2
+    v7 = Strcat v3, v4, v5, v6
+    Return v7
+}
+function f3 name="inLoop" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4: undefined|null|string, v5: number):
+    LoopHint
+    v7 = Integer integer=16
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = String string=","
+    v10 = Add v0, v9
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v12 = Increment v5
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v11, v13)
+  b3():
+    v14 = Add v4, v1
+    Return v14
+}
+function f4 name="behindCall" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: anything):
+    v2 = ToString v0
+    v3 = Call v1 calleeName="next"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    v5 = ToString v4
+    v6 = Strcat v2, v5
+    Return v6
+}
+function f5 name="parsed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = String string=","
+    v3 = Add v0, v2
+    v4 = Add v3, v1
+    Return v4
+}
+function f6 name="textThenCall" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: anything):
+    v2 = ToString v0
+    v3 = Call v1 calleeName="next"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    v5 = Add v2, v4
+    Return v5
+}
+function f7 name="text" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = String string=""
+    v3 = Add v2, v0
+    v4 = Add v3, v1
+    Return v4
+}
+function f8 name="alone" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = ToString v0
+    v3 = Increment v1
+    v4 = Add v2, v3
+    Return v4
+}
+entry module=m0

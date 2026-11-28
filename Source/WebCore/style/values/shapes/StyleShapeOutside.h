@@ -30,8 +30,7 @@
 #include <WebCore/StyleValueTypes.h>
 #include <wtf/RefPtr.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'shape-outside'> = none | [ <basic-shape> || <shape-box> ] | <image>
 // https://www.w3.org/TR/css-shapes/#propdef-shape-outside
@@ -62,9 +61,9 @@ struct ShapeOutside {
 
     ShapeOutside(CSS::Keyword::None) { }
     ShapeOutside(Shape&&);
-    ShapeOutside(ShapeBox&&);
-    ShapeOutside(ShapeAndShapeBox&&);
-    ShapeOutside(Image&&);
+    NODELETE ShapeOutside(ShapeBox&&);
+    NODELETE ShapeOutside(ShapeAndShapeBox&&);
+    NODELETE ShapeOutside(Image&&);
 
     bool isNone() const { return !m_value; }
 
@@ -107,7 +106,7 @@ private:
     public:
         using Kind = Variant<Shape, ShapeBox, ShapeAndShapeBox, Image>;
 
-        static Ref<Value> LEGACY_NODELETE create(Kind&&);
+        NODELETE static Ref<Value> create(Kind&&);
         ~Value();
 
         inline const BasicShape* shape() const;
@@ -176,9 +175,7 @@ template<> struct Blending<ShapeOutside> {
     auto blend(const ShapeOutside&, const ShapeOutside&, const BlendingContext&) -> ShapeOutside;
 };
 
-} // namespace Style
-} // namespace WebCore
-
+} // namespace WebCore::Style
 
 DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::Style::ShapeOutside::ShapeAndShapeBox, 2)
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::ShapeOutside::Image);

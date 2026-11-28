@@ -32,8 +32,7 @@
 #include <WebCore/ScriptWrappableInlines.h>
 #include <WebCore/WebCoreOpaqueRoot.h>
 
-namespace JSC {
-namespace JSCastingHelpers {
+namespace JSC::JSCastingHelpers {
 
 template<>
 struct InheritsTraits<WebCore::JSNode> {
@@ -46,8 +45,7 @@ struct InheritsTraits<WebCore::JSNode> {
     }
 };
 
-} // namespace JSCastingHelpers
-} // namespace JSC
+} // namespace JSC::JSCastingHelpers
 
 namespace WebCore {
 
@@ -81,7 +79,7 @@ void createNodeWrapperInDocumentRealmSlowCase(Node&, Document&);
 
 inline void willCreatePossiblyOrphanedTreeByRemoval(Node& root)
 {
-    if (!root.wrapper() && root.hasChildNodes())
+    if (!root.wrapper() && (root.hasChildNodes() || root.shadowRoot()))
         createNodeWrapperInDocumentRealmSlowCase(root, protect(root.document()));
 }
 

@@ -1,0 +1,50 @@
+# If what an asynchronous function returns escaped, as in the second version, no object that is ever awaited would keep what is known of it. If the wait gave the promise in place of its value, the read behind it would look at the wrong object
+# async function make(o) { return o; }  async function use(o) { const v = await make(o);  return get(v); }  function get(v) { return v.x; }  use({ x: "a", only: 0 });
+# The promise that a call of `make` gives is a site of `make`, and what is returned is its value. The wait reads the value of whatever promise arrives.
+# RUN: summary f1
+# CHECK: access [[settled]] - Read Parameter 0 contents Value else [[other]] then [[found]] -> [[settled]]
+# CHECK: edge [[other]] -> Contents Value of ClassInstance Promise
+# CHECK: edge [[settled]] -> Contents Value of ClassInstance Promise
+# CHECK: edge ClassInstance Promise -> Result 0
+# RUN(KEPT): summary f1
+# KEPT-NOT: Parameter 0 -> Unknown
+# RUN(WAIT): summary f2
+# WAIT: access [[wait]] v3 Read c0.0 contents Value else [[other]] then [[found]] -> [[wait]]
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f3 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="only" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3 calleeName="use"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="make" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="use" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="make"
+    v3 = Await v2
+    v4 = NewClosure function=f3
+    v5 = Call v4, -, v3 calleeName="get"
+    Return v5
+}
+function f3 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

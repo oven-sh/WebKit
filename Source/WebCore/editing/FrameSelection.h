@@ -70,12 +70,12 @@ class CaretBase {
 public:
     WEBCORE_EXPORT static Color computeCaretColor(const Style::ComputedStyle& elementStyle, const Node*, std::optional<LayoutRect> caretRectInPainterSpace = std::nullopt);
 protected:
-    explicit CaretBase(CaretVisibility = CaretVisibility::Hidden);
+    NODELETE explicit CaretBase(CaretVisibility = CaretVisibility::Hidden);
 
     void invalidateCaretRect(Node*, bool caretRectChanged = false, CaretAnimator* = nullptr);
-    void LEGACY_NODELETE clearCaretRect();
+    NODELETE void clearCaretRect();
     bool updateCaretRect(Document&, const VisiblePosition& caretPosition);
-    bool LEGACY_NODELETE shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
+    NODELETE bool shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
     void paintCaret(const Node&, GraphicsContext&, const LayoutPoint&, CaretAnimator*) const;
 
     const LayoutRect& localCaretRectWithoutUpdate() const LIFETIME_BOUND { return m_caretLocalRect; }
@@ -97,7 +97,7 @@ class DragCaretController : private CaretBase {
     WTF_MAKE_TZONE_ALLOCATED(DragCaretController);
     WTF_MAKE_NONCOPYABLE(DragCaretController);
 public:
-    DragCaretController();
+    NODELETE DragCaretController();
 
     RenderBlock* caretRenderer() const;
     void paintDragCaret(LocalFrame*, GraphicsContext&, const LayoutPoint&) const;
@@ -216,7 +216,7 @@ public:
     bool isCaret() const { return m_selection.isCaret(); }
     bool isRange() const { return m_selection.isRange(); }
     bool isCaretOrRange() const { return m_selection.isCaretOrRange(); }
-    bool isAll(EditingBoundaryCrossingRule rule = CannotCrossEditingBoundary) const { return m_selection.isAll(rule); }
+    bool isAll(EditingBoundaryCrossingRule rule = EditingBoundaryCrossingRule::CannotCross) const { return m_selection.isAll(rule); }
     
     void nodeWillBeRemoved(Node&);
     void textWasReplaced(CharacterData&, unsigned offset, unsigned oldLength, unsigned newLength);
@@ -229,7 +229,7 @@ public:
 
     // Used to suspend caret blinking while the mouse is down.
     WEBCORE_EXPORT void setCaretBlinkingSuspended(bool);
-    WEBCORE_EXPORT bool LEGACY_NODELETE isCaretBlinkingSuspended() const;
+    NODELETE WEBCORE_EXPORT bool isCaretBlinkingSuspended() const;
 
 #if ENABLE(ACCESSIBILITY_NON_BLINKING_CURSOR)
     WEBCORE_EXPORT void setPrefersNonBlinkingCursor(bool);
@@ -237,7 +237,7 @@ public:
 
     WEBCORE_EXPORT void setFocused(bool);
     bool isFocused() const { return m_focused; }
-    WEBCORE_EXPORT bool LEGACY_NODELETE isFocusedAndActive() const;
+    NODELETE WEBCORE_EXPORT bool isFocusedAndActive() const;
     void pageActivationChanged();
 
     WEBCORE_EXPORT void updateAppearance();
@@ -300,7 +300,7 @@ public:
     RefPtr<Range> associatedLiveRange();
     void associateLiveRange(Range&);
     void disassociateLiveRange();
-    void updateFromAssociatedLiveRange();
+    void updateFromAssociatedLiveRange(OptionSet<SetSelectionOption> = { });
     void updateOrDisassociateLiveRange(bool shouldMaintainLiveRange);
 
     CaretAnimator& caretAnimator() { return m_caretAnimator.get(); }
@@ -315,7 +315,7 @@ private:
     void updateDataDetectorsForSelection();
 
     bool setSelectionWithoutUpdatingAppearance(const VisibleSelection&, OptionSet<SetSelectionOption>, CursorAlignOnScroll, TextGranularity);
-    void LEGACY_NODELETE setNodeFlags(VisibleSelection&, bool value);
+    NODELETE void setNodeFlags(VisibleSelection&, bool value);
 
     void respondToNodeModification(Node&, bool anchorRemoved, bool focusRemoved, bool baseRemoved, bool extentRemoved, bool startRemoved, bool endRemoved);
     TextDirection directionOfEnclosingBlock();
@@ -357,7 +357,7 @@ private:
 
     void caretAnimationDidUpdate(CaretAnimator&) final;
 
-    Document* LEGACY_NODELETE document() final;
+    NODELETE Document* document() final;
 
     Node* caretNode() final;
 

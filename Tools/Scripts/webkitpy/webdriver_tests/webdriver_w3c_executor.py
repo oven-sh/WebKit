@@ -20,6 +20,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import contextlib
+import itertools
 import logging
 import os
 import json
@@ -40,7 +42,7 @@ def _ensure_directory_in_path(directory):
 _ensure_directory_in_path(os.path.join(w3c_tools_dir, 'webdriver'))
 _ensure_directory_in_path(os.path.join(w3c_tools_dir, 'wptrunner'))
 
-from wptrunner.executors.base import WdspecExecutor, WdspecProtocol  # noqa
+from wptrunner.executors.base import PytestExecutor  # noqa
 from wptrunner.browsers.base import WebDriverBrowser  # noqa
 
 pytest_runner = None
@@ -121,9 +123,10 @@ class WebKitDriverBrowser(WebDriverBrowser):
         return [self.webdriver_binary, f"--port={self.port}"] + self.webdriver_args
 
 
-class WebDriverW3CExecutor(WdspecExecutor):
+class WebDriverW3CExecutor(PytestExecutor):
+    PYTEST_ARGS = ['--strict-markers', '-p', 'no:mozlog']
 
-    def __init__(self, driver, server, env, timeout, expectations):
+    def __init__(self, driver, server, env, timeout, expectations, target_platform):
         WebKitDriverBrowser.test_env = env
         WebKitDriverBrowser.test_env.update(driver.browser_env())
         WebKitDriverBrowser.test_env['WEBKIT_TLS_CAFILE_PEM'] = server.cacert_pem_file()
@@ -135,7 +138,7 @@ class WebDriverW3CExecutor(WdspecExecutor):
                          'doc_root': server.document_root()}
         self.runner = TestRunner()
         browser = WebKitDriverBrowser(self.runner.logger, webdriver_binary=driver.binary_path())
-        WdspecExecutor.__init__(self, self.runner.logger, browser, server_config, driver.binary_path(), None, capabilities=driver.capabilities(), target_platform=None)
+        PytestExecutor.__init__(self, self.runner.logger, browser, server_config, driver.binary_path(), None, capabilities=driver.capabilities(), target_platform=target_platform)
 
         self._timeout = timeout
         self._expectations = expectations
@@ -148,11 +151,18 @@ class WebDriverW3CExecutor(WdspecExecutor):
         self._test_process = TestProcess(self._run_file, self._timeout, restart=self._restart_driver)
         self._test_process.start()
 
+    def collect(self, tests):
+        # Collecting the tests imports pytest, its plugins and everything that the tests import, and AutoInstall may
+        # have to download some of that. Do it here, before any test process is forked: a download in a test process
+        # crashes on macOS, where looking up the system proxy settings isn't safe in a child of a multi-threaded process.
+        do_delayed_imports()
+        pytest_runner.collect(tests, self.PYTEST_ARGS)
+
     def teardown(self):
         if self._test_process is not None:
             self._test_process.stop()
             self._test_process = None
-        self.protocol.teardown()
+        super(WebDriverW3CExecutor, self).teardown()
         self.browser.stop(force=True)
 
     def _restart_driver(self):
@@ -174,16 +184,41 @@ class WebDriverW3CExecutor(WdspecExecutor):
                       'capabilities': self.capabilities,
                       'webdriver': {'binary': self.browser.webdriver_binary},
                       'wptserve': self.server_config,
-                      'timeout_multiplier': 10,
-                      'target_platform': sys.platform,
+                      'timeout_multiplier': 1,
+                      'target_platform': self.target_platform,
                       }
             with open(config_path, 'w') as f:
                 json.dump(config, f)
 
             env.update(WebKitDriverBrowser.test_env)
-            args = ['--strict-markers', '-p', 'no:mozlog']
-            harness_result, _ = pytest_runner.run(test, args, self._timeout, env, self._expectations, report=report, deselected=deselected)
+            with self._reporting_launches(report):
+                harness_result, _ = pytest_runner.run(test, self.PYTEST_ARGS, self._timeout, env, self._expectations, report=report, deselected=deselected)
             return harness_result
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _reporting_launches(report):
+        # Runs in the test process. The driver launches the browser for each New Session command, and the tests send
+        # every command through HTTPWireProtocol.send().
+        from webdriver.transport import HTTPWireProtocol
+        send = HTTPWireProtocol.send
+        launches = itertools.count()
+
+        def send_and_report_launch(protocol, method, uri, *args, **kwargs):
+            if method != 'POST' or uri.strip('/') != 'session':
+                return send(protocol, method, uri, *args, **kwargs)
+            launch = next(launches)
+            report(('launch', 'start', launch))
+            try:
+                return send(protocol, method, uri, *args, **kwargs)
+            finally:
+                report(('launch', 'end', launch))
+
+        HTTPWireProtocol.send = send_and_report_launch
+        try:
+            yield
+        finally:
+            HTTPWireProtocol.send = send
 
     def run(self, test):
         return self._test_process.run(test)

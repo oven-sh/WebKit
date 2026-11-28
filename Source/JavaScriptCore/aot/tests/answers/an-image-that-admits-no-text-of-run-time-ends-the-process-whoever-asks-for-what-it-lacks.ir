@@ -1,0 +1,28 @@
+# What decides how a refusal ends is the image, not who stands on the stack. This image admits no text of run time, so nobody can ask for what it lacks unless the compiler has made a mistake: the process ends at the throw, by name.
+# The function of the shell that asks here would have caught an error; who asks was looked for on the stack once, and a tail call or a value handed on fooled the look.
+# The control: a-built-in-that-evaluated-text-hands-on-is-refused-by-an-error-that-can-be-caught.ir: an image that admits such text.
+# globalThis.attempt = () => { try { return [1].map(count => count).join(); } catch (error) { return error.message; } };   in the shell
+# print(attempt());
+# LIBRARY: own
+# OPTIONS: exclude=LibraryText
+# RUN: run-in-shell globalThis.attempt = () => { try { return [1].map(count => count).join(); } catch (error) { return error.message; } };
+# CHECK: Array.prototype.map was used, but it was not compiled into this executable because nothing seemed to use it
+# CHECK-NOT: went on
+# CHECK: crashed with
+# RUN(IMAGE): image
+# IMAGE-NOT: AdmitsUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="attempt" [isFreeName]
+    v2 = Call v1, - calleeName="attempt"
+    v3 = PropGet v0 key="print" [isFreeName]
+    v4 = Call v3, -, v2 calleeName="print"
+    v5 = String string="went on"
+    v6 = Call v3, -, v5 calleeName="print"
+    v7 = Undefined
+    Return v7
+}

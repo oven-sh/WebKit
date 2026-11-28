@@ -11,10 +11,10 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr ASCIILiteral asyncMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
+static constexpr ASCIILiteral asyncMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -92,7 +92,7 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=L0} illTypedCause=FromLooseType
     v5 = CallDirect v4 function=f9
     v6 = Convert v3 declared={type=L0 flags=[IsExpected]}
     PropSet v6, v1 key="v"
@@ -107,7 +107,6 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     Return v12
 }
 function f2 name="#later" module=m0 kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Promise flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Await v1
@@ -116,7 +115,6 @@ function f2 name="#later" module=m0 kind=Method flags=[IsAsync, HasThis, HasExpl
     Return v4
 }
 function f3 name="#stream" module=m0 kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=AsyncGenerator flags=[IsExpected]}] {
-  b0(v0: anything, v1: function, v2: anything):
     Jump -> next b1()
   b1():
     InitialYield
@@ -154,7 +152,6 @@ function f3 name="#stream" module=m0 kind=Method flags=[IsAsync, IsGenerator, Ha
     Return v21
 }
 function f4 name="later" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Promise flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = GetModuleVariable variable=g1
@@ -164,7 +161,6 @@ function f4 name="later" module=m0 kind=Method flags=[HasThis, HasExplicitName] 
     ReturnCall v5 casts=[{declared={type=Promise flags=[IsExpected]}}]
 }
 function f5 name="collect" module=m0 kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Promise<string> flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string=""
@@ -221,7 +217,6 @@ function f7 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     ReturnCall v5
 }
 function f8 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Builtin builtin=GlobalThis
@@ -231,7 +226,7 @@ function f8 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     v5 = Call v2, -, v4 calleeName="print"
     ReturnCall v5
 }
-function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -243,10 +238,10 @@ data d0 root=Object{layout=L1} module=m0
 entry module=m0
 )IR"_s;
 
-static constexpr ASCIILiteral generatorMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
+static constexpr ASCIILiteral generatorMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -303,7 +298,7 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=L0} illTypedCause=FromLooseType
     v5 = CallDirect v4 function=f5
     v6 = Convert v3 declared={type=L0 flags=[IsExpected]}
     PropSet v6, v1 key="v"
@@ -318,7 +313,6 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     Return v12
 }
 function f2 name="#each" module=m0 kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Generator flags=[IsExpected]}] {
-  b0(v0: anything, v1: function, v2: anything):
     Jump -> next b1()
   b1():
     InitialYield
@@ -355,7 +349,6 @@ function f2 name="#each" module=m0 kind=Method flags=[IsGenerator, HasThis, Take
     Return v20
 }
 function f3 name="sum" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Integer
@@ -411,7 +404,7 @@ function f4 name="open" module=m0 kind=Method flags=[HasExplicitName] length=1 t
     v13 = Convert v12 declared={type=boolean|"opened" flags=[IsExpected]}
     Return v13
 }
-function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -420,13 +413,24 @@ function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
     Return v3
 }
 data d0 root=Object{layout=L1} module=m0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+runtimefunction id=GeneratorPrototypeNext function=f6
+function f6 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=GeneratorPrototypeNext parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=1
+    v6 = StrictEq v4, v5
+    v7 = CreateIteratorResult v3, v6
+    Return v7
+}
 entry module=m0
 )IR"_s;
 
-static constexpr ASCIILiteral besideFieldsAndStatics = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#x"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key=#"#y"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}]
+static constexpr ASCIILiteral besideFieldsAndStatics = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#x"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key=#"#y"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}]
 layout L1 kind=Instance name="D" module=m0 constructor=f6
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g4 module=m0 declared={type=anything} flags=[IsImmutable]
@@ -504,7 +508,7 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = Convert v2 declared={type=L0} illTypedCause=FromLooseType
     v4 = CallDirect v3 function=f12
     v5 = Convert v2 declared={type=L0 flags=[IsExpected]}
     v6 = Convert v2 declared={type=L0 flags=[IsExpected]}
@@ -526,7 +530,6 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     Return v18
 }
 function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -538,7 +541,6 @@ function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thi
     Return v6
 }
 function f3 name="#g" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -550,7 +552,6 @@ function f3 name="#g" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thi
     Return v6
 }
 function f4 name="#g" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Convert v1 declared={type=number flags=[IsExpected]}
@@ -560,7 +561,6 @@ function f4 name="#g" module=m0 kind=Setter flags=[HasThis, HasExplicitName] len
     Return v5
 }
 function f5 name="all" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Integer integer=5
@@ -640,7 +640,7 @@ function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={t
     v13 = GetModuleVariable variable=g7
     v14 = TypeTest v13 testedType=absent
     Branch v14 -> taken b4(| 0), notTaken b5(| 0)
-  b4(v15) frequency=Unlikely:
+  b4(v15):
     v16 = NewRuntimeError runtimeError=InvalidPrivateRead
     Throw v16
   b5(v17):
@@ -660,13 +660,13 @@ function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={t
     v29 = Add v21, v28
     v30 = Convert v29 declared={type=string flags=[IsExpected]}
     Return v30
-  b7() frequency=Unlikely:
+  b7():
     v31 = NewRuntimeError runtimeError=InvalidPrivateBrand
     Throw v31
-  b8() frequency=Unlikely:
+  b8():
     v32 = NewRuntimeError runtimeError=InvalidPrivateRead
     Throw v32
-  b9() frequency=Unlikely:
+  b9():
     v33 = NewRuntimeError runtimeError=InvalidPrivateBrand
     Throw v33
 }
@@ -682,7 +682,7 @@ function f10 name="onOther" module=m0 kind=Method flags=[HasExplicitName] length
     v3 = GetModuleVariable variable=g8
     v4 = Call v3, v0 calleeName="#m"
     Return v4
-  b4() frequency=Unlikely handler=b5():
+  b4() handler=b5():
     v5 = NewRuntimeError runtimeError=InvalidPrivateBrand
     Throw v5
   b5() role=CatchHandler:
@@ -702,7 +702,7 @@ function f11 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] t
     v4 = Undefined
     Return v4
 }
-function f12 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f12 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1

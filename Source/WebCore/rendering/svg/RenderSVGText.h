@@ -27,6 +27,8 @@
 #include "SVGBoundingBoxComputation.h"
 #include "SVGPaintServerCache.h"
 
+#include <wtf/UniqueRef.h>
+
 namespace WebCore {
 
 class RenderSVGInlineText;
@@ -36,10 +38,12 @@ class RenderSVGText final : public RenderSVGBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGText);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGText);
 public:
-    RenderSVGText(SVGTextElement&, Style::ComputedStyle&&);
+    RenderSVGText(SVGTextElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGText();
 
-    SVGTextElement& LEGACY_NODELETE textElement() const;
+    bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
+
+    NODELETE SVGTextElement& textElement() const;
 
     bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const override;
 
@@ -49,8 +53,8 @@ public:
     // FIXME: [LBSE] Only needed for legacy SVG engine.
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
 
-    static RenderSVGText* LEGACY_NODELETE locateRenderSVGTextAncestor(RenderObject&);
-    static const RenderSVGText* LEGACY_NODELETE locateRenderSVGTextAncestor(const RenderObject&);
+    NODELETE static RenderSVGText* locateRenderSVGTextAncestor(RenderObject&);
+    NODELETE static const RenderSVGText* locateRenderSVGTextAncestor(const RenderObject&);
 
     FloatRect objectBoundingBox() const final { return m_objectBoundingBox; }
     FloatRect strokeBoundingBox() const final;
@@ -71,9 +75,9 @@ public:
 
     void updatePositionAndOverflow(const FloatRect&);
 
-    void updateLocalTransform();
-    AffineTransform computeLocalTransform() const;
-    AffineTransform localTransform() const override { return m_localTransform; }
+    void updateCachedNominalTransform() final;
+
+    void paintInlineChildren(PaintInfo&, const LayoutPoint&);
 
 private:
     void graphicsElement() const = delete;
@@ -81,10 +85,8 @@ private:
     ASCIILiteral renderName() const override { return "RenderSVGText"_s; }
 
     void paint(PaintInfo&, const LayoutPoint&) override;
-    void paintInlineChildren(PaintInfo&, const LayoutPoint&) override;
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
-    bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
     PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) override;
@@ -100,22 +102,26 @@ private:
 
     // FIXME: [LBSE] Begin code only needed for legacy SVG engine.
     bool nodeAtFloatPoint(const HitTestRequest&, HitTestResult&, const FloatPoint& pointInParent, HitTestAction) override;
+    AffineTransform localTransform() const override { return m_localTransform; }
     const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localTransform; }
     // FIXME: [LBSE] End code only needed for legacy SVG engine.
+
+    std::optional<AffineTransform> cachedNominalTransform() const final { return m_cachedNominalTransform; }
 
     float strokeInflation(float strokeWidth) const;
     void updateVisualOverflow();
 
-    SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
+    SVGPaintServerCache* svgPaintServerCache() const final { return m_svgPaintServerCache.ptr(); }
 
     bool m_needsPositioningValuesUpdate : 1 { false };
     bool m_needsTransformUpdate : 1 { true }; // FIXME: [LBSE] Only needed for legacy SVG engine.
     bool m_needsTextMetricsUpdate : 1 { false };
     bool m_hasPerformedLayout : 1 { false }; // Needed to distinguish between when we perform a full pass of layout and everHadLayout (which can be set be content visibility for skipped content).
     AffineTransform m_localTransform; // FIXME: [LBSE] Only needed for legacy SVG engine.
+    std::optional<AffineTransform> m_cachedNominalTransform;
     FloatRect m_objectBoundingBox;
     mutable std::optional<LayoutRect> m_cachedVisualOverflowRect;
-    mutable SVGPaintServerCache m_svgPaintServerCache;
+    const UniqueRef<SVGPaintServerCache> m_svgPaintServerCache { makeUniqueRef<SVGPaintServerCache>() };
 };
 
 } // namespace WebCore

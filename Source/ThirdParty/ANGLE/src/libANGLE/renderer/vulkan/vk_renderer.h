@@ -93,7 +93,7 @@ class ImageMemorySuballocator : angle::NonCopyable
                                               VkMemoryPropertyFlags flags);
 
     // Determines if dedicated memory is required for the allocation.
-    bool needsDedicatedMemory(VkDeviceSize size) const;
+    bool needsDedicatedMemory(Renderer *renderer, VkDeviceSize size) const;
 
     // Initializes a custom memory pool with a specific type index (if needed) and returns it.
     VkResult getInitMemoryPool(Renderer *renderer, uint32_t poolMemoryTypeIndex, Pool **poolOut);
@@ -109,7 +109,7 @@ class ImageMemorySuballocator : angle::NonCopyable
 
     // Gets the block size for a specific memory pool.
     VkDeviceSize getInitialPoolBlockSize(Renderer *renderer, uint32_t poolMemoryTypeIndex);
-    VkDeviceSize getDefaultPoolBlockSize(Renderer *renderer);
+    VkDeviceSize getDefaultPoolBlockSize(Renderer *renderer) const;
 
     // Initial memory pools are smaller and have a max block count. If allocation fails on them, the
     // allocator moves to the default memory pools.
@@ -213,6 +213,11 @@ class Renderer : angle::NonCopyable
     {
         return mHostImageCopyProperties;
     }
+    const VkPhysicalDeviceExtendedDynamicState3PropertiesEXT &
+    getPhysicalDeviceExtendedDynamicState3Properties() const
+    {
+        return mExtendedDynamicState3Properties;
+    }
     const VkPhysicalDeviceShaderIntegerDotProductProperties &
     getPhysicalDeviceShaderIntegerDotProductProperties() const
     {
@@ -290,6 +295,7 @@ class Renderer : angle::NonCopyable
     const angle::FeaturesVk &getFeatures() const { return mFeatures; }
     uint32_t getMaxVertexAttribDivisor() const { return mMaxVertexAttribDivisor; }
     VkDeviceSize padVertexAttribBufferSizeIfNeeded(VkDeviceSize bufferSize);
+    gl::DrawBufferMask getValidDrawBuffers() const { return mValidDrawBuffers; }
     uint32_t getMaxColorInputAttachmentCount() const { return mMaxColorInputAttachmentCount; }
     ANGLE_INLINE bool isInFlightCommandsEmpty() const
     {
@@ -415,6 +421,13 @@ class Renderer : angle::NonCopyable
     const std::vector<vk::SkippedSyncvalMessage> &getSkippedSyncvalMessages() const
     {
         return mSkippedSyncvalMessages;
+    }
+
+    bool supportsStippledLines() const
+    {
+        return mLineRasterizationFeatures.stippledRectangularLines ||
+               mLineRasterizationFeatures.stippledBresenhamLines ||
+               mLineRasterizationFeatures.stippledSmoothLines;
     }
 
     bool isCoherentColorFramebufferFetchEmulated() const
@@ -909,6 +922,8 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceSamplerYcbcrConversionFeatures mSamplerYcbcrConversionFeatures;
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT mExtendedDynamicStateFeatures;
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT mExtendedDynamicState2Features;
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT mExtendedDynamicState3Features;
+    VkPhysicalDeviceExtendedDynamicState3PropertiesEXT mExtendedDynamicState3Properties;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT mGraphicsPipelineLibraryFeatures;
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT mGraphicsPipelineLibraryProperties;
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT mVertexInputDynamicStateFeatures;
@@ -961,6 +976,7 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceTileMemoryHeapPropertiesQCOM mTileMemoryHeapProperties;
     VkPhysicalDeviceTextureCompressionASTC3DFeaturesEXT mTextureCompressionASTC3DFeatures;
     VkPhysicalDeviceShaderCorePropertiesAMD mShaderCorePropertiesAMD;
+    VkPhysicalDevicePipelineBinaryFeaturesKHR mPipelineBinaryFeatures;
 
     uint32_t mLegacyDitheringVersion = 0;
 
@@ -972,6 +988,7 @@ class Renderer : angle::NonCopyable
     uint32_t mCurrentQueueFamilyIndex;
     uint32_t mMaxVertexAttribDivisor;
     VkDeviceSize mMaxVertexAttribStride;
+    mutable gl::DrawBufferMask mValidDrawBuffers;
     mutable uint32_t mMaxColorInputAttachmentCount;
     uint32_t mDefaultUniformBufferSize;
     VkDevice mDevice;
@@ -1122,6 +1139,8 @@ class Renderer : angle::NonCopyable
 
     // Use thread pool to compress cache data.
     std::shared_ptr<angle::WaitableEvent> mCompressEvent;
+    // The platform blob cache's total size limit, which bounds the pipeline cache that is stored.
+    size_t mBlobCacheSizeLimit = 0;
 
     VulkanLayerVector mEnabledInstanceLayerNames;
     vk::ExtensionNameList mEnabledInstanceExtensions;

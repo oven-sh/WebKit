@@ -1,0 +1,47 @@
+# function laysByKey(table, name) { table[name] = 1; }   function laysByName(table) { table.NaN = 1; }   function laysThen(table) { table.then = 1; }   function laysTag(table) { table.tag = 1; }   sink(laysByKey, laysByName, laysThen, laysTag);
+# A hundred fresh objects of a class go through one store: the stubs file the addition and repeat it by the number of the Structure alone, unless the two Structures give their cells other flags.
+# RUN(SHELL): run-in-shell --useDollarVM=1 globalThis.sink = (laysByKey, laysByName, laysThen, laysTag) => { const lays = [t => laysByKey(t, "1.5"), t => laysByKey(t, "-1"), laysByName, laysThen, laysTag]; const count = (what, makes) => { let all = 0, flags = 0, withoutNames = 0, withoutElements = 0, lostElements = 0, lostNames = 0; for (let m = 0; m < makes.length; m++) for (let l = 0; l < lays.length; l++) for (let hasStorage = 0; hasStorage < 2; hasStorage++) for (let i = 0; i < 100; i++) { const t = makes[m](); if (hasStorage) laysTag(t); lays[l](t); all++; const flag = $vm.isPristine(t), names = $vm.hasPristineNames(t), elements = $vm.hasPristineElements(t); if (flag) flags++; if (!names) lostNames++; if (!elements) lostElements++; if (flag && !names) withoutNames++; if (flag && !elements) withoutElements++; } print(what + ": " + all + " cells . lost names " + lostNames + " . lost elements " + lostElements + " . with the flag " + flags + " . the flag without names " + withoutNames + " . the flag without elements " + withoutElements); }; count("tables", [() => new Map(), () => new Set(), () => new WeakMap(), () => new WeakSet()]); count("lists", [() => [], () => [1, 2]]); };
+# SHELL: tables: 4000 cells . lost names 800 . lost elements 2400 . with the flag 800 . the flag without names 0 . the flag without elements 0
+# SHELL: lists: 2000 cells . lost names 400 . lost elements 1200 . with the flag 400 . the flag without names 0 . the flag without elements 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    Return v6
+}
+function f1 name="laysByKey" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2 @100
+    v4 = Undefined
+    Return v4
+}
+function f2 name="laysByName" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="NaN" @110
+    v3 = Undefined
+    Return v3
+}
+function f3 name="laysThen" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="then" @120
+    v3 = Undefined
+    Return v3
+}
+function f4 name="laysTag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="tag" @130
+    v3 = Undefined
+    Return v3
+}

@@ -10,7 +10,9 @@ pub mod dead_code_eliminate;
 pub mod dealias;
 pub mod emulate_instanced_multiview;
 pub mod emulate_multi_draw;
+pub mod ensure_loop_forward_progress;
 pub mod expand_fragment_outputs_to_vec4;
+pub mod gather_default_uniforms;
 pub mod initialize_uninitialized_variables;
 pub mod localized_workarounds;
 pub mod monomorphize_unsupported_functions;
@@ -32,9 +34,7 @@ pub mod glsl_common {}
 #[cfg(angle_enable_hlsl)]
 pub mod hlsl {}
 #[cfg(angle_enable_msl)]
-pub mod msl {
-    pub mod ensure_loop_forward_progress;
-}
+pub mod msl {}
 #[cfg(angle_enable_spirv)]
 pub mod spirv {
     pub mod pass1;

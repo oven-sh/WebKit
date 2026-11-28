@@ -158,7 +158,7 @@ bool waitUntilCaptureState(WKWebView *webView, _WKMediaCaptureStateDeprecated ex
             break;
     } while (true);
 
-    SAFE_WTFLOGALWAYS("Expected state %s, but after 10 seconds state is %s", wkMediaCaptureStateString(expectedState).utf8(), wkMediaCaptureStateString(state).utf8());
+    SAFE_WTFLOGALWAYS("Expected state %s, but after 10 seconds state is %s", makeUTF8CString(wkMediaCaptureStateString(expectedState)), makeUTF8CString(wkMediaCaptureStateString(state)));
     return false;
 }
 
@@ -2000,7 +2000,6 @@ TEST(GetUserMedia, ClearRemoteVideoFrameObjectHeapPixelConformerUnderMemoryPress
     WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("CaptureVideoInGPUProcessEnabled"));
     WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("UseGPUProcessForMediaEnabled"));
     WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("UseGPUProcessForCanvasRenderingEnabled"));
-    WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], false, WKStringCreateWithUTF8CString("UseGPUProcessForDOMRenderingEnabled"));
 
     configuration.get()._mediaCaptureEnabled = YES;
     auto preferences = [configuration preferences];

@@ -44,7 +44,7 @@ public:
     ~CSSNamedImageValue();
 
     String customCSSText(const CSS::SerializationContext&) const;
-    bool LEGACY_NODELETE equals(const CSSNamedImageValue&) const;
+    NODELETE bool equals(const CSSNamedImageValue&) const;
 
     RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
@@ -52,7 +52,7 @@ private:
     explicit CSSNamedImageValue(CSS::CustomIdent&&);
 
     CSS::CustomIdent m_name;
-    mutable RefPtr<Style::Image> m_cachedStyleImage;
+    const RefPtr<Style::Image> m_cachedStyleImage;
 };
 
 } // namespace WebCore

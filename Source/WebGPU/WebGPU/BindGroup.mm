@@ -36,6 +36,7 @@
 #import "Sampler.h"
 #import "TextureView.h"
 #import <ranges>
+#import <wtf/Borrow.h>
 #import <wtf/EnumeratedArray.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/spi/cocoa/IOSurfaceSPI.h>
@@ -66,7 +67,7 @@ constexpr size_t stageCount = std::size(stages);
 constexpr size_t stagesPlusUndefinedCount = std::size(stagesPlusUndefined);
 }
 
-static MTLRenderStages LEGACY_NODELETE metalRenderStage(ShaderStage shaderStage)
+NODELETE static MTLRenderStages metalRenderStage(ShaderStage shaderStage)
 {
     switch (shaderStage) {
     case ShaderStage::Vertex:
@@ -94,7 +95,7 @@ enum class PixelRange {
     Full
 };
 
-static PixelRange LEGACY_NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
+NODELETE static PixelRange pixelRangeFromPixelFormat(OSType pixelFormat)
 {
     switch (pixelFormat) {
     case kCVPixelFormatType_4444AYpCbCr8:
@@ -115,6 +116,7 @@ static PixelRange LEGACY_NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
     case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
     case kCVPixelFormatType_422YpCbCr10BiPlanarFullRange:
     case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange:
 #if HAVE(COREVIDEO_COMPRESSED_PIXEL_FORMAT_TYPES)
     case kCVPixelFormatType_AGX_420YpCbCr8BiPlanarFullRange:
 #endif
@@ -139,12 +141,45 @@ static TransferFunctionCV transferFunctionFromString(RetainPtr<CFStringRef> stri
     return TransferFunctionCV::kITU_R_709_2;
 }
 
+// How a Metal texture normalizes the samples of the format it reads, which is what the YCbCr columns
+// of the matrix below are scaled by. The constants are derived for an 8-bit sample c normalized to
+// c/255, so a 10-bit code c, which is c/4 as 8 bits, needs the ratio of what its texture gives to that.
+enum class SampleNormalization {
+    // c/255.
+    EightBit,
+    // The non-packed 10-bit formats keep a code c in the top 10 bits of 16, which a 16-bit texture
+    // normalizes to 64c/65535.
+    TenBitInSixteen,
+    // The packed 10-bit formats are read through 10-bit textures, which normalize c to c/1023.
+    TenBitPacked,
+};
+
+static constexpr float yCbCrScale(SampleNormalization normalization)
+{
+    switch (normalization) {
+    case SampleNormalization::EightBit:
+        return 1.f;
+    case SampleNormalization::TenBitInSixteen:
+        return 65535.f / (64.f * 4.f * 255.f);
+    case SampleNormalization::TenBitPacked:
+        return 1023.f / (4.f * 255.f);
+    }
+}
+
 // Columns are the Y, Cb, Cr and constant terms of the YCbCr-to-RGB conversion, over inputs normalized
 // by 255 rather than 256, which is what sampling an 8-bit Metal texture gives. Each is derived from the
 // standard's luma coefficients: R = Y' + 2(1-Kr)Cr', B = Y' + 2(1-Kb)Cb', and G from the remainder,
-// where a video-range Y' is (255Y - 16)/219 and a video-range chroma is (255C - 128)/224.
+// where a video-range Y' is (255Y - 16)/219 and a video-range chroma is (255C - 128)/224. The Y, Cb
+// and Cr columns are scaled for the way the format's texture normalizes its samples; the constant
+// column, which is added to the result, is not.
+template<SampleNormalization normalization>
 static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef pixelBuffer)
 {
+    constexpr float scale = yCbCrScale(normalization);
+    auto scaledColumn = [](float y, float cb, float cr) {
+        return simd::make_float3(y * scale, cb * scale, cr * scale);
+    };
+
     auto format = CVPixelBufferGetPixelFormatType(pixelBuffer);
     auto range = pixelRangeFromPixelFormat(format);
     auto transferFunction = transferFunctionFromString(adoptCF((CFStringRef)CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nil)));
@@ -153,14 +188,14 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kITU_R_709_2: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.18732430f, +1.85560000f),
-                simd::make_float3(+1.57480000f, -0.46813550f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.18732430f, +1.85560000f),
+                scaledColumn(+1.57480000f, -0.46813550f, +0.00000000f),
                 simd::make_float3(-0.79048784f, +0.32901511f, -0.93143764f));
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.21324866f, +2.11240177f),
-                simd::make_float3(+1.79274106f, -0.53292211f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.21324866f, +2.11240177f),
+                scaledColumn(+1.79274106f, -0.53292211f, +0.00000000f),
                 simd::make_float3(-0.97294507f, +0.30148910f, -1.13340221f));
         }
     }
@@ -168,15 +203,15 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kITU_R_601_4: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.34413628f, +1.77200000f),
-                simd::make_float3(+1.40200000f, -0.71413629f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.34413628f, +1.77200000f),
+                scaledColumn(+1.40200000f, -0.71413629f, +0.00000000f),
                 simd::make_float3(-0.70374902f, +0.53121133f, -0.88947451f));
 
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.39176200f, +2.01723214f),
-                simd::make_float3(+1.59602678f, -0.81296769f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.39176200f, +2.01723214f),
+                scaledColumn(+1.59602678f, -0.81296769f, +0.00000000f),
                 simd::make_float3(-0.87420221f, +0.53166750f, -1.08563078f));
         }
     }
@@ -184,14 +219,14 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kSMPTE_240M_1995: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.22662197f, +1.82600000f),
-                simd::make_float3(+1.57600000f, -0.47662197f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.22662197f, +1.82600000f),
+                scaledColumn(+1.57600000f, -0.47662197f, +0.00000000f),
                 simd::make_float3(-0.79109020f, +0.35300088f, -0.91658039f));
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.25798483f, +2.07870536f),
-                simd::make_float3(+1.79410714f, -0.54258304f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.25798483f, +2.07870536f),
+                scaledColumn(+1.79410714f, -0.54258304f, +0.00000000f),
                 simd::make_float3(-0.97363079f, +0.32879432f, -1.11648793f));
         }
     }
@@ -199,17 +234,41 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kITU_R_2020: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.16455310f, +1.88140000f),
-                simd::make_float3(+1.47460000f, -0.57135310f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.16455310f, +1.88140000f),
+                scaledColumn(+1.47460000f, -0.57135310f, +0.00000000f),
                 simd::make_float3(-0.74019137f, +0.36939605f, -0.94438902f));
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.18732607f, +2.14177231f),
-                simd::make_float3(+1.67867410f, -0.65042428f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.18732607f, +2.14177231f),
+                scaledColumn(+1.67867410f, -0.65042428f, +0.00000000f),
                 simd::make_float3(-0.91568793f, +0.34745847f, -1.14814507f));
         }
     } }
+}
+
+static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef pixelBuffer)
+{
+    switch (CVPixelBufferGetPixelFormatType(pixelBuffer)) {
+    case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+    case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+    case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange:
+    case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+    case kCVPixelFormatType_422YpCbCr10BiPlanarFullRange:
+    case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
+        return colorSpaceConversionMatrixForPixelBuffer<SampleNormalization::TenBitInSixteen>(pixelBuffer);
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_Lossless_422YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange:
+    case kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_Lossy_422YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_420YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_422YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_444YpCbCr10PackedBiPlanarVideoRange:
+        return colorSpaceConversionMatrixForPixelBuffer<SampleNormalization::TenBitPacked>(pixelBuffer);
+    default:
+        return colorSpaceConversionMatrixForPixelBuffer<SampleNormalization::EightBit>(pixelBuffer);
+    }
 }
 
 static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plane, std::optional<MTLTextureSwizzleChannels>& swizzle, bool supportsExtendedFormats)
@@ -217,6 +276,19 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
     auto pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
     auto biplanarFormat = [](int plane) {
         return plane ? MTLPixelFormatRG8Unorm : MTLPixelFormatR8Unorm;
+    };
+    // Non-packed 10-bit formats keep each sample in the 10 MSBs of 16 bits, so both planes have to be
+    // read as 16-bit; reading the chroma plane as 8-bit pairs scrambles Cb and Cr.
+    auto biplanar16BitFormat = [](int plane) {
+        return plane ? MTLPixelFormatRG16Unorm : MTLPixelFormatR16Unorm;
+    };
+    // Packed 10-bit formats keep three samples to 32 bits with no padding, which only these formats
+    // read. The YCbCr formats which describe both planes at once sample as RGB, already converted with
+    // a matrix of Metal's choosing, which is no good to a shader applying the frame's own.
+    auto packed10BitFormat = [supportsExtendedFormats, biplanarFormat](int plane) -> MTLPixelFormat {
+        if (!supportsExtendedFormats)
+            return biplanarFormat(plane);
+        return plane ? static_cast<MTLPixelFormat>(MTLPixelFormatRG10Unorm_PACKED) : static_cast<MTLPixelFormat>(MTLPixelFormatR10Unorm_PACKED);
     };
 
     switch (pixelFormat) {
@@ -378,17 +450,17 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
         return MTLPixelFormatDepth32Float;
 
     case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange: /* 2 plane YCbCr10 4:2:0, each 10 bits in the MSBs of 16bits, video-range (luma=[64,940] chroma=[64,960]) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange: /* 2 plane YCbCr10 4:2:2, each 10 bits in the MSBs of 16bits, video-range (luma=[64,940] chroma=[64,960]) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange: /* 2 plane YCbCr10 4:4:4, each 10 bits in the MSBs of 16bits, video-range (luma=[64,940] chroma=[64,960]) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_444_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange: /* 2 plane YCbCr10 4:2:0, each 10 bits in the MSBs of 16bits, full-range (Y range 0-1023) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_422YpCbCr10BiPlanarFullRange: /* 2 plane YCbCr10 4:2:2, each 10 bits in the MSBs of 16bits, full-range (Y range 0-1023) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange: /* 2 plane YCbCr10 4:4:4, each 10 bits in the MSBs of 16bits, full-range (Y range 0-1023) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_444_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar: /* first and second planes as per 420YpCbCr8BiPlanarVideoRange (420v), alpha 8 bits in third plane full-range.  No CVPlanarPixelBufferInfo struct. */
         return biplanarFormat(plane);
 
@@ -415,10 +487,13 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
         return biplanarFormat(plane);
 
     case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange: /* Lossless-compressed-packed form of case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_Lossless_422YpCbCr10PackedBiPlanarVideoRange: /* Lossless-compressed form of case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
+
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange: /* Lossless-compressed form of case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_Lossy_32BGRA: /* Lossy-compressed form of case kCVPixelFormatType_32BGRA. No CVPlanarPixelBufferInfo struct.  */
         return MTLPixelFormatBGRA8Unorm;
@@ -428,17 +503,17 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
         return biplanarFormat(plane);
 
     case kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange: /* Lossy-compressed form of case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P_PACKED_PQ) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_Lossy_422YpCbCr10PackedBiPlanarVideoRange: /* Lossy-compressed form of kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_420YpCbCr10PackedBiPlanarVideoRange:
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
     case kCVPixelFormatType_422YpCbCr10PackedBiPlanarVideoRange:
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
     case kCVPixelFormatType_444YpCbCr10PackedBiPlanarVideoRange:
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_444_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
     }
 
     return MTLPixelFormatInvalid;
@@ -579,11 +654,12 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
 {
 #if HAVE(COREVIDEO_METAL_SUPPORT)
     // colorMatrixBetweenPrimaries() is row-major, and Metal indexes a float3x3 by column.
-    simd::float3x3 primariesConversionMatrix = simd::float3x3(0.f);
+    simd::float3x4 primariesConversionMatrix = simd::float3x4(0.f);
     if (auto matrix = primariesConversionMatrixForPixelBuffer(pixelBuffer, colorSpace)) {
         auto& m = *matrix;
-        primariesConversionMatrix = simd::float3x3(simd::make_float3(m[0], m[3], m[6]), simd::make_float3(m[1], m[4], m[7]), simd::make_float3(m[2], m[5], m[8]));
+        primariesConversionMatrix = simd::float3x4(simd::make_float4(m[0], m[3], m[6], 0.f), simd::make_float4(m[1], m[4], m[7], 0.f), simd::make_float4(m[2], m[5], m[8], 0.f));
     }
+    primariesConversionMatrix.columns[0].w = static_cast<float>(hdrTransferFunctionForPixelBuffer(pixelBuffer));
 
     auto premultiplyParameters = premultiplyAlpha == PremultiplyAlpha::Yes ? premultiplyAlphaParameters(pixelBuffer) : PremultiplyAlphaParameters { };
 
@@ -704,7 +780,7 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
             mtlTexture1 = [mtlTexture1 newTextureViewWithPixelFormat:mtlTexture1.pixelFormat textureType:mtlTexture1.textureType levels:NSMakeRange(0, mtlTexture1.mipmapLevelCount) slices:NSMakeRange(0, mtlTexture1.arrayLength) swizzle:*secondPlaneSwizzle];
     }
 
-    protect(m_defaultQueue)->onSubmittedWorkDone(CompletionHandler<void()> { [plane0 = adoptCF(plane0), plane1 = adoptCF(plane1)] { } });
+    protect(m_defaultQueue)->onSubmittedWorkDone(CompletionHandler<void(bool)> { [plane0 = adoptCF(plane0), plane1 = adoptCF(plane1)](bool) { } });
 
     float Ax = 1.f / (upperRight[0] - lowerLeft[0]);
     float Bx = -Ax * lowerLeft[0];
@@ -729,7 +805,7 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
 #endif
 }
 
-static bool LEGACY_NODELETE hasProperUsageFlags(BindGroupLayout::BufferBindingType bufferType, OptionSet<WebGPU::BufferUsage> usage)
+NODELETE static bool hasProperUsageFlags(BindGroupLayout::BufferBindingType bufferType, OptionSet<WebGPU::BufferUsage> usage)
 {
     switch (bufferType) {
     case BindGroupLayout::BufferBindingType::Uniform:
@@ -739,7 +815,7 @@ static bool LEGACY_NODELETE hasProperUsageFlags(BindGroupLayout::BufferBindingTy
         return usage.contains(WebGPU::BufferUsage::Storage);
     case BindGroupLayout::BufferBindingType::Float3x2:
     case BindGroupLayout::BufferBindingType::Float4x3:
-    case BindGroupLayout::BufferBindingType::Float3x3:
+    case BindGroupLayout::BufferBindingType::Float3x4:
     case BindGroupLayout::BufferBindingType::UInt2:
     case BindGroupLayout::BufferBindingType::ArrayLength:
         ASSERT_NOT_REACHED();
@@ -747,7 +823,7 @@ static bool LEGACY_NODELETE hasProperUsageFlags(BindGroupLayout::BufferBindingTy
     }
 }
 
-static MTLResourceUsage LEGACY_NODELETE resourceUsageForBindingAcccess(BindGroupLayout::BindingAccess bindingAccess)
+NODELETE static MTLResourceUsage resourceUsageForBindingAcccess(BindGroupLayout::BindingAccess bindingAccess)
 {
     switch (bindingAccess) {
     case BindGroupLayout::BindingAccessReadOnly:
@@ -772,7 +848,7 @@ static bool is32bppFloatFormat(id<MTLTexture> t)
     return t.pixelFormat == MTLPixelFormatR32Float || t.pixelFormat == MTLPixelFormatRG32Float || t.pixelFormat == MTLPixelFormatRGBA32Float;
 }
 
-static bool LEGACY_NODELETE valid32bppFloatSampleType(WebGPU::TextureSampleType sampleType)
+NODELETE static bool valid32bppFloatSampleType(WebGPU::TextureSampleType sampleType)
 {
     return sampleType == WebGPU::TextureSampleType::Float || sampleType == WebGPU::TextureSampleType::UnfilterableFloat;
 }
@@ -1039,12 +1115,12 @@ static bool validateTextureViewDimension(const auto* textureEntry, const auto& a
     }
 }
 
-static bool LEGACY_NODELETE validateStorageTextureViewFormat(const BindGroupLayout::StorageTextureBindingLayout* storageTexture, const auto& apiTextureView)
+NODELETE static bool validateStorageTextureViewFormat(const BindGroupLayout::StorageTextureBindingLayout* storageTexture, const auto& apiTextureView)
 {
     return !storageTexture || storageTexture->format == apiTextureView->format();
 }
 
-static bool LEGACY_NODELETE validateSamplerType(WebGPU::SamplerBindingType type, const Sampler& sampler)
+NODELETE static bool validateSamplerType(WebGPU::SamplerBindingType type, const Sampler& sampler)
 {
     switch (type) {
     case WebGPU::SamplerBindingType::Filtering:
@@ -1056,12 +1132,12 @@ static bool LEGACY_NODELETE validateSamplerType(WebGPU::SamplerBindingType type,
     }
 }
 
-static BindGroupEntryUsage LEGACY_NODELETE usageForTexture(const BindGroupLayout::TextureBindingLayout&)
+NODELETE static BindGroupEntryUsage usageForTexture(const BindGroupLayout::TextureBindingLayout&)
 {
     return BindGroupEntryUsage::ConstantTexture;
 }
 
-static BindGroupEntryUsage LEGACY_NODELETE usageForStorageTexture(const BindGroupLayout::StorageTextureBindingLayout& textureLayout)
+NODELETE static BindGroupEntryUsage usageForStorageTexture(const BindGroupLayout::StorageTextureBindingLayout& textureLayout)
 {
     switch (textureLayout.access) {
     case WebGPU::StorageTextureAccess::ReadOnly:
@@ -1076,7 +1152,7 @@ static BindGroupEntryUsage LEGACY_NODELETE usageForStorageTexture(const BindGrou
     return BindGroupEntryUsage::Undefined;
 }
 
-static BindGroupEntryUsage LEGACY_NODELETE usageForBuffer(BindGroupLayout::BufferBindingType bufferBindingType)
+NODELETE static BindGroupEntryUsage usageForBuffer(BindGroupLayout::BufferBindingType bufferBindingType)
 {
     switch (bufferBindingType) {
     case BindGroupLayout::BufferBindingType::Uniform:
@@ -1087,7 +1163,7 @@ static BindGroupEntryUsage LEGACY_NODELETE usageForBuffer(BindGroupLayout::Buffe
         return BindGroupEntryUsage::StorageRead;
     case BindGroupLayout::BufferBindingType::Float3x2:
     case BindGroupLayout::BufferBindingType::Float4x3:
-    case BindGroupLayout::BufferBindingType::Float3x3:
+    case BindGroupLayout::BufferBindingType::Float3x4:
     case BindGroupLayout::BufferBindingType::UInt2:
     case BindGroupLayout::BufferBindingType::ArrayLength:
         return BindGroupEntryUsage::Undefined;
@@ -1100,7 +1176,7 @@ static BindGroupEntryUsageData makeBindGroupEntryUsageData(BindGroupEntryUsage u
     return BindGroupEntryUsageData { .usage = usage, .binding = bindingIndex, .resource = resource.ptr(), .entryOffset = entryOffset, .entrySize = entrySize };
 }
 
-static bool LEGACY_NODELETE allowedExternalTextureFormat(WebGPU::TextureFormat format)
+NODELETE static bool allowedExternalTextureFormat(WebGPU::TextureFormat format)
 {
     switch (format) {
     case WebGPU::TextureFormat::Rgba8unorm:
@@ -1132,7 +1208,7 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
         }
         auto textureUsage = apiTextureView->usage();
         if ((textureEntry && !textureUsage.contains(WebGPU::TextureUsage::TextureBinding)) || (storageTextureEntry && !textureUsage.contains(WebGPU::TextureUsage::StorageBinding))) {
-            VALIDATION_ERROR([NSString stringWithFormat:@"Storage texture usage(%llu) did not have storage usage or storage texture entry did not have storage binding", toAPI(textureUsage)]);
+            VALIDATION_ERROR([NSString stringWithFormat:@"Storage texture usage(%llu) did not have storage usage or storage texture entry did not have storage binding", static_cast<unsigned long long>(textureUsage.toRaw())]);
             return BindGroup::createInvalid(object);
         }
         if (textureEntry && (3 * (textureEntry->multisampled ? 1 : 0) + 1 != apiTextureView->sampleCount())) {
@@ -1217,8 +1293,8 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
                 *cscMatrixAddress = simd::float4x3(1.f);
 
             argumentIndices[stage].remove(externalIndex);
-            if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
-                *primariesMatrixAddress = simd::float3x3(0.f);
+            if (auto* primariesMatrixAddress = static_cast<simd::float3x4*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
+                *primariesMatrixAddress = simd::float3x4(0.f);
 
             argumentIndices[stage].remove(externalIndex);
             if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
@@ -1269,8 +1345,8 @@ static void addResourceHolder(const BindGroupEntryUsageData::Resource& resource,
 template<typename Holder>
 static void registerResourceHolderImpl(const Vector<BindableResources>& resources, const Holder& holder)
 {
-    for (const auto& bindableResources : resources) {
-        for (const auto& resourceUsage : bindableResources.resourceUsages)
+    for (const auto& bindableResources : borrow(resources)) {
+        for (const auto& resourceUsage : borrow(bindableResources.resourceUsages))
             addResourceHolder(resourceUsage.resource, holder);
     }
 }
@@ -1305,7 +1381,7 @@ id<MTLResource> placeholderForDestroyedResource(const BindGroupEntryUsageData::R
 bool replaceDestroyedResourcesWithPlaceholders(Vector<BindableResources>& resources)
 {
     bool replacedAnything = false;
-    for (auto& bindableResources : resources) {
+    for (auto& bindableResources : borrow(resources)) {
         auto resourceCount = std::min(bindableResources.mtlResources.size(), bindableResources.resourceUsages.size());
         for (size_t i = 0; i < resourceCount; ++i) {
             id<MTLResource> placeholder = placeholderForDestroyedResource(bindableResources.resourceUsages[i].resource);
@@ -1349,7 +1425,7 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
     auto& bindGroupLayoutEntries = bindGroupLayout->entries();
     BindGroup::DynamicBuffersContainer dynamicBuffers;
     BindGroup::SamplersContainer samplersSet;
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usedBindingSlots;
+    HashSet<uint32_t> usedBindingSlots;
 
     for (auto& entry : descriptor.entries) {
         auto* bufferBinding = std::get_if<WebGPU::BufferBinding>(&entry.resource);
@@ -1415,7 +1491,7 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
                     }
 
                     if (!hasProperUsageFlags(layoutBinding->type, apiBuffer->usage())) {
-                        VALIDATION_ERROR([NSString stringWithFormat:@"Unexpected type(%u), buffer.usage(%llu)", layoutBinding->type, toAPI(apiBuffer->usage())]);
+                        VALIDATION_ERROR([NSString stringWithFormat:@"Unexpected type(%u), buffer.usage(%llu)", layoutBinding->type, static_cast<unsigned long long>(apiBuffer->usage().toRaw())]);
                         return BindGroup::createInvalid(*this);
                     }
 
@@ -1503,6 +1579,10 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
                     return BindGroup::createInvalid(*this);
                 }
                 Ref externalTexture = metal(externalTextureResource->get());
+                if (&externalTexture->device() != this) {
+                    VALIDATION_ERROR(@"External texture was created from a different device");
+                    return BindGroup::createInvalid(*this);
+                }
                 auto textureData = createExternalTextureFromPixelBuffer(protect(externalTexture->pixelBuffer()), externalTexture->colorSpace(), PremultiplyAlpha::Yes);
                 id<MTLTexture> texture0 = textureData.texture0 ?: placeholderTexture(WebGPU::TextureFormat::Bgra8unorm);
                 auto metalStage = metalRenderStage(stage);
@@ -1537,7 +1617,7 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
                         *cscMatrixAddress = textureData.colorSpaceConversionMatrix;
 
                     argumentIndices[stage].remove(index);
-                    if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder[stage] constantDataAtIndex:index++]))
+                    if (auto* primariesMatrixAddress = static_cast<simd::float3x4*>([argumentEncoder[stage] constantDataAtIndex:index++]))
                         *primariesMatrixAddress = textureData.primariesConversionMatrix;
 
                     argumentIndices[stage].remove(index);
@@ -1738,7 +1818,27 @@ bool BindGroup::updateExternalTextures(WebGPU::ExternalTexture& apiExternalTextu
 {
     // Every WebGPU::ExternalTexture that reaches a WebGPU::Metal::BindGroup is a WebGPU::Metal::ExternalTexture.
     auto& externalTexture = downcast<ExternalTexture>(apiExternalTexture);
-    if (!m_bindGroupLayout || externalTexture.openCommandEncoderCount())
+    if (m_renderBundleConsumerCount)
+        return false;
+
+    if (!m_bindGroupLayout || &externalTexture.device() != m_device.ptr())
+        return false;
+
+    bool foundBoundExternalTexture = false;
+    for (auto& resource : borrow(m_resources)) {
+        for (auto& resourceUsage : borrow(resource.resourceUsages)) {
+            auto* boundExternalTexture = std::get_if<RefPtr<const ExternalTexture>>(&resourceUsage.resource);
+            if (!boundExternalTexture || !*boundExternalTexture)
+                continue;
+
+            if (boundExternalTexture->get() != &externalTexture || (*boundExternalTexture)->openCommandEncoderCount())
+                return false;
+
+            foundBoundExternalTexture = true;
+        }
+    }
+
+    if (!foundBoundExternalTexture)
         return false;
 
     Ref device = m_device;
@@ -1775,7 +1875,7 @@ bool BindGroup::updateExternalTextures(WebGPU::ExternalTexture& apiExternalTextu
         if (auto* cscMatrixAddress = static_cast<simd::float4x3*>([argumentEncoder constantDataAtIndex:index++]))
             *cscMatrixAddress = textureData.colorSpaceConversionMatrix;
 
-        if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder constantDataAtIndex:index++]))
+        if (auto* primariesMatrixAddress = static_cast<simd::float3x4*>([argumentEncoder constantDataAtIndex:index++]))
             *primariesMatrixAddress = textureData.primariesConversionMatrix;
 
         if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder constantDataAtIndex:index++]))
@@ -1813,7 +1913,7 @@ bool BindGroup::makeSubmitInvalid(ShaderStage stage, const BindGroupLayout* pipe
     return true;
 }
 
-static uint64_t LEGACY_NODELETE makePipelineBindGroupKey(uint32_t groupIndex, uint64_t pipelineIndex)
+NODELETE static uint64_t makePipelineBindGroupKey(uint32_t groupIndex, uint64_t pipelineIndex)
 {
     return static_cast<uint64_t>(groupIndex) | (pipelineIndex << Device::maxBindGroups);
 }
@@ -1831,20 +1931,3 @@ bool BindGroup::previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipel
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuBindGroupAddRef(WGPUBindGroup bindGroup)
-{
-    WebGPU::Metal::fromAPI(bindGroup).ref();
-}
-
-void wgpuBindGroupRelease(WGPUBindGroup bindGroup)
-{
-    WebGPU::Metal::fromAPI(bindGroup).deref();
-}
-
-void wgpuBindGroupSetLabel(WGPUBindGroup bindGroup, WGPUStringView label)
-{
-    protect(WebGPU::Metal::fromAPI(bindGroup))->setLabel(WebGPU::Metal::fromAPI(label));
-}

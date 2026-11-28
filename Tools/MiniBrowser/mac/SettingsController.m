@@ -59,6 +59,7 @@ static NSString * const NonFastScrollableRegionOverlayVisiblePreferenceKey = @"N
 static NSString * const WheelEventHandlerRegionOverlayVisiblePreferenceKey = @"WheelEventHandlerRegionOverlayVisible";
 static NSString * const InteractionRegionOverlayVisiblePreferenceKey = @"InteractionRegionOverlayVisible";
 static NSString * const EnhancedSecurityOverlayVisiblePreferenceKey = @"EnhancedSecurityOverlayVisible";
+static NSString * const TouchActionRegionOverlayVisiblePreferenceKey = @"TouchActionRegionOverlayVisible";
 
 static NSString * const UseTransparentWindowsPreferenceKey = @"UseTransparentWindows";
 static NSString * const UsePaginatedModePreferenceKey = @"UsePaginatedMode";
@@ -80,9 +81,6 @@ static NSString * const AcceptAllTLSCertificatesPreferenceKey = @"AcceptAllTLSCe
 static NSString * const AXCustomColorModeEnabledPreferenceKey = @"AXCustomColorModeEnabled";
 static NSString * const ShowAXCustomColorModeControlsPreferenceKey = @"ShowAXCustomColorModeControls";
 
-// This default name intentionally overlaps with the key that WebKit2 checks when creating a view.
-static NSString * const UseRemoteLayerTreeDrawingAreaPreferenceKey = @"WebKit2UseRemoteLayerTreeDrawingArea";
-
 static NSString * const PerWindowWebProcessesDisabledKey = @"PerWindowWebProcessesDisabled";
 static NSString * const NetworkCacheSpeculativeRevalidationDisabledKey = @"NetworkCacheSpeculativeRevalidationDisabled";
 static NSString * const UseFindDelegatePreferenceKey = @"UseFindDelegate";
@@ -92,6 +90,7 @@ typedef NS_ENUM(NSInteger, DebugOverylayMenuItemTag) {
     WheelEventHandlerRegionOverlayTag,
     InteractionRegionOverlayTag,
     EnhancedSecurityOverlayTag,
+    TouchActionRegionOverlayTag,
     ExperimentalFeatureTag,
     InternalDebugFeatureTag,
 };
@@ -122,7 +121,7 @@ typedef NS_ENUM(NSInteger, AttachmentElementEnabledMenuItemTag) {
         UseFindDelegatePreferenceKey,
     ];
 
-    NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
+    NSUserDefaults *userDefaults = MiniBrowserUserDefaults();
     for (NSString *prefName in onByDefaultPrefs) {
         if (![userDefaults objectForKey:prefName])
             [userDefaults setBool:YES forKey:prefName];
@@ -222,7 +221,6 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
     indent = YES;
     addItem(@"Reserve Space For Banners", @selector(toggleReserveSpaceForBanners:));
     addItem(@"Show Tiled Scrolling Indicator", @selector(toggleShowTiledScrollingIndicator:));
-    addItem(@"Use UI-Side Compositing", @selector(toggleUseUISideCompositing:));
     addItem(@"Disable Per-Window Web Processes", @selector(togglePerWindowWebProcessesDisabled:));
     addItem(@"Load All Site Icons Per-Page", @selector(toggleLoadsAllSiteIcons:));
     addItem(@"Use GameController.framework on macOS (Restart required)", @selector(toggleUsesGameControllerFramework:));
@@ -241,6 +239,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
     addItemToMenu(debugOverlaysMenu, @"Wheel Event Handler Region", @selector(toggleDebugOverlay:), NO, WheelEventHandlerRegionOverlayTag);
     addItemToMenu(debugOverlaysMenu, @"Interaction Region", @selector(toggleDebugOverlay:), NO, InteractionRegionOverlayTag);
     addItemToMenu(debugOverlaysMenu, @"Enhanced Security", @selector(toggleDebugOverlay:), NO, EnhancedSecurityOverlayTag);
+    addItemToMenu(debugOverlaysMenu, @"CSS touch-action Region", @selector(toggleDebugOverlay:), NO, TouchActionRegionOverlayTag);
     addItemToMenu(debugOverlaysMenu, @"Resource Usage", @selector(toggleShowResourceUsageOverlay:), NO, 0);
     addItemToMenu(debugOverlaysMenu, @"Show Web Process ID in Window Title", @selector(toggleShowWebProcessIdentifierInTitle:), NO, 0);
 
@@ -453,15 +452,13 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
         [menuItem setState:[self usesGameControllerFramework] ? NSControlStateValueOn : NSControlStateValueOff];
     else if (action == @selector(toggleNetworkCacheSpeculativeRevalidationDisabled:))
         [menuItem setState:[self networkCacheSpeculativeRevalidationDisabled] ? NSControlStateValueOn : NSControlStateValueOff];
-    else if (action == @selector(toggleUseUISideCompositing:))
-        [menuItem setState:[self useUISideCompositing] ? NSControlStateValueOn : NSControlStateValueOff];
     else if (action == @selector(togglePerWindowWebProcessesDisabled:))
         [menuItem setState:[self perWindowWebProcessesDisabled] ? NSControlStateValueOn : NSControlStateValueOff];
     else if (action == @selector(toggleDebugOverlay:))
         [menuItem setState:[self debugOverlayVisible:menuItem] ? NSControlStateValueOn : NSControlStateValueOff];
     else if (action == @selector(changeCustomUserAgent:)) {
 
-        NSString *savedUAIdentifier = [[NSUserDefaults standardUserDefaults] stringForKey:CustomUserAgentPreferenceKey];
+        NSString *savedUAIdentifier = [MiniBrowserUserDefaults() stringForKey:CustomUserAgentPreferenceKey];
         NSDictionary *userAgentDict = [menuItem representedObject];
         if (userAgentDict) {
             BOOL isCurrentUA = [userAgentDict[@"identifier"] isEqualToString:savedUAIdentifier];
@@ -490,7 +487,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (void)_toggleBooleanDefault:(NSString *)defaultName
 {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSUserDefaults *defaults = MiniBrowserUserDefaults();
     [defaults setBool:![defaults boolForKey:defaultName] forKey:defaultName];
 
     [[[NSApplication sharedApplication] browserAppDelegate] didChangeSettings];
@@ -503,7 +500,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)useWebKit2ByDefault
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UseWebKit2ByDefaultPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:UseWebKit2ByDefaultPreferenceKey];
 }
 
 - (void)toggleCreateEditorByDefault:(id)sender
@@ -513,7 +510,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)createEditorByDefault
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:CreateEditorByDefaultPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:CreateEditorByDefaultPreferenceKey];
 }
 
 - (void)toggleUseTransparentWindows:(id)sender
@@ -523,7 +520,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)useTransparentWindows
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UseTransparentWindowsPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:UseTransparentWindowsPreferenceKey];
 }
 
 - (void)toggleUsePaginatedMode:(id)sender
@@ -533,25 +530,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)usePaginatedMode
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UsePaginatedModePreferenceKey];
-}
-
-- (void)toggleUseUISideCompositing:(id)sender
-{
-    [self _toggleBooleanDefault:UseRemoteLayerTreeDrawingAreaPreferenceKey];
-}
-
-- (BOOL)useUISideCompositing
-{
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000
-    bool useRemoteLayerTree = true;
-#else
-    bool useRemoteLayerTree = false;
-#endif
-    id useRemoteLayerTreeBoolean = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKit2UseRemoteLayerTreeDrawingArea"];
-    if (useRemoteLayerTreeBoolean)
-        useRemoteLayerTree = [useRemoteLayerTreeBoolean boolValue];
-    return useRemoteLayerTree;
+    return [MiniBrowserUserDefaults() boolForKey:UsePaginatedModePreferenceKey];
 }
 
 - (void)togglePerWindowWebProcessesDisabled:(id)sender
@@ -572,7 +551,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)perWindowWebProcessesDisabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:PerWindowWebProcessesDisabledKey];
+    return [MiniBrowserUserDefaults() boolForKey:PerWindowWebProcessesDisabledKey];
 }
 
 - (void)toggleIncrementalRenderingSuppressed:(id)sender
@@ -582,7 +561,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)incrementalRenderingSuppressed
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:IncrementalRenderingSuppressedPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:IncrementalRenderingSuppressedPreferenceKey];
 }
 
 - (void)toggleShowLayerBorders:(id)sender
@@ -592,7 +571,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)layerBordersVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:LayerBordersVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:LayerBordersVisiblePreferenceKey];
 }
 
 - (void)toggleLegacyLineLayoutVisualCoverageEnabled:(id)sender
@@ -602,7 +581,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)legacyLineLayoutVisualCoverageEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:LegacyLineLayoutVisualCoverageEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:LegacyLineLayoutVisualCoverageEnabledPreferenceKey];
 }
 
 - (void)toggleAcceleratedDrawingEnabled:(id)sender
@@ -612,7 +591,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)acceleratedDrawingEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AcceleratedDrawingEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AcceleratedDrawingEnabledPreferenceKey];
 }
 
 - (void)toggleEnhancedSecurityEnabled:(id)sender
@@ -622,7 +601,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)enhancedSecurityEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:EnhancedSecurityEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:EnhancedSecurityEnabledPreferenceKey];
 }
 
 - (void)toggleReserveSpaceForBanners:(id)sender
@@ -642,13 +621,13 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (void)toggleShowWebProcessIdentifierInTitle:(id)sender
 {
-    [[NSUserDefaults standardUserDefaults] setBool:![self showWebProcessIdentifierInTitle] forKey:ShowWebProcessIdentifierInTitlePreferenceKey];
+    [MiniBrowserUserDefaults() setBool:![self showWebProcessIdentifierInTitle] forKey:ShowWebProcessIdentifierInTitlePreferenceKey];
     [[[NSApplication sharedApplication] browserAppDelegate] didChangeSettings];
 }
 
 - (BOOL)loadsAllSiteIcons
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:LoadsAllSiteIconsKey];
+    return [MiniBrowserUserDefaults() boolForKey:LoadsAllSiteIconsKey];
 }
 
 - (void)toggleLoadsAllSiteIcons:(id)sender
@@ -658,7 +637,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)usesGameControllerFramework
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UsesGameControllerFrameworkKey];
+    return [MiniBrowserUserDefaults() boolForKey:UsesGameControllerFrameworkKey];
 }
 
 - (void)toggleUsesGameControllerFramework:(id)sender
@@ -668,7 +647,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)networkCacheSpeculativeRevalidationDisabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:NetworkCacheSpeculativeRevalidationDisabledKey];
+    return [MiniBrowserUserDefaults() boolForKey:NetworkCacheSpeculativeRevalidationDisabledKey];
 }
 
 - (void)toggleNetworkCacheSpeculativeRevalidationDisabled:(id)sender
@@ -678,34 +657,34 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)isSpaceReservedForBanners
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:ReserveSpaceForBannersPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:ReserveSpaceForBannersPreferenceKey];
 }
 
 - (BOOL)webViewFillsWindow
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:WebViewFillsWindowKey];
+    return [MiniBrowserUserDefaults() boolForKey:WebViewFillsWindowKey];
 }
 
 - (void)setWebViewFillsWindow:(BOOL)fillsWindow
 {
-    return [[NSUserDefaults standardUserDefaults] setBool:fillsWindow forKey:WebViewFillsWindowKey];
+    return [MiniBrowserUserDefaults() setBool:fillsWindow forKey:WebViewFillsWindowKey];
 }
 
 - (BOOL)tiledScrollingIndicatorVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:TiledScrollingIndicatorVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:TiledScrollingIndicatorVisiblePreferenceKey];
 }
 
 - (BOOL)resourceUsageOverlayVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:ResourceUsageOverlayVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:ResourceUsageOverlayVisiblePreferenceKey];
 }
 
 - (BOOL)showWebProcessIdentifierInTitle
 {
-    if (![[NSUserDefaults standardUserDefaults] objectForKey:ShowWebProcessIdentifierInTitlePreferenceKey])
+    if (![MiniBrowserUserDefaults() objectForKey:ShowWebProcessIdentifierInTitlePreferenceKey])
         return YES;
-    return [[NSUserDefaults standardUserDefaults] boolForKey:ShowWebProcessIdentifierInTitlePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:ShowWebProcessIdentifierInTitlePreferenceKey];
 }
 
 - (void)toggleResourceLoadStatisticsEnabled:(id)sender
@@ -715,7 +694,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)resourceLoadStatisticsEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:ResourceLoadStatisticsEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:ResourceLoadStatisticsEnabledPreferenceKey];
 }
 
 - (void)toggleLargeImageAsyncDecodingEnabled:(id)sender
@@ -725,7 +704,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)largeImageAsyncDecodingEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:LargeImageAsyncDecodingEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:LargeImageAsyncDecodingEnabledPreferenceKey];
 }
 
 - (void)toggleAnimatedImageAsyncDecodingEnabled:(id)sender
@@ -735,7 +714,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)animatedImageAsyncDecodingEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AnimatedImageAsyncDecodingEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AnimatedImageAsyncDecodingEnabledPreferenceKey];
 }
 
 - (void)toggleAppleColorFilterEnabled:(id)sender
@@ -745,7 +724,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)appleColorFilterEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AppleColorFilterEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AppleColorFilterEnabledPreferenceKey];
 }
 
 - (void)toggleSiteSpecificQuirksModeEnabled:(id)sender
@@ -755,7 +734,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)siteSpecificQuirksModeEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:SiteSpecificQuirksModeEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:SiteSpecificQuirksModeEnabledPreferenceKey];
 }
 
 - (void)toggleAcceptAllTLSCertificates:(id)sender
@@ -765,7 +744,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)acceptAllTLSCertificates
 {
-    id acceptTLSCertificates = [[NSUserDefaults standardUserDefaults] objectForKey:AcceptAllTLSCertificatesPreferenceKey];
+    id acceptTLSCertificates = [MiniBrowserUserDefaults() objectForKey:AcceptAllTLSCertificatesPreferenceKey];
     if (acceptTLSCertificates)
         return [acceptTLSCertificates boolValue];
     return NO;
@@ -778,7 +757,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)tabFocusesLinksEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:TabFocusesLinksEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:TabFocusesLinksEnabledPreferenceKey];
 }
 
 - (void)toggleUseFindDelegate:(id)sender
@@ -788,7 +767,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)useFindDelegate
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UseFindDelegatePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:UseFindDelegatePreferenceKey];
 }
 
 - (void)togglePunchOutWhiteBackgroundsInDarkMode:(id)sender
@@ -798,7 +777,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)punchOutWhiteBackgroundsInDarkMode
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:PunchOutWhiteBackgroundsInDarkModePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:PunchOutWhiteBackgroundsInDarkModePreferenceKey];
 }
 
 - (void)toggleAXCustomColorModeEnabled:(id)sender
@@ -808,7 +787,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)axCustomColorModeEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AXCustomColorModeEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AXCustomColorModeEnabledPreferenceKey];
 }
 
 - (void)toggleShowAXCustomColorModeControls:(id)sender
@@ -818,7 +797,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)showAXCustomColorModeControls
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:ShowAXCustomColorModeControlsPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:ShowAXCustomColorModeControlsPreferenceKey];
 }
 
 - (void)toggleUseSystemAppearance:(id)sender
@@ -828,7 +807,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)useSystemAppearance
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UseSystemAppearancePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:UseSystemAppearancePreferenceKey];
 }
 
 - (void)toggleDataDetectorsEnabled:(id)sender
@@ -838,7 +817,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)dataDetectorsEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:DataDetectorsEnabledPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:DataDetectorsEnabledPreferenceKey];
 }
 
 - (void)toggleUseMockCaptureDevices:(id)sender
@@ -848,7 +827,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)useMockCaptureDevices
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:UseMockCaptureDevicesPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:UseMockCaptureDevicesPreferenceKey];
 }
 
 - (void)toggleAdvancedPrivacyProtections:(id)sender
@@ -858,7 +837,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)advancedPrivacyProtectionsEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AdvancedPrivacyProtectionsPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AdvancedPrivacyProtectionsPreferenceKey];
 }
 
 - (void)toggleAllowsContentJavascript:(id)sender
@@ -868,7 +847,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)allowsContentJavascript
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AllowsContentJavascriptPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AllowsContentJavascriptPreferenceKey];
 }
 
 - (void)toggleAllowUniversalAccessFromFileURLs:(id)sender
@@ -878,27 +857,32 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)allowUniversalAccessFromFileURLs
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:AllowUniversalAccessFromFileURLsPreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:AllowUniversalAccessFromFileURLsPreferenceKey];
 }
 
 - (BOOL)nonFastScrollableRegionOverlayVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:NonFastScrollableRegionOverlayVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:NonFastScrollableRegionOverlayVisiblePreferenceKey];
 }
 
 - (BOOL)wheelEventHandlerRegionOverlayVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:WheelEventHandlerRegionOverlayVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:WheelEventHandlerRegionOverlayVisiblePreferenceKey];
 }
 
 - (BOOL)interactionRegionOverlayVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:InteractionRegionOverlayVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:InteractionRegionOverlayVisiblePreferenceKey];
 }
 
 - (BOOL)enhancedSecurityOverlayVisible
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:EnhancedSecurityOverlayVisiblePreferenceKey];
+    return [MiniBrowserUserDefaults() boolForKey:EnhancedSecurityOverlayVisiblePreferenceKey];
+}
+
+- (BOOL)touchActionRegionOverlayVisible
+{
+    return [MiniBrowserUserDefaults() boolForKey:TouchActionRegionOverlayVisiblePreferenceKey];
 }
 
 - (NSString *)preferenceKeyForRegionOverlayTag:(NSUInteger)tag
@@ -915,6 +899,9 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
     case EnhancedSecurityOverlayTag:
         return EnhancedSecurityOverlayVisiblePreferenceKey;
+
+    case TouchActionRegionOverlayTag:
+        return TouchActionRegionOverlayVisiblePreferenceKey;
     }
     return nil;
 }
@@ -934,7 +921,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
     BOOL currentlyEnabled = [preferences _isEnabledForFeature:feature];
     [preferences _setEnabled:!currentlyEnabled forFeature:feature];
 
-    [[NSUserDefaults standardUserDefaults] setBool:!currentlyEnabled forKey:feature.key];
+    [MiniBrowserUserDefaults() setBool:!currentlyEnabled forKey:feature.key];
 }
 
 - (void)toggleInternalDebugFeature:(id)sender
@@ -945,7 +932,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
     BOOL currentlyEnabled = [preferences _isEnabledForInternalDebugFeature:feature];
     [preferences _setEnabled:!currentlyEnabled forInternalDebugFeature:feature];
 
-    [[NSUserDefaults standardUserDefaults] setBool:!currentlyEnabled forKey:feature.key];
+    [MiniBrowserUserDefaults() setBool:!currentlyEnabled forKey:feature.key];
 }
 
 - (void)resetAllExperimentalFeatures:(id)sender
@@ -955,7 +942,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
     for (_WKExperimentalFeature *feature in experimentalFeatures) {
         [preferences _setEnabled:feature.defaultValue forExperimentalFeature:feature];
-        [[NSUserDefaults standardUserDefaults] setBool:feature.defaultValue forKey:feature.key];
+        [MiniBrowserUserDefaults() setBool:feature.defaultValue forKey:feature.key];
     }
 }
 
@@ -966,7 +953,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
     for (_WKInternalDebugFeature *feature in internalDebugFeatures) {
         [preferences _setEnabled:feature.defaultValue forInternalDebugFeature:feature];
-        [[NSUserDefaults standardUserDefaults] setBool:feature.defaultValue forKey:feature.key];
+        [MiniBrowserUserDefaults() setBool:feature.defaultValue forKey:feature.key];
     }
 }
 
@@ -974,14 +961,14 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 {
     NSString *preferenceKey = [self preferenceKeyForRegionOverlayTag:[menuItem tag]];
     if (preferenceKey)
-        return [[NSUserDefaults standardUserDefaults] boolForKey:preferenceKey];
+        return [MiniBrowserUserDefaults() boolForKey:preferenceKey];
 
     return NO;
 }
 
 - (NSString *)customUserAgent
 {
-    NSString *uaIdentifier = [[NSUserDefaults standardUserDefaults] stringForKey:CustomUserAgentPreferenceKey];
+    NSString *uaIdentifier = [MiniBrowserUserDefaults() stringForKey:CustomUserAgentPreferenceKey];
     if (uaIdentifier) {
         for (NSDictionary *item in [[self class] userAgentData]) {
             if ([item[@"identifier"] isEqualToString:uaIdentifier])
@@ -1000,14 +987,14 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
     NSString *uaIdentifier = userAgentDict[@"identifier"];
     if (uaIdentifier)
-        [[NSUserDefaults standardUserDefaults] setObject:uaIdentifier forKey:CustomUserAgentPreferenceKey];
+        [MiniBrowserUserDefaults() setObject:uaIdentifier forKey:CustomUserAgentPreferenceKey];
 
     [[NSNotificationCenter defaultCenter] postNotificationName:kUserAgentChangedNotificationName object:self];
 }
 
 - (AttachmentElementEnabledState)attachmentElementEnabled
 {
-    return (AttachmentElementEnabledState)[[NSUserDefaults standardUserDefaults] integerForKey:AttachmentElementEnabledPreferenceKey];
+    return (AttachmentElementEnabledState)[MiniBrowserUserDefaults() integerForKey:AttachmentElementEnabledPreferenceKey];
 }
 
 - (NSInteger)preferenceValueForAttachmentElementEnabledTag:(NSUInteger)tag
@@ -1027,20 +1014,20 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
 
 - (BOOL)attachmentElementEnabled:(NSMenuItem *)menuItem
 {
-    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:AttachmentElementEnabledPreferenceKey];
+    NSInteger value = [MiniBrowserUserDefaults() integerForKey:AttachmentElementEnabledPreferenceKey];
     return [self preferenceValueForAttachmentElementEnabledTag:[menuItem tag]] == value ? YES : NO;
 }
 
 - (void)changeAttachmentElementEnabled:(id)sender
 {
     NSInteger value = [self preferenceValueForAttachmentElementEnabledTag:[sender tag]];
-    [[NSUserDefaults standardUserDefaults] setInteger:value forKey:AttachmentElementEnabledPreferenceKey];
+    [MiniBrowserUserDefaults() setInteger:value forKey:AttachmentElementEnabledPreferenceKey];
     [[[NSApplication sharedApplication] browserAppDelegate] didChangeSettings];
 }
 
 - (NSString *)defaultURL
 {
-    NSString *customDefaultURL = [[NSUserDefaults standardUserDefaults] stringForKey:DefaultURLPreferenceKey];
+    NSString *customDefaultURL = [MiniBrowserUserDefaults() stringForKey:DefaultURLPreferenceKey];
     if (customDefaultURL)
         return customDefaultURL;
     return defaultURL;
@@ -1055,7 +1042,7 @@ static NSMenu *addSubmenuToMenu(NSMenu *menu, NSString *title)
         customDefaultURL = [[(BrowserWindowController *)windowController currentURL] absoluteString];
 
     if (customDefaultURL)
-        [[NSUserDefaults standardUserDefaults] setObject:customDefaultURL forKey:DefaultURLPreferenceKey];
+        [MiniBrowserUserDefaults() setObject:customDefaultURL forKey:DefaultURLPreferenceKey];
 }
 
 @end

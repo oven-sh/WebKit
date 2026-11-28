@@ -1,0 +1,61 @@
+# A text has no name of its own but `length` and its indexes and stands below String.prototype for good, and the rows say of the method under @@iterator there what they say of a list's. So a loop over what is proven a text needs no test:
+# the position comes round in a parameter of the head, a step reads one code unit, a second one behind a lead surrogate, and hands out the piece. No iterator, no result object, no call, nothing to close.
+# function each(value) { for (const piece of `${value}`) keep(piece); }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: [[text]]: string {{*}} = ToString
+# CHECK: ([[position]]: int[0, 34359738368] {{*}}isLoopHead=true
+# CHECK: = GetStringLength
+# CHECK: [[inside]]: boolean {{*}} = Less [[position]], {{*}} form=Integers
+# RUN(UNITS): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# UNITS-COUNT-2: = GetStringCodeUnit
+# UNITS-NOT: = GetStringCodeUnit
+# one code unit is handed out by the table of texts of one character, in line, off the unit that the step has read; a piece is cut for a pair of surrogates alone.
+# RUN(SINGLE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# SINGLE: [[unit]]: {{*}} = GetStringCodeUnit
+# SINGLE: = CallInline -, [[unit]] inlineBuiltin=StringFromCharCode {{*}}traits=[mayThrow, mayCollect, mayTouchMemory]
+# RUN(PIECE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# PIECE-COUNT-1: = Substring
+# PIECE-NOT: = Substring
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# NEVER-NOT: @@iterator
+# NEVER-NOT: NewHeapWords
+# NEVER-NOT: key="next"
+# NEVER-NOT: CatchException
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED: = PropGet {{*}}key=@@iterator
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Undefined
+    Return v7
+  b3() handler=b4():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v6
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}

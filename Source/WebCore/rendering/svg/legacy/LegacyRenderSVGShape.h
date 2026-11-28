@@ -58,7 +58,7 @@ public:
         GlobalCoordinateSpace,
         LocalCoordinateSpace
     };
-    LegacyRenderSVGShape(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGShape(Type, SVGGraphicsElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGShape();
 
     inline SVGGraphicsElement& graphicsElement() const;
@@ -92,15 +92,15 @@ protected:
     Path& ensurePath() LIFETIME_BOUND;
 
     virtual void updateShapeFromElement() = 0;
-    virtual bool LEGACY_NODELETE isEmpty() const;
+    NODELETE virtual bool isEmpty() const;
     virtual bool shapeDependentStrokeContains(const FloatPoint&, PointCoordinateSpace = GlobalCoordinateSpace);
     virtual bool shapeDependentFillContains(const FloatPoint&, const WindRule) const;
     float strokeWidth() const;
     float strokeWidthForMarkerUnits() const;
 
     inline bool hasNonScalingStroke() const;
-    AffineTransform nonScalingStrokeTransform() const;
-    Path* nonScalingStrokePath(const Path*, const AffineTransform&) const;
+    AffineTransform computeNonScalingStrokeTransform() const;
+    Path nonScalingStrokePath(const Path&, const AffineTransform&) const;
 
     virtual FloatRect adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation, FloatRect strokeBoundingBox) const { return strokeBoundingBox; }
 
@@ -136,6 +136,8 @@ private:
     bool setupNonScalingStrokeContext(AffineTransform&, GraphicsContextStateSaver&);
 
     FloatRect calculateApproximateStrokeBoundingBox() const;
+    // Upper bound on strokeBoundingBox(), computed without stroking the path.
+    std::optional<FloatRect> boundOfStrokeBoundingBox() const;
     
     std::unique_ptr<Path> createPath() const;
 

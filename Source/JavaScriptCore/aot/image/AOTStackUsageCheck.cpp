@@ -9,13 +9,16 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTConvention.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "CallFrame.h"
+#include <wtf/BitVector.h>
+#include <wtf/MathExtras.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
 using Typed::StronglyConnectedComponents;
-
-static_assert(defaultLimitValue(LimitID::UncheckedStackBytes, hostArchitecture()) == maxStackUsedWithoutCheck);
 
 namespace {
 
@@ -35,23 +38,14 @@ static uint64_t frameUsageOf(const FrameDescription& frame)
     return static_cast<uint64_t>(frame.stackUsedAtCalls) + (frame.hasFrame() ? frame.frameSizeInBytes + sizeof(CallerFrameAndPC) : 0);
 }
 
-static UncheckedCalls collectUncheckedCalls(const LinkedFunctions& functions, const ResolvedCallees& callees, std::span<const EntryAlias> aliases, const CodeIndex& index, BuildContext& context)
+static UncheckedCalls collectUncheckedCalls(const LinkedFunctions& functions, const ResolvedCallees& callees, BuildContext& context)
 {
-    Vector<uint32_t> ownCodeEnds(functions.size(), [&](size_t position) {
-        return static_cast<uint32_t>(functions[position].body.bytes.size());
-    });
-    for (const EntryAlias& alias : aliases) {
-        if (alias.placement != AliasPlacement::AfterBody)
-            continue;
-        if (auto position = index.indexOf(alias.body))
-            ownCodeEnds[*position] = std::min(ownCodeEnds[*position], alias.start);
-    }
     UncheckedCalls calls(functions.size());
     forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(functions.size()), [&](unsigned position) {
         for (const Relocation& relocation : functions[position].body.relocations) {
-            if (relocation.offset >= ownCodeEnds[position] || relocation.space != SymbolSpace::Function || !transfersControl(relocation.kind))
+            if (relocation.space != SymbolSpace::Function || !transfersControl(relocation.kind))
                 continue;
-            OptionalIndex callee = callees.at(position, relocation.symbol).body;
+            OptionalIndex callee = callees.at(position, relocation.symbol);
             if (!callee)
                 continue;
             const FrameDescription& frame = functions[*callee].frame;
@@ -100,17 +94,9 @@ static std::optional<uint32_t> findCycleUsingStack(const LinkedFunctions& functi
 
 static Vector<uint64_t> computeUsageByComponent(const LinkedFunctions& functions, const UncheckedCalls& calls, const StronglyConnectedComponents& components)
 {
-    Vector<uint32_t> nextIndex(FillWith { }, components.numberOfComponents + 1, 0);
-    for (uint32_t component : components.componentOf)
-        ++nextIndex[component + 1];
-    for (size_t component = 1; component < nextIndex.size(); ++component)
-        nextIndex[component] += nextIndex[component - 1];
-    Vector<uint32_t> positions(FillWith { }, components.componentOf.size(), 0);
-    for (uint32_t position = 0; position < positions.size(); ++position)
-        positions[nextIndex[components.componentOf[position]]++] = position;
-
-    Vector<uint64_t> usage(FillWith { }, components.numberOfComponents, 0);
-    for (uint32_t position : positions) {
+    Vector<uint64_t> usage;
+    usage.fill(0, components.numberOfComponents);
+    for (uint32_t position : components.members) {
         uint32_t component = components.componentOf[position];
         uint64_t calleeUsage = 0;
         for (const UncheckedCall& call : calls[position]) {
@@ -123,15 +109,25 @@ static Vector<uint64_t> computeUsageByComponent(const LinkedFunctions& functions
     return usage;
 }
 
-void checkUncheckedStackUsage(const LinkedFunctions& functions, const ResolvedCallees& callees, std::span<const EntryAlias> aliases, const CodeIndex& index, BuildContext& context)
+static void reportUncheckedStackUsage(InternalErrorKind kind, const CompiledCode& code, uint64_t bytes, BuildContext& context)
 {
-    UncheckedCalls calls = collectUncheckedCalls(functions, callees, aliases, index, context);
+    context.diagnostics().add(InternalError {
+        .kind = kind,
+        .function = code.unit.function,
+        .count = clampTo<uint32_t>(bytes),
+        .detail = makeString("found at the "_s, nameOf(code.unit.role), " of function f"_s, code.unit.function.index()),
+    });
+}
+
+void checkUncheckedStackUsage(const LinkedFunctions& functions, const ResolvedCallees& callees, BuildContext& context)
+{
+    UncheckedCalls calls = collectUncheckedCalls(functions, callees, context);
     StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(static_cast<unsigned>(functions.size()), [&](unsigned position) -> const Vector<UncheckedCall, 0>& {
         return calls[position];
     });
 
-    if (auto position = findCycleUsingStack(functions, calls, components); position && !context.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime)) {
-        context.diagnostics().add(InternalError { .kind = InternalErrorKind::UncheckedStackCycle, .function = functions[*position].function });
+    if (auto position = findCycleUsingStack(functions, calls, components)) {
+        reportUncheckedStackUsage(InternalErrorKind::UncheckedStackCycle, functions[*position], 0, context);
         return;
     }
 
@@ -140,8 +136,8 @@ void checkUncheckedStackUsage(const LinkedFunctions& functions, const ResolvedCa
         if (!functions[position].frame.isProvenToFitOnStack)
             continue;
         uint64_t needed = usage[components.componentOf[position]];
-        if (needed > context.limit(LimitID::UncheckedStackBytes)) {
-            context.diagnostics().add(InternalError { .kind = InternalErrorKind::UncheckedStackTooDeep, .function = functions[position].function, .limit = LimitID::UncheckedStackBytes, .count = clampTo<uint32_t>(needed) });
+        if (needed > maxStackUsedWithoutCheck) {
+            reportUncheckedStackUsage(InternalErrorKind::UncheckedStackTooDeep, functions[position], needed, context);
             return;
         }
     }

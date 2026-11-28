@@ -1,0 +1,52 @@
+# `o.z`, and no Point has a `z`: outside of a loop, in a file that nobody has checked. Somebody has written what `o` is: the object itself is asked whether it has gained a property, and behind its answer the read is undefined.
+# function written(o: Point) { return [o.z, o.z]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = HasNoExtraProperties
+# CHECK: frequency=Rare
+# CHECK: = PropGet {{*}}key="z"
+# RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CLOSED-COUNT-2: = PropGet {{*}}key="z"
+# CLOSED-NOT: = PropGet
+# Where a Point is only seen to arrive the reads stay closed
+# function seen(o) { return [o.z, o.z]; }
+# RUN(SEEN): walk f2 mechanisms=none+TypedOperations+Guesses+Folding
+# SEEN-LABEL: code f2:Body
+# SEEN-NOT: Test
+# SEEN-COUNT-2: = PropGet {{*}}key="z"
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f2
+    v10 = Call v1, -, v9
+    v11 = Call v9, -, v7
+    Return v8
+}
+function f1 name="written" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="z"
+    v3 = PropGet v1 key="z"
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f2 name="seen" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="z"
+    v2 = PropGet v0 key="z"
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}

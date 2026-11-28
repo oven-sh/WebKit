@@ -32,7 +32,6 @@
 #include <WebCore/GraphicsTypesGL.h>
 #include <WebCore/ImageBufferAllocator.h>
 #include <WebCore/ImageBufferParameters.h>
-#include <WebCore/ImageDrawingOptions.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PixelBufferFormat.h>
 #include <WebCore/PlatformLayer.h>
@@ -107,12 +106,12 @@ public:
     WEBCORE_EXPORT virtual ~ImageBufferBackend();
 
     WEBCORE_EXPORT static IntSize calculateSafeBackendSize(const ImageBufferParameters&);
-    WEBCORE_EXPORT static size_t LEGACY_NODELETE calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
+    NODELETE WEBCORE_EXPORT static size_t calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
     WEBCORE_EXPORT static AffineTransform calculateBaseTransform(const ImageBufferParameters&);
 
     virtual RenderingMode renderingMode() const { return RenderingMode::Unaccelerated; }
     virtual size_t memoryCost() const { return calculateMemoryCost(m_backendSize, bytesPerRow()); }
-    WEBCORE_EXPORT AffineTransform LEGACY_NODELETE baseTransform() const;
+    NODELETE WEBCORE_EXPORT AffineTransform baseTransform() const;
 
     virtual GraphicsContext& context() = 0;
     virtual void flushContext() { }
@@ -128,8 +127,6 @@ public:
     virtual void getPixelBuffer(const IntRect& srcRect, PixelBuffer& destination) = 0;
     virtual void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) = 0;
 
-    WEBCORE_EXPORT virtual RefPtr<SharedBuffer> sinkIntoPDFDocument();
-
 #if HAVE(IOSURFACE)
     virtual IOSurface* surface() { return nullptr; }
 #endif
@@ -143,7 +140,14 @@ public:
 #endif
 
     virtual bool isInUse() const { return false; }
+
+    // Destroys the GraphicsContext, dropping the state it holds. The state can
+    // reference resources owned by other objects, so this is how an ImageBuffer
+    // is detached from its surroundings.
     virtual void releaseGraphicsContext() { }
+    // Backends that cannot destroy their context must leave hasGraphicsContext() true;
+    // such an ImageBuffer must not be handed to a different owner.
+    virtual bool hasGraphicsContext() const { return true; }
 
     virtual void transferToNewContext(const ImageBufferCreationContext&) { }
 
@@ -182,7 +186,7 @@ protected:
     RenderingPurpose purpose() const { return m_purpose; }
 
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-    void LEGACY_NODELETE convertToLuminanceMaskFloat16();
+    NODELETE void convertToLuminanceMaskFloat16();
 #endif
     void convertToLuminanceMaskUint8();
 

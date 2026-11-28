@@ -31,6 +31,7 @@
 #include <WebCore/CookieRequestHeaderFieldProxy.h>
 #include <WebCore/CookieStorageSession.h>
 #include <WebCore/StorageSessionProvider.h>
+#include <wtf/Borrow.h>
 #include <wtf/Function.h>
 
 namespace WebCore {
@@ -64,7 +65,7 @@ void SocketStreamHandleImpl::platformSend(std::span<const uint8_t> data, Functio
     return completionHandler(true);
 }
 
-static std::span<const uint8_t> LEGACY_NODELETE removeTerminationCharacters(std::span<const uint8_t> data)
+NODELETE static std::span<const uint8_t> removeTerminationCharacters(std::span<const uint8_t> data)
 {
 #ifndef NDEBUG
     ASSERT(data.size() > 2);
@@ -88,7 +89,7 @@ static std::optional<std::pair<Vector<uint8_t>, bool>> cookieDataForHandshake(co
         return std::pair<Vector<uint8_t>, bool> { { }, secureCookiesAccessed };
 
     Vector<uint8_t> data = { 'C', 'o', 'o', 'k', 'i', 'e', ':', ' ' };
-    data.append(cookieDataString.utf8().span());
+    data.append(makeUTF8CString(cookieDataString).span());
     data.append("\r\n\r\n"_span);
 
     return std::pair<Vector<uint8_t>, bool> { data, secureCookiesAccessed };
@@ -117,19 +118,18 @@ void SocketStreamHandleImpl::platformSendHandshake(std::span<const uint8_t> data
             return completionHandler(false, secureCookiesAccessed);
         }
         m_buffer.append(data);
-        m_buffer.append(cookieData.span());
+        m_buffer.append(borrow(cookieData)->span());
         m_client.didUpdateBufferedAmount(*this, bufferedAmount());
         return completionHandler(true, secureCookiesAccessed);
     }
     size_t bytesWritten = 0;
     if (m_state == Open) {
         // Unfortunately, we need to send the data in one buffer or else the handshake fails.
-        Vector<uint8_t> sendData;
-        sendData.reserveInitialCapacity(data.size() + cookieData.size());
+        Vector<uint8_t> sendData(ReserveCapacityTag { }, data.size() + cookieData.size());
         sendData.append(data);
         sendData.appendVector(cookieData);
 
-        if (auto result = platformSendInternal(sendData.span()))
+        if (auto result = platformSendInternal(borrow(sendData)->span()))
             bytesWritten = result.value();
         else
             return completionHandler(false, secureCookiesAccessed);
@@ -144,7 +144,7 @@ void SocketStreamHandleImpl::platformSendHandshake(std::span<const uint8_t> data
             m_buffer.append(data.subspan(bytesWritten));
         else
             cookieBytesWritten = bytesWritten - data.size();
-        m_buffer.append(cookieData.subspan(cookieBytesWritten));
+        m_buffer.append(borrow(cookieData)->subspan(cookieBytesWritten));
         m_client.didUpdateBufferedAmount(static_cast<SocketStreamHandle&>(*this), bufferedAmount());
     }
     return completionHandler(true, secureCookiesAccessed);

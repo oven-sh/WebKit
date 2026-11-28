@@ -90,7 +90,7 @@ static void appendImplicitSelectorIfNeeded(MutableCSSSelector& selector, CSSPars
 
 MutableCSSSelectorList parseMutableCSSSelectorList(CSSParserTokenRange& range, const CSSSelectorParserContext& context, StyleSheetContents* styleSheet, CSSParserEnum::NestedContext nestedContext, CSSParserEnum::IsForgiving isForgiving, CSSSelectorParser::DisallowPseudoElement disallowPseudoElement)
 {
-    CSSSelectorParser parser(context, styleSheet, nestedContext, disallowPseudoElement);
+    CSSSelectorParser parser(context, styleSheet, disallowPseudoElement);
     range.consumeWhitespace();
     auto consume = [&] {
         if (nestedContext && isForgiving == CSSParserEnum::IsForgiving::No)
@@ -124,10 +124,9 @@ std::optional<CSSSelectorList> parseCSSSelectorList(CSSParserTokenRange range, c
     return CSSSelectorList { WTF::move(result) };
 }
 
-CSSSelectorParser::CSSSelectorParser(const CSSSelectorParserContext& context, StyleSheetContents* styleSheet, CSSParserEnum::NestedContext nestedContext, DisallowPseudoElement disallowPseudoElement)
+CSSSelectorParser::CSSSelectorParser(const CSSSelectorParserContext& context, StyleSheetContents* styleSheet, DisallowPseudoElement disallowPseudoElement)
     : m_context(context)
     , m_styleSheet(styleSheet)
-    , m_nestedContext(nestedContext)
     , m_disallowPseudoElements(disallowPseudoElement == DisallowPseudoElement::Yes)
 {
 }
@@ -213,7 +212,7 @@ MutableCSSSelectorList CSSSelectorParser::consumeForgivingSelectorList(CSSParser
         // Consume until next comma and add the full range as an unknown selector to the selector list.
         if ((!range.atEnd() && range.peek().type() != CommaToken) || !selector) {
             while (!range.atEnd() && range.peek().type() != CommaToken)
-                range.consume();
+                range.consumeComponentValue();
             if (!m_disableForgivingParsing)
                 selectorList.append(unknownSelector());
             return;
@@ -367,7 +366,7 @@ enum class CompoundSelectorFlag {
     HasPseudoElementForRightmostCompound = 1 << 0,
 };
 
-static OptionSet<CompoundSelectorFlag> LEGACY_NODELETE extractCompoundFlags(const MutableCSSSelector& simpleSelector, CSSParserMode parserMode)
+NODELETE static OptionSet<CompoundSelectorFlag> extractCompoundFlags(const MutableCSSSelector& simpleSelector, CSSParserMode parserMode)
 {
     if (simpleSelector.match() != CSSSelector::Match::PseudoElement)
         return { };
@@ -381,7 +380,7 @@ static OptionSet<CompoundSelectorFlag> LEGACY_NODELETE extractCompoundFlags(cons
     return CompoundSelectorFlag::HasPseudoElementForRightmostCompound;
 }
 
-static bool LEGACY_NODELETE isDescendantCombinator(CSSSelector::Relation relation)
+NODELETE static bool isDescendantCombinator(CSSSelector::Relation relation)
 {
     return relation == CSSSelector::Relation::DescendantSpace;
 }
@@ -479,7 +478,7 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeRelativeNestedSele
     return selector;
 }
 
-static bool LEGACY_NODELETE isScrollbarPseudoClass(CSSSelector::PseudoClass pseudo)
+NODELETE static bool isScrollbarPseudoClass(CSSSelector::PseudoClass pseudo)
 {
     switch (pseudo) {
     case CSSSelector::PseudoClass::Enabled:
@@ -503,7 +502,7 @@ static bool LEGACY_NODELETE isScrollbarPseudoClass(CSSSelector::PseudoClass pseu
     }
 }
 
-static bool LEGACY_NODELETE isUserActionPseudoClass(CSSSelector::PseudoClass pseudo)
+NODELETE static bool isUserActionPseudoClass(CSSSelector::PseudoClass pseudo)
 {
     switch (pseudo) {
     case CSSSelector::PseudoClass::Hover:
@@ -517,7 +516,7 @@ static bool LEGACY_NODELETE isUserActionPseudoClass(CSSSelector::PseudoClass pse
     }
 }
 
-static bool LEGACY_NODELETE isPseudoClassValidAfterPseudoElement(CSSSelector::PseudoClass pseudoClass, CSSSelector::PseudoElement compoundPseudoElement)
+NODELETE static bool isPseudoClassValidAfterPseudoElement(CSSSelector::PseudoClass pseudoClass, CSSSelector::PseudoElement compoundPseudoElement)
 {
     // FIXME: https://drafts.csswg.org/selectors-4/#pseudo-element-states states all pseudo-elements
     // can be followed by isUserActionPseudoClass().
@@ -596,7 +595,7 @@ static bool isSimpleSelectorValidAfterPseudoElement(const MutableCSSSelector& si
     return isPseudoClassValidAfterPseudoElement(simpleSelector.pseudoClass(), compoundPseudoElement.pseudoElement());
 }
 
-static bool LEGACY_NODELETE atEndIgnoringWhitespace(CSSParserTokenRange range)
+NODELETE static bool atEndIgnoringWhitespace(CSSParserTokenRange range)
 {
     range.consumeWhitespace();
     return range.atEnd();
@@ -887,18 +886,15 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumePseudo(CSSParserTo
     else {
         selector = MutableCSSSelector::parsePseudoElementSelector(token.value(), m_context);
 #if ENABLE(VIDEO)
-        if (m_context.webkitMediaTextTrackDisplayQuirkEnabled
-            && token.type() == IdentToken
+        if (token.type() == IdentToken
             && selector
             && selector->match() == CSSSelector::Match::PseudoElement
             && selector->pseudoElement() == CSSSelector::PseudoElement::UserAgentPart
             && selector->value() == UserAgentParts::webkitMediaTextTrackDisplay()) {
-            // This quirk will convert a `::-webkit-media-text-track-display` selector
-            // into a `::-webkit-media-text-track-container` selector, so
-            // that websites which were previously using that selector to move cues
-            // with transform:translateY() rules can continue to do so, without hitting
-            // the PropertyAllowList::Cue restriction.
-            selector->setValue(UserAgentParts::webkitMediaTextTrackContainer());
+            // This will convert a `::-webkit-media-text-track-display` selector into a
+            // `::cue` selector, so that websites which were previously using that selector
+            // to move cues with transform:translateY() rules can continue to do so.
+            selector->setValue(UserAgentParts::cue());
         }
 
         // Treat the ident version of cue as PseudoElement::UserAgentPart.
@@ -1514,7 +1510,7 @@ CSSSelectorList CSSSelectorParser::resolveNestingParent(const CSSSelectorList& n
     return CSSSelectorList { WTF::move(result) };
 }
 
-static std::optional<Style::PseudoElementIdentifier> LEGACY_NODELETE pseudoElementIdentifierFor(CSSSelectorPseudoElement selectorPseudoElement)
+NODELETE static std::optional<Style::PseudoElementIdentifier> pseudoElementIdentifierFor(CSSSelectorPseudoElement selectorPseudoElement)
 {
     auto type = CSSSelector::stylePseudoElementTypeFor(selectorPseudoElement);
     if (!type)

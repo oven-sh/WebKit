@@ -1,0 +1,12 @@
+# `keep` lays what arrives in a variable. The verifier asks Link about the parameter, as the sweep did, and does not take the word of the record
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: f4 Body b0 v3 (CallDirect): a closure of the frame is handed to a function that may do more than call it: v2 (NewClosure)
+# PROGRAM-OF: ../closures-lent/loan-of-a-closure-is-written-into-its-record.ir
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim loan=ToFunctionEntered
+#     v3: anything @JSValue = CallDirect v2 function=f3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v3
+# }
+# -- end of code

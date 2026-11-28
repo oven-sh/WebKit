@@ -105,7 +105,7 @@ inline LayoutPoint RenderBox::topLeftLocation() const
     // This is inlined for speed, since it is used by updateLayerPosition() during scrolling.
     if (!document().view() || !document().view()->hasFlippedBlockRenderers())
         return location();
-    return topLeftLocationWithFlipping();
+    return topLeftLocationFromBlockStartRelative();
 }
 
 inline LayoutRect RenderBox::firstFragmentBorderBoxRect() const
@@ -118,7 +118,7 @@ inline LayoutSize RenderBox::topLeftLocationOffset() const
     // This is inlined for speed, since it is used by updateLayerPosition() during scrolling.
     if (!document().view() || !document().view()->hasFlippedBlockRenderers())
         return locationOffset();
-    return toLayoutSize(topLeftLocationWithFlipping());
+    return toLayoutSize(topLeftLocationFromBlockStartRelative());
 }
 
 inline LayoutRect RenderBox::paddingBoxRectIncludingScrollbar() const
@@ -162,9 +162,9 @@ inline LayoutRect RenderBox::contentBoxRect() const
     return { location, size };
 }
 
-inline LayoutRect RenderBox::flippedContentBoxRect() const
+inline LayoutRect RenderBox::blockStartRelativeContentBoxRect() const
 {
-    auto rect = flippedPaddingBoxRect();
+    auto rect = blockStartRelativePaddingBoxRect();
     auto padding = this->padding();
     if (!padding.isZero()) {
         if (writingMode().isBlockFlipped())
@@ -188,7 +188,7 @@ inline LayoutRect RenderBox::marginBoxRect() const
 inline const LayoutRect RenderBox::scrollableContentAreaOverflowRect() const
 {
     if (!m_overflow)
-        return flippedContentBoxRect();
+        return blockStartRelativeContentBoxRect();
 
     return m_overflow->contentArea();
 }
@@ -196,12 +196,12 @@ inline const LayoutRect RenderBox::scrollableContentAreaOverflowRect() const
 inline const LayoutRect RenderBox::scrollablePaddingAreaOverflowRect() const
 {
     if (!m_overflow)
-        return flippedPaddingBoxRect();
+        return blockStartRelativePaddingBoxRect();
 
     auto overflowRect = m_overflow->contentArea();
-    flipForWritingMode(overflowRect);
+    blockStartRelativeToPhysical(overflowRect);
     overflowRect.expand(padding());
-    flipForWritingMode(overflowRect);
+    physicalToBlockStartRelative(overflowRect);
     return overflowRect;
 }
 
@@ -276,6 +276,15 @@ inline void RenderBox::markShapeOutsideDependentsForLayout()
 {
     if (isFloating())
         removeFloatingOrOutOfFlowChildFromBlockLists();
+}
+
+// The box-sizing conversions only use the containing block width to resolve the margins of a stretch(), so it is only
+// looked up for one. An out-of-flow box finds it through PositionedLayoutConstraints.
+template<typename SizeType> inline std::optional<LayoutUnit> RenderBox::containingBlockLogicalWidthForBoxSizing(const SizeType& size) const
+{
+    if (!size.isStretchFunction())
+        return std::nullopt;
+    return containingBlockLogicalWidthForContent();
 }
 
 inline LayoutUnit resolveHeightForRatio(LayoutUnit borderAndPaddingLogicalWidth, LayoutUnit borderAndPaddingLogicalHeight, LayoutUnit logicalWidth, double aspectRatio, BoxSizing boxSizing)

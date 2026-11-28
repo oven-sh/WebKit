@@ -1,0 +1,77 @@
+# function run(rows) { let sum = 0, squares = 0; for (let i = 0; i < rows.length; i++) { const x = rows[i][0]; sum += x; squares += x * x; } return sum + squares; }   sink(run([[1.5, 2], [2.5, 4], [3]]));
+# Link has typed what comes out of `rows[i][0]`: a number, or undefined where nothing lies. The row is found in the turn, so no kind stands in front, and the read chooses its own form.
+# With one user that takes doubles it was a double already; with three (`sum += x`, `x * x` twice) it was boxed: the double asked whether it is whole, the proof checked on the box, each user unboxing it: 118 instructions a turn of
+# a correlation, 70 since. Every user stands in the read's own block and takes doubles: the read is a double.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: undefined|number @OptionalDouble = GetArrayElement
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: fractional @JSValue = GetArrayElement
+# a user that takes the value itself keeps the box
+# RUN(KEPT): walk f2 mechanisms=all
+# KEPT-LABEL: code f2:Body
+# KEPT: fractional @JSValue = GetArrayElement
+# RUN(SHELL): run-in-shell globalThis.sink = (...said) => { print(said.join(" ")); };
+# SHELL: 24.5 3
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+data d0 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=1.5}, Number{value=2}]}, Array{contents=anything elements=[Number{value=2.5}, Number{value=4}]}, Array{contents=anything elements=[Number{value=3}]}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Data data=d0
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v3, v4
+    Return v7
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v1, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = ElemGet v0, v6
+    v11 = Integer
+    v12 = ElemGet v10, v11
+    v13 = Add v4, v12
+    v14 = Mul v12, v12
+    v15 = Add v5, v14
+    v16 = Increment v6
+    Jump -> next b1(v13, v15, v16)
+  b3():
+    v17 = Add v4, v5
+    Return v17
+}
+function f2 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v1, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = ElemGet v0, v6
+    v11 = Integer
+    v12 = ElemGet v10, v11
+    v13 = Add v4, v12
+    v14 = Increment v6
+    Jump -> next b1(v13, v12, v14)
+  b3():
+    Return v5
+}

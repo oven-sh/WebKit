@@ -29,6 +29,7 @@
 #include "config.h"
 #include "RenderReplica.h"
 
+#include "MaskPainter.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderLayer.h"
@@ -39,7 +40,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderReplica);
 
-RenderReplica::RenderReplica(Document& document, Style::ComputedStyle&& style)
+RenderReplica::RenderReplica(Document& document, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBox(Type::Replica, document, WTF::move(style))
 {
     // This is a hack. Replicas are synthetic, and don't pick up the attributes of the
@@ -60,11 +61,11 @@ void RenderReplica::layout()
     clearNeedsLayout();
 }
 
-void RenderReplica::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderReplica::computeIntrinsicLogicalWidthContributions()
 {
-    m_minContentLogicalWidthContribution = parentBox()->borderBoxWidth();
-    m_maxContentLogicalWidthContribution = m_minContentLogicalWidthContribution;
-    clearContentLogicalWidthsInvalidation();
+    // The reflection style has no border or padding.
+    auto logicalWidth = parentBox()->borderBoxWidth();
+    return { logicalWidth, logicalWidth };
 }
 
 void RenderReplica::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -80,9 +81,9 @@ void RenderReplica::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
         CheckedPtr rootPaintingLayer = layer()->transform() ? layer()->parent() : layer()->enclosingTransformedAncestor();
         RenderLayer::LayerPaintingInfo paintingInfo(rootPaintingLayer.get(), paintInfo.rect, PaintBehavior::Normal, LayoutSize(), 0);
         OptionSet<RenderLayer::PaintLayerFlag> flags { RenderLayer::PaintLayerFlag::HaveTransparency, RenderLayer::PaintLayerFlag::AppliedTransform, RenderLayer::PaintLayerFlag::TemporaryClipRects, RenderLayer::PaintLayerFlag::PaintingReflection };
-        layer()->parent()->paintLayer(paintInfo.context(), paintingInfo, flags);
+        protect(layer()->parent())->paintLayer(paintInfo.context(), paintingInfo, flags);
     } else if (paintInfo.phase == PaintPhase::Mask)
-        paintMask(paintInfo, adjustedPaintOffset);
+        Paint::MaskPainter { *this, paintInfo, adjustedPaintOffset }.paintMask();
 }
 
 } // namespace WebCore

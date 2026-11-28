@@ -25,6 +25,7 @@
 
 #import "config.h"
 
+#import "FrameTreeChecks.h"
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
@@ -68,8 +69,6 @@ asm(".linker_option \"-delay_framework\", \"LinkSecurity\"");
 #endif // HAVE(ENHANCED_SECURITY_LINKS)
 
 using namespace TestWebKitAPI;
-
-#if !PLATFORM(IOS)
 
 @interface TestUIDelegate (EnhancedSecurityExtras)
 - (NSArray *)waitForAlertWithEnhancedSecurity;
@@ -175,13 +174,13 @@ static void testAlertWithEnhancedSecurity(RetainPtr<TestUIDelegate> uiDelegate, 
     EXPECT_WK_STREQ(result[0], message);
     if ([result[1] boolValue] != enhancedSecurityEnabled) {
         ADD_FAILURE_AT(location.file_name(), location.line())
-            << "Enhanced security mismatch for alert '" << message.utf8().toStdString() << "'"
+            << "Enhanced security mismatch for alert '" << makeUTF8CString(message).toStdString() << "'"
             << " (expected: " << (enhancedSecurityEnabled ? "Enabled" : "Disabled")
             << ", actual: " << ([result[1] boolValue] ? "Enabled" : "Disabled") << ")";
     }
 }
 
-enum class UseSharedProcess : bool { No, Yes };
+enum class UseSharedProcess : uint8_t { No, Yes, YesWithEnhancedSecurity };
 
 static RetainPtr<TestWKWebView> enhancedSecurityTestConfiguration(
     const TestWebKitAPI::HTTPServer* plaintextServer,
@@ -203,7 +202,12 @@ static RetainPtr<TestWKWebView> enhancedSecurityTestConfiguration(
         // Stated explicitly because these tests depend on whether a cross-site subframe gets a
         // process of its own.
         if ([feature.key isEqualToString:@"SiteIsolationSharedProcessEnabled"])
-            [preferences _setEnabled:useSharedProcess == UseSharedProcess::Yes forFeature:feature];
+            [preferences _setEnabled:useSharedProcess != UseSharedProcess::No forFeature:feature];
+        if ([feature.key isEqualToString:@"SiteIsolationSharedProcessEnhancedSecurityEnabled"])
+            [preferences _setEnabled:useSharedProcess == UseSharedProcess::YesWithEnhancedSecurity forFeature:feature];
+        // The platform default would override the heuristics these tests cover.
+        if ([feature.key isEqualToString:@"EnhancedSecurityEnabledByDefault"])
+            [preferences _setEnabled:NO forFeature:feature];
     }
 
     auto storeConfiguration = useNonPersistentStore
@@ -352,6 +356,43 @@ static void runHttpFragmentNavigation(bool useSiteIsolation)
     EXPECT_EQ(plaintextServer.totalRequests(), 1u);
 }
 TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpFragmentNavigation)
+
+static void runHttpClientFragmentLoad(bool useSiteIsolation)
+{
+    auto pageBody = "<script>"
+        "alert('insecure-page');"
+        "window.onhashchange = () => alert('after-fragment-navigation');"
+        "</script>"_s;
+
+    HTTPServer plaintextServer({
+        { "http://insecure.example.internal/"_s, { pageBody } },
+        { "http://insecure.example.internal/#fragment"_s, { pageBody } },
+    });
+
+    auto webView = enhancedSecurityTestConfiguration(&plaintextServer, nullptr, useSiteIsolation);
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/", {
+        { "insecure-page"_s, ExpectedEnhancedSecurity::Enabled }
+    });
+
+    [webView objectByEvaluatingJavaScript:@"window.reloadMarker = 'alive'"];
+    pid_t pidBefore = [webView _webProcessIdentifier];
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/#fragment", {
+        { "after-fragment-navigation"_s, ExpectedEnhancedSecurity::Enabled }
+    });
+
+    // We need to allow a moment for the reload to happen, if it is going to.
+    TestWebKitAPI::Util::runFor(0.5_s);
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/#fragment");
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"window.reloadMarker || 'reloaded'"], "alive");
+
+    EXPECT_EQ([webView _provisionalWebProcessIdentifier], 0);
+    EXPECT_EQ(pidBefore, [webView _webProcessIdentifier]);
+    EXPECT_EQ(plaintextServer.totalRequests(), 1u);
+}
+TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpClientFragmentLoad)
 
 static void runHttpLoadWithCOOP(bool useSiteIsolation)
 {
@@ -519,7 +560,7 @@ static void runHttpToHttpsRedirectNoEnhancedSecurityProcess(bool useSiteIsolatio
 }
 TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpToHttpsRedirectNoEnhancedSecurityProcess)
 
-static void runIframeKeepsSiteOutOfEnhancedSecurityProcess(bool useSiteIsolation)
+static void runIframeDoesNotKeepSiteOutOfEnhancedSecurityProcess(bool useSiteIsolation)
 {
     HTTPServer plaintextServer({
         { "http://insecure.example.internal/iframe"_s, { "<script>alert('iframe-in-page')</script>"_s } },
@@ -535,23 +576,24 @@ static void runIframeKeepsSiteOutOfEnhancedSecurityProcess(bool useSiteIsolation
         { "iframe-in-page"_s, ExpectedEnhancedSecurity::Disabled }
     });
 
+    auto pidWithIframeAlive = [webView _webProcessIdentifier];
+
+    // The navigation shares a process with the iframe until its response moves it to a new browsing context group.
     loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/first", {
-        { "with-iframe-alive"_s, ExpectedEnhancedSecurity::Disabled }
+        { "with-iframe-alive"_s, ExpectedEnhancedSecurity::Enabled }
     });
 
     EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/first");
-
-    auto pidWithoutEnhancedSecurity = [webView _webProcessIdentifier];
+    EXPECT_NE([webView _webProcessIdentifier], pidWithIframeAlive);
 
     loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/second", {
         { "after-iframe-gone"_s, ExpectedEnhancedSecurity::Enabled }
     });
 
     EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/second");
-    EXPECT_NE([webView _webProcessIdentifier], pidWithoutEnhancedSecurity);
     EXPECT_EQ(plaintextServer.totalRequests(), 3u);
 }
-TEST_WITH_SITE_ISOLATION(IframeKeepsSiteOutOfEnhancedSecurityProcess)
+TEST_WITH_SITE_ISOLATION(IframeDoesNotKeepSiteOutOfEnhancedSecurityProcess)
 
 TEST(EnhancedSecurityPolicies, IframeInSharedProcessDoesNotKeepSiteOutOfEnhancedSecurityProcess)
 {
@@ -585,6 +627,798 @@ TEST(EnhancedSecurityPolicies, IframeInSharedProcessDoesNotKeepSiteOutOfEnhanced
 
     EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/second");
     EXPECT_EQ(plaintextServer.totalRequests(), 3u);
+}
+
+// MARK: - Site Isolation Shared Process Tests
+
+static std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> sharedProcessTestWebView(const HTTPServer& secureServer, UseSharedProcess useSharedProcess = UseSharedProcess::YesWithEnhancedSecurity)
+{
+    RetainPtr webView = enhancedSecurityTestConfiguration(nullptr, &secureServer, true, true, useSharedProcess);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    [webView setNavigationDelegate:navigationDelegate.get()];
+    return { WTF::move(webView), WTF::move(navigationDelegate) };
+}
+
+static NSString *processVariantForFrame(WKWebView *webView, WKFrameInfo *frame)
+{
+    return [webView _webContentProcessVariantForFrame:frame._handle];
+}
+
+static void checkCrossSiteFramesInSharedProcess(TestWKWebView *webView, const char* expectedVariant)
+{
+    RetainPtr mainFrame = [webView mainFrame];
+    RetainPtr<NSArray<_WKFrameTreeNode *>> childFrames = mainFrame.get().childFrames;
+    ASSERT_EQ([childFrames count], 3u);
+
+    pid_t mainFramePID = mainFrame.get().info._processIdentifier;
+    pid_t sharedProcessPID = [childFrames objectAtIndex:1].info._processIdentifier;
+    EXPECT_NE(mainFramePID, 0);
+    EXPECT_NE(sharedProcessPID, 0);
+    EXPECT_NE(sharedProcessPID, mainFramePID);
+    EXPECT_EQ([childFrames objectAtIndex:0].info._processIdentifier, mainFramePID);
+    EXPECT_EQ([childFrames objectAtIndex:2].info._processIdentifier, sharedProcessPID);
+
+    EXPECT_WK_STREQ(processVariantForFrame(webView, mainFrame.get().info), "standard");
+    EXPECT_WK_STREQ(processVariantForFrame(webView, [childFrames objectAtIndex:0].info), "standard");
+    EXPECT_WK_STREQ(processVariantForFrame(webView, [childFrames objectAtIndex:1].info), expectedVariant);
+    EXPECT_WK_STREQ(processVariantForFrame(webView, [childFrames objectAtIndex:2].info), expectedVariant);
+}
+
+static constexpr auto mainPageWithSameSiteAndCrossSiteFrames = "<iframe src='https://example.com/same'></iframe><iframe src='https://webkit.org/ad'></iframe><iframe src='https://apple.com/ad2'></iframe>"_s;
+static constexpr auto mainPageWithAdFrame = "<iframe id='ad' src='https://webkit.org/ad'></iframe>"_s;
+static NSString * const addFriendlyFrameScript = @"document.body.insertAdjacentHTML('beforeend', \"<iframe id='friendly' src='about:blank'></iframe>\"); true";
+static NSString * const writeAndReadFriendlyFrameScript = @"document.getElementById('friendly').contentDocument.body.textContent = 'friendly'; document.getElementById('friendly').contentDocument.body.textContent";
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityForCrossSiteFrames)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithSameSiteAndCrossSiteFrames } },
+        { "/same"_s, { "same"_s } },
+        { "/ad"_s, { "ad"_s } },
+        { "/ad2"_s, { "ad2"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkCrossSiteFramesInSharedProcess(webView.get(), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFlagOff)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithSameSiteAndCrossSiteFrames } },
+        { "/same"_s, { "same"_s } },
+        { "/ad"_s, { "ad"_s } },
+        { "/ad2"_s, { "ad2"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer, UseSharedProcess::Yes);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkCrossSiteFramesInSharedProcess(webView.get(), "standard");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityRespectsForceDisabled)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithSameSiteAndCrossSiteFrames } },
+        { "/same"_s, { "same"_s } },
+        { "/ad"_s, { "ad"_s } },
+        { "/ad2"_s, { "ad2"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    for (_WKFeature *feature in [WKPreferences _features]) {
+        if ([feature.key isEqualToString:@"EnhancedSecurityForceDisabled"])
+            [webView.get().configuration.preferences _setEnabled:YES forFeature:feature];
+    }
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkCrossSiteFramesInSharedProcess(webView.get(), "standard");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityNotUsedForLockdownPage)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    RetainPtr preferences = adoptNS([WKWebpagePreferences new]);
+    preferences.get().lockdownModeEnabled = YES;
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigationWithPreferences:preferences.get()];
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_NE(adFrame.get()._processIdentifier, 0);
+    EXPECT_NE(adFrame.get()._processIdentifier, [webView mainFrame].info._processIdentifier);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), [webView mainFrame].info), "lockdown");
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "lockdown");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityWhenPageOptsOutOfEnhancedSecurity)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    RetainPtr preferences = adoptNS([WKWebpagePreferences new]);
+    preferences.get().securityRestrictionMode = WKSecurityRestrictionModeNone;
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigationWithPreferences:preferences.get()];
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_NE(adFrame.get()._processIdentifier, [webView mainFrame].info._processIdentifier);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), [webView mainFrame].info), "standard");
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+static pid_t loadPageWithAdFrameInSharedProcess(TestWKWebView *webView, TestNavigationDelegate *navigationDelegate, const char* expectedVariant)
+{
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    pid_t sharedProcessPID = adFrame.get()._processIdentifier;
+    EXPECT_NE(sharedProcessPID, 0);
+    EXPECT_NE(sharedProcessPID, [webView mainFrame].info._processIdentifier);
+    EXPECT_WK_STREQ(processVariantForFrame(webView, adFrame.get()), expectedVariant);
+
+    [webView objectByEvaluatingJavaScript:@"document.getElementById('ad').onload = () => alert('ad-loaded'); true"];
+    return sharedProcessPID;
+}
+
+static pid_t loadPageWithAdFrameInEnhancedSecuritySharedProcess(TestWKWebView *webView, TestNavigationDelegate *navigationDelegate)
+{
+    return loadPageWithAdFrameInSharedProcess(webView, navigationDelegate, "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesItselfToAboutBlank)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView _evaluateJavaScript:@"location = 'about:blank'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameNavigatesFrameToAboutBlank)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView evaluateJavaScript:@"document.getElementById('ad').src = 'about:blank'" completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr mainFrame = [webView mainFrame];
+    RetainPtr<WKFrameInfo> adFrame = mainFrame.get().childFrames.firstObject.info;
+    EXPECT_NE(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_EQ(adFrame.get()._processIdentifier, mainFrame.get().info._processIdentifier);
+    EXPECT_WK_STREQ(adFrame.get().securityOrigin.host, "example.com");
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "standard");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameSetsFrameSrcdoc)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView evaluateJavaScript:@"document.getElementById('ad').srcdoc = 'srcdoc content'" completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr mainFrame = [webView mainFrame];
+    RetainPtr<WKFrameInfo> adFrame = mainFrame.get().childFrames.firstObject.info;
+    EXPECT_NE(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_EQ(adFrame.get()._processIdentifier, mainFrame.get().info._processIdentifier);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "standard");
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"document.getElementById('ad').contentDocument.body.textContent"], "srcdoc content");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesItselfToDataURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView _evaluateJavaScript:@"location = 'data:text/html,data'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameNavigatesFrameToDataURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView evaluateJavaScript:@"document.getElementById('ad').src = 'data:text/html,data'" completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesStandardDescendantToDataURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "<iframe id='child' src='https://example.com/child'></iframe>"_s } },
+        { "/child"_s, { "child"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    RetainPtr mainFrame = [webView mainFrame];
+    pid_t mainFramePID = mainFrame.get().info._processIdentifier;
+    RetainPtr<_WKFrameTreeNode> adFrame = mainFrame.get().childFrames.firstObject;
+    pid_t sharedProcessPID = adFrame.get().info._processIdentifier;
+    EXPECT_NE(sharedProcessPID, mainFramePID);
+    EXPECT_EQ(adFrame.get().childFrames.firstObject.info._processIdentifier, mainFramePID);
+
+    [webView objectByEvaluatingJavaScript:@"document.getElementById('child').onload = () => alert('child-loaded'); true" inFrame:adFrame.get().info];
+    [webView _evaluateJavaScript:@"document.getElementById('child').src = 'data:text/html,data'" withSourceURL:nil inFrame:adFrame.get().info inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "child-loaded");
+
+    RetainPtr<WKFrameInfo> childFrame = [webView mainFrame].childFrames.firstObject.childFrames.firstObject.info;
+    EXPECT_NE(childFrame.get()._processIdentifier, 0);
+    EXPECT_NE(childFrame.get()._processIdentifier, mainFramePID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), childFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesItselfCrossSite)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView _evaluateJavaScript:@"location = 'https://apple.com/landing'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_WK_STREQ(adFrame.get().securityOrigin.host, "apple.com");
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameCreatesAboutBlankFrame)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    [webView objectByEvaluatingJavaScript:addFriendlyFrameScript inFrame:adFrame.get()];
+    [webView waitForNextPresentationUpdate];
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:writeAndReadFriendlyFrameScript inFrame:adFrame.get()], "friendly");
+
+    RetainPtr<WKFrameInfo> friendlyFrame = [webView mainFrame].childFrames.firstObject.childFrames.firstObject.info;
+    EXPECT_EQ(friendlyFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), friendlyFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityAboutBlankFrameAfterFrameNavigatesToOtherAboutURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    __block bool decidedAboutFooPolicy = false;
+    navigationDelegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *action, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        if ([action.request.URL.absoluteString isEqualToString:@"about:foo"])
+            decidedAboutFooPolicy = true;
+        decisionHandler(WKNavigationActionPolicyAllow);
+    };
+    [webView _evaluateJavaScript:@"location = 'about:foo'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    bool* decided = &decidedAboutFooPolicy;
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([decided] {
+        return *decided;
+    }));
+    [webView waitForNextPresentationUpdate];
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), [webView firstChildFrame]), "security");
+
+    [webView objectByEvaluatingJavaScript:addFriendlyFrameScript];
+    [webView waitForNextPresentationUpdate];
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:writeAndReadFriendlyFrameScript], "friendly");
+
+    RetainPtr mainFrame = [webView mainFrame];
+    RetainPtr<NSArray<_WKFrameTreeNode *>> childFrames = mainFrame.get().childFrames;
+    ASSERT_EQ([childFrames count], 2u);
+    RetainPtr<WKFrameInfo> friendlyFrame = [childFrames objectAtIndex:1].info;
+    EXPECT_EQ(friendlyFrame.get()._processIdentifier, mainFrame.get().info._processIdentifier);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), friendlyFrame.get()), "standard");
+}
+
+static bool isMainFrameEnhancedSecurityEnabled(WKWebView *webView)
+{
+    __block bool done = false;
+    __block bool result = false;
+    [webView _isEnhancedSecurityEnabled:^(BOOL isEnhancedSecurityEnabled) {
+        result = isEnhancedSecurityEnabled;
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    return result;
+}
+
+static void checkMainFrameInStandardProcess(TestWKWebView *webView, pid_t sharedProcessPID)
+{
+    RetainPtr<WKFrameInfo> mainFrame = [webView mainFrame].info;
+    EXPECT_NE(mainFrame.get()._processIdentifier, 0);
+    EXPECT_NE(mainFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView, mainFrame.get()), "standard");
+    EXPECT_FALSE(isMainFrameEnhancedSecurityEnabled(webView));
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityBackToPageAfterFrameNavigationDoesNotEnableEnhancedSecurity)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+        { "/ad2"_s, { "ad2"_s } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView _evaluateJavaScript:@"location.href = 'https://webkit.org/ad2'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+    EXPECT_EQ([webView backForwardList].backList.count, 1u);
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://apple.com/landing"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_EQ([webView backForwardList].backList.count, 2u);
+
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"https://example.com/main");
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"location.href" inFrame:[webView firstChildFrame]], "https://webkit.org/ad2");
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+
+    sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameNavigatesToSharedProcessSite)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView evaluateJavaScript:@"location.href = 'https://webkit.org/landing'" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"https://webkit.org/landing");
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameLoadsSharedProcessSite)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://webkit.org/landing"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"https://webkit.org/landing");
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityPopupToSharedProcessSiteStaysInSharedProcess)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    RetainPtr popupNavigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [popupNavigationDelegate allowAnyTLSCertificate];
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    __block RetainPtr<TestWKWebView> popup;
+    uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *, WKWindowFeatures *) {
+        popup = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+        popup.get().navigationDelegate = popupNavigationDelegate.get();
+        return popup.get();
+    };
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView evaluateJavaScript:@"window.open('https://webkit.org/landing'); true" completionHandler:nil];
+    [popupNavigationDelegate waitForDidFinishNavigation];
+
+    ASSERT_TRUE(!!popup);
+    EXPECT_WK_STREQ([popup URL].absoluteString, @"https://webkit.org/landing");
+    RetainPtr<WKFrameInfo> popupMainFrame = [popup mainFrame].info;
+    EXPECT_EQ(popupMainFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(popup.get(), popupMainFrame.get()), "security");
+
+    [webView setUIDelegate:nil];
+}
+
+static constexpr auto adPageAlertingMessages = "<script>onmessage = (event) => alert(event.data)</script>"_s;
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityPopupFromFrameKeepsOpener)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { adPageAlertingMessages } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    RetainPtr popupNavigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [popupNavigationDelegate allowAnyTLSCertificate];
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    __block RetainPtr<TestWKWebView> popup;
+    uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *, WKWindowFeatures *) {
+        popup = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+        popup.get().navigationDelegate = popupNavigationDelegate.get();
+        return popup.get();
+    };
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView _evaluateJavaScript:@"window.open('https://webkit.org/landing'); true" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    [popupNavigationDelegate waitForDidFinishNavigation];
+
+    ASSERT_TRUE(!!popup);
+    EXPECT_WK_STREQ([popup URL].absoluteString, @"https://webkit.org/landing");
+    RetainPtr<WKFrameInfo> popupMainFrame = [popup mainFrame].info;
+    EXPECT_EQ(popupMainFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(popup.get(), popupMainFrame.get()), "security");
+    checkFrameTreesInProcesses(popup.get(), { { "https://webkit.org"_s }, { RemoteFrame } });
+    EXPECT_TRUE([[popup objectByEvaluatingJavaScript:@"!!window.opener"] boolValue]);
+
+    [popup evaluateJavaScript:@"window.opener.postMessage('from popup', '*')" completionHandler:nil];
+    EXPECT_WK_STREQ([uiDelegate waitForAlert], "from popup");
+
+    [webView setUIDelegate:nil];
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityCrossSitePopupFromFrameKeepsOpener)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { adPageAlertingMessages } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    RetainPtr popupNavigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [popupNavigationDelegate allowAnyTLSCertificate];
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    __block RetainPtr<TestWKWebView> popup;
+    uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *, WKWindowFeatures *) {
+        popup = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+        popup.get().navigationDelegate = popupNavigationDelegate.get();
+        return popup.get();
+    };
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView _evaluateJavaScript:@"window.open('https://apple.com/landing'); true" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    [popupNavigationDelegate waitForDidFinishNavigation];
+
+    ASSERT_TRUE(!!popup);
+    EXPECT_WK_STREQ([popup URL].absoluteString, @"https://apple.com/landing");
+    EXPECT_NE([popup mainFrame].info._processIdentifier, [webView mainFrame].info._processIdentifier);
+    checkMainFrameInStandardProcess(popup.get(), sharedProcessPID);
+    EXPECT_TRUE([[popup objectByEvaluatingJavaScript:@"!!window.opener"] boolValue]);
+
+    [popup evaluateJavaScript:@"window.opener.postMessage('from popup', '*')" completionHandler:nil];
+    EXPECT_WK_STREQ([uiDelegate waitForAlert], "from popup");
+
+    [webView setUIDelegate:nil];
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityNoOpenerPopupToSharedProcessSite)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+        { "/landing"_s, { "landing"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    RetainPtr popupNavigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [popupNavigationDelegate allowAnyTLSCertificate];
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    __block RetainPtr<TestWKWebView> popup;
+    uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *, WKWindowFeatures *) {
+        popup = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+        popup.get().navigationDelegate = popupNavigationDelegate.get();
+        return popup.get();
+    };
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView evaluateJavaScript:@"window.open('https://webkit.org/landing', '_blank', 'noopener'); true" completionHandler:nil];
+    [popupNavigationDelegate waitForDidFinishNavigation];
+
+    ASSERT_TRUE(!!popup);
+    EXPECT_WK_STREQ([popup URL].absoluteString, @"https://webkit.org/landing");
+    checkMainFrameInStandardProcess(popup.get(), sharedProcessPID);
+
+    [webView setUIDelegate:nil];
+}
+
+static void optOutOfEnhancedSecurityForAllNavigations(TestNavigationDelegate *navigationDelegate)
+{
+    navigationDelegate.decidePolicyForNavigationActionWithPreferences = ^(WKNavigationAction *, WKWebpagePreferences *preferences, void (^decisionHandler)(WKNavigationActionPolicy, WKWebpagePreferences *)) {
+        preferences.securityRestrictionMode = WKSecurityRestrictionModeNone;
+        decisionHandler(WKNavigationActionPolicyAllow, preferences);
+    };
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityPageOptsOutFrameNavigatesItselfToDataURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    optOutOfEnhancedSecurityForAllNavigations(navigationDelegate.get());
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+
+    [webView _evaluateJavaScript:@"location = 'data:text/html,data'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityPageOptsOutFrameNavigatesItselfToAboutBlank)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    optOutOfEnhancedSecurityForAllNavigations(navigationDelegate.get());
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+
+    [webView _evaluateJavaScript:@"location = 'about:blank'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesStandardFrameToAboutBlank)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "<iframe id='child' src='https://example.com/child'></iframe>"_s } },
+        { "/child"_s, { "child"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    RetainPtr mainFrame = [webView mainFrame];
+    pid_t mainFramePID = mainFrame.get().info._processIdentifier;
+    RetainPtr<_WKFrameTreeNode> adFrame = mainFrame.get().childFrames.firstObject;
+    pid_t sharedProcessPID = adFrame.get().info._processIdentifier;
+    EXPECT_NE(sharedProcessPID, mainFramePID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get().info), "security");
+    EXPECT_EQ(adFrame.get().childFrames.firstObject.info._processIdentifier, mainFramePID);
+
+    [webView objectByEvaluatingJavaScript:@"document.getElementById('child').onload = () => alert('child-loaded'); true" inFrame:adFrame.get().info];
+    [webView _evaluateJavaScript:@"document.getElementById('child').src = 'about:blank'" withSourceURL:nil inFrame:adFrame.get().info inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "child-loaded");
+
+    RetainPtr<WKFrameInfo> childFrame = [webView mainFrame].childFrames.firstObject.childFrames.firstObject.info;
+    EXPECT_EQ(childFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(childFrame.get().securityOrigin.host, "webkit.org");
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), childFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesItselfToOpaqueBlob)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { "<iframe id='ad' sandbox='allow-scripts' src='https://webkit.org/ad'></iframe>"_s } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView _evaluateJavaScript:@"location = URL.createObjectURL(new Blob(['blob'], { type: 'text/html' }))" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:adFrame.get()], "blob");
+    EXPECT_NE(adFrame.get()._processIdentifier, 0);
+    EXPECT_NE(adFrame.get()._processIdentifier, [webView mainFrame].info._processIdentifier);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFrameNavigatesItselfToSameOriginBlob)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    [webView _evaluateJavaScript:@"location = URL.createObjectURL(new Blob(['blob'], { type: 'text/html' }))" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:adFrame.get()], "blob");
+    EXPECT_WK_STREQ(adFrame.get().securityOrigin.host, "webkit.org");
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "security");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameNavigatesToAboutBlank)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+    pid_t mainFramePID = [webView mainFrame].info._processIdentifier;
+
+    [webView evaluateJavaScript:@"location = 'about:blank'" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"about:blank");
+    EXPECT_EQ([webView mainFrame].info._processIdentifier, mainFramePID);
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityMainFrameNavigatesToAboutBlankAfterFrameNavigatesToOtherAboutURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer);
+    pid_t sharedProcessPID = loadPageWithAdFrameInEnhancedSecuritySharedProcess(webView.get(), navigationDelegate.get());
+
+    __block bool decidedAboutFooPolicy = false;
+    navigationDelegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *action, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        if ([action.request.URL.absoluteString isEqualToString:@"about:foo"])
+            decidedAboutFooPolicy = true;
+        decisionHandler(WKNavigationActionPolicyAllow);
+    };
+    [webView _evaluateJavaScript:@"location = 'about:foo'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    bool* decided = &decidedAboutFooPolicy;
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([decided] {
+        return *decided;
+    }));
+    [webView waitForNextPresentationUpdate];
+
+    [webView evaluateJavaScript:@"location = 'about:blank'" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"about:blank");
+    checkMainFrameInStandardProcess(webView.get(), sharedProcessPID);
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFlagOffFrameNavigatesItselfToDataURL)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer, UseSharedProcess::Yes);
+    pid_t sharedProcessPID = loadPageWithAdFrameInSharedProcess(webView.get(), navigationDelegate.get(), "standard");
+
+    [webView _evaluateJavaScript:@"location = 'data:text/html,data'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "standard");
+}
+
+TEST(EnhancedSecurityPolicies, SharedProcessEnhancedSecurityFlagOffFrameNavigatesItselfToAboutBlank)
+{
+    HTTPServer secureServer({
+        { "/main"_s, { mainPageWithAdFrame } },
+        { "/ad"_s, { "ad"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = sharedProcessTestWebView(secureServer, UseSharedProcess::Yes);
+    pid_t sharedProcessPID = loadPageWithAdFrameInSharedProcess(webView.get(), navigationDelegate.get(), "standard");
+
+    [webView _evaluateJavaScript:@"location = 'about:blank'" withSourceURL:nil inFrame:[webView firstChildFrame] inContentWorld:WKContentWorld.pageWorld withUserGesture:NO completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "ad-loaded");
+
+    RetainPtr adFrame = [webView firstChildFrame];
+    EXPECT_EQ(adFrame.get()._processIdentifier, sharedProcessPID);
+    EXPECT_WK_STREQ(processVariantForFrame(webView.get(), adFrame.get()), "standard");
 }
 
 // MARK: - HTTPS First Upgrade Tests
@@ -841,6 +1675,41 @@ static void runHttpsOpeningHttp(bool useSiteIsolation)
 }
 TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpsOpeningHttp)
 
+static void runExplicitEnhancedSecurityInPopupStartsNewBrowsingContextGroup(bool useSiteIsolation)
+{
+    HTTPServer secureServer({
+        { "/"_s, { "<script>window.onload = function() { window.open('https://secure.different.internal/popup'); }</script>"_s } },
+        { "/popup"_s, { "<script>alert('popup'); alert(!!window.opener)</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto webView = enhancedSecurityTestConfiguration(nullptr, &secureServer, useSiteIsolation);
+
+    // The popup's own navigation asks for Enhanced Security, which its opener's browsing context group doesn't have.
+    RetainPtr popupNavigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [popupNavigationDelegate allowAnyTLSCertificate];
+    popupNavigationDelegate.get().decidePolicyForNavigationActionWithPreferences = ^(WKNavigationAction *, WKWebpagePreferences *preferences, void (^completionHandler)(WKNavigationActionPolicy, WKWebpagePreferences *)) {
+        preferences.securityRestrictionMode = WKSecurityRestrictionModeMaximizeCompatibility;
+        completionHandler(WKNavigationActionPolicyAllow, preferences);
+    };
+
+    __block RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    __block RetainPtr<TestWKWebView> popup;
+    uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *, WKWindowFeatures *) {
+        popup = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+        popup.get().UIDelegate = uiDelegate.get();
+        popup.get().navigationDelegate = popupNavigationDelegate.get();
+        return popup.get();
+    };
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://secure.example.internal/"]]];
+    testAlertWithEnhancedSecurity(uiDelegate, "popup"_s, true, std::source_location::current());
+    testAlertWithEnhancedSecurity(uiDelegate, "false"_s, true, std::source_location::current());
+
+    [webView setUIDelegate:nil];
+}
+TEST_WITH_AND_WITHOUT_SITE_ISOLATION(ExplicitEnhancedSecurityInPopupStartsNewBrowsingContextGroup)
+
 static void runOpenerMultipleNavigations(bool useSiteIsolation)
 {
     HTTPServer plaintextServer({
@@ -944,6 +1813,42 @@ static void runOpenerNavigatedWhileSelfNavigationIsProvisional(bool useSiteIsola
 }
 
 TEST_WITH_AND_WITHOUT_SITE_ISOLATION(OpenerNavigatedWhileSelfNavigationIsProvisional)
+
+static void runInsecureLoadInOpenerDoesNotEnableEnhancedSecurity(bool useSiteIsolation)
+{
+    HTTPServer plaintextServer({
+        { "http://insecure.example.internal/"_s, { "<script>alert('opener-page');</script>"_s } }
+    });
+
+    HTTPServer secureServer({
+        { "/"_s, { "<script>window.onload = function() { window.open('https://secure.different.internal/popup'); }</script>"_s } },
+        { "/popup"_s, { "<script>alert('popup'); window.opener.location = 'http://insecure.example.internal/';</script>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto webView = enhancedSecurityTestConfiguration(&plaintextServer, &secureServer, useSiteIsolation);
+    RetainPtr navigationDelegate = static_cast<TestNavigationDelegate *>([webView navigationDelegate]);
+
+    __block RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    __block RetainPtr<TestWKWebView> popup;
+    uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *, WKWindowFeatures *) {
+        popup = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+        popup.get().UIDelegate = uiDelegate.get();
+        popup.get().navigationDelegate = navigationDelegate.get();
+        return popup.get();
+    };
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://secure.example.internal/"]]];
+    testAlertWithEnhancedSecurity(uiDelegate, "popup"_s, false, std::source_location::current());
+    testAlertWithEnhancedSecurity(uiDelegate, "opener-page"_s, false, std::source_location::current());
+
+    // Enhanced Security would need a new browsing context group, which would cut the opener off from its popup.
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://insecure.example.internal/"]]];
+    testAlertWithEnhancedSecurity(uiDelegate, "opener-page"_s, false, std::source_location::current());
+
+    [webView setUIDelegate:nil];
+}
+TEST_WITH_SITE_ISOLATION(InsecureLoadInOpenerDoesNotEnableEnhancedSecurity)
 
 static void runHttpOpeningHttpsNoOpener(bool useSiteIsolation)
 {
@@ -1240,15 +2145,16 @@ static void runWebViewSameSiteMainFrameNavigation(bool useSiteIsolation)
         { "tainted-page"_s, ExpectedEnhancedSecurity::Enabled }
     });
 
+    // The page is alone in its browsing context group, so the navigation leaves it for its own Enhanced Security.
     loadRequestAndCheckEnhancedSecurityAlerts(webView, @"https://secure.example.internal/", {
-        { "secure-page"_s, ExpectedEnhancedSecurity::Enabled }
+        { "secure-page"_s, ExpectedEnhancedSecurity::Disabled }
     });
 
     loadRequestAndCheckEnhancedSecurityAlerts(webView, @"https://secure.different.internal/", {
         { "secure-page"_s, ExpectedEnhancedSecurity::Disabled }
     });
 }
-TEST_WITH_SITE_ISOLATION(WebViewSameSiteMainFrameNavigation)
+TEST_WITH_AND_WITHOUT_SITE_ISOLATION(WebViewSameSiteMainFrameNavigation)
 
 // MARK: - Cookies / Local Storage / Meaningful Site Checks
 
@@ -1957,7 +2863,8 @@ TEST(EnhancedSecurityPolicies, OpenDatabaseDoesNotCrashWhenMigrationFails)
     cleanUpEnhancedSecuritySites();
 }
 
-#if HAVE(ENHANCED_SECURITY_LINKS)
+// The LinkSecurity store we rely on is disabled in the simulator.
+#if HAVE(ENHANCED_SECURITY_LINKS) && !PLATFORM(IOS_FAMILY_SIMULATOR)
 
 TEST(EnhancedSecurityPolicies, LinkInStoreEnablesEnhancedSecurity)
 {
@@ -1974,14 +2881,14 @@ TEST(EnhancedSecurityPolicies, LinkInStoreEnablesEnhancedSecurity)
     [LSLinkSecurityManager.sharedManager addFlaggedURL:enhancedURL];
 
     bool isFlagged = false;
-    TestWebKitAPI::Util::waitFor([&] {
+    ASSERT_TRUE(TestWebKitAPI::Util::waitFor([&] {
         if (!LSLinkSecurityManager.sharedManager.hasFlaggedURLs)
             return false;
         [LSLinkSecurityManager.sharedManager checkIsFlaggedURL:enhancedURL completion:makeBlockPtr([&](BOOL flagged) {
             isFlagged = flagged;
         }).get()];
         return isFlagged;
-    });
+    })) << "The LinkSecurity store did not record the flagged URL";
 
     loadRequestAndCheckEnhancedSecurityAlerts(webView, @"https://clicked.example/", {
         { "secure-page"_s, ExpectedEnhancedSecurity::Enabled }
@@ -2007,18 +2914,16 @@ TEST(EnhancedSecurityPolicies, HttpLinkInStoreRemainsOnceUpgraded)
     [LSLinkSecurityManager.sharedManager addFlaggedURL:enhancedURL];
 
     bool isFlagged = false;
-    TestWebKitAPI::Util::waitFor([&] {
+    ASSERT_TRUE(TestWebKitAPI::Util::waitFor([&] {
         [LSLinkSecurityManager.sharedManager checkIsFlaggedURL:enhancedURL completion:makeBlockPtr([&](BOOL flagged) {
             isFlagged = flagged;
         }).get()];
         return isFlagged;
-    });
+    })) << "The LinkSecurity store did not record the flagged URL";
 
     loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://clicked.example/", {
         { "secure-page"_s, ExpectedEnhancedSecurity::Enabled }
     });
 }
 
-#endif // HAVE(ENHANCED_SECURITY_LINKS)
-
-#endif
+#endif // HAVE(ENHANCED_SECURITY_LINKS) && !PLATFORM(IOS_FAMILY_SIMULATOR)

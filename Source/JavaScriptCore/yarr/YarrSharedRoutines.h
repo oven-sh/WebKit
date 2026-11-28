@@ -90,6 +90,7 @@ static_assert(areCanonicallyEquivalentCharArgReg == GPRInfo::returnValueGPR);
 enum class SurrogatePairAdvance : uint8_t { ByCaller, ClaimsSecondUnit, ClaimsSecondUnitBeforeCallerAdvances };
 enum class InputCheck : uint8_t { DoneByCaller, FailsIfIndexIsAboveLength, FailsIfIndexIsLength };
 enum class ClassWords : uint8_t { Low, High, Both };
+enum class PositionUnits : uint8_t { One, IgnoreCase, Two };
 
 #if CPU(X86_64)
 inline constexpr GPRReg classTableRegister = MacroAssembler::s_scratchRegister;
@@ -105,6 +106,9 @@ struct SharedRoutine {
         MatchCodePointAgainstClassTable,
         ClearCaptures,
         FindFirstOfClass,
+        FindFirstOfTwoUnits,
+        FindFirstPairOfUnits,
+        FindEitherPrefix,
         CanonicalEquivalence,
     };
 
@@ -146,13 +150,35 @@ struct SharedRoutine {
         friend bool operator==(const FindFirstOfClass&, const FindFirstOfClass&) = default;
     };
 
+    struct FindFirstOfTwoUnits {
+        CharSize charSize;
+
+        friend bool operator==(const FindFirstOfTwoUnits&, const FindFirstOfTwoUnits&) = default;
+    };
+
+    struct FindFirstPairOfUnits {
+        CharSize charSize;
+        uint8_t distance;
+        PositionUnits first;
+        PositionUnits second;
+
+        friend bool operator==(const FindFirstPairOfUnits&, const FindFirstPairOfUnits&) = default;
+    };
+
+    // 8-bit subjects only. The table maps the low half of a character to a bit set of its possible positions in the prefixes: one byte for the first prefix and, 16 bytes later, one for the second, or one byte for both if the prefixes have four characters.
+    struct FindEitherPrefix {
+        uint8_t prefixLength;
+
+        friend bool operator==(const FindEitherPrefix&, const FindEitherPrefix&) = default;
+    };
+
     struct CanonicalEquivalence {
         CanonicalMode mode;
 
         friend bool operator==(const CanonicalEquivalence&, const CanonicalEquivalence&) = default;
     };
 
-    using Payload = Variant<MatchSet, ReadCodePoint, SlowCodePointRead, MatchCodePointAgainstClassTable, ClearCaptures, FindFirstOfClass, CanonicalEquivalence>;
+    using Payload = Variant<MatchSet, ReadCodePoint, SlowCodePointRead, MatchCodePointAgainstClassTable, ClearCaptures, FindFirstOfClass, FindFirstOfTwoUnits, FindFirstPairOfUnits, FindEitherPrefix, CanonicalEquivalence>;
 
     Kind kind() const;
 
@@ -164,6 +190,12 @@ struct SharedRoutine {
 void add(Hasher&, const SharedRoutine&);
 bool canGenerateSharedRoutine(const SharedRoutine&);
 void generateSharedRoutine(CCallHelpers&, const SharedRoutine&, CodeAddressing&);
+inline constexpr unsigned unitsInVectorOfTwoUnitsSearch = 16;
+inline constexpr unsigned prefixSearchVectorLength = 16;
+inline constexpr unsigned longPrefixLength = 8;
+inline constexpr unsigned shortPrefixLength = 4;
+MacroAssembler::Jump emitTestOfVectorForTwoUnits(CCallHelpers&, CharSize, bool unitsDiffer, int32_t unitsInFrontOfIndex);
+void emitAdvanceToUnitFoundInVector(CCallHelpers&);
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
 void emitReadSurrogatePair(CCallHelpers&, MacroAssembler::RegisterID resultReg, MacroAssembler::JumpList& slowCases);

@@ -1,0 +1,93 @@
+# What a row stores into the value of a promise is settled first. An object that nobody has seen may be a promise, or answer to `then`: the promise then holds what that one gives, which is anything.
+#   function Kept() { return sink(); }
+#   function later() { return new Kept(); }
+#   function show(v) { return v; }
+#   function showFirst(v) { return v; }
+#   async function use() { show(await Promise.resolve(1).then(later)); }
+#   async function useAll() { showFirst((await Promise.all([new Kept()]))[0]); }
+#   use();  useAll();
+# What a plain function returns to `new` counts only if it is an object: of `anything` the objects that nobody has seen are left, without the primitives. Nothing of this program goes anywhere, so its promises stay as they were made.
+# RUN: link functions mechanisms=all
+# CHECK: function f3 callers-known
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f4 callers-known
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f5
+
+module m0 path="settle.js" displayPath="settle.js" body=f0
+entry module=m0
+variable g0 name="Kept" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="later" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="show" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="showFirst" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f6
+    v3 = Convert v2 declared={type=f6 flags=[IsFromCompiler]}
+    v4 = Call v1 calleeName="use"
+    v5 = Call v3 calleeName="useAll"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="Kept" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1 calleeName="sink"
+    ReturnCall v2
+}
+function f2 name="later" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0 calleeName="Kept"
+    Return v1
+}
+function f3 name="show" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="showFirst" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="use" module=m0 flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasLiveAwait] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Promise" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]}
+    v5 = PropGet v4 key="resolve"
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
+    v7 = Integer integer=1
+    v8 = Call v6, v4, v7 calleeKey="resolve" calleeName="Promise.resolve"
+    v9 = PropGet v8 key="then"
+    v10 = GetModuleVariable variable=g1
+    v11 = Call v9, v8, v10 calleeKey="then" calleeName="then"
+    v12 = Await v11
+    v13 = Call v1, -, v12 calleeName="show"
+    v14 = Undefined
+    Return v14
+}
+function f6 name="useAll" module=m0 flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasLiveAwait] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Promise" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]}
+    v5 = PropGet v4 key="all"
+    v6 = Convert v5 declared={type=builtin(PromiseAll) flags=[IsExpected]}
+    v7 = GetModuleVariable variable=g0
+    v8 = Construct v7 calleeName="Kept"
+    v9 = NewArray v8 contents=anything
+    v10 = Call v6, v4, v9 calleeKey="all" calleeName="Promise.all"
+    v11 = Await v10
+    v12 = Integer
+    v13 = ElemGet v11, v12
+    v14 = Call v1, -, v13 calleeName="showFirst"
+    v15 = Undefined
+    Return v15
+}

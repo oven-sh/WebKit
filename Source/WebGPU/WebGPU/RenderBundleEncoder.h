@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "CommandsMixin.h"
 #import "RenderBundle.h"
 #import <WebGPU/WebGPUCpp.h>
@@ -44,7 +48,7 @@ class RenderPipeline;
 
 @interface RenderBundleICBWithResources : NSObject
 
-- (instancetype)initWithICB:(id<MTLIndirectCommandBuffer>)icb containerBuffer:(id<MTLBuffer>)containerBuffer pipelineState:(id<MTLRenderPipelineState>)pipelineState depthStencilState:(id<MTLDepthStencilState>)depthStencilState cullMode:(MTLCullMode)cullMode frontFace:(MTLWinding)frontFace depthClipMode:(MTLDepthClipMode)depthClipMode depthBias:(float)depthBias depthBiasSlopeScale:(float)depthBiasSlopeScale depthBiasClamp:(float)depthBiasClamp fragmentDynamicOffsetsBuffer:(id<MTLBuffer>)fragmentDynamicOffsetsBuffer pipeline:(const WebGPU::Metal::RenderPipeline*)pipeline minVertexCounts:(WebGPU::Metal::RenderBundle::MinVertexCountsContainer*)minVertexCounts indirectDraws:(WebGPU::Metal::IndirectDrawForSlotContainer*)indirectDraws outOfBoundsReadFlag:(id<MTLBuffer>)outOfBoundsReadFlag NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithICB:(id<MTLIndirectCommandBuffer>)icb containerBuffer:(id<MTLBuffer>)containerBuffer pipelineState:(id<MTLRenderPipelineState>)pipelineState depthStencilState:(id<MTLDepthStencilState>)depthStencilState cullMode:(MTLCullMode)cullMode frontFace:(MTLWinding)frontFace depthClipMode:(MTLDepthClipMode)depthClipMode depthBias:(float)depthBias depthBiasSlopeScale:(float)depthBiasSlopeScale depthBiasClamp:(float)depthBiasClamp fragmentDynamicOffsetsBuffer:(id<MTLBuffer>)fragmentDynamicOffsetsBuffer fragmentDynamicOffsetsHeaderOffsets:(Vector<uint64_t>*)fragmentDynamicOffsetsHeaderOffsets pipeline:(const WebGPU::Metal::RenderPipeline*)pipeline minVertexCounts:(WebGPU::Metal::RenderBundle::MinVertexCountsContainer*)minVertexCounts indirectDraws:(WebGPU::Metal::IndirectDrawForSlotContainer*)indirectDraws outOfBoundsReadFlag:(id<MTLBuffer>)outOfBoundsReadFlag NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
 @property (readonly, nonatomic) id<MTLBuffer> outOfBoundsReadFlag;
@@ -63,6 +67,7 @@ class RenderPipeline;
 
 - (WebGPU::Metal::RenderBundle::MinVertexCountsContainer*)minVertexCountForDrawCommand;
 - (WebGPU::Metal::IndirectDrawForSlotContainer*)indirectDrawsForSlot;
+- (std::span<const uint64_t>)fragmentDynamicOffsetsHeaderOffsets;
 @end
 
 namespace WebGPU::Metal {
@@ -116,10 +121,11 @@ public:
     void setVertexBuffer(uint32_t slot, WebGPU::Buffer*, uint64_t offset, std::optional<uint64_t> size) final;
     void setBindGroup(uint32_t groupIndex, const WebGPU::BindGroup*, std::optional<std::span<const uint32_t>> dynamicOffsets) final;
     void makeInvalid(NSString* = nil);
+    void makeInvalid(String&& error) final;
     void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
-    void replayCommands(RenderPassEncoder&);
+    NODELETE bool isValid() const final;
+    void replayCommands(RenderPassEncoder&, float minDepth, float maxDepth);
     void releaseDestroyedResources();
 
     static constexpr auto startIndexForFragmentDynamicOffsets = 3;
@@ -134,7 +140,7 @@ private:
     void setBindGroupWithOwnedDynamicOffsets(uint32_t groupIndex, const BindGroup*, std::optional<Vector<uint32_t>>&& dynamicOffsets);
     RenderBundleEncoder(Device&, NSString*);
 
-    bool LEGACY_NODELETE validatePopDebugGroup() const;
+    NODELETE bool validatePopDebugGroup() const;
     id<MTLIndirectRenderCommand> currentRenderCommand();
     bool replayingCommands() const;
 
@@ -153,8 +159,8 @@ private:
     NSString* errorValidatingDraw() const;
     NSString* errorValidatingDrawIndexed() const;
     NSString* errorValidatingStripIndexFormat() const;
-    uint32_t LEGACY_NODELETE maxVertexBufferIndex() const;
-    uint32_t LEGACY_NODELETE maxBindGroupIndex() const;
+    NODELETE uint32_t maxVertexBufferIndex() const;
+    NODELETE uint32_t maxBindGroupIndex() const;
     void recordCommand(WTF::Function<bool(void)>&&);
     bool storeVertexBufferCountsForValidation(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t baseVertex, uint32_t firstInstance, MTLIndexType, NSUInteger indexBufferOffsetInBytes);
     std::pair<uint32_t, uint32_t> computeMininumVertexInstanceCount(bool& needsValidationLayerWorkaround) const;
@@ -171,7 +177,7 @@ private:
     RefPtr<const RenderPipeline> m_pipeline;
     uint32_t m_maxVertexBufferSlot { 0 };
     uint32_t m_maxBindGroupSlot { 0 };
-    using UtilizedBufferIndicesContainer = HashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using UtilizedBufferIndicesContainer = HashMap<uint32_t, uint64_t>;
     UtilizedBufferIndicesContainer m_utilizedBufferIndices;
 
     id<MTLIndirectCommandBuffer> m_indirectCommandBuffer { nil };
@@ -201,9 +207,9 @@ private:
     };
     Vector<BufferAndOffset> m_vertexBuffers;
     Vector<BufferAndOffset> m_fragmentBuffers;
-    using BindGroupDynamicOffsetsContainer = HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using BindGroupDynamicOffsetsContainer = HashMap<uint32_t, Vector<uint32_t>>;
     std::optional<BindGroupDynamicOffsetsContainer> m_bindGroupDynamicOffsets;
-    HashMap<uint32_t, Ref<const BindGroup>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroups;
+    HashMap<uint32_t, Ref<const BindGroup>> m_bindGroups;
     HashSet<RefPtr<const BindGroup>> m_allBindGroups;
     RenderBundle::MinVertexCountsContainer m_minVertexCountForDrawCommand;
     IndirectDrawForSlotContainer m_indirectDrawsForSlot;
@@ -212,6 +218,7 @@ private:
     id<MTLBuffer> m_dynamicOffsetsFragmentBuffer { nil };
     uint64_t m_vertexDynamicOffset { 0 };
     uint64_t m_fragmentDynamicOffset { 0 };
+    Vector<uint64_t> m_fragmentDynamicOffsetsHeaderOffsets;
 
     ThreadSafeWeakPtr<RenderPassEncoder> m_renderPassEncoder;
     id<MTLIndirectRenderCommand> m_currentCommand { nil };
@@ -224,6 +231,8 @@ private:
     bool m_requiresCommandReplay { false };
     bool m_finished { false };
     uint32_t m_sampleMask { defaultSampleMask };
+    float m_minDepth { 0.f };
+    float m_maxDepth { 1.f };
     bool m_makeSubmitInvalid { false };
 };
 

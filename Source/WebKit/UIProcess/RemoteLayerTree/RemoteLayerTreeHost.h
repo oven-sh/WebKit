@@ -42,6 +42,9 @@
 
 OBJC_CLASS CAAnimation;
 OBJC_CLASS WKAnimationDelegate;
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+OBJC_CLASS UIScrollView;
+#endif
 
 namespace IPC {
 class Connection;
@@ -61,8 +64,14 @@ class RemoteAnimationTimeline;
 class RemoteLayerTreeHost {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeHost);
 public:
-    explicit RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy&);
+    // Secondary hosts build another tree from the same transactions, without page-wide side effects.
+    enum class Role : uint8_t { Primary, DebugIndicator, Mirror };
+
+    RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy&, Role);
     ~RemoteLayerTreeHost();
+
+    Role role() const { return m_role; }
+    bool isPrimary() const { return m_role == Role::Primary; }
 
     RemoteLayerTreeNode* nodeForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
     RefPtr<RemoteLayerTreeNode> rootNode() const { return m_rootNode.get(); }
@@ -70,7 +79,7 @@ public:
     RetainPtr<CALayer> layerForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
     RetainPtr<CALayer> rootLayer() const;
 
-    RemoteLayerTreeDrawingAreaProxy& LEGACY_NODELETE drawingArea() const;
+    NODELETE RemoteLayerTreeDrawingAreaProxy& drawingArea() const;
 
     // Returns true if the root layer changed.
     bool updateLayerTree(const IPC::Connection&, const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, float indicatorScaleFactor  = 1);
@@ -85,9 +94,6 @@ public:
     void releaseDisplayOnlyImage(RemoteSnapshotIdentifier);
     void removeDisplayOnlyImagesForProcess(WebCore::ProcessIdentifier);
 
-    void setIsDebugLayerTreeHost(bool flag) { m_isDebugLayerTreeHost = flag; }
-    bool isDebugLayerTreeHost() const { return m_isDebugLayerTreeHost; }
-
     typedef HashMap<WebCore::PlatformLayerIdentifier, RetainPtr<WKAnimationDelegate>> LayerAnimationDelegateMap;
     LayerAnimationDelegateMap& animationDelegates() LIFETIME_BOUND { return m_animationDelegates; }
 
@@ -101,7 +107,7 @@ public:
     RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 #endif
 
-    void LEGACY_NODELETE detachFromDrawingArea();
+    NODELETE void detachFromDrawingArea();
     void clearLayers();
 
     // Detach the root layer; it will be reattached upon the next incoming commit.
@@ -109,12 +115,20 @@ public:
 
     RetainPtr<CALayer> layerWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 
-    bool LEGACY_NODELETE replayDynamicContentScalingDisplayListsIntoBackingStore() const;
+    NODELETE bool replayDynamicContentScalingDisplayListsIntoBackingStore() const;
     bool threadedAnimationsEnabled() const;
 
     bool cssUnprefixedBackdropFilterEnabled() const;
 
     void remotePageProcessDidTerminate(WebCore::ProcessIdentifier);
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    void updateOrDeferInteractionRegions(RemoteLayerTreeNode&);
+    void updateDeferredInteractionRegions();
+
+    RetainPtr<CALayer> takeInteractionRegionGlowLayer();
+    void reclaimInteractionRegionGlowLayer(RetainPtr<CALayer>&&);
+#endif
 
 private:
 
@@ -125,6 +139,11 @@ private:
 
     void applyDisplayOnlyImage(RemoteLayerTreeNode&, WebCore::ProcessIdentifier sender, Markable<RemoteSnapshotIdentifier>);
     void layerWillBeRemoved(WebCore::ProcessIdentifier, WebCore::PlatformLayerIdentifier);
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    void updateScrollViewsHidingInteractionRegions();
+    bool shouldDeferInteractionRegionUpdate(const RemoteLayerTreeNode&) const;
+#endif
 
     WeakPtr<RemoteLayerTreeDrawingAreaProxy> m_drawingArea;
     ThreadSafeWeakPtr<RemoteLayerTreeNode> m_rootNode;
@@ -140,7 +159,13 @@ private:
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
     HashSet<WebCore::PlatformLayerIdentifier> m_modelLayers;
 #endif
-    bool m_isDebugLayerTreeHost { false };
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    HashSet<WebCore::PlatformLayerIdentifier> m_layersWithDeferredInteractionRegionUpdates;
+    Vector<RetainPtr<UIScrollView>> m_scrollViewsHidingInteractionRegions;
+    Vector<RetainPtr<CALayer>> m_interactionRegionGlowLayerPool;
+    bool m_mainScrollViewHidesInteractionRegions { false };
+#endif
+    const Role m_role;
 };
 
 } // namespace WebKit

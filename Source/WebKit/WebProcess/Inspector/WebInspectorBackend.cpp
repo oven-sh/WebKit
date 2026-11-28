@@ -27,6 +27,7 @@
 #include "WebInspectorBackend.h"
 
 #include "FrameNetworkAgentProxy.h"
+#include "NetworkInterceptionSink.h"
 #include "PageAgentProxy.h"
 #include "WebFrame.h"
 #include "WebInspectorBackendMessages.h"
@@ -43,9 +44,15 @@
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/DocumentPage.h>
 #include <WebCore/DocumentView.h>
+#include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameInspectorController.h>
 #include <WebCore/FrameLoadRequest.h>
 #include <WebCore/FrameLoader.h>
+#include <WebCore/FrameSnapshotting.h>
+#include <WebCore/GraphicsContext.h>
+#include <WebCore/ImageBuffer.h>
+#include <WebCore/ImageBufferParameters.h>
+#include <WebCore/ImageUtilities.h>
 #include <WebCore/InspectorFrontendClient.h>
 #include <WebCore/InspectorIdentifierRegistry.h>
 #include <WebCore/InspectorPageAgent.h>
@@ -55,14 +62,17 @@
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/NavigationAction.h>
+#include <WebCore/NodeDocument.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/Page.h>
 #include <WebCore/PageInspectorController.h>
+#include <WebCore/RenderObject.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/Settings.h>
 #include <WebCore/WebInjectedScriptManager.h>
 #include <WebCore/WindowFeatures.h>
 #include <wtf/Borrow.h>
+#include <wtf/CallbackAggregator.h>
 #include <wtf/HashSet.h>
 #include <wtf/URL.h>
 #include <wtf/text/StringHash.h>
@@ -271,6 +281,12 @@ void WebInspectorBackend::timelineRecordingChanged(bool active)
     protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebInspectorBackendProxy::TimelineRecordingChanged(active), m_page->identifier());
 }
 
+void WebInspectorBackend::takeTimelineScreenshot(const WebCore::IntRect& rect, double timestamp, CompletionHandler<void()>&& completionHandler)
+{
+    // The UI process takes the screenshot of every process's frames and sends the record to the frontend itself.
+    protect(WebProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::WebInspectorBackendProxy::TakeTimelineScreenshot(rect, timestamp), WTF::move(completionHandler), m_page->identifier());
+}
+
 void WebInspectorBackend::showPaintRectsChanged(bool show)
 {
     // Forward the main-frame process's paint-rects toggle to the UIProcess, which fans it out to the
@@ -345,7 +361,7 @@ static void forEachLocalOrProvisionalFrame(Page& page, NOESCAPE const Function<v
             frames.append(localFrame.releaseNonNull());
     }
 
-    for (auto& frame : frames)
+    for (auto& frame : borrow(frames))
         function(frame);
 }
 
@@ -387,7 +403,7 @@ void WebInspectorBackend::ensureNetworkInstrumentationForFrame(LocalFrame& frame
     };
 
     CheckedRef resourceDataStore = m_resourceDataStore.get();
-    auto proxy = makeUnique<FrameNetworkAgentProxy>(webContext, *page, resourceDataStore.get(), m_extraRequestHeaders);
+    auto proxy = makeUnique<FrameNetworkAgentProxy>(webContext, *page, frameID, resourceDataStore.get(), m_extraRequestHeaders);
     std::ignore = proxy->enable();
     m_frameNetworkAgentProxies.add(frameID, WTF::move(proxy));
 }
@@ -406,8 +422,10 @@ void WebInspectorBackend::enableNetworkInstrumentation()
         corePage->settings().setDeveloperExtrasEnabled(true);
         corePage->inspectorController().connectRemoteInstrumentation();
 
-        // Buffer certificates only when the page opts in, matching PageNetworkAgent.
-        CheckedRef { m_resourceDataStore.get() }->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
+        // Use the page's content size limit, and buffer certificates only when the page opts in, matching PageNetworkAgent.
+        CheckedRef resourceDataStore = m_resourceDataStore;
+        resourceDataStore->setMaximumResourcesContentSize(corePage->settings().inspectorMaximumResourcesContentSize() * MB);
+        resourceDataStore->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
     }
 
     forEachLocalOrProvisionalFrame(*corePage, [&](LocalFrame& frame) {
@@ -422,6 +440,7 @@ void WebInspectorBackend::disableNetworkInstrumentation()
 
     m_frameNetworkAgentProxies.clear();
     m_networkInstrumentationEnabled = false;
+    CheckedRef { m_resourceDataStore }->clear();
 
     // Reset latched Network overrides so nothing persists past inspection. The caching flag lives
     // on the Page and would otherwise stay disabled with no inspector attached. Mirrors
@@ -436,6 +455,10 @@ void WebInspectorBackend::disableNetworkInstrumentation()
         corePage->setResourceCachingDisabledByWebInspector(false);
         corePage->inspectorController().disconnectRemoteInstrumentation();
     }
+
+    // Loads that Web Inspector paused go on unchanged once nobody can resolve them.
+    if (RefPtr page = m_page)
+        page->networkInterceptionSink().continueInspectorPauses();
 }
 
 void WebInspectorBackend::removeInstrumentationForFrame(LocalFrame& frame)
@@ -488,6 +511,26 @@ void WebInspectorBackend::getSerializedCertificate(ResourceLoaderIdentifier reso
     completionHandler(WTF::move(result));
 }
 
+void WebInspectorBackend::resolveWebSocket(uint64_t channelID, const String& objectGroup, CompletionHandler<void(std::expected<String, String>&&)>&& completionHandler)
+{
+    RefPtr page = m_page;
+    RefPtr corePage = page ? page->corePage() : nullptr;
+    if (!corePage) {
+        completionHandler(makeUnexpected("Inspected page is gone"_s));
+        return;
+    }
+
+    auto result = Inspector::ResourceUtilities::resolveWebSocketInFrame(*corePage, channelID, objectGroup);
+    if (!result) {
+        ASSERT(!result.error().isEmpty());
+        completionHandler(makeUnexpected(result.error()));
+        return;
+    }
+
+    Ref remoteObject = WTF::move(result.value());
+    completionHandler(remoteObject->toJSONString());
+}
+
 void WebInspectorBackend::loadResource(WebCore::FrameIdentifier frameID, const String& url, CompletionHandler<void(std::expected<std::tuple<String, String, int>, String>&&)>&& completionHandler)
 {
     // Site Isolation load leg for Network.loadResource: ProxyingNetworkAgent already routed this to
@@ -519,9 +562,8 @@ void WebInspectorBackend::loadResource(WebCore::FrameIdentifier frameID, const S
 // typed-IPC mirror, so the UIProcess rebuilds the protocol objects on its side (as with FrameResource).
 static Vector<Inspector::SearchMatch> convertSearchMatches(JSON::ArrayOf<Inspector::Protocol::GenericTypes::SearchMatch>& matches)
 {
-    Vector<Inspector::SearchMatch> result;
     auto length = matches.length();
-    result.reserveInitialCapacity(length);
+    Vector<Inspector::SearchMatch> result(ReserveCapacityTag { }, length);
     for (size_t i = 0; i < length; ++i) {
         RefPtr object = matches.get(i)->asObject();
         if (!object)
@@ -651,7 +693,7 @@ void WebInspectorBackend::searchInFramesAndRequests(Vector<WebCore::FrameIdentif
 
     CheckedRef resourceDataStore = m_resourceDataStore.get();
     resourceDataStore->forEach([&](const BackendResourceDataStore::ResourceData& entry) {
-        if (!entry.hasContent() || entry.base64Encoded())
+        if (!entry.hasContent() || entry.base64Encoded() || entry.url().isNull())
             return;
         // Skip entries already emitted by the cached-resource walk to avoid double-counting
         // (e.g. a stylesheet is both a CachedResource and a buffered data-store entry).
@@ -786,6 +828,13 @@ void WebInspectorBackend::disablePageInstrumentation()
     // resets on disable().
     m_showPaintRects = false;
     m_bootstrapScript = { };
+
+    if (RefPtr corePage = m_page ? m_page->corePage() : nullptr) {
+        for (auto& settingName : std::exchange(m_overriddenSettings, { })) {
+            if (auto setting = Inspector::Protocol::Helpers::parseEnumValueFromString<Inspector::Protocol::Page::Setting>(settingName))
+                InspectorPageAgent::applySettingOverride(*corePage, *setting, std::nullopt);
+        }
+    }
 }
 
 void WebInspectorBackend::setShowPaintRects(bool show)
@@ -795,6 +844,22 @@ void WebInspectorBackend::setShowPaintRects(bool show)
     m_showPaintRects = show;
     for (auto& proxy : m_framePageAgentProxies.values())
         proxy->setShowPaintRects(show);
+}
+
+void WebInspectorBackend::setSettingOverride(const String& settingName, std::optional<bool> value)
+{
+    RefPtr corePage = m_page ? m_page->corePage() : nullptr;
+    if (!corePage)
+        return;
+
+    auto setting = Inspector::Protocol::Helpers::parseEnumValueFromString<Inspector::Protocol::Page::Setting>(settingName);
+    if (!setting || !InspectorPageAgent::applySettingOverride(*corePage, *setting, value))
+        return;
+
+    if (value)
+        m_overriddenSettings.add(settingName);
+    else
+        m_overriddenSettings.remove(settingName);
 }
 
 void WebInspectorBackend::setBootstrapScript(const String& source)
@@ -813,8 +878,7 @@ void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&
     // process only for the frames it hosts; it then builds the Page.getResourceTree protocol objects
     // from this typed data under Site Isolation. Frames not local to this process are silently
     // skipped (another process answers for them). See webkit.org/b/308896.
-    Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>> resourcesByFrame;
-    resourcesByFrame.reserveInitialCapacity(frameIDs.size());
+    Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>> resourcesByFrame(ReserveCapacityTag { }, frameIDs.size());
 
     for (auto frameID : frameIDs) {
         RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
@@ -835,6 +899,23 @@ void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&
     }
 
     completionHandler(WTF::move(resourcesByFrame));
+}
+
+void WebInspectorBackend::getFrameCookies(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&& completionHandler)
+{
+    // Return the cookies each requested frame local to this WebContent process would send to its document's URL and to its
+    // cached same-site subresources' URLs, the lookup Page.getCookies does without Site Isolation. Cross-site subresource
+    // URLs are skipped because the NetworkProcess refuses them for this process; the Storage tab never listed their
+    // cookies, since it only has a section per frame host. The UIProcess InspectorStorageAgent asks each process only for
+    // the frames it hosts and merges the results.
+    ListHashSet<WebCore::Cookie> cookies;
+    for (auto frameID : frameIDs) {
+        RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+        if (RefPtr localFrame = webFrame ? webFrame->coreLocalFrame() : nullptr)
+            Inspector::ResourceUtilities::collectRawCookiesForFrame(*localFrame, cookies, Inspector::ResourceUtilities::SubresourceSites::FrameSiteOnly);
+    }
+
+    completionHandler(copyToVector(cookies));
 }
 
 void WebInspectorBackend::getFrameResourceContent(WebCore::FrameIdentifier frameID, String url, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&& completionHandler)
@@ -891,6 +972,129 @@ void WebInspectorBackend::getFrameResourceContent(WebCore::FrameIdentifier frame
     // Matches InspectorPageAgent::getResourceContent: on a lookup miss, report success with
     // empty content rather than an error -- the frontend already tolerates empty content here.
     completionHandler(content, base64Encoded, String());
+}
+
+struct NodeForSnapshot {
+    Ref<LocalFrame> rootFrame;
+    Ref<Node> node;
+};
+
+// Finds the node that the DOM agent of the frame target for frameID, or of the page target, gave this id.
+// The root is that target's frame. The node is in it, or in a frame below it in this process.
+static std::expected<NodeForSnapshot, String> nodeForSnapshot(WebPage* page, std::optional<FrameIdentifier> frameID, int nodeId)
+{
+    RefPtr corePage = page ? page->corePage() : nullptr;
+    if (!corePage)
+        return makeUnexpected("Missing page"_s);
+
+    RefPtr<LocalFrame> rootFrame;
+    RefPtr<Node> node;
+    if (frameID) {
+        RefPtr webFrame = WebProcess::singleton().webFrame(*frameID);
+        rootFrame = webFrame ? webFrame->coreLocalFrame() : nullptr;
+        if (!rootFrame || rootFrame->page() != corePage)
+            return makeUnexpected("Frame is not local to this process"_s);
+        node = rootFrame->inspectorController().nodeForId(nodeId);
+    } else {
+        rootFrame = page->localMainFrame();
+        if (!rootFrame)
+            return makeUnexpected("Main frame isn't local"_s);
+        node = corePage->inspectorController().nodeForId(nodeId);
+    }
+
+    if (!node)
+        return makeUnexpected("Missing node for given nodeId"_s);
+    return NodeForSnapshot { rootFrame.releaseNonNull(), node.releaseNonNull() };
+}
+
+void WebInspectorBackend::snapshotNode(std::optional<FrameIdentifier> frameID, int nodeId, CompletionHandler<void(std::expected<String, String>&&)>&& completionHandler)
+{
+    RefPtr page = m_page;
+    auto result = nodeForSnapshot(page.get(), frameID, nodeId);
+    if (!result) {
+        completionHandler(makeUnexpected(result.error()));
+        return;
+    }
+
+    // Paint the node's own frame, which may be below the root.
+    Ref node = result->node;
+    RefPtr frame = node->document().frame();
+    RefPtr snapshot = frame ? WebCore::snapshotNode(*frame, node, { { }, PixelFormat::BGRA8, ColorSpace::SRGB() }) : nullptr;
+    if (!snapshot) {
+        completionHandler(makeUnexpected("Could not capture snapshot"_s));
+        return;
+    }
+    completionHandler(encodeDataURL(WTF::move(snapshot), "image/png"_s));
+}
+
+// Paints like WebCore::snapshotNode(), but records into the remote snapshot, so frames of other processes
+// inside the node are drawn too. Modeled on WebPage::takeRemoteSnapshotForTargetedElement().
+void WebInspectorBackend::snapshotNodeToRemoteSnapshot(std::optional<FrameIdentifier> frameID, int nodeId, RemoteSnapshotIdentifier snapshotIdentifier, CompletionHandler<void(std::expected<void, String>&&)>&& completionHandler)
+{
+#if ENABLE(GPU_PROCESS)
+    RefPtr page = m_page;
+
+    auto fail = [&](const String& errorString) {
+        // The UI process waits for the snapshot in the GPU process, which has to hear that the root failed.
+        WebProcess::singleton().failSnapshot(snapshotIdentifier);
+        completionHandler(makeUnexpected(errorString));
+    };
+
+    auto result = nodeForSnapshot(page.get(), frameID, nodeId);
+    if (!result) {
+        fail(result.error());
+        return;
+    }
+
+    Ref corePage = *page->corePage();
+    ASSERT(corePage->settings().remoteSnapshottingEnabled());
+
+    Ref rootFrame = result->rootFrame;
+    Ref node = result->node;
+    RefPtr frame = node->document().frame();
+    RefPtr frameView = frame ? frame->view() : nullptr;
+    if (!frameView) {
+        fail("Could not capture snapshot"_s);
+        return;
+    }
+    frameView->updateLayoutAndStyleIfNeededRecursive();
+
+    // Painting updates layout again, which can destroy the renderer, so do not hold it past this block.
+    IntRect paintingRect;
+    if (CheckedPtr renderer = node->renderer()) {
+        LayoutRect elementRect;
+        paintingRect = snappedIntRect(renderer->subtreePaintRootRect(elementRect, RenderObject::RespectTransforms::Yes));
+    }
+    if (paintingRect.isEmpty()) {
+        fail("Could not capture snapshot"_s);
+        return;
+    }
+
+    float scaleFactor = corePage->deviceScaleFactor() * (corePage->delegatesScaling() ? corePage->pageScaleFactor() : 1);
+    auto bitmapSize = calculateImageBufferBackendSize(paintingRect.size(), scaleFactor);
+
+    Ref callback = MainRunLoopSuccessCallbackAggregator::create(WebPage::failRemoteSnapshotIfRootFails(snapshotIdentifier, [completionHandler = WTF::move(completionHandler)](bool success) mutable {
+        if (!success) {
+            completionHandler(makeUnexpected("Could not capture snapshot"_s));
+            return;
+        }
+        completionHandler({ });
+    }));
+
+    auto savedBackgroundColor = frameView->baseBackgroundColor();
+    frameView->setBaseBackgroundColor(Color::transparentBlack);
+    page->recordRemoteSnapshot(snapshotIdentifier, rootFrame->frameID(), WebPage::RemoteSnapshotRole::Root, RenderingMode::DisplayList, IntRect { { }, bitmapSize }, { 1, 1 }, bitmapSize, WTF::move(callback), [&](GraphicsContext& context) {
+        context.applyDeviceScaleFactor(scaleFactor);
+        context.translate(-paintingRect.location());
+        frameView->paintContentsForSnapshot(context, paintingRect, node.ptr(), LocalFrameView::IncludeSelection, LocalFrameView::DocumentCoordinates);
+    });
+    frameView->setBaseBackgroundColor(savedBackgroundColor);
+#else
+    UNUSED_PARAM(frameID);
+    UNUSED_PARAM(nodeId);
+    UNUSED_PARAM(snapshotIdentifier);
+    completionHandler(makeUnexpected("Remote snapshots are not supported"_s));
+#endif
 }
 
 } // namespace WebKit

@@ -64,7 +64,6 @@ class StyleRuleNamespace;
 class StyleRulePage;
 class StyleRulePositionTry;
 class StyleRuleSupports;
-class StyleRuleViewport;
 class StyleRuleViewTransition;
 #if ENABLE(SPATIAL_PORTAL)
 class StyleRuleEnvironmentMap;
@@ -163,7 +162,6 @@ private:
     RefPtr<StyleRuleNamespace> consumeNamespaceRule(CSSParserTokenRange prelude);
     RefPtr<StyleRuleMedia> consumeMediaRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleSupports> consumeSupportsRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
-    RefPtr<StyleRuleViewport> consumeViewportRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFontFace> consumeFontFaceRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFontFeatureValuesBlock> consumeFontFeatureValuesRuleBlock(CSSAtRuleID, CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFontFeatureValues> consumeFontFeatureValuesRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
@@ -197,7 +195,18 @@ private:
     void consumeDeclarationList(CSSParserTokenRange, StyleRuleType);
     void consumeDeclarationRuleList(CSSParserTokenRange, StyleRuleType);
     void consumeStyleBlock(CSSParserTokenRange, StyleRuleType, ParsingStyleDeclarationsInRuleList = ParsingStyleDeclarationsInRuleList::No);
-    bool consumeDeclaration(CSSParserTokenRange, StyleRuleType);
+
+    // For the inspector, an invalid declaration that may instead be consumed as a nested style rule.
+    struct DeferredInvalidDeclaration {
+        unsigned startOffset { 0 };
+        unsigned endOffset { 0 };
+        bool isImportant { false };
+    };
+    struct ConsumeDeclarationResult {
+        bool isValid { false };
+        std::optional<DeferredInvalidDeclaration> deferredInvalidDeclaration;
+    };
+    ConsumeDeclarationResult consumeDeclaration(CSSParserTokenRange, StyleRuleType);
     void consumeDeclarationValue(CSSParserTokenRange, CSSPropertyID, IsImportant, StyleRuleType);
     void consumeCustomPropertyValue(CSSParserTokenRange, const AtomString& propertyName, IsImportant);
 

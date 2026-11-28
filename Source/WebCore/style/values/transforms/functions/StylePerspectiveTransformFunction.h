@@ -30,15 +30,14 @@
 #include "StylePrimitiveNumericTypes.h"
 #include "StyleTransformFunctionBase.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // perspective() = perspective( [ <length [0,∞]> | none ] )
 // https://drafts.csswg.org/css-transforms-2/#funcdef-perspective
 
 class PerspectiveTransformFunction final : public TransformFunctionBase {
 public:
-    static Ref<const PerspectiveTransformFunction> LEGACY_NODELETE create(Perspective);
+    NODELETE static Ref<const PerspectiveTransformFunction> create(Perspective);
 
     Ref<const TransformFunctionBase> clone() const override;
     Ref<TransformOperation> toPlatform(const FloatSize&, ZoomFactor) const override;
@@ -66,7 +65,6 @@ private:
     Perspective m_p;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_TRANSFORM_FUNCTION(WebCore::Style::PerspectiveTransformFunction, WebCore::Style::TransformFunctionBase::Type::Perspective ==)

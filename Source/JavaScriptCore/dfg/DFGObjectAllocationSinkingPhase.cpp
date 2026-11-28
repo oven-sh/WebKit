@@ -149,7 +149,7 @@ public:
     // materialization
     enum class Kind { Escaped, Array, ArrayButterfly, Object, Activation, Function, GeneratorFunction, AsyncFunction, AsyncGeneratorFunction, InternalFieldObject, RegExpObject, Promise };
 
-    using Fields = UncheckedKeyHashMap<PromotedLocationDescriptor, Node*>;
+    using Fields = HashMap<PromotedLocationDescriptor, Node*>;
 
     explicit Allocation(Node* identifier = nullptr, Kind kind = Kind::Escaped, IndexingType indexingType = 0, unsigned length = 0)
         : m_identifier(identifier)
@@ -160,12 +160,12 @@ public:
     }
 
 
-    const Fields& LEGACY_NODELETE fields() const
+    NODELETE const Fields& fields() const
     {
         return m_fields;
     }
 
-    Fields& LEGACY_NODELETE fields()
+    NODELETE Fields& fields()
     {
         return m_fields;
     }
@@ -192,36 +192,36 @@ public:
         set(descriptor, nullptr);
     }
 
-    IndexingType LEGACY_NODELETE indexingType() const
+    NODELETE IndexingType indexingType() const
     {
         return m_indexingType;
     }
 
-    unsigned LEGACY_NODELETE length() const
+    NODELETE unsigned length() const
     {
         return m_initializedIndices.size();
     }
 
-    bool LEGACY_NODELETE isIndexInitialized(unsigned index) const
+    NODELETE bool isIndexInitialized(unsigned index) const
     {
         ASSERT(index < length());
         return m_initializedIndices[index];
     }
 
-    void LEGACY_NODELETE setIndexInitialized(unsigned index)
+    NODELETE void setIndexInitialized(unsigned index)
     {
         ASSERT(index < length());
         m_initializedIndices[index] = true;
     }
 
-    Allocation& LEGACY_NODELETE mergeInitializedIndices(const Allocation& other)
+    NODELETE Allocation& mergeInitializedIndices(const Allocation& other)
     {
         ASSERT(length() == other.length());
         m_initializedIndices &= other.m_initializedIndices;
         return *this;
     }
 
-    bool LEGACY_NODELETE hasStructures() const
+    NODELETE bool hasStructures() const
     {
         switch (kind()) {
         case Kind::Object:
@@ -258,61 +258,61 @@ public:
         return *this;
     }
 
-    const RegisteredStructureSet& LEGACY_NODELETE structures() const
+    NODELETE const RegisteredStructureSet& structures() const
     {
         return m_structures;
     }
 
-    const RegisteredStructureSet& LEGACY_NODELETE structuresForMaterialization() const
+    NODELETE const RegisteredStructureSet& structuresForMaterialization() const
     {
         return m_structuresForMaterialization;
     }
 
-    Node* LEGACY_NODELETE identifier() const { return m_identifier; }
+    NODELETE Node* identifier() const { return m_identifier; }
 
-    Kind LEGACY_NODELETE kind() const { return m_kind; }
+    NODELETE Kind kind() const { return m_kind; }
 
-    bool LEGACY_NODELETE isEscapedAllocation() const
+    NODELETE bool isEscapedAllocation() const
     {
         return kind() == Kind::Escaped;
     }
 
-    bool LEGACY_NODELETE isArrayAllocation() const
+    NODELETE bool isArrayAllocation() const
     {
         return m_kind == Kind::Array;
     }
 
-    bool LEGACY_NODELETE isObjectAllocation() const
+    NODELETE bool isObjectAllocation() const
     {
         return m_kind == Kind::Object;
     }
 
-    bool LEGACY_NODELETE isActivationAllocation() const
+    NODELETE bool isActivationAllocation() const
     {
         return m_kind == Kind::Activation;
     }
 
-    bool LEGACY_NODELETE isFunctionAllocation() const
+    NODELETE bool isFunctionAllocation() const
     {
         return m_kind == Kind::Function || m_kind == Kind::GeneratorFunction || m_kind == Kind::AsyncFunction || m_kind == Kind::AsyncGeneratorFunction;
     }
 
-    bool LEGACY_NODELETE isInternalFieldObjectAllocation() const
+    NODELETE bool isInternalFieldObjectAllocation() const
     {
         return m_kind == Kind::InternalFieldObject;
     }
 
-    bool LEGACY_NODELETE isRegExpObjectAllocation() const
+    NODELETE bool isRegExpObjectAllocation() const
     {
         return m_kind == Kind::RegExpObject;
     }
 
-    bool LEGACY_NODELETE isPromiseAllocation() const
+    NODELETE bool isPromiseAllocation() const
     {
         return m_kind == Kind::Promise;
     }
 
-    friend bool LEGACY_NODELETE operator==(const Allocation&, const Allocation&) = default;
+    NODELETE friend bool operator==(const Allocation&, const Allocation&) = default;
 
     void dump(PrintStream& out) const
     {
@@ -464,12 +464,12 @@ public:
     // set, the current escapees can be retrieved at any time using
     // takeEscapees(), which will clear the cached set of escapees;
     // otherwise the heap won't remember escaping allocations.
-    void LEGACY_NODELETE setWantEscapees()
+    NODELETE void setWantEscapees()
     {
         m_wantEscapees = true;
     }
 
-    UncheckedKeyHashMap<Node*, Allocation> LEGACY_NODELETE takeEscapees()
+    NODELETE HashMap<Node*, Allocation> takeEscapees()
     {
         return WTF::move(m_escapees);
     }
@@ -641,7 +641,7 @@ public:
             && m_pointers == other.m_pointers;
     }
 
-    const UncheckedKeyHashMap<Node*, Allocation>& LEGACY_NODELETE allocations() const
+    NODELETE const HashMap<Node*, Allocation>& allocations() const
     {
         return m_allocations;
     }
@@ -661,12 +661,12 @@ public:
         }
     }
 
-    bool LEGACY_NODELETE reached() const
+    NODELETE bool reached() const
     {
         return m_reached;
     }
 
-    void LEGACY_NODELETE setReached()
+    NODELETE void setReached()
     {
         m_reached = true;
     }
@@ -708,7 +708,7 @@ private:
     //  4: GetByOffset(@3, val)
     //  -: Return(@4)
     template<typename Key>
-    static void mergePointerSets(UncheckedKeyHashMap<Key, Node*>& my, const UncheckedKeyHashMap<Key, Node*>& their, NodeSet& toEscape)
+    static void mergePointerSets(HashMap<Key, Node*>& my, const HashMap<Key, Node*>& their, NodeSet& toEscape)
     {
         auto escape = [&] (Node* identifier) {
             toEscape.addVoid(identifier);
@@ -786,11 +786,11 @@ private:
     }
 
     bool m_reached = false;
-    UncheckedKeyHashMap<Node*, Node*> m_pointers;
-    UncheckedKeyHashMap<Node*, Allocation> m_allocations;
+    HashMap<Node*, Node*> m_pointers;
+    HashMap<Node*, Allocation> m_allocations;
 
     bool m_wantEscapees = false;
-    UncheckedKeyHashMap<Node*, Allocation> m_escapees;
+    HashMap<Node*, Allocation> m_escapees;
 };
 
 class ObjectAllocationSinkingPhase : public Phase {
@@ -958,7 +958,7 @@ private:
     }
 
     template<typename InternalFieldClass>
-    Allocation* handleInternalFieldClass(Node* node, UncheckedKeyHashMap<PromotedLocationDescriptor, LazyNode>& writes)
+    Allocation* handleInternalFieldClass(Node* node, HashMap<PromotedLocationDescriptor, LazyNode>& writes)
     {
         Allocation* result = &m_heap.newAllocation(node, Allocation::Kind::InternalFieldObject);
         writes.add(StructurePLoc, LazyNode(m_graph.freeze(node->structure().get())));
@@ -1004,7 +1004,7 @@ private:
         ASSERT(m_heap.takeEscapees().isEmpty());
 
         Allocation* target = nullptr;
-        UncheckedKeyHashMap<PromotedLocationDescriptor, LazyNode> writes;
+        HashMap<PromotedLocationDescriptor, LazyNode> writes;
         PromotedLocationDescriptor exactRead;
 
         switch (node->op()) {
@@ -1553,7 +1553,7 @@ escapeChildren:
         // Typically we implement closure rule #2. However, when a candidate is
         // excluded due to InlineCallFrame mismatch, we use rule #1 to also exclude
         // anything that transitively depends on it.
-        UncheckedKeyHashMap<Node*, Vector<Node*>> dependencies;
+        HashMap<Node*, Vector<Node*>> dependencies;
         bool hasUnescapedReads = false;
         for (BasicBlock* block : m_graph.blocksInPreOrder()) {
             m_heap = m_heapAtHead[block];
@@ -1614,7 +1614,7 @@ escapeChildren:
                 m_heap.pruneByLiveness(m_combinedLiveness.liveAtTail[block]);
 
                 {
-                    UncheckedKeyHashMap<Node*, Allocation> escapingOnEdge;
+                    HashMap<Node*, Allocation> escapingOnEdge;
                     for (const auto& entry : m_heap.allocations()) {
                         if (entry.value.isEscapedAllocation())
                             continue;
@@ -1635,12 +1635,13 @@ escapeChildren:
         };
 
         auto shouldDemote = [] (Node* candidate, Node* where) {
-            InlineCallFrame* inlineCallFrame = candidate->origin.semantic.inlineCallFrame();
-            if (!inlineCallFrame)
-                return false;
-            if (!inlineCallFrame->isClosureCall && !inlineCallFrame->isVarargs())
-                return false;
-            return inlineCallFrame != where->origin.semantic.inlineCallFrame();
+            for (InlineCallFrame* inlineCallFrame = candidate->origin.semantic.inlineCallFrame(); inlineCallFrame; inlineCallFrame = inlineCallFrame->directCaller.inlineCallFrame()) {
+                // Only the innermost closure-call or varargs frame needs checking: if `where` is
+                // inlined into that one, it is inlined into all of its callers as well.
+                if (inlineCallFrame->isClosureCall || inlineCallFrame->isVarargs())
+                    return !where->origin.semantic.inlineStackContains(*inlineCallFrame);
+            }
+            return false;
         };
 
         // Closure rule #2: for each candidate, promote every `dependencies` entry
@@ -1660,13 +1661,14 @@ escapeChildren:
             // If we're moving an allocation to `where` in the program, we need to ensure
             // we can still walk the stack at that point in the program for the
             // InlineCallFrame of the original allocation. Certain InlineCallFrames rely on
-            // data in the stack when taking a stack trace. All allocation sites can do a
-            // stack walk (we do a stack walk when we GC). Conservatively, we say we're
-            // still ok to move this allocation if we are moving within the same InlineCallFrame.
-            // We could be more precise here and do an analysis of stack writes. However,
-            // this scenario is so rare that we just take the conservative-and-straight-forward
-            // approach of checking that we're in the same InlineCallFrame.
-            forEachEscapee([&] (UncheckedKeyHashMap<Node*, Allocation>& escapees, Node* where) {
+            // data in the stack when taking a stack trace: a closure call's callee and a
+            // varargs call's argument count each live in a stack slot belonging to that
+            // frame, and intervening code is free to reuse those slots once execution has
+            // left it. All allocation sites can do a stack walk (we do a stack walk when we
+            // GC). So an allocation inside a closure-call or varargs frame can only be sunk
+            // to a point that is also inside that frame. When `where` is not, we demote the
+            // candidate and leave the allocation where it was.
+            forEachEscapee([&](HashMap<Node*, Allocation>& escapees, Node* where) {
                 for (Node* allocation : escapees.keys()) {
                     if (shouldDemote(allocation, where)) {
                         dataLogLnIf(Options::verboseObjectAllocationSinking(), "Removing candidate because it escapes from a frame that has a closure: ", allocation);
@@ -1704,7 +1706,7 @@ escapeChildren:
         dataLogLnIf(Options::verboseObjectAllocationSinking(), "Candidates: ", listDump(m_sinkCandidates));
 
         // Create the materialization nodes.
-        forEachEscapee([&] (UncheckedKeyHashMap<Node*, Allocation>& escapees, Node* where) {
+        forEachEscapee([&](HashMap<Node*, Allocation>& escapees, Node* where) {
 #if ASSERT_ENABLED
             for (Node* allocation : escapees.keys())
                 ASSERT(!shouldDemote(allocation, where));
@@ -1715,7 +1717,7 @@ escapeChildren:
         return hasUnescapedReads || !m_sinkCandidates.isEmpty();
     }
 
-    void placeMaterializations(UncheckedKeyHashMap<Node*, Allocation> escapees, Node* where)
+    void placeMaterializations(HashMap<Node*, Allocation> escapees, Node* where)
     {
         // First collect the hints that will be needed when the node
         // we materialize is still stored into other unescaped sink candidates.
@@ -1785,9 +1787,9 @@ escapeChildren:
 
 
         // Compute dependencies between materializations
-        UncheckedKeyHashMap<Node*, NodeSet> dependencies;
-        UncheckedKeyHashMap<Node*, NodeSet> reverseDependencies;
-        UncheckedKeyHashMap<Node*, NodeSet> forMaterialization;
+        HashMap<Node*, NodeSet> dependencies;
+        HashMap<Node*, NodeSet> reverseDependencies;
+        HashMap<Node*, NodeSet> forMaterialization;
         for (const auto& entry : escapees) {
             auto& myDependencies = dependencies.add(entry.key, NodeSet()).iterator->value;
             auto& myDependenciesForMaterialization = forMaterialization.add(entry.key, NodeSet()).iterator->value;
@@ -2037,7 +2039,7 @@ escapeChildren:
     {
         // Collect the set of heap locations that we will be operating
         // over.
-        UncheckedKeyHashSet<PromotedHeapLocation> locations;
+        HashSet<PromotedHeapLocation> locations;
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
             m_heap = m_heapAtHead[block];
 
@@ -2093,7 +2095,7 @@ escapeChildren:
         // We insert all required constants at top of block 0 so that
         // they are inserted only once and we don't clutter the graph
         // with useless constants everywhere
-        UncheckedKeyHashMap<FrozenValue*, Node*> lazyMapping;
+        HashMap<FrozenValue*, Node*> lazyMapping;
         m_bottom = m_insertionSet.insertConstant(0, m_graph.block(0)->at(0)->origin, jsNumber(1927));
 
         auto defaultFor = [&](PromotedHeapLocation location) -> Node* {
@@ -2116,7 +2118,7 @@ escapeChildren:
         };
 
 
-        Vector<UncheckedKeyHashSet<PromotedHeapLocation>> hintsForPhi(m_sinkCandidates.size());
+        Vector<HashSet<PromotedHeapLocation>> hintsForPhi(m_sinkCandidates.size());
 
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
             m_heap = m_heapAtHead[block];
@@ -3114,26 +3116,26 @@ escapeChildren:
     SSACalculator m_pointerSSA;
     SSACalculator m_allocationSSA;
     NodeSet m_sinkCandidates;
-    UncheckedKeyHashMap<PromotedHeapLocation, SSACalculator::Variable*> m_locationToVariable;
-    UncheckedKeyHashMap<Node*, SSACalculator::Variable*> m_nodeToVariable;
-    UncheckedKeyHashMap<PromotedHeapLocation, Node*> m_localMapping;
-    UncheckedKeyHashMap<Node*, Node*> m_escapeeToMaterialization;
+    HashMap<PromotedHeapLocation, SSACalculator::Variable*> m_locationToVariable;
+    HashMap<Node*, SSACalculator::Variable*> m_nodeToVariable;
+    HashMap<PromotedHeapLocation, Node*> m_localMapping;
+    HashMap<Node*, Node*> m_escapeeToMaterialization;
     InsertionSet m_insertionSet;
     InsertionSet m_rootInsertionSet;
     CombinedLiveness m_combinedLiveness;
 
-    UncheckedKeyHashMap<JSCell*, bool> m_validInferredValues;
+    HashMap<JSCell*, bool> m_validInferredValues;
 
     // This maps from a MaterializeXYZ node to the allocation identifier.
-    UncheckedKeyHashMap<Node*, Node*> m_materializationToEscapee;
+    HashMap<Node*, Node*> m_materializationToEscapee;
     // This maps from the node where an allocation escapes to the various MaterializeXYZ nodes.
-    UncheckedKeyHashMap<Node*, Vector<Node*>> m_materializationSiteToMaterializations;
-    UncheckedKeyHashMap<Node*, Vector<PromotedHeapLocation>> m_materializationSiteToRecoveries;
-    UncheckedKeyHashMap<Node*, Vector<std::pair<PromotedHeapLocation, Node*>>> m_materializationSiteToHints;
+    HashMap<Node*, Vector<Node*>> m_materializationSiteToMaterializations;
+    HashMap<Node*, Vector<PromotedHeapLocation>> m_materializationSiteToRecoveries;
+    HashMap<Node*, Vector<std::pair<PromotedHeapLocation, Node*>>> m_materializationSiteToHints;
 
-    UncheckedKeyHashMap<Node*, Vector<PromotedHeapLocation>> m_locationsForAllocation;
+    HashMap<Node*, Vector<PromotedHeapLocation>> m_locationsForAllocation;
 
-    UncheckedKeyHashMap<unsigned, Node*, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_constants;
+    HashMap<unsigned, Node*> m_constants;
 
     IndexMap<BasicBlock*, LocalHeap> m_heapAtHead;
     IndexMap<BasicBlock*, LocalHeap> m_heapAtTail;

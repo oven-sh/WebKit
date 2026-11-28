@@ -36,7 +36,6 @@ enum class FormatPatternTimeZone : uint8_t {
     Named,
 };
 
-// A request of the image. The code of the pattern follows it, in units of one or two bytes, then the arguments that the formatter was made with.
 struct FormatPatternHeader {
     FormatPatternKind kind;
     bool is16Bit;
@@ -45,10 +44,8 @@ struct FormatPatternHeader {
     uint16_t maxLength;
     uint16_t constructorArgumentsOffset;
     int16_t utcOffsetInMinutes;
-    // The formatter is given an object, and asks it for every option that it knows.
     bool readsOptions;
     uint8_t unused;
-    // Of the ICU that the pattern was read from. Another ICU may write other texts, so it formats by itself. Zero in the IR: the image's encoder fills it in.
     uint32_t digestOfICU[2];
 };
 static_assert(sizeof(FormatPatternHeader) == 20 && alignof(FormatPatternHeader) == 4);
@@ -59,7 +56,6 @@ enum class FormatterOptionKind : uint8_t {
     Number,
 };
 
-// The stretch of time around the time value that was formatted last in which a named time zone keeps one offset.
 struct UTCOffsetOfStretch {
     double start { 1 };
     double end { 0 };
@@ -296,7 +292,6 @@ struct ShortestDecimal {
     int exponent;
 };
 
-// The fewest digits that give the number back: those that Number.prototype.toString writes, and that ICU rounds.
 inline ShortestDecimal shortestDecimalOf(double magnitude)
 {
     NumberToStringBuffer buffer;
@@ -420,15 +415,11 @@ inline CharacterType* writeNumber(CharacterType* cursor, const CharacterType* co
     return cursor;
 }
 
-// The compiler calls these through the guard of their feature.
-
-// None where ICU does not say which it is. No pattern is made then, and none is used.
 std::optional<uint64_t> digestOfThisICU();
 
 JSObject* newDateTimeFormatFromArguments(JSGlobalObject*, const FormatPatternHeader*);
 JSObject* newNumberFormatFromArguments(JSGlobalObject*, const FormatPatternHeader*);
 
-// The null string: the pattern does not cover the value, and ICU formats it.
 String formatAtFixedOffsetWithPattern(const FormatPatternHeader*, double timeValue);
 String formatInNamedTimeZoneWithPattern(UTCOffsetOfStretch*, const FormatPatternHeader*, double timeValue);
 String formatNumberWithPattern(const FormatPatternHeader*, double);

@@ -65,7 +65,7 @@ public:
     virtual ~PageClientImpl();
 
     // FIXME: Eventually WebViewImpl should become the PageClient.
-    void LEGACY_NODELETE setImpl(WebViewImpl&);
+    NODELETE void setImpl(WebViewImpl&);
 
     void viewWillMoveToAnotherWindow();
 
@@ -95,6 +95,13 @@ private:
     void processDidExit() override;
     void processWillSwap() override;
     void pageClosed() override;
+#if ENABLE(DOCUMENT_PIP)
+    void createDocumentPictureInPicturePage(Ref<API::PageConfiguration>&&, CompletionHandler<void(RefPtr<WebPageProxy>&&)>&&) override;
+    void showDocumentPictureInPictureWindow() override;
+    void closeDocumentPictureInPictureWindow() override;
+    void focusDocumentPictureInPictureWindow() override;
+    void setDocumentPictureInPictureWindowFrame(const WebCore::FloatRect&) override;
+#endif
     void didRelaunchProcess() override;
     void preferencesDidChange() override;
     void toolTipChanged(const String& oldToolTip, const String& newToolTip) override;
@@ -173,10 +180,6 @@ private:
 
     CALayer *textIndicatorInstallationLayer() override;
 
-    void enterAcceleratedCompositingMode(const LayerTreeContext&) override;
-    void exitAcceleratedCompositingMode() override;
-    void updateAcceleratedCompositingMode(const LayerTreeContext&) override;
-    void didFirstLayerFlush(const LayerTreeContext&) override;
 
     RefPtr<ViewSnapshot> takeViewSnapshot(std::optional<WebCore::IntRect>&&) override;
     RefPtr<ViewSnapshot> takeViewSnapshot(std::optional<WebCore::IntRect>&&, ForceSoftwareCapturingViewportSnapshot) override;
@@ -229,7 +232,7 @@ private:
     void showPDFHUD(PDFPluginIdentifier) final;
 
 #if ENABLE(FULLSCREEN_API)
-    WebFullScreenManagerProxyClient& LEGACY_NODELETE fullScreenManagerProxyClient() final;
+    NODELETE WebFullScreenManagerProxyClient& fullScreenManagerProxyClient() final;
 #endif
 
 #if ENABLE(FULLSCREEN_API)
@@ -304,7 +307,6 @@ private:
     void derefView() override;
 
     void pageDidScroll(const WebCore::IntPoint&) override;
-    void didEndSyntheticMomentumScrolling() override;
     void didRestoreScrollPosition() override;
     bool windowIsFrontWindowUnderMouse(const NativeWebMouseEvent&) override;
 

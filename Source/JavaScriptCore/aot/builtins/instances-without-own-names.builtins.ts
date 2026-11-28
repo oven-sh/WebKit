@@ -1,8 +1,5 @@
 import * as b from "bun-builtins-table";
 
-// Native code puts no own property on an instance of these classes but the members that the class declares under `instance`.
-// The tests of test/aot in Bun that are named after the own names of instances make instances of each and look. A class that is not here and lists no names itself has said nothing.
-// No program reaches an AsyncFromSyncIterator: JSAsyncFromSyncIterator keeps what it holds in members of the cell.
 export default b.declarations(
   b.instancesWithoutOwnNames(
     "Array",

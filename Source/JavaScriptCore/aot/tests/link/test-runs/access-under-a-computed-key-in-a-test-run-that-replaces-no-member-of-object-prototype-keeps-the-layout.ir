@@ -1,0 +1,55 @@
+# The twin of access-under-a-computed-key-below-a-member-of-object-prototype-that-a-test-replaces-lets-the-layout-escape.ir: a test run in which no file spells a store to a member of Object.prototype
+# and the flow follows none there: each member is taken for what the table lists, which locks it, and the object that is read under a key that nobody knows stays with compiled code
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}stays-with-compiled-code
+# CHECK: layout L2 {{*}}stays-with-compiled-code
+
+layout L0 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="key" [isFreeName]
+    v9 = NewClosure function=f1
+    v10 = NewClosure function=f2
+    v11 = NewClosure function=f3
+    v12 = Call v9, -, v2, v8 calleeName="peek"
+    v13 = Call v10, -, v4, v8 calleeName="put"
+    v14 = Call v11, -, v6, v8 calleeName="at"
+    v15 = PropGet v2 key="name"
+    v16 = PropGet v4 key="name"
+    v17 = PropGet v6 key="name"
+    Return v17
+}
+function f1 name="peek" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="to"
+    v3 = Add v2, v1
+    v4 = Integer integer=1
+    ElemSet v0, v3, v4 mode=Strict
+    v6 = Undefined
+    Return v6
+}
+function f3 name="at" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}

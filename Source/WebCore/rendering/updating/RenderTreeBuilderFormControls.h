@@ -36,7 +36,7 @@ class RenderButton;
 class RenderTreeBuilder::FormControls {
     WTF_MAKE_TZONE_ALLOCATED(FormControls);
 public:
-    FormControls(RenderTreeBuilder&);
+    NODELETE FormControls(RenderTreeBuilder&);
 
     void attach(RenderButton& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
 
@@ -45,9 +45,10 @@ public:
     void updateAfterDescendants(RenderElement&);
 
 private:
-    RenderBlock& findOrCreateParentForChild(RenderButton&);
+    CheckedRef<RenderBlock> findOrCreateParentForChild(RenderButton&);
 
-    void updatePseudoElement(PseudoElementType, RenderElement&, StyleAppearance, RenderObject* beforeChild = nullptr);
+    enum class PseudoElementPosition : bool { FirstChild, LastChild };
+    void updatePseudoElement(PseudoElementType, RenderElement&, StyleAppearance, PseudoElementPosition = PseudoElementPosition::LastChild);
 
     RenderTreeBuilder& m_builder;
 };

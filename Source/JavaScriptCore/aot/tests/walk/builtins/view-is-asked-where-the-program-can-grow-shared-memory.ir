@@ -1,0 +1,73 @@
+# function size(view: Uint8Array) { return view.length; }   function count(table: Map<number, number>) { return table.size; }   function sizeOfOwn(view: Uint8Array) { return view.length; }
+# const shared = new SharedArrayBuffer(4); sink(size(new Uint8Array(shared)) + count(new Map()) + sizeOfOwn(new Uint8Array(4))); shared.grow;
+# Link knows every caller. But the program may grow shared memory, in another thread too, and a view that follows such memory is longer from then on. A read off a view that has neither a test nor a
+# closed arm leaves a loop that runs no other code: `while (view.length === 4) { }` would spin for ever. So Link says of no view made over what may be a buffer that it stays as made: the read in `size`
+# has a test and a closed arm, which holds it in its turn. A table follows no memory, and a view made of a number owns its memory: nobody else reaches it, whatever the program names. Both are read
+# without a closed arm, behind the check that holds the word against them.
+# It was once GetTypedArrayLength alone in `size`. Then the walk said nothing of ANY view wherever the program named grow, and a program with one read under an unknown key names it.
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK-NOT: stays-as-made
+# CHECK: function f2
+# CHECK: function f3
+# CHECK: parameter 0 {{*}}proven=Uint8Array{{*}} stays-as-made
+# RUN(WALK): walk f1 f2 f3 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = IsPristine
+# WALK: = GetTypedArrayLength
+# WALK: = PropGet {{*}}key="length"
+# WALK-LABEL: code f2:Body
+# WALK: = IsPristine {{*}}builtinClass=Map aspects=[Names, CellAlone]
+# WALK-NEXT: CheckProof {{*}}checkedType=true
+# WALK-NOT: PropGet
+# WALK: inlineBuiltin=MapSize
+# WALK-LABEL: code f3:Body
+# WALK: = IsPristine {{*}}builtinClass=Uint8Array aspects=[Names, CellAlone]
+# WALK-NEXT: CheckProof {{*}}checkedType=true
+# WALK-NOT: PropGet
+# WALK: = GetTypedArrayLength
+# RUN(SHELL): run-in-shell globalThis.sink = (total) => { print(total); };
+# SHELL: 8
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=4
+    v4 = Builtin builtin=SharedArrayBuffer
+    v5 = Construct v4, -, v3
+    v6 = Construct v2, -, v5
+    v7 = Builtin builtin=Map
+    v8 = Construct v7, -
+    v9 = Call v0, -, v6
+    v10 = Call v1, -, v8
+    v11 = Add v9, v10
+    v12 = NewClosure function=f3
+    v13 = Construct v2, -, v3
+    v14 = Call v12, -, v13
+    v15 = Add v11, v14
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="sink" [isFreeName]
+    v18 = Call v17, -, v15
+    v19 = PropGet v5 key="grow"
+    Return v19
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f2 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f3 name="sizeOfOwn" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

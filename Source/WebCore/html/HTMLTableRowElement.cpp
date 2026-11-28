@@ -62,7 +62,15 @@ Ref<HTMLTableRowElement> HTMLTableRowElement::create(const QualifiedName& tagNam
 
 HTMLTableRowElement::~HTMLTableRowElement() = default;
 
-static inline RefPtr<HTMLTableElement> LEGACY_NODELETE findTable(const HTMLTableRowElement& row)
+const MutableStyleProperties* HTMLTableRowElement::additionalPresentationalHintStyle() const
+{
+    auto table = findParentTable();
+    if (!table)
+        return nullptr;
+    return table->additionalRowStyle();
+}
+
+NODELETE static inline RefPtr<HTMLTableElement> findTable(const HTMLTableRowElement& row)
 {
     auto* parent = row.parentNode();
     if (auto* table = dynamicDowncast<HTMLTableElement>(parent))

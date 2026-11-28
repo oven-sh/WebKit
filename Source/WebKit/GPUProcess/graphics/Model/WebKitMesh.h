@@ -27,10 +27,15 @@
 
 #import <WebCore/NodeIdentifier.h>
 #import <simd/simd.h>
+#import <wtf/HashMap.h>
 #import <wtf/Ref.h>
 #import <wtf/RefCounted.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/TZoneMalloc.h>
+
+#if ENABLE(SPATIAL_PORTAL)
+#import <IOSurface/IOSurfaceRef.h>
+#endif
 
 OBJC_CLASS NSMutableArray;
 OBJC_CLASS NSUUID;
@@ -64,20 +69,25 @@ public:
 
     ~WebMesh();
 
-    bool LEGACY_NODELETE isValid() const;
-    void LEGACY_NODELETE render(uint32_t textureIndex, Function<void(bool)>&&) const;
+    NODELETE bool isValid() const;
+    NODELETE void render(uint32_t textureIndex, Function<void(bool)>&&) const;
     void updateMesh(WebCore::NodeIdentifier, Vector<WebModel::UpdateMeshDescriptor>&&);
     void removeNode(WebCore::NodeIdentifier);
-    void LEGACY_NODELETE updateTexture(Vector<WebModel::UpdateTextureDescriptor>&&);
-    void LEGACY_NODELETE updateMaterial(Vector<WebModel::UpdateMaterialDescriptor>&&);
-    void LEGACY_NODELETE setTransform(const simd_float4x4&);
+    NODELETE void updateTexture(Vector<WebModel::UpdateTextureDescriptor>&&);
+#if ENABLE(SPATIAL_PORTAL)
+    bool updatePortalContentTexture(const WebModel::TypedResourceId&, IOSurfaceRef, bool isOpaque, uint64_t bufferIdentifier);
+    void removePortalContentTexture(uint64_t bufferIdentifier);
+    void clearPortalContentTextures();
+#endif
+    NODELETE void updateMaterial(Vector<WebModel::UpdateMaterialDescriptor>&&);
+    NODELETE void setTransform(const simd_float4x4&);
     void setTransform(WebCore::NodeIdentifier, const simd_float4x4&);
-    void LEGACY_NODELETE setFOV(float);
-    void LEGACY_NODELETE setEnvironmentMap(WebModel::UpdateTextureDescriptor&&);
-    void LEGACY_NODELETE setDefaultEnvironmentMap();
-    void LEGACY_NODELETE removeEnvironmentMap();
-    void LEGACY_NODELETE play(bool);
-    void LEGACY_NODELETE updateRenderBuffers(const WebModel::ResizeMeshDescriptor&);
+    NODELETE void setFOV(float);
+    NODELETE void setEnvironmentMap(WebModel::UpdateTextureDescriptor&&);
+    NODELETE void setDefaultEnvironmentMap();
+    NODELETE void removeEnvironmentMap();
+    NODELETE void play(bool);
+    NODELETE void updateRenderBuffers(const WebModel::ResizeMeshDescriptor&);
     void processRemovals(Vector<WebModel::TypedResourceId>&& meshRemovals, Vector<WebModel::TypedResourceId>&& materialRemovals, Vector<WebModel::TypedResourceId>&& textureRemovals, CompletionHandler<void(bool)>&&);
 
 private:
@@ -91,6 +101,10 @@ private:
     const RetainPtr<NSUUID> m_meshIdentifier;
     mutable bool m_meshDataExists { false };
     std::optional<simd_float4x4> m_transform;
+#if ENABLE(SPATIAL_PORTAL)
+    RetainPtr<id> m_device;
+    HashMap<uint64_t, RetainPtr<id>> m_portalContentTextures;
+#endif
 #endif
 };
 

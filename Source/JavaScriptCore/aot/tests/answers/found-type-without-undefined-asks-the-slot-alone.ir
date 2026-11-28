@@ -1,0 +1,101 @@
+# const items = [{ price: 2, count: 3, bonus: 1 }, { price: 5, count: 7 }]; sink(items);
+# let total = 0; for (let i = 0; i < items.length; i++) total += items[i].price * items[i].count; show(total);
+# let extra = 0; for (let i = 0; i < items.length; i++) extra += items[i].bonus * 2; show(extra);
+# RUN(FILLED): run-in-shell globalThis.sink = (list) => { }; globalThis.show = (x) => print(x);
+# FILLED: 41
+# FILLED-NEXT: NaN
+# FILLED-NEXT: exited with 0
+# RUN(DELETED): run-in-shell globalThis.sink = (list) => { delete list[0].price; list[1].bonus = 4; }; globalThis.show = (x) => print(x);
+# DELETED: NaN
+# DELETED-NEXT: 10
+# DELETED-NEXT: exited with 0
+# RUN(INHERITED): run-in-shell globalThis.sink = (list) => { delete list[1].price; Object.setPrototypeOf(list[1], { get price() { print("getter"); return 10; } }); }; globalThis.show = (x) => print(x);
+# INHERITED: getter
+# INHERITED-NEXT: 76
+# INHERITED-NEXT: NaN
+# INHERITED-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell globalThis.sink = (list) => { Object.setPrototypeOf(list[1], { get price() { print("getter"); return 10; } }); }; globalThis.show = (x) => print(x);
+# HIDDEN-NOT: getter
+# HIDDEN: 41
+# HIDDEN-NEXT: NaN
+# HIDDEN-NEXT: exited with 0
+# RUN(MOVED): run-in-shell globalThis.sink = (list) => { list[1].price = "4"; list[0].count = { valueOf() { print("asked"); return 8; } }; }; globalThis.show = (x) => print(x);
+# MOVED: asked
+# MOVED-NEXT: 44
+# MOVED-NEXT: NaN
+# MOVED-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="price" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="count" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="bonus" declared={type=undefined|number flags=[IsExpected]}}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=2
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="price"
+    v3 = Integer integer=3
+    PropDefine v1, v3 key="count"
+    v5 = Integer integer=1
+    PropDefine v1, v5 key="bonus"
+    v7 = FinishObject v1
+    v8 = Integer integer=5
+    v9 = NewObject layout=L0
+    PropDefine v9, v8 key="price"
+    v11 = Integer integer=7
+    PropDefine v9, v11 key="count"
+    v13 = FinishObject v9
+    v14 = NewArray v7, v13
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="sink" [isFreeName]
+    v18 = Call v17, -, v15 calleeName="sink"
+    v19 = Integer
+    Jump -> next b1(v19, v19)
+  b1(v20, v21):
+    LoopHint
+    v23 = PropGet v15 key="length"
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    v25 = Less v21, v24
+    Branch v25 -> taken b2(), notTaken b3()
+  b2():
+    v26 = ElemGet v15, v21
+    v27 = Convert v26 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v28 = PropGet v27 key="price"
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    v30 = ElemGet v15, v21
+    v31 = Convert v30 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v32 = PropGet v31 key="count"
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Mul v29, v33
+    v35 = Add v20, v34
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    v37 = Increment v21
+    v38 = Convert v37 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v36, v38)
+  b3():
+    v39 = PropGet v16 key="show" [isFreeName]
+    v40 = Call v39, -, v20 calleeName="show"
+    Jump -> next b4(v19, v19)
+  b4(v41, v42):
+    LoopHint
+    v44 = PropGet v15 key="length"
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    v46 = Less v42, v45
+    Branch v46 -> taken b5(), notTaken b6()
+  b5():
+    v47 = ElemGet v15, v42
+    v48 = Convert v47 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v49 = PropGet v48 key="bonus"
+    v50 = Convert v49 declared={type=number flags=[IsExpected]}
+    v51 = Integer integer=2
+    v52 = Mul v50, v51
+    v53 = Add v41, v52
+    v54 = Convert v53 declared={type=number flags=[IsExpected]}
+    v55 = Increment v42
+    v56 = Convert v55 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v54, v56)
+  b6():
+    v57 = PropGet v16 key="show" [isFreeName]
+    v58 = Call v57, -, v41 calleeName="show"
+    Return v58
+}

@@ -1,0 +1,130 @@
+# `super(..)` enters whatever stands above the class object when it runs. Whoever has the class object in hand may lay another function there, so where unseen code has it the parent is proven of nothing,
+# and the call was the closed construction: a thousand instructions. What is written behind `extends` is the guess: one test of the parent, the constructor above behind it, the closed call where it fails.
+# class Above { }  class Meter extends Above { constructor() { super(); } }  sink(Above, Meter)  function many(n) { let x; while (n()) x = new Meter(); return x; }
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: [[parent]]: {{*}} = GetSuperBase
+# CHECK-NEXT: [[test]]: {{*}} = TypeTest [[parent]] testedType=f1
+# In a copy nothing has been done in front of super(): the failing side is the construction as written, and nothing meets the likely way again.
+# CHECK-NEXT: Branch [[test]] -> taken {{*}}, notTaken [[call]]()
+# CHECK: [[call]]() frequency=Rare isInLoop=true:
+# CHECK-NEXT: = CallDirect {{*}}function=f2 [isNeverInlined, isConstruction]
+# CHECK: : L1 {{*}} = NewObject layout=L1
+# RUN(ONE): walk f3 mechanisms=all
+# ONE-NOT: = SuperConstruct
+# RUN(WITHHELD): walk f3 mechanisms=-Guesses
+# WITHHELD-NOT: TypeTest {{*}}testedType=f1
+# WITHHELD: = SuperConstruct
+# A constructor function above a class that nobody else has: function Base() { this.a = 1; }  class Below extends Base { constructor() { super(); } }  function more(n) { let t = 0; while (t < n) t += new Below().a; return t; }
+# The parent is proven, and new.target is the one class object of a class that is written below the function: the object is one of that class, made in the place of the call, and the body stores into it.
+# RUN(FUNCTION): walk f6 mechanisms=all
+# FUNCTION-LABEL: code f6:Body
+# FUNCTION: frame 2 callee=f4 {{*}}isConstruction=true
+# Nobody but the loop has the object, so it is never made, and what the function stored is what is read.
+# FUNCTION-NOT: NewObject
+# FUNCTION-NOT: PropGet
+# FUNCTION: Return
+# RUN(NEVER): walk f6 mechanisms=all
+# NEVER-NOT: SuperConstruct
+# NEVER-NOT: GetConstructPrototype
+# Entered and not copied, the function takes the objects of the class below for its own: no guard turns them away into the slow body.
+# RUN(CALLED): walk f5 mechanisms=-Inlining
+# CALLED-LABEL: code f5:Body
+# CALLED-NOT: SuperConstruct
+# CALLED: [[made]]: L3 {{*}} = NewObject layout=L3
+# CALLED-NOT: role=ParameterGuard
+# CALLED: = CallDirect {{*}}function=f4 [isConstruction]
+# RUN(CLOSED): walk f5 mechanisms=none
+# CLOSED: = SuperConstruct
+
+layout L0 kind=Instance name="Above" module=m0 constructor=f1
+layout L1 kind=Instance name="Meter" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Base" module=m0 constructor=f4 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="Below" module=m0 base=L2 constructor=f5 fields=[{key="a" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L2 originField=0}] supertypes=[L2] flags=[HasHeritage]
+variable g0 name="Meter" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="Below" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f4
+    v9 = ResolveHeritage v8
+    v10 = NewClosure function=f5
+    v11 = NewClass v10, v8, v9 layout=L3
+    v12 = FinishClass v11 layout=L3
+    PutModuleVariable v12 variable=g1
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="sink" [isFreeName]
+    v16 = NewClosure function=f3
+    v17 = NewClosure function=f6
+    v18 = Integer integer=5
+    v19 = Call v17, -, v18
+    v20 = Call v15, -, v2, v6, v16, v19
+    Return v20
+}
+function f1 name="Above" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Meter" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="many" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Jump -> next b1(v1)
+  b1(v2: anything):
+    LoopHint
+    v4 = Call v0
+    v5 = ToBoolean v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g0
+    v7 = Construct v6
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+}
+function f4 name="Base" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f6 name="more" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2: anything):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = GetModuleVariable variable=g1
+    v6 = Construct v5
+    v7 = PropGet v6 key="a"
+    v8 = Add v2, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v2
+}

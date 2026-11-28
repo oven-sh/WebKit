@@ -36,6 +36,7 @@
 #include "WebFullScreenManagerProxyMessages.h"
 #include "WebPage.h"
 #include <WebCore/AbortSignal.h>
+#include <WebCore/BitmapImage.h>
 #include <WebCore/Color.h>
 #include <WebCore/ContainerNodeInlines.h>
 #include <WebCore/DocumentFullscreen.h>
@@ -212,6 +213,20 @@ bool WebFullScreenManager::supportsFullScreenForElement(const WebCore::Element& 
     return PAL::currentUserInterfaceIdiomIsDesktop() || !withKeyboard;
 #else
     return true;
+#endif
+}
+
+void WebFullScreenManager::beginRequestFullscreen()
+{
+#if PLATFORM(IOS_FAMILY)
+    m_page->send(Messages::WebFullScreenManagerProxy::BeginRequestFullscreen());
+#endif
+}
+
+void WebFullScreenManager::endRequestFullscreen()
+{
+#if PLATFORM(IOS_FAMILY)
+    m_page->send(Messages::WebFullScreenManagerProxy::EndRequestFullscreen());
 #endif
 }
 
@@ -468,6 +483,9 @@ void WebFullScreenManager::performEnterFullScreen()
         };
     }
 #endif // ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)
+
+    if (RefPtr mainVideoElement = m_mainVideoElement)
+        mediaDetails.isProjectedVideo = mainVideoElement->isSpatialVideoRendererActive();
 
     m_page->prepareToEnterElementFullScreen();
 
@@ -979,6 +997,10 @@ void WebFullScreenManager::exitFullScreenInMainFrame(CompletionHandler<void()>&&
         return completionHandler();
 
     DocumentFullscreen::finishExitFullscreen(*mainFrame, DocumentFullscreen::ExitMode::Resize);
+    if (RefPtr localMainFrame = m_page->localMainFrame()) {
+        if (RefPtr document = localMainFrame->document())
+            document->updateLayout();
+    }
     completionHandler();
 }
 

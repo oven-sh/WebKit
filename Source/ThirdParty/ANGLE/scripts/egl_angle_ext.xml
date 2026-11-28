@@ -351,6 +351,11 @@
                 <enum name="EGL_TEXTURE_INTERNAL_FORMAT_ANGLE"/>
                 <enum name="EGL_IOSURFACE_USAGE_HINT_ANGLE"/>
                 <enum name="EGL_BIND_TO_TEXTURE_TARGET_ANGLE"/>
+                <enum name="EGL_IOSURFACE_ORIENTATION_ANGLE"/>
+                <enum name="EGL_IOSURFACE_ORIENTATION_INVERT_X_ANGLE"/>
+                <enum name="EGL_IOSURFACE_ORIENTATION_INVERT_Y_ANGLE"/>
+                <enum name="EGL_IOSURFACE_ORIENTATION_SWAP_XY_ANGLE"/>
+                <enum name="EGL_SMPTE_240M_ANGLE"/>
             </require>
         </extension>
         <extension name="EGL_ANGLE_keyed_mutex" supported="egl">
@@ -520,6 +525,12 @@
                 <enum name="EGL_SYNC_METAL_COMMANDS_SCHEDULED_ANGLE"/>
             </require>
         </extension>
+        <extension name="EGL_ANGLE_query_renderer_strings" supported="egl">
+            <require>
+                <enum name="EGL_RENDERER_STRING_ANGLE"/>
+                <enum name="EGL_ANGLE_VERSION_STRING_ANGLE"/>
+            </require>
+        </extension>
     </extensions>
 
     <!-- SECTION: EGL enumerant (token) definitions. -->
@@ -653,11 +664,18 @@
         <enum value="0x34F1" name="EGL_PLATFORM_ANGLE_VULKAN_DRIVER_UUID_ANGLE"/>
         <enum value="0x34F2" name="EGL_PLATFORM_ANGLE_VULKAN_DRIVER_ID_ANGLE"/>
         <enum value="0x34F8" name="EGL_CONTEXT_HARDENED_ANGLE"/>
+        <enum value="0x34F9" name="EGL_RENDERER_STRING_ANGLE"/>
+        <enum value="0x34FA" name="EGL_ANGLE_VERSION_STRING_ANGLE"/>
+        <enum value="0x34FB" name="EGL_IOSURFACE_ORIENTATION_ANGLE"/>
+        <enum value="0x34FC" name="EGL_SMPTE_240M_ANGLE"/>
     </enums>
     <enums namespace="EGL" vendor="ANGLE">
         <enum value="0x0001" name="EGL_LOW_POWER_ANGLE"/>
         <enum value="0x0002" name="EGL_HIGH_POWER_ANGLE"/>
         <enum value="0x0001" name="EGL_SURFACE_ORIENTATION_INVERT_X_ANGLE"/>
         <enum value="0x0002" name="EGL_SURFACE_ORIENTATION_INVERT_Y_ANGLE"/>
+        <enum value="0x0001" name="EGL_IOSURFACE_ORIENTATION_INVERT_X_ANGLE"/>
+        <enum value="0x0002" name="EGL_IOSURFACE_ORIENTATION_INVERT_Y_ANGLE"/>
+        <enum value="0x0004" name="EGL_IOSURFACE_ORIENTATION_SWAP_XY_ANGLE"/>
     </enums>
 </registry>

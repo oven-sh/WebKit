@@ -74,12 +74,12 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) override;
     Path toClipPath() override;
     bool selfHasRelativeLengths() const override;
     void notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) final;
 
-    Document* LEGACY_NODELETE externalDocument() const;
+    NODELETE Document* externalDocument() const;
     void updateExternalDocument();
 
     FloatRect getBBox(StyleUpdateStrategy = StyleUpdateStrategy::Allow) final;
@@ -87,7 +87,7 @@ private:
     RefPtr<SVGElement> findTarget(AtomString* targetID = nullptr) const;
 
     void cloneTarget(ContainerNode&, SVGElement& target) const;
-    RefPtr<SVGElement> LEGACY_NODELETE targetClone() const;
+    NODELETE RefPtr<SVGElement> targetClone() const;
 
     void expandUseElementsInShadowTree() const;
     void expandSymbolElementsInShadowTree() const;

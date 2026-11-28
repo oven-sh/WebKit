@@ -1,0 +1,15 @@
+# function copy(from) { var to = from.other; to.a = from.a; to.b = from.b; to.c = from.c; return to; }   (the program of a-read-off-another-object-between-the-stores-of-a-stretch-has-its-look-in-front.ir)
+# Every field of a Pair is filled at its birth, and whatever takes a field out of its slot marks the cell. The test of `to` refuses marked objects, so behind it no slot of `to` need be asked whether it is filled:
+# a store goes by the mark as a read does. `from` is proven to be a Pair, but nothing is known of its mark here: two looks go to its slots, so its mark is asked ONCE in their place.
+# In front of the three stores stand two tests of a shape word and no look at a slot under `b` or `c`; a Pair that has lost a field, or whose field became a getter, takes the closed arm: the answers are the other test's
+# PROGRAM-OF: a-read-off-another-object-between-the-stores-of-a-stretch-has-its-look-in-front.ir
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
+# CHECK: PutSlot {{*}}key="a" receivers=[L0] level=Proven
+# CHECK: PutSlot {{*}}key="b" receivers=[L0] level=Proven
+# CHECK: PutSlot {{*}}key="c" receivers=[L0] level=Proven
+# RUN(LOOKS): walk f1 mechanisms=all
+# LOOKS-NOT: IsSlotFilled {{*}}key="b"
+# LOOKS-NOT: IsSlotFilled {{*}}key="c"

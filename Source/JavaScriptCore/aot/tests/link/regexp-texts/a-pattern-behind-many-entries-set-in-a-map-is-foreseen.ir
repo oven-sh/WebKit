@@ -1,0 +1,29 @@
+# Setting an entry touches one place of the map and pays for one, however many the map holds.
+# const map = new Map(); for (let n = 0; n < 6000; n++) map.set(n, n);   new RegExp("a" + map.size)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /a6000/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Map
+    v2 = Construct v1, -
+    v3 = String string="a"
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: anything):
+    LoopHint
+    v7 = PropGet v2 key="set"
+    v8 = Call v7, v2, v5, v5 calleeKey="set"
+    v9 = Increment v5
+    v10 = Integer integer=6000
+    v11 = Less v9, v10
+    Branch v11 -> taken b1(v9), notTaken b2()
+  b2():
+    v12 = PropGet v2 key="size"
+    v13 = Add v3, v12
+    v14 = Construct v0, -, v13
+    Return v4
+}

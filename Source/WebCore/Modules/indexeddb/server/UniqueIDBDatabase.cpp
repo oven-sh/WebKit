@@ -45,6 +45,7 @@
 #include "UniqueIDBDatabaseConnection.h"
 #include "UniqueIDBDatabaseManager.h"
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
@@ -70,7 +71,7 @@ static inline uint64_t estimateSize(const IDBKeyData& keyData)
         break;
     }
     case IndexedDB::KeyType::Array:
-        for (auto& data : keyData.array())
+        for (auto& data : borrow(keyData.array()))
             size += estimateSize(data);
         break;
     default:
@@ -102,7 +103,7 @@ static inline uint64_t estimateSize(const IDBObjectStoreInfo& info, const IndexI
     return size;
 }
 
-static inline uint64_t LEGACY_NODELETE estimateSize(const IDBValue& value)
+NODELETE static inline uint64_t estimateSize(const IDBValue& value)
 {
     uint64_t size = 4;
     size += value.data().size();
@@ -144,11 +145,12 @@ static inline uint64_t estimateSize(const IDBObjectStoreInfo& info)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(UniqueIDBDatabase);
 
-UniqueIDBDatabase::UniqueIDBDatabase(UniqueIDBDatabaseManager& manager, const IDBDatabaseIdentifier& identifier)
+UniqueIDBDatabase::UniqueIDBDatabase(WorkQueue& queue, UniqueIDBDatabaseManager& manager, const IDBDatabaseIdentifier& identifier)
     : m_manager(manager)
     , m_identifier(identifier)
+    , m_queue(queue)
 {
-    ASSERT(!isMainThread());
+    assertIsCurrent(m_queue);
 
     LOG_WITH_STREAM(IndexedDB, stream << "UniqueIDBDatabase::UniqueIDBDatabase() ("_s << this << ") "_s << m_identifier.loggingString());
 }
@@ -156,7 +158,7 @@ UniqueIDBDatabase::UniqueIDBDatabase(UniqueIDBDatabaseManager& manager, const ID
 UniqueIDBDatabase::~UniqueIDBDatabase()
 {
     LOG_WITH_STREAM(IndexedDB, stream << "UniqueIDBDatabase::~UniqueIDBDatabase() ("_s << this << ") "_s << m_identifier.loggingString());
-    ASSERT(!isMainThread());
+    assertIsCurrent(m_queue);
     ASSERT(m_pendingOpenDBRequests.isEmpty());
     ASSERT(!m_currentOpenDBRequest);
     ASSERT(m_inProgressTransactions.isEmpty());
@@ -181,7 +183,7 @@ UniqueIDBDatabaseManager* UniqueIDBDatabase::manager()
 void UniqueIDBDatabase::openDatabaseConnection(IDBConnectionToClient& connection, const IDBOpenRequestData& requestData)
 {
     LOG(IndexedDB, "UniqueIDBDatabase::openDatabaseConnection");
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
 
     m_pendingOpenDBRequests.add(ServerOpenDBRequest::create(connection, requestData));
 
@@ -243,7 +245,7 @@ void UniqueIDBDatabase::performCurrentOpenOperationAfterSpaceCheck(bool isGrante
             if (!backingStoreOpenError)
                 m_databaseInfo = makeUnique<IDBDatabaseInfo>(databaseInfo);
             else {
-                LOG_ERROR("Failed to get database info '%s'", backingStoreOpenError.message().utf8());
+                LOG_ERROR("Failed to get database info '%s'", makeUTF8CString(backingStoreOpenError.message()));
                 m_backingStore = nullptr;
             }
         }
@@ -333,7 +335,7 @@ void UniqueIDBDatabase::performCurrentDeleteOperation()
 
 void UniqueIDBDatabase::deleteBackingStore()
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::deleteBackingStore");
     
     auto backingStore = m_backingStore ? std::exchange(m_backingStore, nullptr) : CheckedRef { *m_manager }->createBackingStore(m_identifier);
@@ -374,7 +376,7 @@ void UniqueIDBDatabase::clearStalePendingOpenDBRequests()
 
 void UniqueIDBDatabase::handleDatabaseOperations()
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::handleDatabaseOperations - There are %u pending", m_pendingOpenDBRequests.size());
 
     if (!m_currentOpenDBRequest && (m_versionChangeDatabaseConnection || m_versionChangeTransaction))
@@ -595,7 +597,7 @@ void UniqueIDBDatabase::addOpenDatabaseConnection(Ref<UniqueIDBDatabaseConnectio
 
 void UniqueIDBDatabase::createObjectStore(UniqueIDBDatabaseTransaction& transaction, const IDBObjectStoreInfo& info, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::createObjectStore");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -630,7 +632,7 @@ void UniqueIDBDatabase::createObjectStore(UniqueIDBDatabaseTransaction& transact
 
 void UniqueIDBDatabase::deleteObjectStore(UniqueIDBDatabaseTransaction& transaction, const String& objectStoreName, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::deleteObjectStore");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -667,7 +669,7 @@ void UniqueIDBDatabase::deleteObjectStore(UniqueIDBDatabaseTransaction& transact
 
 void UniqueIDBDatabase::renameObjectStore(UniqueIDBDatabaseTransaction& transaction, IDBObjectStoreIdentifier objectStoreIdentifier, const String& newName, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::renameObjectStore");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -709,7 +711,7 @@ void UniqueIDBDatabase::renameObjectStore(UniqueIDBDatabaseTransaction& transact
 
 void UniqueIDBDatabase::clearObjectStore(UniqueIDBDatabaseTransaction& transaction, IDBObjectStoreIdentifier objectStoreIdentifier, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::clearObjectStore");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -737,7 +739,7 @@ void UniqueIDBDatabase::clearObjectStore(UniqueIDBDatabaseTransaction& transacti
 
 void UniqueIDBDatabase::createIndexAsync(UniqueIDBDatabaseTransaction& transaction, const IDBIndexInfo& indexInfo)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
 
     CheckedPtr manager = m_manager.get();
     if (!manager)
@@ -828,7 +830,7 @@ void UniqueIDBDatabase::didCreateIndexAsyncForTransaction(UniqueIDBDatabaseTrans
 
 void UniqueIDBDatabase::deleteIndex(UniqueIDBDatabaseTransaction& transaction, IDBObjectStoreIdentifier objectStoreIdentifier, const String& indexName, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::deleteIndex");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -872,7 +874,7 @@ void UniqueIDBDatabase::deleteIndex(UniqueIDBDatabaseTransaction& transaction, I
 
 void UniqueIDBDatabase::renameIndex(UniqueIDBDatabaseTransaction& transaction, IDBObjectStoreIdentifier objectStoreIdentifier, IDBIndexIdentifier indexIdentifier, const String& newName, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::renameIndex");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -920,7 +922,7 @@ void UniqueIDBDatabase::renameIndex(UniqueIDBDatabaseTransaction& transaction, I
 
 void UniqueIDBDatabase::putOrAdd(const IDBRequestData& requestData, const IDBKeyData& keyData, const IDBValue& value, const IndexIDToIndexKeyMap& indexKeys, IndexedDB::ObjectStoreOverwriteMode overwriteMode, KeyDataCallback&& callback)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::putOrAdd");
 
     ASSERT(m_databaseInfo);
@@ -992,7 +994,7 @@ void UniqueIDBDatabase::putOrAdd(const IDBRequestData& requestData, const IDBKey
 
 void UniqueIDBDatabase::putOrAddAfterSpaceCheck(const IDBRequestData& requestData, const IDBKeyData& keyData, const IDBValue& value, IndexedDB::ObjectStoreOverwriteMode overwriteMode, KeyDataCallback&& callback, bool isKeyGenerated, const IndexIDToIndexKeyMap& indexKeys, const IDBObjectStoreInfo& objectStoreInfo, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     ASSERT(m_databaseInfo);
 
     if (!m_backingStore)
@@ -1022,7 +1024,7 @@ void UniqueIDBDatabase::putOrAddAfterSpaceCheck(const IDBRequestData& requestDat
 
 void UniqueIDBDatabase::getRecord(const IDBRequestData& requestData, const IDBGetRecordData& getRecordData, GetResultCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::getRecord");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1058,7 +1060,7 @@ void UniqueIDBDatabase::getRecord(const IDBRequestData& requestData, const IDBGe
 
 void UniqueIDBDatabase::getAllRecords(const IDBRequestData& requestData, const IDBGetAllRecordsData& getAllRecordsData, GetAllResultsCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::getAllRecords");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1088,7 +1090,7 @@ void UniqueIDBDatabase::getAllRecords(const IDBRequestData& requestData, const I
 
 void UniqueIDBDatabase::getCount(const IDBRequestData& requestData, const IDBKeyRangeData& range, CountCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::getCount");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1118,7 +1120,7 @@ void UniqueIDBDatabase::getCount(const IDBRequestData& requestData, const IDBKey
 
 void UniqueIDBDatabase::deleteRecord(const IDBRequestData& requestData, const IDBKeyRangeData& keyRangeData, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::deleteRecord");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1147,7 +1149,7 @@ void UniqueIDBDatabase::deleteRecord(const IDBRequestData& requestData, const ID
 
 void UniqueIDBDatabase::openCursor(const IDBRequestData& requestData, const IDBCursorInfo& info, GetResultCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::openCursor");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1177,7 +1179,7 @@ void UniqueIDBDatabase::openCursor(const IDBRequestData& requestData, const IDBC
 
 void UniqueIDBDatabase::iterateCursor(const IDBRequestData& requestData, const IDBIterateCursorData& data, GetResultCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::iterateCursor");
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1208,7 +1210,7 @@ void UniqueIDBDatabase::iterateCursor(const IDBRequestData& requestData, const I
 
 void UniqueIDBDatabase::commitTransaction(UniqueIDBDatabaseTransaction& transaction, uint64_t handledRequestResultsCount, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG_WITH_STREAM(IndexedDB, stream << "UniqueIDBDatabase::commitTransaction - "_s << transaction.info().identifier().loggingString());
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1264,7 +1266,7 @@ void UniqueIDBDatabase::commitTransaction(UniqueIDBDatabaseTransaction& transact
 
 void UniqueIDBDatabase::abortTransaction(UniqueIDBDatabaseTransaction& transaction, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG_WITH_STREAM(IndexedDB, stream << "UniqueIDBDatabase::abortTransaction - "_s << transaction.info().identifier().loggingString());
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
@@ -1327,7 +1329,7 @@ void UniqueIDBDatabase::abortTransaction(UniqueIDBDatabaseTransaction& transacti
 
 void UniqueIDBDatabase::didFinishHandlingVersionChange(UniqueIDBDatabaseConnection& connection, const IDBResourceIdentifier& transactionIdentifier)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG(IndexedDB, "UniqueIDBDatabase::didFinishHandlingVersionChange");
 
     ASSERT_UNUSED(transactionIdentifier, !m_versionChangeTransaction || m_versionChangeTransaction->info().identifier() == transactionIdentifier);
@@ -1342,7 +1344,7 @@ void UniqueIDBDatabase::didFinishHandlingVersionChange(UniqueIDBDatabaseConnecti
 
 void UniqueIDBDatabase::connectionClosedFromClient(UniqueIDBDatabaseConnection& connection)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG_WITH_STREAM(IndexedDB, stream << "UniqueIDBDatabase::connectionClosedFromClient - "_s << connection.openRequestIdentifier().loggingString() << " ("_s << connection.identifier().toUInt64() << ")"_s);
 
     Ref<UniqueIDBDatabaseConnection> protectedConnection(connection);
@@ -1382,7 +1384,7 @@ bool UniqueIDBDatabase::isVersionChangeTransactionActive(const UniqueIDBDatabase
 
 void UniqueIDBDatabase::connectionClosedFromServer(UniqueIDBDatabaseConnection& connection)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
     LOG_WITH_STREAM(IndexedDB, stream << "UniqueIDBDatabase::connectionClosedFromServer - "_s << connection.openRequestIdentifier().loggingString() << " ("_s << connection.identifier().toUInt64() << ")"_s);
 
     protect(connection.connectionToClient())->didCloseFromServer(connection, IDBError::userDeleteError());
@@ -1436,7 +1438,7 @@ void UniqueIDBDatabase::activateTransactionInBackingStore(UniqueIDBDatabaseTrans
     transaction.didActivateInBackingStore(error);
 }
 
-template<typename T> bool LEGACY_NODELETE scopesOverlap(const T& aScopes, const Vector<IDBObjectStoreIdentifier>& bScopes)
+template<typename T> NODELETE bool scopesOverlap(const T& aScopes, const Vector<IDBObjectStoreIdentifier>& bScopes)
 {
     for (auto scope : bScopes) {
         if (aScopes.contains(scope))
@@ -1525,7 +1527,7 @@ void UniqueIDBDatabase::transactionCompleted(RefPtr<UniqueIDBDatabaseTransaction
 {
     ASSERT(transaction);
     ASSERT(!m_inProgressTransactions.contains(transaction->info().identifier()));
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_queue);
 
     for (auto objectStore : transaction->objectStoreIdentifiers()) {
         if (!transaction->isReadOnly()) {
@@ -1601,13 +1603,6 @@ void UniqueIDBDatabase::immediateClose()
     close();
 }
 
-bool UniqueIDBDatabase::hasActiveTransactions() const
-{
-    ASSERT(isMainThread());
-
-    return !m_inProgressTransactions.isEmpty();
-}
-
 void UniqueIDBDatabase::abortActiveTransactions()
 {
     for (auto& identifier : copyToVector(m_inProgressTransactions.keys())) {
@@ -1677,7 +1672,7 @@ UniqueIDBDatabase::DidAbortAnyTransaction UniqueIDBDatabase::abortInProgressTran
     }
 
     bool abortedAnyTransaction = false;
-    for (auto& transaction : transactionsToAbort) {
+    for (auto& transaction : borrow(transactionsToAbort)) {
         auto transactionIdentifier = transaction->info().identifier();
         auto takenTransaction = m_inProgressTransactions.take(transactionIdentifier);
         if (!takenTransaction)

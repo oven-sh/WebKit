@@ -1,0 +1,42 @@
+# The list follows from the program alone. An object may have a method called length. A built-in that never reads the length of what it is handed, Object.keys among them, takes such an object like any other;
+# one that goes through what it is handed by its length is refused it, as ever.
+# const schema = { length() {}, parse() { return "^p"; } }; new RegExp(schema.parse() + Object.keys(schema).length); new RegExp(Array.prototype.join.call(schema) + "joined");
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /^p2/
+# CHECK-NOT: joined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[{key="length" declared={type=anything}}, {key="parse" declared={type=anything}}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = PropGet v2 key="parse"
+    v4 = Call v3, v2 calleeKey="parse"
+    v5 = Builtin builtin=ObjectKeys
+    v6 = Call v5, -, v2
+    v7 = PropGet v6 key="length"
+    v8 = Add v4, v7
+    v9 = Builtin builtin=RegExp
+    v10 = Construct v9, -, v8
+    v11 = Builtin builtin=ArrayPrototypeJoin
+    v12 = PropGet v11 key="call"
+    v13 = Call v12, v11, v2 calleeKey="call"
+    v14 = String string="joined"
+    v15 = Add v13, v14
+    v16 = Construct v9, -, v15
+    Return v16
+}
+function f1 name="length" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="parse" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="^p"
+    Return v0
+}

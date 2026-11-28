@@ -176,16 +176,27 @@ void Session::close(Function<void(CommandResult&&)>&& completionHandler)
     });
 }
 
+static void setTimeoutValue(JSON::Object& object, const String& key, double timeout)
+{
+    // A null timeout is stored as infinity, and serialized back as null.
+    if (std::isinf(timeout))
+        object.setValue(key, JSON::Value::null());
+    else
+        object.setDouble(key, timeout);
+}
+
+Ref<JSON::Object> Session::timeoutsObject() const
+{
+    auto timeouts = JSON::Object::create();
+    setTimeoutValue(timeouts.get(), "script"_s, m_scriptTimeout);
+    setTimeoutValue(timeouts.get(), "pageLoad"_s, m_pageLoadTimeout);
+    setTimeoutValue(timeouts.get(), "implicit"_s, m_implicitWaitTimeout);
+    return timeouts;
+}
+
 void Session::getTimeouts(Function<void(CommandResult&&)>&& completionHandler)
 {
-    auto parameters = JSON::Object::create();
-    if (m_scriptTimeout == std::numeric_limits<double>::infinity())
-        parameters->setValue("script"_s, JSON::Value::null());
-    else
-        parameters->setDouble("script"_s, m_scriptTimeout);
-    parameters->setDouble("pageLoad"_s, m_pageLoadTimeout);
-    parameters->setDouble("implicit"_s, m_implicitWaitTimeout);
-    completionHandler(CommandResult::success(WTF::move(parameters)));
+    completionHandler(CommandResult::success(timeoutsObject()));
 }
 
 void Session::setTimeouts(const Timeouts& timeouts, Function<void(CommandResult&&)>&& completionHandler)
@@ -197,6 +208,13 @@ void Session::setTimeouts(const Timeouts& timeouts, Function<void(CommandResult&
     if (timeouts.implicit)
         m_implicitWaitTimeout = timeouts.implicit.value();
     completionHandler(CommandResult::success());
+}
+
+void Session::setPageLoadTimeoutParameter(JSON::Object& parameters) const
+{
+    // JSON can't represent infinity, so a null (infinite) page load timeout is sent to the
+    // browser as the maximum safe integer, which the browser treats as no timeout.
+    parameters.setDouble("pageLoadTimeout"_s, std::isinf(m_pageLoadTimeout) ? maxSafeInteger : m_pageLoadTimeout);
 }
 
 String Session::uncheckedTopLevelBrowsingContext() const
@@ -294,25 +312,93 @@ void Session::handleUserPrompts(Function<void(CommandResult&&)>&& completionHand
     });
 }
 
+static PromptHandlerConfiguration promptHandlerForType(const std::optional<UserPromptHandler>& userPromptHandler, UserPromptType type)
+{
+    // https://w3c.github.io/webdriver/#dfn-get-the-prompt-handler
+    if (userPromptHandler) {
+        const std::optional<PromptHandlerConfiguration>* handlerForType = nullptr;
+        switch (type) {
+        case UserPromptType::Alert:
+            handlerForType = &userPromptHandler->alert;
+            break;
+        case UserPromptType::BeforeUnload:
+            handlerForType = &userPromptHandler->beforeUnload;
+            break;
+        case UserPromptType::Confirm:
+            handlerForType = &userPromptHandler->confirm;
+            break;
+        case UserPromptType::Prompt:
+            handlerForType = &userPromptHandler->prompt;
+            break;
+        case UserPromptType::Default:
+            break;
+        }
+        if (handlerForType && *handlerForType)
+            return **handlerForType;
+        if (userPromptHandler->defaultHandler)
+            return *userPromptHandler->defaultHandler;
+    }
+
+    if (type == UserPromptType::BeforeUnload)
+        return { PromptHandlerType::Accept, false };
+
+    if (userPromptHandler && userPromptHandler->fallbackDefault)
+        return *userPromptHandler->fallbackDefault;
+
+    return { PromptHandlerType::Dismiss, true };
+}
+
+static UserPromptType userPromptTypeFromDialogType(const String& dialogType)
+{
+    if (dialogType == "alert"_s)
+        return UserPromptType::Alert;
+    if (dialogType == "beforeunload"_s)
+        return UserPromptType::BeforeUnload;
+    if (dialogType == "confirm"_s)
+        return UserPromptType::Confirm;
+    if (dialogType == "prompt"_s)
+        return UserPromptType::Prompt;
+    return UserPromptType::Default;
+}
+
 void Session::handleUnexpectedAlertOpen(Function<void(CommandResult&&)>&& completionHandler)
 {
-    switch (capabilities().unhandledPromptBehavior.value_or(UnhandledPromptBehavior::DismissAndNotify)) {
-    case UnhandledPromptBehavior::Dismiss:
-        dismissAlert(WTF::move(completionHandler));
-        break;
-    case UnhandledPromptBehavior::Accept:
-        acceptAlert(WTF::move(completionHandler));
-        break;
-    case UnhandledPromptBehavior::DismissAndNotify:
-        dismissAndNotifyAlert(WTF::move(completionHandler));
-        break;
-    case UnhandledPromptBehavior::AcceptAndNotify:
-        acceptAndNotifyAlert(WTF::move(completionHandler));
-        break;
-    case UnhandledPromptBehavior::Ignore:
-        reportUnexpectedAlertOpen(WTF::move(completionHandler));
-        break;
-    }
+    // https://w3c.github.io/webdriver/#dfn-handle-any-user-prompts
+    auto parameters = JSON::Object::create();
+    parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
+    m_host->sendCommandToBackend("typeOfCurrentJavaScriptDialog"_s, WTF::move(parameters), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) mutable {
+        auto type = UserPromptType::Default;
+        if (response.isError) {
+            // The dialog was closed after isShowingJavaScriptDialog returned true, so there's nothing to handle.
+            if (CommandResult::fail(WTF::move(response.responseObject)).errorCode() == CommandResult::ErrorCode::NoSuchAlert) {
+                completionHandler(CommandResult::success());
+                return;
+            }
+            // Otherwise the browser can't tell the dialog type, so fall back to the "default" handler.
+        } else if (response.responseObject)
+            type = userPromptTypeFromDialogType(response.responseObject->getString("type"_s));
+
+        auto configuration = promptHandlerForType(capabilities().unhandledPromptBehavior, type);
+        switch (configuration.handler) {
+        case PromptHandlerType::Accept:
+            if (configuration.notify)
+                acceptAndNotifyAlert(WTF::move(completionHandler));
+            else
+                acceptAlert(WTF::move(completionHandler));
+            break;
+        case PromptHandlerType::Dismiss:
+            if (configuration.notify)
+                dismissAndNotifyAlert(WTF::move(completionHandler));
+            else
+                dismissAlert(WTF::move(completionHandler));
+            break;
+        case PromptHandlerType::Ignore:
+            // An "ignore" handler always notifies.
+            ASSERT(configuration.notify);
+            reportUnexpectedAlertOpen(WTF::move(completionHandler));
+            break;
+        }
+    });
 }
 
 void Session::dismissAndNotifyAlert(Function<void(CommandResult&&)>&& completionHandler)
@@ -376,7 +462,7 @@ void Session::go(const String& url, Function<void(CommandResult&&)>&& completion
         auto parameters = JSON::Object::create();
         parameters->setString("handle"_s, uncheckedTopLevelBrowsingContext());
         parameters->setString("url"_s, url);
-        parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
+        setPageLoadTimeoutParameter(parameters.get());
         if (auto pageLoadStrategy = pageLoadStrategyString())
             parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
         m_host->sendCommandToBackend("navigateBrowsingContext"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) mutable {
@@ -441,7 +527,7 @@ void Session::back(Function<void(CommandResult&&)>&& completionHandler)
         }
         auto parameters = JSON::Object::create();
         parameters->setString("handle"_s, uncheckedTopLevelBrowsingContext());
-        parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
+        setPageLoadTimeoutParameter(parameters.get());
         if (auto pageLoadStrategy = pageLoadStrategyString())
             parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
         m_host->sendCommandToBackend("goBackInBrowsingContext"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) mutable {
@@ -468,7 +554,7 @@ void Session::forward(Function<void(CommandResult&&)>&& completionHandler)
         }
         auto parameters = JSON::Object::create();
         parameters->setString("handle"_s, uncheckedTopLevelBrowsingContext());
-        parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
+        setPageLoadTimeoutParameter(parameters.get());
         if (auto pageLoadStrategy = pageLoadStrategyString())
             parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
         m_host->sendCommandToBackend("goForwardInBrowsingContext"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) mutable {
@@ -495,7 +581,7 @@ void Session::refresh(Function<void(CommandResult&&)>&& completionHandler)
         }
         auto parameters = JSON::Object::create();
         parameters->setString("handle"_s, uncheckedTopLevelBrowsingContext());
-        parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
+        setPageLoadTimeoutParameter(parameters.get());
         if (auto pageLoadStrategy = pageLoadStrategyString())
             parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
         m_host->sendCommandToBackend("reloadBrowsingContext"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) mutable {
@@ -1235,8 +1321,9 @@ void Session::findElements(const String& strategy, const String& selector, FindE
         parameters->setString("function"_s, StringImpl::createWithoutCopying(FindNodesJavaScript));
         parameters->setArray("arguments"_s, WTF::move(arguments));
         parameters->setBoolean("expectsImplicitCallbackArgument"_s, true);
-        // If there's an implicit wait, use one second more as callback timeout.
-        if (m_implicitWaitTimeout)
+        // If there's a finite implicit wait, use one second more as callback timeout.
+        // A null (infinite) implicit wait is passed to FindNodes as null and keeps polling.
+        if (m_implicitWaitTimeout && std::isfinite(m_implicitWaitTimeout))
             parameters->setDouble("callbackTimeout"_s, m_implicitWaitTimeout + 1000);
 
         m_host->sendCommandToBackend("evaluateJavaScriptFunction"_s, WTF::move(parameters), [this, protectedThis, mode, isShadowRoot, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
@@ -1307,6 +1394,8 @@ void Session::getActiveElement(Function<void(CommandResult&&)>&& completionHandl
         }
         auto parameters = JSON::Object::create();
         parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
+        if (m_currentBrowsingContext)
+            parameters->setString("frameHandle"_s, m_currentBrowsingContext.value());
         parameters->setString("function"_s, "function() { return document.activeElement; }"_s);
         parameters->setArray("arguments"_s, JSON::Array::create());
         m_host->sendCommandToBackend("evaluateJavaScriptFunction"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
@@ -1507,7 +1596,7 @@ void Session::getElementTagName(const String& elementID, Function<void(CommandRe
         parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
         if (m_currentBrowsingContext)
             parameters->setString("frameHandle"_s, m_currentBrowsingContext.value());
-        parameters->setString("function"_s, "function(element) { return element.tagName.toLowerCase() }"_s);
+        parameters->setString("function"_s, "function(element) { return element.prefix ? element.prefix + ':' + element.localName : element.localName }"_s);
         parameters->setArray("arguments"_s, WTF::move(arguments));
         m_host->sendCommandToBackend("evaluateJavaScriptFunction"_s, WTF::move(parameters), [protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
             if (response.isError || !response.responseObject) {
@@ -1922,7 +2011,7 @@ void Session::waitForNavigationToComplete(Function<void(CommandResult&&)>&& comp
         parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
         if (m_currentBrowsingContext)
             parameters->setString("frameHandle"_s, m_currentBrowsingContext.value());
-        parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
+        setPageLoadTimeoutParameter(parameters.get());
         if (auto pageLoadStrategy = pageLoadStrategyString())
             parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
         m_host->sendCommandToBackend("waitForNavigationToComplete"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
@@ -2435,8 +2524,7 @@ void Session::elementSendKeys(const String& elementID, const String& text, Funct
 
                     unsigned stickyModifiers = 0;
                     auto textLength = text.length();
-                    Vector<KeyboardInteraction> interactions;
-                    interactions.reserveInitialCapacity(textLength);
+                    Vector<KeyboardInteraction> interactions(ReserveCapacityTag { }, textLength);
                     for (unsigned i = 0; i < textLength; ++i) {
                         auto key = text[i];
                         KeyboardInteraction interaction;
@@ -3352,18 +3440,11 @@ void Session::dispatchBidiMessage(RefPtr<JSON::Object>&& message)
 
     if (bidiMessage->getString("type"_s) == "event"_s) {
         if (bidiMessage->size() < 3 || (bidiMessage->find("method"_s) == bidiMessage->end()) || (bidiMessage->find("params"_s) == bidiMessage->end())) {
-            RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Malformed bidi event: %s", bidiMessageValue->toJSONString().utf8());
+            RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Malformed bidi event: %s", makeUTF8CString(bidiMessageValue->toJSONString()));
             return;
         }
 
         auto bidiMethod = bidiMessage->getString("method"_s);
-
-        // Keep the public script.realmDestroyed payload aligned with current client expectations,
-        // while still using context internally for subscription matching.
-        if (bidiMethod == "script.realmDestroyed"_s) {
-            if (auto eventParameters = bidiMessage->getObject("params"_s))
-                eventParameters->remove("context"_s);
-        }
 
         if (bidiMethod == "log.entryAdded"_s)
             bidiMessage = processLogEntryAdded(WTF::move(bidiMessage));

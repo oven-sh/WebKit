@@ -1,0 +1,50 @@
+# a file that an executable holds too meets in a test run what it meets there: its store on a member that the table locks opens nothing, so the program locks the member and the run time refuses the store
+# src/polyfill.js, of the product: Math.imul = () => 7   a.test.js: import "./src/polyfill.js"; Math.max = () => 7; Math.imul(given, given); Math.max(given)
+# the control: the same store in the file of the tests leaves Math.max open
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks open
+# CHECK: locked MathImul constant
+# RUN(OPEN): locks open
+# OPEN-NOT: locked MathMax
+# OPEN: open MathMax written-under-its-name
+# RUN(LIST): test-run
+# LIST: replaces MathMax
+# RUN(NEVER): test-run
+# NEVER-NOT: replaces MathImul
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/src/polyfill.js" displayPath="src/polyfill.js" flags=[HasReadOnlyBuiltins] body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="max"
+    v4 = PropGet v0 key="given" [isFreeName]
+    v5 = PropGet v1 key="imul"
+    v6 = Call v5, v1, v4, v4 calleeKey="imul"
+    v7 = PropGet v1 key="max"
+    v8 = Call v7, v1, v4 calleeKey="max"
+    Return v8
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="imul"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="patched" module=m1 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

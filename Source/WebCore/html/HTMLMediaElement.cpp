@@ -71,6 +71,7 @@
 #include "HTMLAudioElement.h"
 #include "HTMLParserIdioms.h"
 #include "HTMLSourceElement.h"
+#include "HTMLStyleElement.h"
 #include "HTMLTrackElement.h"
 #include "HTMLVideoElement.h"
 #include "HostingContext.h"
@@ -85,6 +86,8 @@
 #include "JSHTMLMediaElement.h"
 #include "JSMediaControlsHost.h"
 #include "JSValueInWrappedObjectInlines.h"
+#include "LazyLoadElementObserver.h"
+#include "LazyLoading.h"
 #include "LoadableTextTrack.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
@@ -293,7 +296,7 @@ static constexpr double maximumHLSPlaybackRate = 2;
 static constexpr auto mediaSourceBlobProtocol = "blob"_s;
 #endif
 
-#if ENABLE(REMOVE_ALL_RESTRICTIONS_ON_AUDIBILITY_CHANGE)
+#if PLATFORM(APPLETV)
 static constexpr MediaElementSession::BehaviorRestrictions restrictionsToRemoveOnAudibilityChange = MediaElementSession::AllRestrictions;
 #else
 static constexpr MediaElementSession::BehaviorRestrictions restrictionsToRemoveOnAudibilityChange = MediaElementSession::AllRestrictions & ~MediaElementSession::RequireUserGestureToControlControlsManager;
@@ -381,17 +384,19 @@ String convertEnumerationToString(HTMLMediaElement::SpeechSynthesisState enumera
 
 String convertEnumerationToString(HTMLMediaElement::ControlsState enumerationValue)
 {
-    // None, Initializing, Ready, PartiallyDeinitialized
-    static const std::array<NeverDestroyed<String>, 4> values {
+    // None, Initializing, Ready, PartiallyDeinitialized, Deferred
+    static const std::array<NeverDestroyed<String>, 5> values {
         MAKE_STATIC_STRING_IMPL("None"),
         MAKE_STATIC_STRING_IMPL("Initializing"),
         MAKE_STATIC_STRING_IMPL("Ready"),
         MAKE_STATIC_STRING_IMPL("PartiallyDeinitialized"),
+        MAKE_STATIC_STRING_IMPL("Deferred"),
     };
     static_assert(!static_cast<size_t>(HTMLMediaElement::ControlsState::None), "HTMLMediaElement::None is not 0 as expected");
     static_assert(static_cast<size_t>(HTMLMediaElement::ControlsState::Initializing) == 1, "HTMLMediaElement::Initializing is not 1 as expected");
     static_assert(static_cast<size_t>(HTMLMediaElement::ControlsState::Ready) == 2, "HTMLMediaElement::Ready is not 2 as expected");
     static_assert(static_cast<size_t>(HTMLMediaElement::ControlsState::PartiallyDeinitialized) == 3, "HTMLMediaElement::PartiallyDeinitialized is not 3 as expected");
+    static_assert(static_cast<size_t>(HTMLMediaElement::ControlsState::Deferred) == 4, "HTMLMediaElement::Deferred is not 4 as expected");
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
@@ -465,7 +470,7 @@ static MediaElementSessionInfo mediaElementSessionInfoForSession(const MediaElem
     return { };
 }
 
-static bool LEGACY_NODELETE preferMediaControlsForCandidateSessionOverOtherCandidateSession(const MediaElementSessionInfo& session, const MediaElementSessionInfo& otherSession)
+NODELETE static bool preferMediaControlsForCandidateSessionOverOtherCandidateSession(const MediaElementSessionInfo& session, const MediaElementSessionInfo& otherSession)
 {
     MediaElementSession::PlaybackControlsPurpose purpose = session.purpose;
     ASSERT(purpose == otherSession.purpose);
@@ -489,7 +494,7 @@ static bool LEGACY_NODELETE preferMediaControlsForCandidateSessionOverOtherCandi
     return session.timeOfLastUserInteraction.value_or(MonotonicTime { }) > otherSession.timeOfLastUserInteraction.value_or(MonotonicTime { });
 }
 
-static bool LEGACY_NODELETE mediaSessionMayBeConfusedWithMainContent(const MediaElementSessionInfo& session, MediaElementSession::PlaybackControlsPurpose purpose)
+NODELETE static bool mediaSessionMayBeConfusedWithMainContent(const MediaElementSessionInfo& session, MediaElementSession::PlaybackControlsPurpose purpose)
 {
     if (purpose == MediaElementSession::PlaybackControlsPurpose::MediaSession)
         return false;
@@ -508,7 +513,7 @@ static bool LEGACY_NODELETE mediaSessionMayBeConfusedWithMainContent(const Media
     return true;
 }
 
-SUPPRESS_NODELETE static bool LEGACY_NODELETE defaultVolumeLocked()
+NODELETE SUPPRESS_NODELETE static bool defaultVolumeLocked()
 {
 #if PLATFORM(IOS)
     return PAL::currentUserInterfaceIdiomIsSmallScreen();
@@ -517,7 +522,7 @@ SUPPRESS_NODELETE static bool LEGACY_NODELETE defaultVolumeLocked()
 #endif
 }
 
-static bool LEGACY_NODELETE isInWindowOrStandardFullscreen(HTMLMediaElementEnums::VideoFullscreenMode mode)
+NODELETE static bool isInWindowOrStandardFullscreen(HTMLMediaElementEnums::VideoFullscreenMode mode)
 {
     return mode == HTMLMediaElementEnums::VideoFullscreenModeStandard || mode == HTMLMediaElementEnums::VideoFullscreenModeInWindow;
 }
@@ -775,7 +780,7 @@ void HTMLMediaElement::initializeMediaSession()
     }
 #endif
 
-#if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+#if PLATFORM(APPLETV)
     if (document->settings().requiresPageVisibilityForVideoToBeNowPlaying())
         mediaSession->addBehaviorRestriction(MediaElementSession::RequirePageVisibilityForVideoToBeNowPlaying);
 #endif
@@ -828,6 +833,8 @@ HTMLMediaElement::~HTMLMediaElement()
     }
 
     allMediaElements().remove(*this);
+
+    LazyLoadElementObserver::unobserve(*this, protect(document()));
 
     setShouldDelayLoadEvent(false);
 
@@ -993,6 +1000,11 @@ void HTMLMediaElement::didMoveToNewDocument(Document& oldDocument, Document& new
     HTMLMEDIAELEMENT_RELEASE_LOG(DidMoveToNewDocument);
 
     ASSERT_WITH_SECURITY_IMPLICATION(&document() == &newDocument);
+
+    LazyLoadElementObserver::unobserve(*this, oldDocument);
+    if (shouldObserveViewportIntersection())
+        LazyLoadElementObserver::observe(*this);
+
     if (m_shouldDelayLoadEvent) {
         oldDocument.decrementLoadEventDelayCount();
         newDocument.incrementLoadEventDelayCount();
@@ -1011,6 +1023,8 @@ void HTMLMediaElement::didMoveToNewDocument(Document& oldDocument, Document& new
     HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
     updateShouldAutoplay();
     visibilityStateChanged();
+
+    InspectorInstrumentation::addEventListenersToNode(*this);
 }
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -1035,6 +1049,12 @@ bool HTMLMediaElement::supportsFocus() const
 
     // If no controls specified, we should still be able to focus the element if it has tabIndex.
     return controls() ||  HTMLElement::supportsFocus();
+}
+
+void HTMLMediaElement::dispatchFocusEvent(RefPtr<Element>&& oldFocusedElement, const FocusOptions& options)
+{
+    ensureDeferredMediaControls();
+    HTMLElement::dispatchFocusEvent(WTF::move(oldFocusedElement), options);
 }
 
 bool HTMLMediaElement::isInteractiveContent() const
@@ -1094,6 +1114,10 @@ void HTMLMediaElement::attributeChanged(const QualifiedName& name, const AtomStr
         }
         maybeUpdatePlayerPreload();
         return;
+    case AttributeNames::loadingAttr:
+        if (!LazyLoading::hasLazyAttributeValue(newValue))
+            runLazyLoadResumptionSteps();
+        break;
     case AttributeNames::mediagroupAttr:
         setMediaGroup(newValue);
         return;
@@ -1139,7 +1163,7 @@ bool HTMLMediaElement::rendererIsNeeded(const Style::ComputedStyle& style)
     return controls() && HTMLElement::rendererIsNeeded(style);
 }
 
-RenderPtr<RenderElement> HTMLMediaElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLMediaElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderMedia>(RenderObject::Type::Media, *this, WTF::move(style));
 }
@@ -1600,7 +1624,7 @@ String HTMLMediaElement::canPlayType(const String& mimeType) const
             break;
     }
 
-    HTMLMEDIAELEMENT_RELEASE_LOG(CanPlayType, mimeType.utf8(), canPlay.utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(CanPlayType, makeUTF8CString(mimeType), makeUTF8CString(canPlay));
 
     return canPlay;
 }
@@ -1627,6 +1651,87 @@ void HTMLMediaElement::load()
     queueCancellableTaskKeepingObjectAlive(*this, TaskSource::MediaElement, m_resourceSelectionTaskCancellationGroup, [](auto& element) { element.prepareToPlay(); });
 }
 
+bool HTMLMediaElement::shouldLazyLoadMediaResource() const
+{
+    if (!LazyLoading::isLazyLoadable(*this))
+        return false;
+
+#if ENABLE(MEDIA_STREAM)
+    if (hasMediaStreamSrcObject())
+        return false;
+#endif
+
+    return true;
+}
+
+bool HTMLMediaElement::deferMediaResourceLoadIfNeeded()
+{
+    if (m_lazyLoadState != LazyLoadState::NotDeferred || !shouldLazyLoadMediaResource())
+        return false;
+
+    // selectMediaResource() sets the delaying-the-load-event flag for every element, but a lazy
+    // load must never delay the load event
+    setShouldDelayLoadEvent(false);
+
+    // Only <video> can be true here: it's observed from create() so already has an intersection state,
+    // and observe() below would no-op. <audio> always parks and resumes on the observer's first delivery.
+    if (isIntersectingViewport()) {
+        m_lazyLoadState = LazyLoadState::ResumedFromDeferred;
+        return false;
+    }
+
+    m_lazyLoadState = LazyLoadState::Deferred;
+    LazyLoadElementObserver::observe(*this);
+    return true;
+}
+
+void HTMLMediaElement::clearLazyLoadState()
+{
+    bool wasDeferred = isMediaResourceLoadDeferred();
+    m_lazyLoadState = LazyLoadState::NotDeferred;
+
+    if (wasDeferred && !shouldObserveViewportIntersection())
+        LazyLoadElementObserver::unobserve(*this, protect(document()));
+}
+
+void HTMLMediaElement::resumeDeferredMediaResourceLoad()
+{
+    if (!isMediaResourceLoadDeferred())
+        return;
+
+    m_lazyLoadState = LazyLoadState::ResumedFromDeferred;
+
+    // An <audio> is observed only to trigger this resumption or build deferred controls, so release it
+    // once neither is pending. A <video> keeps tracking intersection for accelerated rendering.
+    if (!shouldObserveViewportIntersection())
+        LazyLoadElementObserver::unobserve(*this, protect(document()));
+
+    queueSelectMediaResourceTask();
+}
+
+void HTMLMediaElement::runLazyLoadResumptionSteps()
+{
+    resumeDeferredMediaResourceLoad();
+}
+
+void HTMLMediaElement::lazyLoadIntersectionCallbackInvoked(bool isIntersecting)
+{
+    if (isIntersecting) {
+        runLazyLoadResumptionSteps();
+        ensureDeferredMediaControls();
+    }
+
+    // Only <video> tracks intersection. <audio> is observed solely to unpark a lazy load or build deferred controls,
+    // so it keeps reporting not-intersecting just as it did before being observed.
+    if (!tracksViewportIntersection() || m_isIntersectingViewport == isIntersecting)
+        return;
+
+    m_isIntersectingViewport = isIntersecting;
+
+    isVisibleInViewportChanged();
+    viewportIntersectionChanged();
+}
+
 void HTMLMediaElement::prepareForLoad(IsExplicitLoad isExplicitLoad)
 {
     // https://html.spec.whatwg.org/multipage/embedded-content.html#media-element-load-algorithm
@@ -1642,6 +1747,7 @@ void HTMLMediaElement::prepareForLoad(IsExplicitLoad isExplicitLoad)
     // Perform the cleanup required for the resource load algorithm to run.
     stopPeriodicTimers();
     m_resourceSelectionTaskCancellationGroup.cancel();
+    clearLazyLoadState();
     // FIXME: Figure out appropriate place to reset LoadTextTrackResource if necessary and set m_pendingActionFlags to 0 here.
     m_sentEndEvent = false;
     m_sentStalledEvent = false;
@@ -1813,6 +1919,11 @@ void HTMLMediaElement::selectMediaResource()
     // put into the background.
     mediaSession->removeBehaviorRestriction(MediaElementSession::RequirePageConsentToLoadMedia);
 
+    queueSelectMediaResourceTask();
+}
+
+void HTMLMediaElement::queueSelectMediaResourceTask()
+{
     queueCancellableTaskKeepingObjectAlive(*this, TaskSource::MediaElement, m_resourceSelectionTaskCancellationGroup, [](auto& element) {
         HTMLMEDIAELEMENT_RELEASE_LOG_WITH_THIS(&element, SelectMediaResourceLambdaTaskFired);
         // 5. If the media element’s blocked-on-parser flag is false, then populate the list of pending text tracks.
@@ -1862,6 +1973,9 @@ void HTMLMediaElement::selectMediaResource()
 
             return;
         }
+
+        if (element.deferMediaResourceLoadIfNeeded())
+            return;
 
         // 7. Set the media element’s networkState to NETWORK_LOADING.
         element.m_networkState = NETWORK_LOADING;
@@ -2250,7 +2364,7 @@ static bool compareCueInterval(const CueInterval& one, const CueInterval& two)
     return protect(one.data())->isOrderedBefore(protect(two.data()));
 }
 
-static bool LEGACY_NODELETE compareCueIntervalEndTime(const CueInterval& one, const CueInterval& two)
+NODELETE static bool compareCueIntervalEndTime(const CueInterval& one, const CueInterval& two)
 {
     return one.data()->endMediaTime() > two.data()->endMediaTime();
 }
@@ -2568,7 +2682,7 @@ void HTMLMediaElement::speakCueText(TextTrackCue& cue)
 
     m_cueBeingSpoken = cue;
     protect(m_cueBeingSpoken)->prepareToSpeak(protect(speechSynthesis()), m_reportedPlaybackRate ? m_reportedPlaybackRate : m_requestedPlaybackRate, volume(), [weakThis = WeakPtr { *this }](const TextTrackCue&) {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
         RefPtr<HTMLMediaElement> protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -2792,6 +2906,8 @@ void HTMLMediaElement::videoTrackConfigurationChanged(VideoTrack& track)
 {
     UNUSED_PARAM(track);
     ALWAYS_LOG(LOGIDENTIFIER, MediaElementSession::descriptionForTrack(track));
+
+    configureMediaControls();
 }
 
 void HTMLMediaElement::videoTrackKindChanged(VideoTrack& track)
@@ -3192,7 +3308,7 @@ void HTMLMediaElement::mediaLoadingFailed(MediaPlayer::NetworkState error)
 void HTMLMediaElement::setNetworkState(MediaPlayer::NetworkState state)
 {
     if (static_cast<int>(state) != static_cast<int>(m_networkState))
-        HTMLMEDIAELEMENT_RELEASE_LOG(SetNetworkState, convertEnumerationToString(state).utf8(), convertEnumerationToString(m_networkState).utf8());
+        HTMLMEDIAELEMENT_RELEASE_LOG(SetNetworkState, makeUTF8CString(convertEnumerationToString(state)), makeUTF8CString(convertEnumerationToString(m_networkState)));
 
     if (state == MediaPlayer::NetworkState::Empty) {
         // Just update the cached state and leave, we can't do anything.
@@ -3356,7 +3472,7 @@ void HTMLMediaElement::setReadyState(MediaPlayer::ReadyState state)
 
     m_tracksAreReady = tracksAreReady;
 
-    HTMLMEDIAELEMENT_RELEASE_LOG(SetReadyState, convertEnumerationToString(state).utf8(), convertEnumerationToString(m_readyState).utf8(), tracksAreReady);
+    HTMLMEDIAELEMENT_RELEASE_LOG(SetReadyState, makeUTF8CString(convertEnumerationToString(state)), makeUTF8CString(convertEnumerationToString(m_readyState)), tracksAreReady);
 
     if (tracksAreReady)
         m_readyState = newState;
@@ -3379,7 +3495,9 @@ void HTMLMediaElement::setReadyState(MediaPlayer::ReadyState state)
     if (m_seeking) {
         // 4.8.10.9, step 11
         if (wasPotentiallyPlaying && m_readyState < HAVE_FUTURE_DATA) {
-            ALWAYS_LOG(LOGIDENTIFIER, "queuing waiting event, currentTime = ", currentMediaTime());
+            ALWAYS_LOG(LOGIDENTIFIER, "queuing timeupdate and waiting events, currentTime = ", currentMediaTime());
+            // The readyState change steps queue timeupdate before waiting; 'seeking' is already queued.
+            scheduleTimeupdateEvent(false);
             scheduleEvent(eventNames().waitingEvent);
         }
     } else {
@@ -4009,7 +4127,7 @@ void HTMLMediaElement::seekInternal(const MediaTime& time)
 
 void HTMLMediaElement::seekWithTolerance(const SeekTarget& target, bool fromDOM)
 {
-    HTMLMEDIAELEMENT_RELEASE_LOG(SeekWithTolerance, target.toString().utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(SeekWithTolerance, makeUTF8CString(target.toString()));
     // 4.8.10.9 Seeking
 
     // 1 - Set the media element's show poster flag to false.
@@ -4667,6 +4785,8 @@ void HTMLMediaElement::playInternal()
     Ref mediaSession = this->mediaSession();
     mediaSession->setActive(true);
 
+    resumeDeferredMediaResourceLoad();
+
     // Internal play steps, step 1: invoke the resource selection algorithm when networkState is
     // NETWORK_EMPTY. With a src assigned, only do so when no load is underway yet — either no player
     // exists, or one exists but loading was suppressed (e.g. iOS autoplay policy) and readyState is
@@ -5282,9 +5402,10 @@ void HTMLMediaElement::scheduleTimeupdateEvent(bool periodicEvent)
 {
     // Per HTML spec, the periodic timeupdate is only for "the time reached through the
     // usual monotonic increase of the current playback position during normal playback".
-    // During an active seek, the seek algorithm's own events (seeking -> timeupdate ->
-    // seeked via finishSeek) are responsible for notifying the page. Suppress periodic
-    // timeupdates while seeking so they don't interleave with the seek-driven ordering.
+    // During an active seek, the page is notified by the seek algorithm (timeupdate before
+    // seeked, via finishSeek) and by the ready state change steps (timeupdate before waiting,
+    // via setReadyState). Suppress periodic timeupdates while seeking so they don't interleave
+    // with that ordering.
     if (periodicEvent && m_seeking)
         return;
 
@@ -5399,7 +5520,7 @@ void HTMLMediaElement::addAudioTrack(Ref<AudioTrack>&& track)
     track->setLogger(protect(logger()), logIdentifier());
 #endif
     track->addClient(*this);
-    HTMLMEDIAELEMENT_RELEASE_LOG(AddAudioTrack, track->id().string().utf8(), MediaElementSession::descriptionForTrack(track).utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(AddAudioTrack, makeUTF8CString(track->id().string()), makeUTF8CString(MediaElementSession::descriptionForTrack(track)));
     ensureAudioTracks().append(WTF::move(track));
 }
 
@@ -5431,7 +5552,7 @@ void HTMLMediaElement::addVideoTrack(Ref<VideoTrack>&& track)
     track->setLogger(protect(logger()), logIdentifier());
 #endif
     track->addClient(*this);
-    HTMLMEDIAELEMENT_RELEASE_LOG(AddVideoTrack, track->id().string().utf8(), MediaElementSession::descriptionForTrack(track).utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(AddVideoTrack, makeUTF8CString(track->id().string()), makeUTF8CString(MediaElementSession::descriptionForTrack(track)));
     ensureVideoTracks().append(WTF::move(track));
 }
 
@@ -5440,7 +5561,7 @@ void HTMLMediaElement::removeAudioTrack(AudioTrack& track)
     if (!m_audioTracks || !m_audioTracks->contains(track))
         return;
     track.clearClient(*this);
-    HTMLMEDIAELEMENT_RELEASE_LOG(RemoveAudioTrack, track.id().string().utf8(), MediaElementSession::descriptionForTrack(track).utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(RemoveAudioTrack, makeUTF8CString(track.id().string()), makeUTF8CString(MediaElementSession::descriptionForTrack(track)));
     m_audioTracks->remove(track);
 }
 
@@ -5682,7 +5803,7 @@ void HTMLMediaElement::configureTextTrackGroup(const TrackGroup& group)
             currentlyEnabledTracks.append(textTrack);
 
         int trackScore = captionPreferences ? captionPreferences->textTrackSelectionScore(textTrack, *this) : 0;
-        HTMLMEDIAELEMENT_RELEASE_LOG(ConfigureTextTrackGroup, textTrack->kindKeyword().string().utf8(), textTrack->language().string().utf8(), textTrack->validBCP47Language().string().utf8(), trackScore);
+        HTMLMEDIAELEMENT_RELEASE_LOG(ConfigureTextTrackGroup, makeUTF8CString(textTrack->kindKeyword().string()), makeUTF8CString(textTrack->language().string()), makeUTF8CString(textTrack->validBCP47Language().string()), trackScore);
 
         if (trackScore) {
 
@@ -5937,7 +6058,7 @@ void HTMLMediaElement::configureTextTracks()
     configureTextTrackDisplay();
 }
 
-static bool LEGACY_NODELETE isSubtitleOrCaptionTrackKind(TextTrack::Kind kind)
+NODELETE static bool isSubtitleOrCaptionTrackKind(TextTrack::Kind kind)
 {
     return kind == TextTrack::Kind::Subtitles || kind == TextTrack::Kind::Captions;
 }
@@ -6231,15 +6352,20 @@ void HTMLMediaElement::sourceWasAdded(HTMLSourceElement& source)
         return;
     }
 
+    if (isMediaResourceLoadDeferred())
+        return;
+
     if (m_nextChildNodeToConsider)
         return;
 
     // 4.8.9.5, resource selection algorithm, source elements section:
     // 21. Wait until the node after pointer is a node other than the end of the list. (This step might wait forever.)
     // 22. Asynchronously await a stable state...
-    // 23. Set the element's delaying-the-load-event flag back to true (this delays the load event again, in case
-    // it hasn't been fired yet).
-    setShouldDelayLoadEvent(true);
+    // 23. If the media element's lazy loading attribute is in the Eager state or scripting is disabled for
+    // the media element, set the element's delaying-the-load-event flag back to true (this delays the load
+    // event again, in case it hasn't been fired yet). A lazy element never delays the load event, in view or not.
+    if (!shouldLazyLoadMediaResource())
+        setShouldDelayLoadEvent(true);
 
     // 24. Set the networkState back to NETWORK_LOADING.
     m_networkState = NETWORK_LOADING;
@@ -6612,7 +6738,7 @@ void HTMLMediaElement::mediaEngineWasUpdated()
 
 void HTMLMediaElement::mediaPlayerEngineUpdated()
 {
-    HTMLMEDIAELEMENT_RELEASE_LOG(MediaPlayerEngineUpdated, protect(m_player)->engineDescription().utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(MediaPlayerEngineUpdated, makeUTF8CString(protect(m_player)->engineDescription()));
 
 #if ENABLE(MEDIA_SOURCE)
     m_droppedVideoFrames = 0;
@@ -6627,7 +6753,7 @@ void HTMLMediaElement::mediaPlayerEngineUpdated()
 // supported by analysis.
 void HTMLMediaElement::mediaPlayerWillInitializeMediaEngine() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 #if ENABLE(WEB_AUDIO)
     // Make sure the MediaElementAudioSourceNode's process function does not try and access the media player while its engine is getting updated.
     if (RefPtr audioSourceNode = m_audioSourceNode.get())
@@ -6639,7 +6765,7 @@ void HTMLMediaElement::mediaPlayerWillInitializeMediaEngine() WTF_IGNORES_THREAD
 // supported by analysis.
 void HTMLMediaElement::mediaPlayerDidInitializeMediaEngine() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 #if ENABLE(WEB_AUDIO)
     if (RefPtr audioSourceNode = m_audioSourceNode.get()) {
         if (auto* provider = audioSourceProvider())
@@ -6653,7 +6779,7 @@ void HTMLMediaElement::mediaPlayerDidInitializeMediaEngine() WTF_IGNORES_THREAD_
 void HTMLMediaElement::mediaPlayerCharacteristicChanged()
 {
     if (RefPtr mediaSession = m_mediaSession)
-        HTMLMEDIAELEMENT_RELEASE_LOG(MediaPlayerCharacteristicsChanged, mediaSession->description().utf8());
+        HTMLMEDIAELEMENT_RELEASE_LOG(MediaPlayerCharacteristicsChanged, makeUTF8CString(mediaSession->description()));
     else
         HTMLMEDIAELEMENT_RELEASE_LOG(MediaPlayerCharacteristicsChangedNoMediaSession);
 
@@ -7263,6 +7389,7 @@ void HTMLMediaElement::closeTaskQueues()
     cancelPendingTasks();
     m_resourceSelectionTaskCancellationGroup.cancel();
     m_asyncEventsCancellationGroup.cancel();
+    m_ensureDeferredMediaControlsTaskCancellationGroup.cancel();
 }
 
 void HTMLMediaElement::contextDestroyed()
@@ -8306,7 +8433,7 @@ void HTMLMediaElement::textTrackReadyStateChanged(TextTrack* track)
 
 void HTMLMediaElement::configureTextTrackDisplay(TextTrackVisibilityCheckType checkType)
 {
-    HTMLMEDIAELEMENT_RELEASE_LOG(ConfigureTextTrackDisplay, convertEnumerationToString(checkType).utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(ConfigureTextTrackDisplay, makeUTF8CString(convertEnumerationToString(checkType)));
     ASSERT(m_textTracks);
 
     if (m_processingPreferenceChange)
@@ -8339,6 +8466,10 @@ void HTMLMediaElement::configureTextTrackDisplay(TextTrackVisibilityCheckType ch
 
 void HTMLMediaElement::updateTextTrackDisplay()
 {
+    // Deferred controls have no text track container yet; building them displays the active cues.
+    if (hasDeferredMediaControls())
+        return;
+
     if (ensureMediaControls())
         m_mediaControlsHost->updateTextTrackContainer();
 }
@@ -8459,7 +8590,7 @@ void HTMLMediaElement::setShouldDelayLoadEvent(bool shouldDelay)
         protect(document())->decrementLoadEventDelayCount();
 }
 
-static String& LEGACY_NODELETE sharedMediaCacheDirectory()
+NODELETE static String& sharedMediaCacheDirectory()
 {
     static NeverDestroyed<String> sharedMediaCacheDirectory;
     return sharedMediaCacheDirectory;
@@ -8507,28 +8638,127 @@ bool HTMLMediaElement::shouldForceControlsDisplay() const
 
 void HTMLMediaElement::configureMediaControls()
 {
-    bool requireControls = controls();
+    bool forceControls = false;
 
     // Create controls for a video in fullscreen when fullscreen playback is required.
     if (isVideo() && isFullscreen() && protect(mediaSession())->requiresFullscreenForVideoPlayback())
-        requireControls = true;
+        forceControls = true;
 
     if (shouldForceControlsDisplay())
-        requireControls = true;
+        forceControls = true;
 
     // Always create controls when in full screen mode.
     if (isFullscreen() && videoUsesElementFullscreen())
-        requireControls = true;
+        forceControls = true;
+
+    // The spatial video renderer lives alongside the controls in the shadow tree, so a projected
+    // video needs them to exist even when they are never shown.
+    if (RefPtr videoElement = dynamicDowncast<HTMLVideoElement>(*this); videoElement && videoElement->hasSpatialVideoProjection())
+        forceControls = true;
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     if (m_isPlayingToWirelessTarget)
-        requireControls = true;
+        forceControls = true;
 #endif
 
-    if (!requireControls || !isConnected() || !inActiveDocument())
+    if (!forceControls && !controls()) {
+        cancelDeferredMediaControls();
+        return;
+    }
+
+    if (!isConnected() || !inActiveDocument())
+        return;
+
+    if (!forceControls && deferMediaControlsIfNeeded())
         return;
 
     ensureMediaControls();
+}
+
+bool HTMLMediaElement::deferMediaControlsIfNeeded()
+{
+    if (m_controlsState != ControlsState::None && m_controlsState != ControlsState::Deferred)
+        return false;
+
+    // Assistive technology reaches controls regardless of scroll position.
+    if (AXObjectCache::accessibilityEnabled())
+        return false;
+
+    // A <video> is observed since creation and may have reported its intersection already, in which case
+    // the observer will not report again until it changes.
+    if (isIntersectingViewport())
+        return false;
+
+    // The first build in a document starts loading the icon images that later builds share, so it happens at once.
+    if (!DocumentMediaElement::from(protect(document())).hasBuiltMediaControls())
+        return false;
+
+    if (m_controlsState == ControlsState::None) {
+        // Without controls script there is nothing to build later.
+        if (RenderTheme::singleton().mediaControlsScripts().isEmpty())
+            return false;
+
+        INFO_LOG(LOGIDENTIFIER, "deferring media controls");
+        m_controlsState = ControlsState::Deferred;
+        // The controls style sheets size the host, so they must apply before the controls are built.
+        ensureMediaControlsStyleSheets();
+    }
+
+    // Observing is idempotent, and re-inserting a deferred element must leave it observed.
+    LazyLoadElementObserver::observe(*this);
+    return true;
+}
+
+void HTMLMediaElement::cancelDeferredMediaControls()
+{
+    if (m_controlsState != ControlsState::Deferred)
+        return;
+
+    INFO_LOG(LOGIDENTIFIER);
+
+    m_controlsState = ControlsState::None;
+    if (!shouldObserveViewportIntersection())
+        LazyLoadElementObserver::unobserve(*this, protect(document()));
+}
+
+void HTMLMediaElement::ensureMediaControlsStyleSheets()
+{
+    if (std::exchange(m_hasMediaControlsStyleSheets, true))
+        return;
+
+    auto styleSheets = RenderTheme::singleton().mediaControlsStyleSheets(*this);
+    if (styleSheets.isEmpty())
+        return;
+
+    Ref shadowRoot = ensureUserAgentShadowRoot();
+    for (auto& styleSheet : styleSheets) {
+        Ref style = HTMLStyleElement::create(protect(document()));
+        style->setTextContent(WTF::move(styleSheet));
+        shadowRoot->appendChild(style);
+        // Every media element must share one parsed copy of these sheets. There is no sheet yet if the host is not connected.
+        ASSERT(!style->sheet() || style->sheet()->contents().isCacheableWithNoBaseURLDependency());
+    }
+}
+
+void HTMLMediaElement::ensureDeferredMediaControls()
+{
+    // A failed build leaves the controls deferred and observed, so a later request retries.
+    if (m_controlsState != ControlsState::Deferred || !isConnected() || !inActiveDocument())
+        return;
+
+    INFO_LOG(LOGIDENTIFIER, "building deferred media controls");
+    ensureMediaControls();
+}
+
+void HTMLMediaElement::scheduleEnsureDeferredMediaControls()
+{
+    // A task that is dropped without running releases the group, so a later request can schedule again.
+    if (m_controlsState != ControlsState::Deferred || m_ensureDeferredMediaControlsTaskCancellationGroup.hasPendingTask())
+        return;
+
+    queueCancellableTaskKeepingObjectAlive(*this, TaskSource::MediaElement, m_ensureDeferredMediaControlsTaskCancellationGroup, [](auto& element) {
+        element.ensureDeferredMediaControls();
+    });
 }
 
 void HTMLMediaElement::captionPreferencesChanged()
@@ -8980,7 +9210,7 @@ String HTMLMediaElement::mediaPlayerUserAgent() const
     return frame->loader().userAgent(m_currentSrc);
 }
 
-static inline PlatformTextTrackData::TrackKind LEGACY_NODELETE toPlatform(TextTrack::Kind kind)
+NODELETE static inline PlatformTextTrackData::TrackKind toPlatform(TextTrack::Kind kind)
 {
     switch (kind) {
     case TextTrack::Kind::Captions:
@@ -9000,7 +9230,7 @@ static inline PlatformTextTrackData::TrackKind LEGACY_NODELETE toPlatform(TextTr
     return PlatformTextTrackData::TrackKind::Caption;
 }
 
-static inline PlatformTextTrackData::TrackMode LEGACY_NODELETE toPlatform(TextTrack::Mode mode)
+NODELETE static inline PlatformTextTrackData::TrackMode toPlatform(TextTrack::Mode mode)
 {
     switch (mode) {
     case TextTrack::Mode::Disabled:
@@ -9393,7 +9623,8 @@ void HTMLMediaElement::setControllerJSProperty(ASCIILiteral propertyName, JSC::J
 
         auto controllerValue = m_mediaControlsHost->controllerWrapper().getValue();
         EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || controllerValue.isNull());
-        if (controllerValue.isNull())
+        // Once the controls are deinitialized the controller may have been collected.
+        if (!controllerValue.isObject())
             return false;
 
         JSC::PutPropertySlot propertySlot(controllerValue);
@@ -9423,7 +9654,8 @@ bool HTMLMediaElement::ensureMediaControls()
     m_controlsState = ControlsState::Initializing;
 
     auto controlsReady = false;
-    if (oldControlsState == ControlsState::None) {
+    if (oldControlsState == ControlsState::None || oldControlsState == ControlsState::Deferred) {
+        ensureMediaControlsStyleSheets();
         controlsReady = DocumentMediaElement::from(protect(document())).setupAndCallMediaControlsJS([this, mediaControlsScripts = WTF::move(mediaControlsScripts)](JSDOMGlobalObject& globalObject, JSC::JSGlobalObject& lexicalGlobalObject, ScriptController&, DOMWrapperWorld&) {
             auto& vm = globalObject.vm();
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -9516,10 +9748,27 @@ bool HTMLMediaElement::ensureMediaControls()
 
             return resultValue.toBoolean(&lexicalGlobalObject);
         });
-    } else
+    } else {
         ASSERT_NOT_REACHED();
+        m_controlsState = oldControlsState;
+        return false;
+    }
 
     m_controlsState = controlsReady ? ControlsState::Ready : oldControlsState;
+    if (controlsReady)
+        DocumentMediaElement::from(protect(document())).didBuildMediaControls();
+
+    if (oldControlsState == ControlsState::Deferred) {
+        if (!controlsReady)
+            LazyLoadElementObserver::observe(*this); // The build may have run script that moved the element between documents.
+        else {
+            if (!shouldObserveViewportIntersection())
+                LazyLoadElementObserver::unobserve(*this, protect(document()));
+            // The element was laid out before its text track container existed, so size the container and show the active cues.
+            if (m_mediaControlsHost && m_haveVisibleTextTrack)
+                m_mediaControlsHost->updateCaptionDisplaySizes(MediaControlsHost::ForceUpdate::Yes);
+        }
+    }
     return controlsReady;
 }
 
@@ -9608,7 +9857,7 @@ bool HTMLMediaElement::canProduceAudio() const
 
 bool HTMLMediaElement::computeCanProduceAudio() const
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     // Because the remote target could unmute playback without notifying us, we must assume
@@ -9778,7 +10027,7 @@ bool HTMLMediaElement::supportsSeeking() const
 }
 
 #if ENABLE(MEDIA_STREAM)
-static bool LEGACY_NODELETE isCameraTrack(const MediaStreamTrack& track)
+NODELETE static bool isCameraTrack(const MediaStreamTrack& track)
 {
     return track.isCaptureTrack() && track.isVideo();
 }
@@ -10020,7 +10269,7 @@ void HTMLMediaElement::userDidInterfereWithAutoplay()
 
 void HTMLMediaElement::setAutoplayEventPlaybackState(AutoplayEventPlaybackState reason)
 {
-    HTMLMEDIAELEMENT_RELEASE_LOG(SetAutoplayEventPlaybackState, convertEnumerationToString(reason).utf8());
+    HTMLMEDIAELEMENT_RELEASE_LOG(SetAutoplayEventPlaybackState, makeUTF8CString(convertEnumerationToString(reason)));
     m_autoplayEventPlaybackState = reason;
 
     if (reason == AutoplayEventPlaybackState::PreventedAutoplay) {
@@ -10052,7 +10301,7 @@ void HTMLMediaElement::visibilityAdjustmentStateDidChange()
 void HTMLMediaElement::sceneIdentifierDidChange()
 {
     if (RefPtr page = document().page()) {
-        HTMLMEDIAELEMENT_RELEASE_LOG(SceneIdentifierDidChange, page->sceneIdentifier().utf8());
+        HTMLMEDIAELEMENT_RELEASE_LOG(SceneIdentifierDidChange, makeUTF8CString(page->sceneIdentifier()));
         if (RefPtr player = m_player)
             player->setSceneIdentifier(page->sceneIdentifier());
     }

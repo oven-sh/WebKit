@@ -42,7 +42,7 @@ public:
 
     JSC::JSGlobalObject& globalObject() const { return m_globalObject; }
 
-    static RunLoopMode LEGACY_NODELETE runLoopModeSingleton();
+    NODELETE static RunLoopMode runLoopModeSingleton();
 
     RunWhilePausedCallback runWhilePausedCallback { nullptr };
 

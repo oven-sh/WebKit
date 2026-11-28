@@ -29,6 +29,7 @@
 
 #ifdef __cplusplus
 
+#import "Helpers/cocoa/TestUIDelegate.h"
 #import <WebKit/WKWebViewPrivate.h>
 #import <array>
 #import <string>
@@ -37,10 +38,15 @@
 #import <wtf/text/ASCIILiteral.h>
 #import <wtf/text/MakeString.h>
 
+@class TestMessageHandler;
 @class TestNavigationDelegate;
 @class TestWKWebView;
 @class WKFrameInfo;
 @class WKWebViewConfiguration;
+
+// WebCore only dispatches beforeunload when the UI delegate can run its confirmation panel.
+@interface BeforeUnloadUIDelegate : TestUIDelegate
+@end
 
 #if PLATFORM(MAC)
 // AppKit responder and Services methods that WKWebView implements but doesn't declare in its headers.
@@ -54,13 +60,25 @@
 namespace TestWebKitAPI {
 
 class HTTPServer;
+struct HTTPResponse;
 
 void setFeatureEnabled(WKWebViewConfiguration *, NSString *featureName, bool enabled);
 void enableSiteIsolation(WKWebViewConfiguration *);
+void enableUnloadEvent(WKWebViewConfiguration *);
 
 std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegate(RetainPtr<WKWebViewConfiguration>, CGRect, bool enable);
 std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegate(RetainPtr<WKWebViewConfiguration>, CGRect = CGRectZero);
 std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegate(const HTTPServer&, CGRect = CGRectZero);
+
+HTTPResponse documentIsolationPolicyResponse(const String& body);
+std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegateWithDocumentIsolationPolicy(const HTTPServer&);
+
+struct WebViewAndDelegates {
+    RetainPtr<TestWKWebView> webView;
+    RetainPtr<TestMessageHandler> messageHandler;
+    RetainPtr<TestNavigationDelegate> navigationDelegate;
+    RetainPtr<TestUIDelegate> uiDelegate;
+};
 
 struct SiteIsolationParams {
     bool crossOrigin { false };

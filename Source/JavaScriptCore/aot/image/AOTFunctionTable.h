@@ -16,10 +16,17 @@
 namespace JSC { namespace AOT {
 
 class CodeIndex;
+class ImageNumbers;
 class LinkedFunctions;
 struct CodeLayout;
-struct EntryAlias;
 struct ProgramTables;
+
+namespace Typed {
+class Plan;
+class Program;
+}
+
+struct SharedCode;
 
 struct FrameTable {
     Vector<ImageFrame> frames;
@@ -30,22 +37,22 @@ std::optional<FrameTable> collectFrames(const LinkedFunctions&, BuildContext&);
 
 struct FunctionTableInputs {
     const LinkedFunctions& functions;
-    const Vector<EntryAlias>& aliases;
+    const ImageNumbers& numbers;
     const CodeLayout& layout;
+    const SharedCode& sharedCode;
     const CodeIndex& index;
-    std::span<const OptionSet<ImageFunctionFlag>> sideTableFlags;
     std::span<const uint32_t> sideTableOffsets;
     const ProgramTables& programTables;
     bool hasPositions;
+    const Typed::Program& program;
+    const Typed::Plan& plan;
 };
 
 struct EncodedFunctionTables {
     Vector<uint8_t> functions;
     Vector<uint8_t> functionStarts;
     Vector<uint8_t> codeGranules;
-    Vector<uint8_t> innerEntries;
     Vector<uint8_t> closureWords;
-    Vector<uint8_t> methodLookups;
     Vector<uint8_t> methodTable;
 };
 

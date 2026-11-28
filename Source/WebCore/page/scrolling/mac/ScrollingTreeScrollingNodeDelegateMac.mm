@@ -152,16 +152,24 @@ bool ScrollingTreeScrollingNodeDelegateMac::handleWheelEvent(const PlatformWheel
     if (wasInMomentumPhase != m_inMomentumPhase)
         m_scrollerPair->setUsePresentationValues(m_inMomentumPhase);
 
+    if (wheelEvent.momentumPhase() == PlatformWheelEventPhase::Began)
+        m_momentumBeganDuringCurrentRubberBand = m_scrollController.isRubberBandInProgress();
+
     auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *scrollingTree(), scrollingNode()->scrollingNodeID(), WheelEventTestMonitor::DeferReason::HandlingWheelEvent };
 
     updateUserScrollInProgressForEvent(wheelEvent);
+    m_scrollController.handleWheelEventDuringSpringAnimation(wheelEvent);
 
     // PlatformWheelEventPhase::MayBegin fires when two fingers touch the trackpad, and is used to flash overlay scrollbars.
     // We know we're scrollable at this point, so handle the event.
     if (wheelEvent.phase() == PlatformWheelEventPhase::MayBegin)
         return true;
 
-    return m_scrollController.handleWheelEvent(wheelEvent);
+    bool handled = m_scrollController.handleWheelEvent(wheelEvent);
+    if (m_momentumBeganDuringCurrentRubberBand && m_scrollController.isIgnoringMomentumScrolls() && scrollingTree()->scrollingPerformanceTestingEnabled())
+        scrollingTree()->setIsIgnoringMomentumScrollsDuringRubberBand(true);
+
+    return handled;
 }
 
 void ScrollingTreeScrollingNodeDelegateMac::willDoProgrammaticScroll(const FloatPoint& targetPosition)
@@ -350,6 +358,8 @@ void ScrollingTreeScrollingNodeDelegateMac::didStopRubberBandAnimation()
 
 void ScrollingTreeScrollingNodeDelegateMac::rubberBandingStateChanged(bool inRubberBand)
 {
+    m_momentumBeganDuringCurrentRubberBand = false;
+
     if (scrollingTree()->scrollingPerformanceTestingEnabled()) {
         auto stretch = stretchAmount();
         WTFEmitSignpostAlways(this, ScrollingPerformanceTestRubberBand, "%{public}s; top=%d right=%d bottom=%d left=%d; stretch=%d,%d; isMainFrame=%d",

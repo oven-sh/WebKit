@@ -34,44 +34,38 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemotePipelineLayoutProxy final : public ::WebGPU::PipelineLayout {
     WTF_MAKE_TZONE_ALLOCATED(RemotePipelineLayoutProxy);
 public:
-    static Ref<RemotePipelineLayoutProxy> create(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemotePipelineLayoutProxy> create(RemoteDeviceProxy& parent, WebGPUPipelineLayoutIdentifier identifier)
     {
-        return adoptRef(*new RemotePipelineLayoutProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemotePipelineLayoutProxy(parent, identifier));
     }
 
     virtual ~RemotePipelineLayoutProxy();
 
     RemoteDeviceProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
+    WebGPUPipelineLayoutIdentifier backing() const { return m_backing; }
 
     void setLabel(String&&) final;
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemotePipelineLayoutProxy(RemoteDeviceProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemotePipelineLayoutProxy(RemoteDeviceProxy&, WebGPUPipelineLayoutIdentifier);
 
     RemotePipelineLayoutProxy(const RemotePipelineLayoutProxy&) = delete;
     RemotePipelineLayoutProxy(RemotePipelineLayoutProxy&&) = delete;
     RemotePipelineLayoutProxy& operator=(const RemotePipelineLayoutProxy&) = delete;
     RemotePipelineLayoutProxy& operator=(RemotePipelineLayoutProxy&&) = delete;
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
         return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUPipelineLayoutIdentifier m_backing;
     const Ref<RemoteDeviceProxy> m_parent;
 };
 

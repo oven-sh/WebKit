@@ -26,7 +26,7 @@
 #include "config.h"
 #include "MockHidConnection.h"
 
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 
 #include "Logging.h"
 #include <WebCore/AuthenticatorGetInfoResponse.h>
@@ -205,8 +205,7 @@ void MockHidConnection::parseRequest()
 void MockHidConnection::feedReports()
 {
     if (m_subStage == Mock::HidSubStage::Init) {
-        Vector<uint8_t> payload;
-        payload.reserveInitialCapacity(kHidInitResponseSize);
+        Vector<uint8_t> payload(ReserveCapacityTag { }, kHidInitResponseSize);
         payload.appendVector(m_nonce);
         size_t writePosition = payload.size();
         if (stagesMatch() && m_configuration.hid->error == Mock::HidError::WrongNonce)
@@ -347,7 +346,7 @@ void MockHidConnection::initializeExpectedCommands()
         if (decodedMessage)
             m_expectedCommands.append(WTF::move(*decodedMessage));
         else
-            RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Failed to decode expected command: %s", expectedCommandBase64.utf8());
+            RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Failed to decode expected command: %s", makeUTF8CString(expectedCommandBase64));
     }
 
     RELEASE_LOG(WebAuthn, "MockHidConnection: Initialized %zu expected commands for validation", m_expectedCommands.size());
@@ -356,14 +355,14 @@ void MockHidConnection::initializeExpectedCommands()
 void MockHidConnection::validateExpectedCommand(const Vector<uint8_t>& actualCommand)
 {
     if (m_currentExpectedCommandIndex >= m_expectedCommands.size()) {
-        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Received unexpected command beyond expected count. Expected %zu commands, but received command %zu. Content: %s", m_expectedCommands.size(), m_currentExpectedCommandIndex + 1, base64EncodeToString(actualCommand).utf8());
+        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Received unexpected command beyond expected count. Expected %zu commands, but received command %zu. Content: %s", m_expectedCommands.size(), m_currentExpectedCommandIndex + 1, makeUTF8CString(base64EncodeToString(actualCommand)));
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("MockHidConnection: Unexpected command.");
     }
 
     Borrow borrowedExpectedCommands = m_expectedCommands;
     const auto& expectedCommand = borrowedExpectedCommands[m_currentExpectedCommandIndex];
     if (actualCommand != expectedCommand) {
-        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Command mismatch at index %zu. Expected %s Actual %s", m_currentExpectedCommandIndex, base64EncodeToString(expectedCommand).utf8(), base64EncodeToString(actualCommand).utf8());
+        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Command mismatch at index %zu. Expected %s Actual %s", m_currentExpectedCommandIndex, makeUTF8CString(base64EncodeToString(expectedCommand)), makeUTF8CString(base64EncodeToString(actualCommand)));
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("MockHidConnection: Command did not match expected value.");
     }
 
@@ -378,10 +377,10 @@ void MockHidConnection::validateExpectedCommandsCompleted()
         return;
 
     for (size_t i = m_currentExpectedCommandIndex; i < m_expectedCommands.size(); ++i)
-        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Missing expected command %zu: %s", i, base64EncodeToString(m_expectedCommands[i]).utf8());
+        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Missing expected command %zu: %s", i, makeUTF8CString(base64EncodeToString(m_expectedCommands[i])));
     RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("MockHidConnection: validateAllExpectedCommandsConsumed called - %zu of %zu commands consumed", m_currentExpectedCommandIndex, m_expectedCommands.size());
 }
 
 } // namespace WebKit
 
-#endif // ENABLE(WEB_AUTHN)
+#endif // ENABLE(WEB_AUTHN) && PLATFORM(COCOA)

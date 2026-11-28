@@ -39,7 +39,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderFrameBase);
 
-RenderFrameBase::RenderFrameBase(Type type, HTMLFrameElementBase& element, Style::ComputedStyle&& style)
+RenderFrameBase::RenderFrameBase(Type type, HTMLFrameElementBase& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderWidget(type, element, WTF::move(style))
 {
 }
@@ -65,7 +65,7 @@ void RenderFrameBase::styleDidChange(Style::Difference diff, const Style::Comput
     }
 }
 
-inline bool LEGACY_NODELETE shouldExpandFrame(LayoutUnit width, LayoutUnit height, bool hasFixedWidth, bool hasFixedHeight)
+NODELETE inline bool shouldExpandFrame(LayoutUnit width, LayoutUnit height, bool hasFixedWidth, bool hasFixedHeight)
 {
     // If the size computed to zero never expand.
     if (!width || !height)

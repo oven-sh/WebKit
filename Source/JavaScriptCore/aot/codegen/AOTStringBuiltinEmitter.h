@@ -30,10 +30,10 @@ public:
     void generateCallStringConstructor(const InlineCall&);
     void generateStringUTF8ByteLength(const InlineCall&);
     void generateStringLength(const InlineCall&);
-    void generateStringAt(const InlineCall& call) { generateIndexedRead(call, InlineBuiltin::StringAt); }
-    void generateStringCharAt(const InlineCall& call) { generateIndexedRead(call, InlineBuiltin::StringCharAt); }
-    void generateStringCharCodeAt(const InlineCall& call) { generateIndexedRead(call, InlineBuiltin::StringCharCodeAt); }
-    void generateStringCodePointAt(const InlineCall& call) { generateIndexedRead(call, InlineBuiltin::StringCodePointAt); }
+    void generateStringAt(const InlineCall& call) { generateIndexedRead(call, IndexedRead::At); }
+    void generateStringCharAt(const InlineCall& call) { generateIndexedRead(call, IndexedRead::CharAt); }
+    void generateStringCharCodeAt(const InlineCall& call) { generateIndexedRead(call, IndexedRead::CharCodeAt); }
+    void generateStringCodePointAt(const InlineCall& call) { generateIndexedRead(call, IndexedRead::CodePointAt); }
     void generateStringSlice(const InlineCall& call) { generateRange(call, StringRangeMethod::Slice); }
     void generateStringSubstring(const InlineCall& call) { generateRange(call, StringRangeMethod::Substring); }
     void generateStringSubstr(const InlineCall& call) { generateRange(call, StringRangeMethod::Substr); }
@@ -50,20 +50,21 @@ public:
     void generateStringLocaleCompare(const InlineCall&);
     void generateStringConcat(const InlineCall&);
     void generateStringFromCharCode(const InlineCall&);
-    void generateStringSplitPrefix(const InlineCall&);
 
 private:
+    enum class IndexedRead : uint8_t { At, CharAt, CharCodeAt, CodePointAt };
+
     StringEmitter& strings() { return emitter<StringEmitter>(); }
     CellPointer stringOperand(ValueID string) { return cellOperand(string); }
-    // Where the operand may be undefined at run time it counts as `whenUndefined`. NaN is what the conversion of undefined to a number gives: position 0.
     std::optional<Number> numberArgument(const InlineCall&, unsigned index, double whenUndefined = PNaN);
     std::optional<Condition> isUndefinedArgument(const InlineCall&, unsigned index);
     Word32 positionArgument(const InlineCall&, unsigned index, Word32 length, Word32 whenAbsent);
+    Integer countArgument(const InlineCall&, unsigned index);
     Condition is8Bit(CellPointer string);
     void continueIf(Condition condition, LBasicBlock otherwise) { strings().continueIf(condition, unlikelyEdge(otherwise)); }
     void finish(const InlineCall&, Operand naturalResult);
 
-    void generateIndexedRead(const InlineCall&, InlineBuiltin);
+    void generateIndexedRead(const InlineCall&, IndexedRead);
     void generateRange(const InlineCall&, StringRangeMethod);
     void generateHasAt(const InlineCall&, LiteralEnd);
     Condition hasCharactersAt(const InlineCall&, CellPointer string, CellPointer other, Integer at);
@@ -71,14 +72,6 @@ private:
     void generateTrim(const InlineCall&, TrimmedEnds);
     void generateCase(const InlineCall&, RuntimeOperation);
     void generatePad(const InlineCall&, bool isAtStart);
-
-    struct Separator {
-        Word32 codeUnitOrText;
-        unsigned length;
-    };
-    void splitAtLiteral(const InlineCall&, CellPointer string, StringID literal, unsigned count);
-    // Writes where the first `wanted` separators are and returns how many of them it has found. Where none is wanted it counts them all.
-    Integer searchSeparators(const CharacterView&, const Separator&, Pointer positions = { }, unsigned wanted = 0);
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -86,7 +86,7 @@ public:
     virtual bool isDeviceMotionController() const { return false; }
     virtual bool isDeviceOrientationController() const { return false; }
     virtual bool isDocumentMediaElement() const { return false; }
-    virtual bool isDocumentPictureInPicture() const { return false; }
+    virtual bool isVideoPictureInPicture() const { return false; }
     virtual bool isDocumentStorageAccess() const { return false; }
     virtual bool isGeolocationController() const { return false; }
     virtual bool isHTMLVideoElementPictureInPicture() const { return false; }
@@ -109,6 +109,7 @@ public:
     virtual bool isNavigatorPermissions() const { return false; }
     virtual bool isNavigatorScreenWakeLock() const { return false; }
     virtual bool isNavigatorUserActivation() const { return false; }
+    virtual bool isNavigatorWebXR() const { return false; }
     virtual bool isNotificationController() const { return false; }
     virtual bool isServiceWorkerRegistrationBackgroundFetchAPI() const { return false; }
     virtual bool isServiceWorkerRegistrationPushAPI() const { return false; }
@@ -146,14 +147,14 @@ class Supplementable {
 public:
     void provideSupplement(ASCIILiteral key, std::unique_ptr<Supplement<T>> supplement)
     {
-        ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
+        ASSERT_WITH_SECURITY_IMPLICATION(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
         ASSERT(!m_supplements.get(key));
         m_supplements.add(key, WTF::move(supplement));
     }
 
     Supplement<T>* requireSupplement(ASCIILiteral key)
     {
-        ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
+        ASSERT_WITH_SECURITY_IMPLICATION(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
         return m_supplements.get(key);
     }
 
@@ -165,7 +166,7 @@ protected:
 private:
     using SupplementMap = HashMap<ASCIILiteral, std::unique_ptr<Supplement<T>>>;
     SupplementMap m_supplements;
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     const uint32_t m_creationThreadID { currentThreadID() };
 #endif
 };

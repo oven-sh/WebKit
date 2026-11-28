@@ -93,7 +93,7 @@ void MemoryNumbering::beginWalk(Dominators& dominators)
     m_statesAtTails.shrink(0);
     m_statesAtTails.append(MemoryState { });
     recordLoopWrites();
-    if (m_proc.policy().validation.overlooksWritesOnUnlikelyPaths) [[unlikely]]
+    if (m_proc.policy().validation.ignoresWritesOnRarePaths) [[unlikely]]
         findBlocksOnLikelyPaths();
 }
 
@@ -392,7 +392,7 @@ void MemoryNumbering::findBlocksOnLikelyPaths()
 
 void MemoryNumbering::didWriteMemory(const HeapSet& writes, Origin origin)
 {
-    if (m_proc.policy().validation.overlooksWritesOnUnlikelyPaths && !m_blocksOnLikelyPaths.contains(m_block)) [[unlikely]]
+    if (m_proc.policy().validation.ignoresWritesOnRarePaths && !m_blocksOnLikelyPaths.contains(m_block)) [[unlikely]]
         return;
     m_memoryState.id = ++m_lastMemoryStateID;
     m_memoryState.owner = m_block;

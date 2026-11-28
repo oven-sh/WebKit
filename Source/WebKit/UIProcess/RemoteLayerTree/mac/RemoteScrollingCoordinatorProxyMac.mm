@@ -86,9 +86,9 @@ void RemoteScrollingCoordinatorProxyMac::handleWheelEvent(Ref<WebWheelEvent>&& w
     m_eventDispatcher->handleWheelEvent(WTF::move(wheelEvent), rubberBandableEdges);
 }
 
-void RemoteScrollingCoordinatorProxyMac::wheelEventHandlingCompleted(const PlatformWheelEvent& wheelEvent, std::optional<ScrollingNodeID> scrollingNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
+void RemoteScrollingCoordinatorProxyMac::wheelEventHandlingCompleted(const PlatformWheelEvent& wheelEvent, std::optional<FrameIdentifier> defaultHandlingFrameID, std::optional<ScrollingNodeID> scrollingNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
 {
-    m_eventDispatcher->wheelEventHandlingCompleted(wheelEvent, scrollingNodeID, gestureState, wasHandled);
+    m_eventDispatcher->wheelEventHandlingCompleted(wheelEvent, defaultHandlingFrameID, scrollingNodeID, gestureState, wasHandled);
 }
 
 RequestsScrollHandling RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&)
@@ -294,6 +294,14 @@ void RemoteScrollingCoordinatorProxyMac::applyScrollingTreeLayerPositionsAfterCo
 {
     RemoteScrollingCoordinatorProxy::applyScrollingTreeLayerPositionsAfterCommit();
     m_eventDispatcher->renderingUpdateComplete();
+#if ENABLE(THREADED_ANIMATIONS)
+    m_eventDispatcher->updateAnimatedContentVisibilityAfterCommit();
+#endif
+}
+
+void RemoteScrollingCoordinatorProxyMac::flushMainThreadTransactionIfNeeded()
+{
+    m_eventDispatcher->flushMainThreadTransactionIfNeeded();
 }
 
 #if ENABLE(THREADED_ANIMATIONS)
@@ -320,6 +328,11 @@ void RemoteScrollingCoordinatorProxyMac::removeTimelines(WebCore::ProcessIdentif
 RefPtr<const RemoteAnimationTimeline> RemoteScrollingCoordinatorProxyMac::timeline(const TimelineID& timelineID) const
 {
     return m_eventDispatcher->timeline(timelineID);
+}
+
+bool RemoteScrollingCoordinatorProxyMac::hasVisibleMonotonicAnimations() const
+{
+    return m_eventDispatcher->hasVisibleMonotonicAnimations();
 }
 
 String RemoteScrollingCoordinatorProxyMac::animationStackJSONForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const

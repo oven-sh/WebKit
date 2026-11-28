@@ -783,23 +783,23 @@ TEST(ArgumentCoderShareableResourceHandle, OverflowingOffsetAndSizeIsRejectedNot
 TEST(ArgumentCoderSecurityFlags, SecureDefaultRoundTrips)
 {
     IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
-    encoder << WebKit::SecurityFlags { };
+    encoder << WebKit::SecurityFlags::Storage { };
 
     auto decoder = IPC::Decoder::create(encoder.span(), { });
     ASSERT_TRUE(decoder);
 
-    auto flags = decoder->decode<WebKit::SecurityFlags>();
+    auto flags = decoder->decode<WebKit::SecurityFlags::Storage>();
     ASSERT_TRUE(flags.has_value());
-    EXPECT_TRUE(*flags == WebKit::SecurityFlags { });
+    EXPECT_TRUE(*flags == WebKit::SecurityFlags::Storage { });
 }
 
 TEST(ArgumentCoderSecurityFlags, DisabledFlagRoundTrips)
 {
-    std::array<uint64_t, WebKit::SecurityFlags::ipcWordCount> words { };
+    std::array<uint64_t, WebKit::SecurityFlags::Storage::ipcWordCount> words { };
     words[0] |= 1ULL;
-    auto original = WebKit::SecurityFlags::fromDisabledFlagsForIPC(words);
+    auto original = WebKit::SecurityFlags::Storage::fromDisabledFlagsForIPC(words);
     ASSERT_TRUE(original.has_value());
-    EXPECT_FALSE(*original == WebKit::SecurityFlags { });
+    EXPECT_FALSE(*original == WebKit::SecurityFlags::Storage { });
 
     IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
     encoder << *original;
@@ -807,7 +807,7 @@ TEST(ArgumentCoderSecurityFlags, DisabledFlagRoundTrips)
     auto decoder = IPC::Decoder::create(encoder.span(), { });
     ASSERT_TRUE(decoder);
 
-    auto flags = decoder->decode<WebKit::SecurityFlags>();
+    auto flags = decoder->decode<WebKit::SecurityFlags::Storage>();
     ASSERT_TRUE(flags.has_value());
     EXPECT_TRUE(*flags == *original);
     EXPECT_EQ(flags->disabledFlagsForIPC(), words);
@@ -817,11 +817,11 @@ TEST(ArgumentCoderSecurityFlags, BitBelongingToNoFlagIsRejectedNotCrashed)
 {
     // A flag count that fills the last word leaves no bit for this test to set, and flagCount / 64 would then
     // index one past the end.
-    if constexpr (!(WebKit::SecurityFlags::flagCount % 64))
+    if constexpr (!(WebKit::SecurityFlags::Storage::flagCount % 64))
         GTEST_SKIP() << "every bit belongs to a flag at this flag count";
     else {
-        std::array<uint64_t, WebKit::SecurityFlags::ipcWordCount> words { };
-        words[WebKit::SecurityFlags::flagCount / 64] |= 1ULL << (WebKit::SecurityFlags::flagCount % 64);
+        std::array<uint64_t, WebKit::SecurityFlags::Storage::ipcWordCount> words { };
+        words[WebKit::SecurityFlags::Storage::flagCount / 64] |= 1ULL << (WebKit::SecurityFlags::Storage::flagCount % 64);
 
         IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
         encoder << words;
@@ -829,7 +829,7 @@ TEST(ArgumentCoderSecurityFlags, BitBelongingToNoFlagIsRejectedNotCrashed)
         auto decoder = IPC::Decoder::create(encoder.span(), { });
         ASSERT_TRUE(decoder);
 
-        auto flags = decoder->decode<WebKit::SecurityFlags>();
+        auto flags = decoder->decode<WebKit::SecurityFlags::Storage>();
         EXPECT_FALSE(flags.has_value());
     }
 }
@@ -905,6 +905,7 @@ TEST(ArgumentCoderQuirkTable, RoundTripsEveryField)
     behavior.userAgent = "userAgent"_s;
     behavior.chromeCompatibilityVersion = "123"_s;
     behavior.cookieNames = { "a"_s, "b"_s };
+    behavior.styleSheet = "body { color: red; }"_s;
     behavior.elementSelector = ".element"_s;
     behavior.documentSelector = "#document"_s;
     behavior.secondaryURL = { quirkMatchPattern("*://*.example.com/*"_s) };
@@ -989,6 +990,39 @@ TEST(ArgumentCoderQuirkTable, NumberOfIDsIsNotADecodableBehaviorID)
     auto decoder = IPC::Decoder::create(encoder.span(), { });
     ASSERT_TRUE(decoder);
     EXPECT_FALSE(decoder->decode<WebCore::QuirkBehavior>().has_value());
+}
+
+static NEVER_INLINE void encodeBoolArgument(IPC::Encoder& encoder, bool value)
+{
+    encoder << value;
+}
+
+TEST(ArgumentCoderBool, NonCanonicalBoolIsEncodedAsTrue)
+{
+    // Calling a BOOL API through an untyped objc_msgSend() or -performSelector:withObject: leaves
+    // the whole register in the bool argument. Call a bool function the same way.
+    auto encodeUntypedArgument = std::bit_cast<void(*)(IPC::Encoder&, uintptr_t)>(&encodeBoolArgument);
+
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encodeUntypedArgument(encoder, 0x12345603);
+
+    auto decoder = IPC::Decoder::create(encoder.span(), { });
+    ASSERT_TRUE(decoder);
+    auto value = decoder->decode<bool>();
+    ASSERT_TRUE(value.has_value());
+    EXPECT_TRUE(*value);
+    EXPECT_TRUE(decoder->isValid());
+}
+
+TEST(ArgumentCoderBool, NonCanonicalByteIsRejected)
+{
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encoder << static_cast<uint8_t>(0x50);
+
+    auto decoder = IPC::Decoder::create(encoder.span(), { });
+    ASSERT_TRUE(decoder);
+    EXPECT_FALSE(decoder->decode<bool>().has_value());
+    EXPECT_FALSE(decoder->isValid());
 }
 
 } // namespace TestWebKitAPI

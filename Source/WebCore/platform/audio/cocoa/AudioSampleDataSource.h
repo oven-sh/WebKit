@@ -49,7 +49,7 @@ class AudioSampleDataSource : public ThreadSafeRefCounted<AudioSampleDataSource,
 #endif
     {
 public:
-    static Ref<AudioSampleDataSource> LEGACY_NODELETE create(size_t, LoggerHelper&, size_t waitToStartForPushCount = 2);
+    NODELETE static Ref<AudioSampleDataSource> create(size_t, LoggerHelper&, size_t waitToStartForPushCount = 2);
 
     ~AudioSampleDataSource();
 
@@ -124,6 +124,7 @@ private:
     bool m_shouldComputeOutputSampleOffset { true };
 
     uint64_t m_readCount { 0 };
+    uint64_t m_lastReadFrame { 0 };
     enum { NoSeek = std::numeric_limits<uint64_t>::max() };
     std::atomic<uint64_t> m_seekTo { NoSeek };
 

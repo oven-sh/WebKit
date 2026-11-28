@@ -56,7 +56,6 @@ namespace WebCore {
 class AnalyserNode;
 class AsyncAudioDecoder;
 class AudioBuffer;
-class AudioBufferCallback;
 class AudioBufferSourceNode;
 class AudioListener;
 class AudioNodeOutput;
@@ -67,6 +66,8 @@ class ChannelMergerNode;
 class ChannelSplitterNode;
 class ConstantSourceNode;
 class ConvolverNode;
+class DecodeErrorCallback;
+class DecodeSuccessCallback;
 class DelayNode;
 class Document;
 class DynamicsCompressorNode;
@@ -106,7 +107,7 @@ public:
     WEBCORE_EXPORT static bool isContextAlive(uint64_t contextID);
     uint64_t contextID() const { return m_contextID; }
 
-    Document* LEGACY_NODELETE document() const;
+    NODELETE Document* document() const;
     bool isInitialized() const { return m_isInitialized; }
     
     virtual bool isOfflineContext() const = 0;
@@ -121,7 +122,7 @@ public:
     float sampleRate() const { return destination().sampleRate(); }
 
     // Asynchronous audio file data decoding.
-    void decodeAudioData(Ref<JSC::ArrayBuffer>&&, RefPtr<AudioBufferCallback>&&, RefPtr<AudioBufferCallback>&&, Ref<DeferredPromise>&&);
+    void decodeAudioData(Ref<JSC::ArrayBuffer>&&, RefPtr<DecodeSuccessCallback>&&, RefPtr<DecodeErrorCallback>&&, Ref<DeferredPromise>&&);
 
     AudioListener& listener() { return m_listener; }
 
@@ -218,16 +219,16 @@ public:
     void removeMarkedSummingJunction(AudioSummingJunction*);
 
     // EventTarget
-    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
+    NODELETE ScriptExecutionContext* scriptExecutionContext() const final;
 
     virtual void sourceNodeWillBeginPlayback(AudioNode&);
     // When a source node has no more processing to do (has finished playing), then it tells the context to dereference it.
-    void LEGACY_NODELETE sourceNodeDidFinishPlayback(AudioNode&);
+    NODELETE void sourceNodeDidFinishPlayback(AudioNode&);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const override { return m_logger.get(); }
     uint64_t logIdentifier() const override { return m_logIdentifier; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
+    NODELETE WTFLogChannel& logChannel() const final;
     uint64_t nextAudioNodeLogIdentifier() { return childLogIdentifier(m_logIdentifier, ++m_nextAudioNodeIdentifier); }
     uint64_t nextAudioParameterLogIdentifier() { return childLogIdentifier(m_logIdentifier, ++m_nextAudioParameterIdentifier); }
 #endif
@@ -239,7 +240,7 @@ public:
 
     virtual void lazyInitialize();
 
-    static bool LEGACY_NODELETE isSupportedSampleRate(float sampleRate);
+    NODELETE static bool isSupportedSampleRate(float sampleRate);
 
     PeriodicWave& periodicWave(OscillatorType);
 
@@ -262,7 +263,7 @@ protected:
 
     void clear();
 
-    RefPtr<MediaSessionManagerInterface> LEGACY_NODELETE mediaSessionManagerIfExists() const;
+    NODELETE RefPtr<MediaSessionManagerInterface> mediaSessionManagerIfExists() const;
     RefPtr<MediaSessionManagerInterface> mediaSessionManager() const;
 
     // ActiveDOMObject.

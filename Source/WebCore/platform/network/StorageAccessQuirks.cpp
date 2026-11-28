@@ -26,15 +26,16 @@
 #include "config.h"
 #include "StorageAccessQuirks.h"
 
+#include "Quirks.h"
 #include <algorithm>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
 
 namespace WebCore {
 
-static HashSet<OrganizationStorageAccessPromptQuirk>& LEGACY_NODELETE updatableStorageAccessPromptQuirks()
+NODELETE static HashSet<OrganizationStorageAccessPromptQuirk>& updatableStorageAccessPromptQuirks()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     // FIXME: Move this isn't an instance of a class, probably as a member of NetworkStorageSession.
     static MainThreadNeverDestroyed<HashSet<OrganizationStorageAccessPromptQuirk>> set;
     return set.get();
@@ -67,12 +68,12 @@ void updateStorageAccessPromptQuirks(Vector<OrganizationStorageAccessPromptQuirk
 bool loginDomainMatchesRequestingDomain(const RegistrableDomain& topFrameDomain, const RegistrableDomain& resourceDomain)
 {
     auto loginDomains = subResourceDomainsInNeedOfStorageAccessForFirstParty(topFrameDomain);
-    return (loginDomains && loginDomains.value().contains(resourceDomain)) || !!storageAccessQuirkForDomainPair(topFrameDomain, resourceDomain);
+    return (loginDomains && loginDomains.value().contains(resourceDomain)) || !!storageAccessQuirkForDomainPair(topFrameDomain, resourceDomain) || Quirks::isSingleOwnerLoginDomainPair(topFrameDomain, resourceDomain);
 }
 
 bool canRequestStorageAccessForLoginOrCompatibilityPurposesWithoutPriorUserInteraction(const RegistrableDomain& resourceDomain, const RegistrableDomain& topFrameDomain)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     return loginDomainMatchesRequestingDomain(topFrameDomain, resourceDomain);
 }
 

@@ -1,0 +1,241 @@
+# function* noisy() { report("a"); yield 1; report("b"); yield 2; report("c"); }
+# function all() { for (const value of noisy()) report(value); }
+# function some() { for (const value of noisyToo()) { report(value); if (0 < value) return; } }
+# function* count() { for (let i = 0;; i++) yield i; }
+# function thrower() { for (const value of count()) { if (2 < value) throw value; } }
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell globalThis.report = print;
+# ANSWER: a
+# ANSWER-NEXT: 1
+# ANSWER-NEXT: b
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: c
+# ANSWER-NEXT: a
+# ANSWER-NEXT: 1
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="all"
+    v2 = NewClosure function=f2
+    v3 = Call v2 calleeName="some"
+    v4 = NewClosure function=f3
+    Jump -> next b1()
+  b1() handler=b3():
+    v5 = Call v4 calleeName="thrower"
+    Jump -> next b2()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="report" [isFreeName]
+    v10 = Call v9, -, v7 calleeName="report"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="all" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f4
+    v1 = Call v0 calleeName="noisy"
+    v2 = IteratorOpen v1
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Undefined
+    Return v7
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="report" [isFreeName]
+    v10 = Call v9, -, v6 calleeName="report"
+    Jump -> next b2()
+  b6() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}
+function f2 name="some" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f5
+    v1 = Call v0 calleeName="noisyToo"
+    v2 = IteratorOpen v1
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Undefined
+    Return v7
+  b4():
+    Jump -> next b5()
+  b5() handler=b8():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="report" [isFreeName]
+    v10 = Call v9, -, v6 calleeName="report"
+    v11 = Integer
+    v12 = Less v11, v6
+    Branch v12 -> taken b6(), notTaken b7()
+  b6():
+    IteratorClose v2
+    v14 = Undefined
+    Return v14
+  b7() handler=b8():
+    Jump -> next b2()
+  b8() role=IterationCleanup subject=v2:
+    v15 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v15
+}
+function f3 name="thrower" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f6
+    v1 = Call v0 calleeName="count"
+    v2 = IteratorOpen v1
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Undefined
+    Return v7
+  b4():
+    Jump -> next b5()
+  b5() handler=b8():
+    v8 = Integer integer=2
+    v9 = Less v8, v6
+    Branch v9 -> taken b6(), notTaken b7()
+  b6() handler=b8():
+    Throw v6
+  b7() handler=b8():
+    Jump -> next b2()
+  b8() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+}
+function f4 name="noisy" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="report" [isFreeName]
+    v5 = String string="a"
+    v6 = Call v4, -, v5 calleeName="report"
+    v7 = Integer integer=1
+    v8 = Yield v7
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v9
+  b3():
+    Return v9
+  b4():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="report" [isFreeName]
+    v13 = String string="b"
+    v14 = Call v12, -, v13 calleeName="report"
+    v15 = Integer integer=2
+    v16 = Yield v15
+    v17 = ResultAt v16
+    v18 = ResultAt v16 index=1
+    Switch v18 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5():
+    Throw v17
+  b6():
+    Return v17
+  b7():
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="report" [isFreeName]
+    v21 = String string="c"
+    v22 = Call v20, -, v21 calleeName="report"
+    v23 = Undefined
+    Return v23
+}
+function f5 name="noisyToo" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="report" [isFreeName]
+    v5 = String string="a"
+    v6 = Call v4, -, v5 calleeName="report"
+    v7 = Integer integer=1
+    v8 = Yield v7
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v9
+  b3():
+    Return v9
+  b4():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="report" [isFreeName]
+    v13 = String string="b"
+    v14 = Call v12, -, v13 calleeName="report"
+    v15 = Integer integer=2
+    v16 = Yield v15
+    v17 = ResultAt v16
+    v18 = ResultAt v16 index=1
+    Switch v18 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5():
+    Throw v17
+  b6():
+    Return v17
+  b7():
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="report" [isFreeName]
+    v21 = String string="c"
+    v22 = Call v20, -, v21 calleeName="report"
+    v23 = Undefined
+    Return v23
+}
+function f6 name="count" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v3 = Integer
+    Jump -> next b2(v3)
+  b2(v4: anything):
+    LoopHint
+    v6 = Yield v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Switch v8 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b3():
+    Throw v7
+  b4():
+    Return v7
+  b5():
+    v9 = Increment v4
+    Jump -> next b2(v9)
+}

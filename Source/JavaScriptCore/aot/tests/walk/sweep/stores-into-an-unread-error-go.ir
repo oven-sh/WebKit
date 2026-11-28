@@ -1,0 +1,26 @@
+# const e = new SuppressedError(a, b); define(e, "name", b);   with nothing reading e
+# v2 keeps its operands in its result, so it has made the result. v3 waits for v2, nothing needs v2, and both go.
+# v4 may hand on the object that it is given, so v5 stays, and keeps v4 with it.
+# RUN: sweep-code
+# CHECK: v2, v3
+# CHECK: v4: anything @Cell = ToThis
+# CHECK: v5 @Void = PropDefine
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @Cell = NewSuppressedError v0, v1 traits=[mayCollect, mayTouchMemory]
+#     v3 @Void = PropDefine v2, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v4: anything @Cell = ToThis v0 traits=[mayCollect, mayTouchMemory]
+#     v5 @Void = PropDefine v4, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

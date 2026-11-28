@@ -81,8 +81,7 @@
 #include <WebCore/StyleWebKitLocale.h>
 #include <WebCore/ViewTimeline.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - ComputedStyleBase::NonInheritedFlags
 
@@ -144,6 +143,11 @@ inline bool ComputedStyleBase::hasExplicitlyInheritedProperties() const
     return m_nonInheritedFlags.hasExplicitlyInheritedProperties;
 }
 
+inline bool ComputedStyleBase::hasAuthorHighlightColors() const
+{
+    return m_nonInheritedFlags.hasAuthorHighlightColors;
+}
+
 inline bool ComputedStyleBase::disallowsFastPathInheritance() const
 {
     return m_nonInheritedFlags.disallowsFastPathInheritance;
@@ -188,6 +192,13 @@ inline bool ComputedStyleBase::isInSubtreeWithBlendMode() const
 inline bool ComputedStyleBase::isAffectedBySmartImageResizer() const
 {
     return m_inheritedRareData->isAffectedBySmartImageResizer;
+}
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+inline AppleColorFilterOverride ComputedStyleBase::appleColorFilterOverride() const
+{
+    return static_cast<AppleColorFilterOverride>(m_inheritedRareData->appleColorFilterOverride);
 }
 #endif
 
@@ -557,5 +568,4 @@ inline const PageSize& ComputedStyleBase::pageSize() const
     return m_nonInheritedData->rareData->pageSize;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

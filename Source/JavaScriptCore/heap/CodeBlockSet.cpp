@@ -43,8 +43,6 @@ bool CodeBlockSet::contains(const AbstractLocker&, void* candidateCodeBlock)
 {
     RELEASE_ASSERT(m_lock.isLocked());
     CodeBlock* codeBlock = static_cast<CodeBlock*>(candidateCodeBlock);
-    if (!UncheckedKeyHashSet<CodeBlock*>::isValidValue(codeBlock))
-        return false;
     return m_codeBlocks.contains(codeBlock);
 }
 
@@ -52,8 +50,9 @@ void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
 {
     ASSERT(vm.heap.isInPhase(CollectorPhase::End));
     m_currentlyExecuting.clear();
+    HeapVersion markingVersion = vm.heap.objectSpace().markingVersion();
     m_codeBlocks.removeIf([&](CodeBlock* codeBlock) {
-        return !vm.heap.isMarked(codeBlock);
+        return !Heap::isMarked(markingVersion, codeBlock);
     });
 }
 

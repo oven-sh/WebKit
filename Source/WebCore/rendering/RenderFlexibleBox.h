@@ -44,8 +44,8 @@ class RenderFlexibleBox : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderFlexibleBox);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderFlexibleBox);
 public:
-    RenderFlexibleBox(Type, Element&, Style::ComputedStyle&&);
-    RenderFlexibleBox(Type, Document&, Style::ComputedStyle&&);
+    RenderFlexibleBox(Type, Element&, UniqueRef<Style::ComputedStyle>&&);
+    RenderFlexibleBox(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderFlexibleBox();
 
     using Direction = FlowDirection;
@@ -60,8 +60,6 @@ public:
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
     void flexItemWillBeRemoved(const RenderBox& flexItem);
-    bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& adjustedLocation, HitTestAction) override;
-    void paintChildren(PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect) override;
 
     bool willStretchItem(const RenderBox& item, LogicalBoxAxis containingAxis, StretchingMode = StretchingMode::Normal) const override;
 
@@ -86,8 +84,10 @@ public:
     // Returns true if the position changed. In that case, the flexItem will have to be laid out again.
     bool setStaticPositionForPositionedLayout(const RenderBox&);
 
-    bool LEGACY_NODELETE isComputingFlexBaseSizes() const;
-    bool LEGACY_NODELETE isInCrossAxisStretchLayout() const;
+    NODELETE bool isComputingFlexBaseSizes() const;
+    NODELETE bool isInCrossAxisStretchLayout() const;
+
+    const LayoutIntegration::FlexLayout& flexLayout() const LIFETIME_BOUND { return m_flexLayout; }
 
 protected:
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
@@ -96,7 +96,7 @@ private:
     friend class LayoutIntegration::FlexLayout;
     friend class LayoutIntegration::FlexItemIntrinsicWidthComputationScope;
 
-    void LEGACY_NODELETE clearFlexItemOverridingSizes();
+    NODELETE void clearFlexItemOverridingSizes();
 
     // The flex items' border box rects as they were before the flex algorithm ran, so layoutBlock can repaint the
     // ones it moved. Both walk the in-flow children directly (the flex item list is built inside FlexLayout::layout).

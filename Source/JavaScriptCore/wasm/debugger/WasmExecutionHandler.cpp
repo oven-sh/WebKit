@@ -772,7 +772,7 @@ void ExecutionHandler::handleThreadStopInfo(StringView packet)
     sendStopReplyForThread(locker, *vmId);
 }
 
-static uint64_t LEGACY_NODELETE getStopPC(const DebugState& state)
+NODELETE static uint64_t getStopPC(const DebugState& state)
 {
     if (state.isStoppedAtSystemCall())
         return VirtualAddress(VirtualAddress::INVALID_BASE).value();
@@ -941,7 +941,7 @@ void ExecutionHandler::sendReplyImpl(AbstractLocker&, StringView reply) WTF_REQU
     }
 #endif
 
-    auto packetData = packet.utf8();
+    auto packetData = makeUTF8CString(packet);
     auto packetBytes = packetData.span();
     int sent = static_cast<int>(send(m_debugServer.m_clientSocket, packetBytes.data(), packetBytes.size(), 0));
     if (sent < 0)

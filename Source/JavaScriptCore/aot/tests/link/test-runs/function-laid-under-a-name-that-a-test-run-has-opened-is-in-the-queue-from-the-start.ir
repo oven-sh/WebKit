@@ -1,0 +1,68 @@
+# A test run has opened `shut` on Object.prototype, so `Gate.prototype.shut = function () { .. }` may find a setter there: the flow lets the closure go to unseen code and keeps no record of the name.
+# The table lists what the body writes all the same, the record of the class names it, and a run behind a test of the layout finds it by name. So it lies under its name for the queue as well:
+# it is in the queue from the start, and the constructor leads to it. Without that the build stopped in UnitQueue: "the code of function 4, Body, mentions function 2, GenericCallEntry".
+# function Gate(v) { this.count = v; this.parts = v; }      Gate.prototype.shut = function () { return this.count; };
+# function take(gate) { return gate.count + gate.parts; }   function atEnd() { this.shut(); return take(this); }      sink({ handler: atEnd }); sink(new Gate(1));
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link functions members mechanisms=all
+# CHECK: function f2 {{*}}in-queue-from-start
+# CHECK: referrers f0, f1
+# CHECK: on-prototype L0 "shut" expected=f2
+# RUN(WALK): walk f3 mechanisms=all
+# WALK-LABEL: code f3:Body
+# WALK: AreMembersUnchanged conditions=[{layout=L0 key="shut"}]
+# WALK: CallDirect {{*}}function=f2
+
+module m0 path="gate.js" displayPath="gate.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Gate" module=m0 constructor=f1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="parts" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 module=m0 position=205 fields=[{key="handler" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="Gate" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="take" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @40
+    v1 = PropGet v0 key="prototype" @40
+    v2 = NewClosure function=f2 @62
+    PropSet v1, v2 key="shut" @55
+    v4 = Builtin builtin=GlobalThis @200
+    v5 = PropGet v4 key="sink" [isFreeName] @200
+    v6 = NewClosure function=f3 @205
+    v7 = NewObject -, v6 layout=L1 fields=[0] @204
+    v8 = FinishObject v7 @204
+    v9 = Call v5, -, v8 calleeName="sink" @200
+    v10 = GetModuleVariable variable=g0 @224
+    v11 = Integer integer=1 @229
+    v12 = Construct v10, -, v11 calleeName="Gate" @220
+    v13 = Call v5, -, v12 calleeName="sink" @215
+    v14 = Undefined @215
+    Return v14 @215
+}
+function f1 name="Gate" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="count" @16
+    PropSet v0, v1 key="parts" @17
+    v4 = Undefined @16
+    Return v4 @16
+}
+function f2 module=m0 position=62 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="count" @80
+    Return v1 @80
+}
+function f3 name="atEnd" module=m0 position=160 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=undefined|null|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="shut" @180
+    v2 = Call v1, v0 calleeKey="shut" calleeName="this.shut" @185
+    v3 = GetModuleVariable variable=g1 @190
+    v4 = Call v3, -, v0 calleeName="take" @190
+    Return v4 @180
+}
+function f4 name="take" module=m0 position=230 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="count" @240
+    v2 = PropGet v0 key="parts" @244
+    v3 = Add v1, v2 @244
+    Return v3 @240
+}
+openedname holder=ObjectPrototype name="shut"

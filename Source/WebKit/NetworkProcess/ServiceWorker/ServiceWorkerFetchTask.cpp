@@ -45,6 +45,7 @@
 #include <WebCore/CrossOriginAccessControl.h>
 #include <WebCore/RetrieveRecordsOptions.h>
 #include <WebCore/SWServerRegistration.h>
+#include <WebCore/ServiceWorkerFetch.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #define SWFETCH_RELEASE_LOG(fmt, ...) RELEASE_LOG(ServiceWorker, "%p - [fetchIdentifier=%" PRIu64 "] ServiceWorkerFetchTask::" fmt, this, m_fetchIdentifier.toUInt64(), ##__VA_ARGS__)
@@ -88,7 +89,7 @@ Ref<ServiceWorkerFetchTask> ServiceWorkerFetchTask::fromCache(NetworkResourceLoa
     WebCore::RetrieveRecordsOptions options {
         .request { request },
         .crossOriginEmbedderPolicy { loader.parameters().crossOriginEmbedderPolicy },
-        .documentIsolationPolicy = loader.parameters().documentIsolationPolicy.value,
+        .documentIsolationPolicy { loader.parameters().documentIsolationPolicy },
         .sourceOrigin { WTF::move(clientOrigin) }
     };
 
@@ -302,7 +303,7 @@ void ServiceWorkerFetchTask::processResponse(ResourceResponse&& response, const 
         return;
 #endif
 
-    SWFETCH_RELEASE_LOG("processResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, needsContinueDidReceiveResponseMessage=%d, source=%u)", response.httpStatusCode(), response.mimeType().utf8(), response.expectedContentLength(), needsContinueDidReceiveResponseMessage, static_cast<unsigned>(response.source()));
+    SWFETCH_RELEASE_LOG("processResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, needsContinueDidReceiveResponseMessage=%d, source=%u)", response.httpStatusCode(), makeUTF8CString(response.mimeType()), response.expectedContentLength(), needsContinueDidReceiveResponseMessage, static_cast<unsigned>(response.source()));
     m_wasHandled = true;
     if (m_timeoutTimer)
         m_timeoutTimer->stop();
@@ -383,7 +384,10 @@ void ServiceWorkerFetchTask::didReceiveFormData(const IPC::FormDataReference& fo
 void ServiceWorkerFetchTask::didFinish(const NetworkLoadMetrics& networkLoadMetrics)
 {
     ASSERT(!m_timeoutTimer || !m_timeoutTimer->isActive());
-    SWFETCH_RELEASE_LOG("didFinish:");
+    SWFETCH_RELEASE_LOG("didFinish: (m_isDone=%d)", m_isDone);
+
+    if (m_isDone)
+        return;
 
     m_isDone = true;
     if (m_timeoutTimer)
@@ -400,6 +404,9 @@ void ServiceWorkerFetchTask::didFinish(const NetworkLoadMetrics& networkLoadMetr
 
 void ServiceWorkerFetchTask::didFail(const ResourceError& error)
 {
+    if (m_isDone)
+        return;
+
     m_isDone = true;
     if (m_timeoutTimer && m_timeoutTimer->isActive()) {
         m_timeoutTimer->stop();
@@ -407,7 +414,7 @@ void ServiceWorkerFetchTask::didFail(const ResourceError& error)
     }
     cancelPreloadIfNecessary();
 
-    SWFETCH_RELEASE_LOG_ERROR("didFail: (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8(), error.errorCode());
+    SWFETCH_RELEASE_LOG_ERROR("didFail: (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", makeUTF8CString(error.domain()), error.errorCode());
     protect(m_loader)->didFailLoading(error);
 }
 
@@ -442,6 +449,8 @@ void ServiceWorkerFetchTask::usePreload()
     }
 
     m_isDone = true;
+    if (m_timeoutTimer)
+        m_timeoutTimer->stop();
     protect(m_loader)->serviceWorkerDidNotHandle(this);
 }
 
@@ -462,6 +471,8 @@ void ServiceWorkerFetchTask::cancelFromClient()
         return;
 
     m_isDone = true;
+    if (m_timeoutTimer)
+        m_timeoutTimer->stop();
 
     if (m_isLoadingFromPreloader) {
         cancelPreloadIfNecessary();
@@ -499,6 +510,7 @@ void ServiceWorkerFetchTask::continueFetchTaskWith(ResourceRequest&& request)
     SWFETCH_RELEASE_LOG("continueFetchTaskWith: (hasServiceWorkerConnection=%d)", !!m_serviceWorkerConnection);
     Ref loader = *m_loader;
     if (!m_serviceWorkerConnection) {
+        m_isDone = true;
         loader->serviceWorkerDidNotHandle(this);
         return;
     }
@@ -512,7 +524,10 @@ void ServiceWorkerFetchTask::timeoutTimerFired()
 {
     ASSERT(!m_isDone);
     ASSERT(!m_wasHandled);
-    SWFETCH_RELEASE_LOG_ERROR("timeoutTimerFired: (hasServiceWorkerConnection=%d)", !!m_serviceWorkerConnection);
+    SWFETCH_RELEASE_LOG_ERROR("timeoutTimerFired: (hasServiceWorkerConnection=%d, hasLoader=%d)", !!m_serviceWorkerConnection, !!m_loader);
+
+    if (!m_loader)
+        return;
 
     softUpdateIfNeeded();
 
@@ -679,6 +694,8 @@ bool ServiceWorkerFetchTask::convertToDownload(DownloadManager& manager, Downloa
         return false;
 
     m_isDone = true;
+    if (m_timeoutTimer)
+        m_timeoutTimer->stop();
 
     // FIXME: We might want to keep the service worker alive until the download ends.
     RefPtr<ServiceWorkerDownloadTask> serviceWorkerDownloadTask;
@@ -726,7 +743,7 @@ void ServiceWorkerFetchTask::loadFromCache(NetworkStorageManager& manager, WebCo
 void ServiceWorkerFetchTask::respondWithCacheResponse(std::optional<DOMCacheEngine::Record>&& record)
 {
     if (!record) {
-        if (auto* loader = m_loader.get())
+        if (RefPtr loader = m_loader)
             loader->setWorkerFinalRouterSource(RouterSourceEnum::Network);
         didNotHandle();
         return;
@@ -735,10 +752,15 @@ void ServiceWorkerFetchTask::respondWithCacheResponse(std::optional<DOMCacheEngi
     if (m_isDone)
         return;
 
-    if (auto* loader = m_loader.get())
-        loader->setWorkerFinalRouterSource(RouterSourceEnum::Cache);
+    Ref loader = *m_loader;
+    loader->setWorkerFinalRouterSource(RouterSourceEnum::Cache);
 
     auto response = std::exchange(record->response, { });
+    if (auto error = ServiceWorkerFetch::validateResponse(response, loader->parameters().options.mode, loader->parameters().options.redirect); !error.isNull()) {
+        didFail(error);
+        return;
+    }
+
     if (response.url().isNull())
         response.setURL(URL { m_currentRequest.url() });
 
@@ -751,6 +773,7 @@ void ServiceWorkerFetchTask::respondWithCacheResponse(std::optional<DOMCacheEngi
 
     finishLoadingWithCacheResponse(WTF::move(*record));
 }
+
 void ServiceWorkerFetchTask::finishLoadingWithCacheResponse(DOMCacheEngine::Record&& record)
 {
     switchOn(WTF::move(record.responseBody), [&](std::nullptr_t) {

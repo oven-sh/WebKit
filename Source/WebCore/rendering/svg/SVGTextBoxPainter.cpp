@@ -53,7 +53,7 @@ SVGTextBoxPainter::SVGTextBoxPainter(const LayoutIntegration::InlineContent& inl
     , m_paintInfo(paintInfo)
     , m_selectableRange(m_textBox.selectableRange())
     , m_paintOffset(paintOffset)
-    , m_haveSelection(!m_renderer.document().printing() && m_renderer.view().selection().highlightStateForTextBox(m_renderer, m_selectableRange) != RenderObject::HighlightState::None)
+    , m_haveSelection(!m_renderer->document().printing() && m_renderer->view().selection().highlightStateForTextBox(m_renderer, m_selectableRange) != RenderObject::HighlightState::None)
 {
 }
 
@@ -69,8 +69,8 @@ FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, Text
     float scalingFactor = renderer.scalingFactor();
     ASSERT(scalingFactor);
 
-    const FontCascade& scaledFont = renderer.scaledFont();
-    const FontMetrics& scaledFontMetrics = scaledFont.metricsOfPrimaryFont();
+    CheckedRef scaledFont = renderer.scaledFont();
+    const FontMetrics& scaledFontMetrics = scaledFont->metricsOfPrimaryFont();
     FloatPoint textOrigin(fragment.x, fragment.y);
     if (scalingFactor != 1)
         textOrigin.scale(scalingFactor);
@@ -79,7 +79,7 @@ FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, Text
 
     LayoutRect selectionRect { textOrigin, LayoutSize(0, LayoutUnit(fragment.height * scalingFactor)) };
     TextRun run = constructTextRun(renderer.text(), direction, style, fragment);
-    scaledFont.adjustSelectionRectForText(renderer.canUseSimplifiedTextMeasuring().value_or(false), run, selectionRect, startPosition, endPosition);
+    scaledFont->adjustSelectionRectForText(false, run, selectionRect, startPosition, endPosition);
     FloatRect snappedSelectionRect = snapRectToDevicePixelsWithWritingDirection(selectionRect, renderer.document().deviceScaleFactor(), run.ltr());
     if (scalingFactor == 1)
         return snappedSelectionRect;
@@ -88,7 +88,7 @@ FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, Text
     return snappedSelectionRect;
 }
 
-static inline bool LEGACY_NODELETE textShouldBePainted(const RenderSVGInlineText& textRenderer)
+NODELETE static inline bool textShouldBePainted(const RenderSVGInlineText& textRenderer)
 {
     return textRenderer.scaledFont().size() >= 0.5;
 }
@@ -101,8 +101,7 @@ void SVGTextBoxPainter::paintSelectionBackground()
     if (renderer().usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
-    auto& parentRenderer = this->parentRenderer();
-    ASSERT(!parentRenderer.document().printing());
+    ASSERT(!parentRenderer().document().printing());
 
     // Determine whether or not we're selected.
     bool paintSelectedTextOnly = m_paintInfo.phase == PaintPhase::Selection;
@@ -116,7 +115,7 @@ void SVGTextBoxPainter::paintSelectionBackground()
     if (!textShouldBePainted(renderer()))
         return;
 
-    auto& style = parentRenderer.style();
+    CheckedRef style = renderer().style();
 
     auto [startPosition, endPosition] = selectionStartEnd();
 
@@ -167,12 +166,12 @@ void SVGTextBoxPainter::paint()
     if (!textShouldBePainted(renderer()))
         return;
 
-    auto& style = parentRenderer.style();
+    CheckedRef style = renderer().style();
 
-    bool hasFill = !style.fill().isNone();
-    bool hasVisibleStroke = !style.stroke().isNone() && style.strokeWidth().isPossiblyPositive();
+    bool hasFill = !style->fill().isNone();
+    bool hasVisibleStroke = !style->stroke().isNone() && style->strokeWidth().isPossiblyPositive();
 
-    const Style::ComputedStyle* selectionStyle = &style;
+    CheckedPtr<const Style::ComputedStyle> selectionStyle = style.ptr();
     if (hasSelection && shouldPaintSelectionHighlight) {
         selectionStyle = parentRenderer.lazyPseudoElementStyle({ PseudoElementType::Selection });
         if (selectionStyle) {
@@ -181,7 +180,7 @@ void SVGTextBoxPainter::paint()
             if (!hasVisibleStroke)
                 hasVisibleStroke = !selectionStyle->stroke().isNone() && selectionStyle->strokeWidth().isPossiblyPositive();
         } else
-            selectionStyle = &style;
+            selectionStyle = style.ptr();
     }
 
     if (renderer().view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask)) {
@@ -199,13 +198,13 @@ void SVGTextBoxPainter::paint()
             m_paintInfo.context().concatCTM(fragmentTransform);
 
         // Spec: All text decorations except line-through should be drawn before the text is filled and stroked; thus, the text is rendered on top of these decorations.
-        auto decorations = style.textDecorationLineInEffect();
+        auto decorations = style->textDecorationLineInEffect();
         if (decorations.hasUnderline())
             paintDecoration(Style::TextDecorationLine::Flag::Underline, fragment);
         if (decorations.hasOverline())
             paintDecoration(Style::TextDecorationLine::Flag::Overline, fragment);
 
-        for (auto type : style.paintOrder()) {
+        for (auto type : style->paintOrder()) {
             switch (type) {
             case Style::PaintType::Fill:
                 if (!hasFill)
@@ -234,9 +233,9 @@ void SVGTextBoxPainter::paint()
     }
 
     // Finally, paint the outline if any.
-    if (style.hasOutline()) {
+    if (protect(parentRenderer.style())->hasOutline()) {
         if (parentRenderer.isInlineBox())
-            OutlinePainter { m_paintInfo }.paintOutline(parentRenderer, m_paintOffset);
+            Paint::OutlinePainter { m_paintInfo }.paintOutline(parentRenderer, m_paintOffset);
     }
 
     ASSERT(!m_legacyPaintingResource);
@@ -260,17 +259,9 @@ bool SVGTextBoxPainter::acquirePaintingResource(SVGPaintServerHandling& paintSer
         context.save();
         context.setTextDrawingMode(TextDrawingMode::Stroke);
 
-        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
-            if (style.fontDescription().textRenderingMode() == TextRenderingMode::GeometricPrecision)
-                scalingFactor = 1.0 / RenderSVGInlineText::computeScalingFactorForRenderer(renderer);
-            else
-                scalingFactor = 1.0;
-
-            if (auto zoomFactor = renderer.style().usedZoom(); zoomFactor != 1.0)
-                scalingFactor *= zoomFactor;
-
-            if (auto deviceScaleFactor = renderer.document().deviceScaleFactor(); deviceScaleFactor != 1.0)
-                scalingFactor *= deviceScaleFactor;
+        if (renderer.style().vectorEffect() == VectorEffect::NonScalingStroke) {
+            if (auto nonScalingStrokeScale = RenderSVGInlineText::computeNonScalingStrokeScaleForRenderer(renderer); nonScalingStrokeScale > 0)
+                scalingFactor /= nonScalingStrokeScale;
         }
 
         if (scalingFactor != 1.0)
@@ -326,17 +317,9 @@ bool SVGTextBoxPainter::acquireLegacyPaintingResource(GraphicsContext*& context,
     }
 
     if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToStroke)) {
-        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
-            if (style.fontDescription().textRenderingMode() == TextRenderingMode::GeometricPrecision)
-                scalingFactor = 1.0 / RenderSVGInlineText::computeScalingFactorForRenderer(renderer);
-            else
-                scalingFactor = 1.0;
-
-            if (auto zoomFactor = renderer.style().usedZoom(); zoomFactor != 1.0)
-                scalingFactor *= zoomFactor;
-
-            if (auto deviceScaleFactor = renderer.document().deviceScaleFactor(); deviceScaleFactor != 1.0)
-                scalingFactor *= deviceScaleFactor;
+        if (renderer.style().vectorEffect() == VectorEffect::NonScalingStroke) {
+            if (auto nonScalingStrokeScale = RenderSVGInlineText::computeNonScalingStrokeScaleForRenderer(renderer); nonScalingStrokeScale > 0)
+                scalingFactor /= nonScalingStrokeScale;
         }
 
         if (scalingFactor != 1.0)
@@ -344,6 +327,23 @@ bool SVGTextBoxPainter::acquireLegacyPaintingResource(GraphicsContext*& context,
     }
 
     return true;
+}
+
+void SVGTextBoxPainter::adjustPaintServerForTextScale(GraphicsContext& context, float scalingFactor)
+{
+    // Text painting removes the scaling part of the context transform, see paintTextWithShadows
+    // and paintDecorationWithStyle. Scale the pattern accordingly, so that it tiles in user space
+    // like it does for shapes.
+    if (scalingFactor == 1)
+        return;
+    if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToFill)) {
+        if (RefPtr pattern = context.fillPattern())
+            context.setFillPattern(pattern->scaled(scalingFactor));
+    }
+    if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToStroke)) {
+        if (RefPtr pattern = context.strokePattern())
+            context.setStrokePattern(pattern->scaled(scalingFactor));
+    }
 }
 
 void SVGTextBoxPainter::releaseLegacyPaintingResource(GraphicsContext*& context, const Path* path)
@@ -372,7 +372,7 @@ bool mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SV
     return true;
 }
 
-static inline float LEGACY_NODELETE positionOffsetForDecoration(Style::TextDecorationLine decoration, const FontMetrics& fontMetrics, float thickness)
+NODELETE static inline float positionOffsetForDecoration(Style::TextDecorationLine decoration, const FontMetrics& fontMetrics, float thickness)
 {
     // FIXME: For SVG Fonts we need to use the attributes defined in the <font-face> if specified.
     // Compatible with Batik/Opera.
@@ -388,7 +388,7 @@ static inline float LEGACY_NODELETE positionOffsetForDecoration(Style::TextDecor
     return 0.0f;
 }
 
-static inline float LEGACY_NODELETE thicknessForDecoration(Style::TextDecorationLine, const FontCascade& font)
+NODELETE static inline float thicknessForDecoration(Style::TextDecorationLine, const FontCascade& font)
 {
     // FIXME: For SVG Fonts we need to use the attributes defined in the <font-face> if specified.
     // Compatible with Batik/Opera
@@ -421,7 +421,7 @@ void SVGTextBoxPainter::paintDecoration(Style::TextDecorationLine decoration, co
 
     ASSERT(decorationRenderer);
 
-    const Style::ComputedStyle& decorationStyle = decorationRenderer->style();
+    CheckedRef decorationStyle = decorationRenderer->style();
 
     if (decorationRenderer->usedStyle().visibility() == UsedVisibility::Hidden)
         return;
@@ -429,13 +429,13 @@ void SVGTextBoxPainter::paintDecoration(Style::TextDecorationLine decoration, co
     for (auto type : renderer().style().paintOrder()) {
         switch (type) {
         case Style::PaintType::Fill:
-            if (!decorationStyle.fill().isNone()) {
+            if (!decorationStyle->fill().isNone()) {
                 m_paintingResourceMode = RenderSVGResourceMode::ApplyToFill;
                 paintDecorationWithStyle(decoration, fragment, *decorationRenderer);
             }
             break;
         case Style::PaintType::Stroke:
-            if (!decorationStyle.stroke().isNone() && decorationStyle.strokeWidth().isPossiblyPositive()) {
+            if (!decorationStyle->stroke().isNone() && decorationStyle->strokeWidth().isPossiblyPositive()) {
                 m_paintingResourceMode = RenderSVGResourceMode::ApplyToStroke;
                 paintDecorationWithStyle(decoration, fragment, *decorationRenderer);
             }
@@ -454,7 +454,7 @@ void SVGTextBoxPainter::paintDecorationWithStyle(Style::TextDecorationLine decor
     ASSERT(!paintingResourceMode().isEmpty());
 
     auto& context = m_paintInfo.context();
-    auto& decorationStyle = decorationRenderer.style();
+    CheckedRef decorationStyle = decorationRenderer.style();
 
     float scalingFactor = 1;
     FontCascade scaledFont;
@@ -464,7 +464,7 @@ void SVGTextBoxPainter::paintDecorationWithStyle(Style::TextDecorationLine decor
     // The initial y value refers to overline position.
     float thickness = thicknessForDecoration(decoration, scaledFont);
 
-    if (fragment.width <= 0 && thickness <= 0)
+    if (fragment.width <= 0 || thickness <= 0)
         return;
 
     FloatPoint decorationOrigin(fragment.x, fragment.y);
@@ -486,6 +486,8 @@ void SVGTextBoxPainter::paintDecorationWithStyle(Style::TextDecorationLine decor
     if (decorationRenderer.document().settings().layerBasedSVGEngineEnabled()) {
         SVGPaintServerHandling paintServerHandling { context };
         if (acquirePaintingResource(paintServerHandling, scalingFactor, decorationRenderer, decorationStyle)) {
+            adjustPaintServerForTextScale(context, scalingFactor);
+
             if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToFill))
                 context.fillPath(path);
             else if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToStroke))
@@ -497,8 +499,10 @@ void SVGTextBoxPainter::paintDecorationWithStyle(Style::TextDecorationLine decor
     }
 
     GraphicsContext* usedContext = &context;
-    if (acquireLegacyPaintingResource(usedContext, scalingFactor, const_cast<RenderBoxModelObject&>(decorationRenderer), decorationStyle))
+    if (acquireLegacyPaintingResource(usedContext, scalingFactor, const_cast<RenderBoxModelObject&>(decorationRenderer), decorationStyle)) {
+        adjustPaintServerForTextScale(*usedContext, scalingFactor);
         releaseLegacyPaintingResource(usedContext, &path);
+    }
 }
 
 void SVGTextBoxPainter::paintTextWithShadows(const Style::ComputedStyle& style, TextRun& textRun, const SVGTextFragment& fragment, unsigned startPosition, unsigned endPosition)
@@ -508,7 +512,7 @@ void SVGTextBoxPainter::paintTextWithShadows(const Style::ComputedStyle& style, 
     float scalingFactor = renderer().scalingFactor();
     ASSERT(scalingFactor);
 
-    const auto& scaledFont = renderer().scaledFont();
+    CheckedRef scaledFont = renderer().scaledFont();
     const auto& shadows = style.textShadow();
 
     FloatPoint textOrigin(fragment.x, fragment.y);
@@ -519,7 +523,7 @@ void SVGTextBoxPainter::paintTextWithShadows(const Style::ComputedStyle& style, 
         textSize.scale(scalingFactor);
     }
 
-    FloatRect shadowRect(FloatPoint(textOrigin.x(), textOrigin.y() - scaledFont.metricsOfPrimaryFont().ascent()), textSize);
+    FloatRect shadowRect(FloatPoint(textOrigin.x(), textOrigin.y() - scaledFont->metricsOfPrimaryFont().ascent()), textSize);
 
     GraphicsContext* usedContext = &context;
     SVGPaintServerHandling paintServerHandling { context };
@@ -544,10 +548,10 @@ void SVGTextBoxPainter::paintTextWithShadows(const Style::ComputedStyle& style, 
 
         {
             // Optimized code path to support gradient/pattern fill/stroke on text without using temporary ImageBuffers / masking.
-            RefPtr<Gradient> gradient;
-            RefPtr<Pattern> pattern;
+            RefPtr<const Gradient> gradient;
+            RefPtr<const Pattern> pattern;
             if (renderer().document().settings().layerBasedSVGEngineEnabled()) {
-                auto* textRootBlock = RenderSVGText::locateRenderSVGTextAncestor(renderer());
+                CheckedPtr textRootBlock = RenderSVGText::locateRenderSVGTextAncestor(renderer());
                 ASSERT(textRootBlock);
 
                 AffineTransform gradientSpaceTransform;
@@ -577,13 +581,23 @@ void SVGTextBoxPainter::paintTextWithShadows(const Style::ComputedStyle& style, 
                 }
             }
 
-            ShadowApplier shadowApplier(style, *usedContext, shadow, Style::AppleColorFilter::none(), shadowRect, lastShadowInIteration);
+            Paint::ShadowApplier shadowApplier(style, *usedContext, shadow, Style::AppleColorFilter::none(), shadowRect, lastShadowInIteration);
 
             if (!shadowApplier.didSaveContext())
                 usedContext->save();
 
             usedContext->scale(1 / scalingFactor);
-            scaledFont.drawText(*usedContext, textRun, textOrigin + shadowApplier.extraOffset(), startPosition, endPosition);
+            if (gradient || pattern) {
+                // The glyphs act only as an alpha mask for the paint server painted above. Draw
+                // them opaque, so that the paint server's own alpha is not applied a second time.
+                if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToFill))
+                    usedContext->setFillColor(Color::black);
+                if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToStroke))
+                    usedContext->setStrokeColor(Color::black);
+            } else
+                adjustPaintServerForTextScale(*usedContext, scalingFactor);
+
+            scaledFont->drawText(*usedContext, textRun, textOrigin + shadowApplier.extraOffset(), startPosition, endPosition);
 
             if (!shadowApplier.didSaveContext())
                 usedContext->restore();
@@ -639,9 +653,9 @@ void SVGTextBoxPainter::paintText(const Style::ComputedStyle& style, const Style
         paintTextWithShadows(style, textRun, fragment, endPosition, fragment.length);
 }
 
-TextRun constructTextRun(StringView text, TextDirection direction, const Style::ComputedStyle& style, const SVGTextFragment& fragment)
+TextRun constructTextRun(StringView text, TextDirection direction, const Style::ComputedStyle& style)
 {
-    TextRun run(text.substring(fragment.characterOffset, fragment.length),
+    TextRun run(text,
         0, /* xPos, only relevant with allowTabs=true */
         0, /* padding, only relevant for justified text, not relevant for SVG */
         ExpansionBehavior::allowRightOnly(),
@@ -653,9 +667,14 @@ TextRun constructTextRun(StringView text, TextDirection direction, const Style::
     return run;
 }
 
+TextRun constructTextRun(StringView text, TextDirection direction, const Style::ComputedStyle& style, const SVGTextFragment& fragment)
+{
+    return constructTextRun(text.substring(fragment.characterOffset, fragment.length), direction, style);
+}
+
 std::pair<unsigned, unsigned> SVGTextBoxPainter::selectionStartEnd() const
 {
-    return m_renderer.view().selection().rangeForTextBox(m_renderer, m_selectableRange);
+    return m_renderer->view().selection().rangeForTextBox(m_renderer, m_selectableRange);
 }
 
 }

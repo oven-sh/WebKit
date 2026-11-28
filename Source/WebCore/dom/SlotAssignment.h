@@ -53,7 +53,7 @@ public:
     inline void resolveSlotsBeforeNodeInsertionOrRemoval();
     inline void willRemoveAllChildren();
 
-    virtual HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&) = 0;
+    NODELETE virtual HTMLSlotElement* findAssignedSlot(const Node&) = 0;
     virtual const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) = 0;
 
     virtual void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName, ShadowRoot&) = 0;
@@ -68,7 +68,7 @@ public:
 
     virtual void willRemoveAssignedNode(Node&, ShadowRoot&) = 0;
     virtual void didRemoveAllChildrenOfShadowHost(ShadowRoot&) = 0;
-    virtual void didMutateTextNodesOfShadowHost(ShadowRoot&) = 0;
+    virtual void didMutateTextNodesOfShadowHost(ShadowRoot&, ContainerNode::ChildChange::Type) = 0;
     virtual void didChangeSlotNamesOfShadowHostChildren(ShadowRoot&) { }
 
 protected:
@@ -88,10 +88,23 @@ public:
     static const AtomString& defaultSlotName() { return emptyAtom(); }
 
 protected:
-    void didChangeSlot(const AtomString&, ShadowRoot&);
+    enum class RenderTreeUpdate : bool { TearDownHost, ByCaller };
+    void didChangeSlot(const AtomString&, ShadowRoot&, RenderTreeUpdate = RenderTreeUpdate::TearDownHost);
+
+    // Render tree updates for a single slottable, for use with RenderTreeUpdate::ByCaller. Inserted and moved slottables
+    // get their renderers built by the next render tree update and removal tears them down, so these only handle fallback
+    // content and slottables that a change moves to a different slot.
+    void didInsertSlottable(const AtomString& slotName, ShadowRoot&);
+    void didRemoveSlottable(const AtomString& slotName, ShadowRoot&);
+    void didReassignSlottable(Element&, const AtomString& oldSlotName, ShadowRoot&);
+
+    // The first node assigned to the slot, if the assignments are still valid. Call before didChangeSlot() to get the state before the change.
+    std::optional<RefPtr<Node>> firstAssignedNodeBeforeChange(const AtomString& slotName) const;
+
+    void hostChildElementDidChangeSlotAttribute(Element&, const AtomString& oldValue, const AtomString& newValue, ShadowRoot&) override;
 
 private:
-    HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&) final;
+    NODELETE HTMLSlotElement* findAssignedSlot(const Node&) final;
 
     void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName, ShadowRoot&) final;
     void addSlotElementByName(const AtomString&, HTMLSlotElement&, ShadowRoot&) final;
@@ -104,9 +117,10 @@ private:
     void willRemoveAssignedNode(Node&, ShadowRoot&) final;
 
     void didRemoveAllChildrenOfShadowHost(ShadowRoot&) final;
-    void didMutateTextNodesOfShadowHost(ShadowRoot&) final;
+    void didMutateTextNodesOfShadowHost(ShadowRoot&, ContainerNode::ChildChange::Type) final;
     void hostChildElementDidChange(const Element&, ShadowRoot&) override;
-    void hostChildElementDidChangeSlotAttribute(Element&, const AtomString& oldValue, const AtomString& newValue, ShadowRoot&) final;
+
+    void updateWhitespaceRendererAfterSlottable(const Node&, const AtomString& slotName, ShadowRoot&);
 
     struct Slot {
         WTF_MAKE_TZONE_ALLOCATED(Slot);
@@ -126,9 +140,9 @@ private:
     enum class SlotMutationType { Insertion, Removal };
     void resolveSlotsAfterSlotMutation(ShadowRoot&, SlotMutationType, ContainerNode* oldParentOfRemovedTree = nullptr);
 
-    virtual const AtomString& LEGACY_NODELETE slotNameForHostChild(const Node&) const;
+    NODELETE virtual const AtomString& slotNameForHostChild(const Node&) const;
 
-    HTMLSlotElement* LEGACY_NODELETE findFirstSlotElement(Slot&);
+    NODELETE HTMLSlotElement* findFirstSlotElement(Slot&);
 
     void assignSlots(ShadowRoot&);
     void assignToSlot(Node& child, const AtomString& slotName);
@@ -147,7 +161,7 @@ class ManualSlotAssignment : public SlotAssignment {
 public:
     ManualSlotAssignment() = default;
 
-    HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&) final;
+    NODELETE HTMLSlotElement* findAssignedSlot(const Node&) final;
 
     const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) final;
     void renameSlotElement(HTMLSlotElement&, const AtomString&, const AtomString&, ShadowRoot&) final;
@@ -162,7 +176,7 @@ public:
 
     void willRemoveAssignedNode(Node&, ShadowRoot&) final;
     void didRemoveAllChildrenOfShadowHost(ShadowRoot&) final;
-    void didMutateTextNodesOfShadowHost(ShadowRoot&) final;
+    void didMutateTextNodesOfShadowHost(ShadowRoot&, ContainerNode::ChildChange::Type) final;
 
 private:
     struct Slot {
@@ -218,10 +232,10 @@ inline void ShadowRoot::didChangeSlotNamesOfShadowHostChildren()
         m_slotAssignment->didChangeSlotNamesOfShadowHostChildren(*this);
 }
 
-inline void ShadowRoot::didMutateTextNodesOfShadowHost()
+inline void ShadowRoot::didMutateTextNodesOfShadowHost(ChildChange::Type type)
 {
     if (m_slotAssignment) [[unlikely]]
-        m_slotAssignment->didMutateTextNodesOfShadowHost(*this);
+        m_slotAssignment->didMutateTextNodesOfShadowHost(*this, type);
 }
 
 inline void ShadowRoot::hostChildElementDidChange(const Element& childElement)

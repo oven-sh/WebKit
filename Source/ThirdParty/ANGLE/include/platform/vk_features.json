@@ -572,6 +572,24 @@
             "issue": "https://issuetracker.google.com/161903006"
         },
         {
+            "name": "split_cross_format_layered_image_copy",
+            "category": "Workarounds",
+            "description": [
+                "Issue one vkCmdCopyImage per layer for multi-layer copies between ",
+                "different formats, which some drivers copy incorrectly"
+            ],
+            "issue": "https://anglebug.com/573420557"
+        },
+        {
+            "name": "mutable_format_for_int_color_images",
+            "category": "Workarounds",
+            "description": [
+                "Create integer color images with VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT, ",
+                "as some drivers return wrong values for data written into them otherwise"
+            ],
+            "issue": "https://anglebug.com/573449713"
+        },
+        {
             "name": "supports_image_format_list",
             "category": "Features",
             "description": [
@@ -1035,6 +1053,14 @@
             "issue": "http://anglebug.com/42264446"
         },
         {
+            "name": "supports_extended_dynamic_state3",
+            "category": "Features",
+            "description": [
+                "VkDevice supports VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/42264446"
+        },
+        {
             "name": "use_primitive_restart_enable_dynamic_state",
             "category": "Workarounds",
             "description": [
@@ -1065,6 +1091,103 @@
                 "VkDevice supports the logicOp feature of VK_EXT_extended_dynamic_state2 extension"
             ],
             "issue": "http://anglebug.com/42262506"
+        },
+        {
+            "name": "supports_patch_control_points_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the patchControlPoints feature of VK_EXT_extended_dynamic_state2 extension"
+            ],
+            "issue": "http://anglebug.com/42264446"
+        },
+        {
+            "name": "supports_alpha_to_coverage_enable_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the alphaToCoverageEnable feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_alpha_to_one_enable_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the alphaToOneEnable feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_color_blend_enable_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the colorBlendEnable feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_color_write_mask_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the colorWriteMask feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_depth_clamp_enable_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the depthClampEnable feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_depth_clip_negative_one_to_one_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the depthClipNegativeOneToOne feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_line_rasterization_mode_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the lineRasterizationMode feature of VK_EXT_extended_dynamic_state3 extension, and ",
+                "if stippled lines are supported, also the lineStippleEnable feature of the same extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_logic_op_enable_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the logicOpEnable feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_polygon_mode_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the polygonMode feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_rasterization_samples_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the rasterizationSamples feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
+        },
+        {
+            "name": "supports_sample_mask_dynamic_state",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the sampleMask feature of VK_EXT_extended_dynamic_state3 extension"
+            ],
+            "issue": "http://anglebug.com/575891833"
         },
         {
             "name": "supports_fragment_shading_rate",
@@ -1283,12 +1406,11 @@
             "issue": "https://anglebug.com/42266842"
         },
         {
-            "name": "sync_monolithic_pipelines_to_blob_cache",
+            "name": "sync_global_pipeline_cache_to_blob_cache",
             "category": "Workarounds",
             "description": [
-                "Whether it's beneficial to store monolithic pipelines in the blob cache when ",
-                "VK_EXT_graphics_pipeline_library is in use.  Otherwise the libraries are stored ",
-                "only, and monolithic pipelines are recreated on every run"
+                "Whether it's beneficial to store global pipeline cache in the blob cache. ",
+                "Otherwise the global pipeline cache is recreated on every run"
             ],
             "issue": "https://anglebug.com/42265839"
         },
@@ -1296,9 +1418,8 @@
             "name": "merge_program_pipeline_caches_to_global_cache",
             "category": "Workarounds",
             "description": [
-                "Whether it's beneficial to merge the pipeline cache for the shaders subset of the ",
-                "pipeline into the monolithic pipeline cache.  Only useful on platforms where ",
-                "monolithic pipelines can reuse blobs from partial pipelines"
+                "Whether it's beneficial to merge the per-program pipeline cache into the global ",
+                "pipeline cache after the warm up or load"
             ],
             "issue": "https://anglebug.com/42265839"
         },
@@ -2051,14 +2172,6 @@
             "issue": "http://anglebug.com/386688871"
         },
         {
-            "name": "supports_clip_cull_distance_in_GS_and_TS",
-            "category": "Features",
-            "description": [
-                "Supports using clip/cull distance features in geometry and tessellation shaders"
-            ],
-            "issue": "http://anglebug.com/42264006"
-        },
-        {
             "name": "supports_maintenance9",
             "category": "Features",
             "description": [
@@ -2248,7 +2361,7 @@
         },
         {
             "name": "initialize_color_attachment_with_white",
-            "category": "Workarounds",
+            "category": "AppWorkarounds",
             "description": [
                 "Initialize color tetxure attachment with white color for app bug workaround."
             ]
@@ -2289,6 +2402,30 @@
             "description": [
                 "FP64 support for OpenCL."
             ]
+        },
+        {
+            "name": "supports_pipeline_binary",
+            "category": "Features",
+            "description": [
+                "VkDevice supports VK_KHR_pipeline_binary extension."
+            ],
+            "issue": "http://anglebug.com/481364092"
+        },
+        {
+            "name": "prefer_pipeline_binaries",
+            "category": "Features",
+            "description": [
+                "Prefer using VK_KHR_pipeline_binary over monolithic VkPipelineCache when supported."
+            ],
+            "issue": "http://anglebug.com/481364092"
+        },
+        {
+            "name": "allow_pipeline_binaries_for_testing",
+            "category": "Features",
+            "description": [
+                "Allow preferPipelineBinaries where VK_KHR_pipeline_binary is supported, for testing."
+            ],
+            "issue": "http://anglebug.com/481364092"
         }
     ]
 }

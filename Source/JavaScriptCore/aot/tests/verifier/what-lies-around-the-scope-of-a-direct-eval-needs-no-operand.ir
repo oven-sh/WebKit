@@ -1,0 +1,20 @@
+# what lies around the scope of a direct eval is shared by calls: it holds names that are variables, and nothing lies around it in turn
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 5
+
+module m0 path="main" displayPath="main"
+entry module=m0
+layout L0 kind=Environment fields=[{key="c" declared={type=anything}}]
+variable g0 name="x" module=m0 declared={type=anything}
+evalscope e0 bindings=[{name="variable" variable=g0}, {name="constant" kind=Constant depth=1 variable=g0}, {name="functionName" kind=FunctionName depth=1 variable=g0}]
+evalscope e1 bindings=[{name="good" operand=0}] outer=e0
+evalscope e2 outer=e0
+evalscope e3 bindings=[{name="operand" operand=0}]
+evalscope e4 bindings=[{name="field" layout=L0 field=0 operand=0}]
+evalscope e5 bindings=[{kind=EvalVariables variable=g0}]
+evalscope e6 bindings=[{name="arguments" kind=Arguments variable=g0}]
+evalscope e7 outer=e3
+evalscope e8 outer=e4
+evalscope e9 outer=e5
+evalscope e10 outer=e6
+evalscope e11 outer=e1

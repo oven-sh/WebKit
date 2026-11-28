@@ -43,7 +43,7 @@
 - (CGFloat)clickHighlightControllerCornerRadiusScale:(WKClickHighlightController *)controller;
 - (WebCore::FloatRect)clickHighlightControllerUnobscuredRect:(WKClickHighlightController *)controller;
 - (WebCore::FloatRect)clickHighlightControllerBoundaryRect:(WKClickHighlightController *)controller;
-- (BOOL)clickHighlightControllerIsPotentialClickInProgress:(WKClickHighlightController *)controller;
+- (BOOL)clickHighlightControllerIsPotentialTapInProgress:(WKClickHighlightController *)controller;
 @end
 
 @interface WKClickHighlightController : NSObject
@@ -68,6 +68,8 @@
 
 @property (nonatomic) BOOL usesDebugAppearance;
 @property (nonatomic, readonly) CGRect highlightViewFrame;
+@property (nonatomic, readonly) WebCore::Color highlightColor;
+@property (nonatomic, readonly) BOOL isShowingHighlight;
 
 @end
 

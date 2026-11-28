@@ -15,7 +15,7 @@ const stringCoding = (parameter: string, usesFeature: string, throws: boolean) =
     returns: b.string,
     capability: "heap",
     throws,
-    uses: { [parameter]: [b.readAsCharacters] },
+    uses: { [parameter]: b.inspected },
     deterministic: true,
     usesFeature,
     implementation: b.hostCall,
@@ -35,7 +35,7 @@ export default b.declarations(
 
   b.name("default", "module.exports", "require", "children", "parent", "__esModule", "callee"),
   b.name("configurable", "done", "enumerable", "errors", "writable"),
-  b.name("app", "fetch", "routes", "stop"),
+  b.name("undefined", "bigint", "boolean", "number", "string", "symbol", "object", "function"),
 
   b.fn("isNaN", { ...numberTest("IsNaN"), boxedCallStub: "IsNaN" }),
   b.fn("isFinite", numberTest("IsFinite")),
@@ -43,7 +43,7 @@ export default b.declarations(
     args: { string: b.string.loose },
     returns: b.f64,
     capability: "heap",
-    uses: { string: [b.readAsCharacters] },
+    uses: { string: b.inspected },
     deterministic: true,
     implementation: b.hostCall,
   }),
@@ -52,7 +52,7 @@ export default b.declarations(
     returns: b.f64,
     capability: "heap",
     throws: true,
-    uses: { string: [b.readAsCharacters] },
+    uses: { string: b.inspected },
     deterministic: true,
     implementation: b.inline("ParseInt", { otherwise: b.hostCall }),
   }),
@@ -83,7 +83,6 @@ export default b.declarations(
     },
   ]),
 
-  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, useSharedArrayBuffer, useTemporal, useWasm.
   [
     "AsyncDisposableStack",
     "DisposableStack",
@@ -92,7 +91,6 @@ export default b.declarations(
     "Temporal",
     "WebAssembly",
   ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
-  // And each of these on its holder: useIteratorSequencing, useJointIteration, useIteratorChunking, useJSPI.
   [
     "Iterator.concat",
     "Iterator.zip",
@@ -103,7 +101,6 @@ export default b.declarations(
     "WebAssembly.Suspending",
     "WebAssembly.SuspendError",
   ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
-  // JSWebAssembly::finishCreation() adds these two only if the host's method table has the hook.
   ["WebAssembly.compileStreaming", "WebAssembly.instantiateStreaming"].flatMap(path =>
     b.extend(path, { marks: ["MayBeAbsent"] }),
   ),

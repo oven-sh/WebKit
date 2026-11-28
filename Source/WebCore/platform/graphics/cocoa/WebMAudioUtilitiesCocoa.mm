@@ -141,7 +141,7 @@ static RefPtr<AudioInfo> createAudioInfoForFormat(OSType formatID, Vector<uint8_
 #endif // ENABLE(VORBIS) || ENABLE(OPUS)
 
 #if ENABLE(OPUS)
-constexpr Seconds LEGACY_NODELETE opusConfigToFrameDuration(uint8_t config)
+NODELETE constexpr Seconds opusConfigToFrameDuration(uint8_t config)
 {
     // Refer to https://tools.ietf.org/html/rfc6716#section-3:
     // Section 3.1. The TOC Byte
@@ -188,7 +188,7 @@ constexpr Seconds LEGACY_NODELETE opusConfigToFrameDuration(uint8_t config)
     return 20_ms; // The most common Opus frame duration.
 }
 
-constexpr int32_t LEGACY_NODELETE opusConfigToBandwidth(uint8_t config)
+NODELETE constexpr int32_t opusConfigToBandwidth(uint8_t config)
 {
     // Refer to https://tools.ietf.org/html/rfc6716#section-3:
     // Section 3.1. The TOC Byte
@@ -441,8 +441,7 @@ RefPtr<AudioInfo> createOpusAudioInfo(const OpusCookieContents& cookieContents)
 
 Vector<uint8_t> createOpusPrivateData(const AudioStreamBasicDescription& description, uint16_t preSkip)
 {
-    Vector<uint8_t> magicCookie;
-    magicCookie.reserveInitialCapacity(19);
+    Vector<uint8_t> magicCookie(ReserveCapacityTag { }, 19);
     magicCookie.append("OpusHead"_span);
     // Set Opus version.
     magicCookie.append(1);

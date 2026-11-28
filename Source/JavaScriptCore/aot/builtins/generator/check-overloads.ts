@@ -193,7 +193,35 @@ function checkTotality(overloads: readonly ModelOverload[], root: ModelDispatchT
   }
 }
 
-// A call passes no argument after the first optional parameter that it leaves out.
+function isWrittenForPristine(parameter: ModelParameter | null, atom: Atom): boolean {
+  return (
+    parameter !== null &&
+    parameter.accepted.parts.some(part => part.part === "Instance" && part.class === atom && part.pristine.length > 0)
+  );
+}
+
+function checkPristineReceivers(overloads: readonly ModelOverload[], root: ModelDispatchTarget, problems: Problems): void {
+  const argumentCount = longestParameterList(overloads);
+  const isTotal = [...targetsOf(root)].every(
+    target => "overload" in target || target.node.branches.at(-1)?.tested.isAnything,
+  );
+  if ("overload" in root || !isTotal || !isEnumerable(overloads, argumentCount)) return;
+  const positions = positionsOf(argumentCount);
+  const reported = new Set<ModelOverload>();
+  for (const vector of kindVectors(overloads, argumentCount)) {
+    const [receiver, ...passed] = vector;
+    if (!overloads.some(overload => isWrittenForPristine(overload.receiver, receiver))) continue;
+    const chosen = chooseOverload(root, operand => atomIn(vector, operand));
+    if (reported.has(chosen) || isWrittenForPristine(chosen.receiver, receiver)) continue;
+    if (!positions.every(position => takes(parameterAt(chosen, position), atomIn(vector, position)))) continue;
+    reported.add(chosen);
+    problems.add(
+      chosen.source,
+      `${describeOverload(chosen)} answers for a pristine ${describeAtom(receiver)} where the call passes (${passed.map(describeAtom).join(", ")}): no overload for a pristine receiver takes that call`,
+    );
+  }
+}
+
 function checkParameterOrder(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     const firstOptional = overload.parameters.findIndex(parameter => parameter.mode !== "Required");
@@ -207,7 +235,6 @@ function checkParameterOrder(overloads: readonly ModelOverload[], problems: Prob
   }
 }
 
-// Placement plans the cell of a layout from the allocations in compiled code. A function of the engine or of the host makes an ordinary object with the same properties.
 export function checkResultLayouts(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     const isCompiled = overload.code.implementation.how === "Compiled";
@@ -230,6 +257,24 @@ export function checkResultLayouts(overloads: readonly ModelOverload[], problems
         );
       }
     }
+  }
+}
+
+function namesPlainObjects(type: ModelType): boolean {
+  return type.parts.some(
+    part =>
+      part.part === "Instance" &&
+      (part.class.jsType === "FinalObjectType" || part.contents.some(held => namesPlainObjects(held.type))),
+  );
+}
+
+export function checkPlainObjectsOfCompiledRows(overloads: readonly ModelOverload[], problems: Problems): void {
+  for (const overload of overloads) {
+    if (overload.code.implementation.how !== "Compiled" || !namesPlainObjects(overload.result.type)) continue;
+    problems.add(
+      overload.source,
+      `${describeOverload(overload)} is compiled, so the plain object that it returns is a cell of a compiled layout: b.object, or b.layoutOf(..)`,
+    );
   }
 }
 
@@ -258,7 +303,6 @@ function checkSpecialCases(overloads: readonly ModelOverload[], problems: Proble
   }
 }
 
-// The function object of an entry that a function of the library implements runs that function.
 function checkHostCallees(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     const { implementation } = overload.code;
@@ -285,12 +329,14 @@ export function checkOverloads(model: TableModel, problems: Problems): void {
       }
       checkParameterOrder(overloads, problems);
       checkResultLayouts(overloads, problems);
+      checkPlainObjectsOfCompiledRows(overloads, problems);
       checkHostCallees(overloads, problems);
       checkReachability(overloads, root, problems);
       checkNarrowTypes(overloads, problems);
       checkSpecialCases(overloads, problems);
       checkUndeclaredOverload(overloads, problems);
       checkTotality(overloads, root, problems);
+      checkPristineReceivers(overloads, root, problems);
     }
   }
 }

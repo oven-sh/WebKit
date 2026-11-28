@@ -29,6 +29,7 @@
 #include "ASTStringDumper.h"
 #include "ASTStructure.h"
 #include "TypeStore.h"
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
@@ -98,7 +99,7 @@ void Type::dump(PrintStream& out) const
         [&](const Function& function) {
             out.print("(");
             bool first = true;
-            for (auto* parameter : function.parameters) {
+            for (auto* parameter : borrow(function.parameters)) {
                 if (!first)
                     out.print(", ");
                 first = false;
@@ -182,7 +183,7 @@ void Type::dump(PrintStream& out) const
         });
 }
 
-constexpr unsigned LEGACY_NODELETE primitivePair(Types::Primitive::Kind first, Types::Primitive::Kind second)
+NODELETE constexpr unsigned primitivePair(Types::Primitive::Kind first, Types::Primitive::Kind second)
 {
     static_assert(sizeof(Types::Primitive::Kind) == 1);
     return static_cast<unsigned>(first) << 8 | second;

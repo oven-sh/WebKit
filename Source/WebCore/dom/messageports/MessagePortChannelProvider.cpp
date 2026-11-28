@@ -35,7 +35,7 @@
 
 namespace WebCore {
 
-static RefPtr<MessagePortChannelProvider>& LEGACY_NODELETE globalProvider()
+NODELETE static RefPtr<MessagePortChannelProvider>& globalProvider()
 {
     static MainThreadNeverDestroyed<RefPtr<MessagePortChannelProvider>> globalProvider;
     return globalProvider;
@@ -43,7 +43,7 @@ static RefPtr<MessagePortChannelProvider>& LEGACY_NODELETE globalProvider()
 
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     auto& globalProvider = WebCore::globalProvider();
     if (!globalProvider)
         globalProvider = MessagePortChannelProviderImpl::create();

@@ -46,6 +46,7 @@ public:
     float logicalBottom() const;
     float logicalHeight() const { return logicalBottom() - logicalTop(); }
     float logicalWidth() const;
+    float logicalBaseline() const;
 
     float contentLogicalTop() const;
     float contentLogicalBottom() const;
@@ -54,8 +55,22 @@ public:
     float contentLogicalWidth() const;
     float contentLogicalHeight() const;
 
+    // Like contentLogicalTop/Bottom, but inline boxes contribute their content area instead of their border box.
+    float contentAreaLogicalTop() const;
+    float contentAreaLogicalBottom() const;
+
+    // The content extended to the adjacent line's content, used by hit-testing.
     float contentLogicalTopAdjustedForPrecedingLineBox() const;
     float contentLogicalBottomAdjustedForFollowingLineBox() const;
+
+    // The content area extended to the adjacent line's content area, used by the caret, highlights and other marked text.
+    float contentAreaLogicalTopAdjustedForPrecedingLineBox() const;
+    float contentAreaLogicalBottomAdjustedForFollowingLineBox() const;
+    FloatRect contentAreaLogicalRectAdjustedForAdjacentLineBoxes() const;
+
+    // The line box grown to fit overflowing content area. Adjacent lines share their boundary so that selection has no gaps or overlaps.
+    float selectionLogicalTop() const;
+    float selectionLogicalBottom() const;
 
     float inkOverflowLogicalTop() const;
     float inkOverflowLogicalBottom() const;
@@ -79,12 +94,12 @@ public:
     bool isFirstAfterPageBreak() const;
 
     bool hasBlockContent() const;
-    LeafBoxIterator LEGACY_NODELETE blockLevelBox() const;
+    NODELETE LeafBoxIterator blockLevelBox() const;
     inline bool hasContentfulInFlowBox() const;
 
     // Text-relative left/right
-    LeafBoxIterator LEGACY_NODELETE lineLeftmostLeafBox() const;
-    LeafBoxIterator LEGACY_NODELETE lineRightmostLeafBox() const;
+    NODELETE LeafBoxIterator lineLeftmostLeafBox() const;
+    NODELETE LeafBoxIterator lineRightmostLeafBox() const;
     // Coordinate-relative left/right
     inline LeafBoxIterator logicalLeftmostLeafBox() const;
     inline LeafBoxIterator logicalRightmostLeafBox() const;
@@ -92,8 +107,8 @@ public:
     // Leaf boxes from line-left to line-right.
     LeafBoxRange leafBoxes() const;
 
-    LineBoxIterator LEGACY_NODELETE next() const;
-    LineBoxIterator LEGACY_NODELETE previous() const;
+    NODELETE LineBoxIterator next() const;
+    NODELETE LineBoxIterator previous() const;
 
     size_t lineIndex() const { return m_lineIndex; }
 
@@ -111,6 +126,9 @@ private:
     const InlineDisplay::Lines& lines() const LIFETIME_BOUND { return m_inlineContent->displayContent().lines; }
     const InlineDisplay::Line& line() const LIFETIME_BOUND { return lines()[m_lineIndex]; }
     InlineDisplay::Line::Ellipsis lineEllipsis() const;
+
+    std::optional<LineBox> precedingLineBoxForSelection() const;
+    std::optional<LineBox> followingLineBoxForSelection() const;
 
     SingleThreadWeakPtr<const LayoutIntegration::InlineContent> m_inlineContent;
     size_t m_lineIndex { 0 };
@@ -212,7 +230,7 @@ WEBCORE_EXPORT LineBoxIterator firstLineBoxFor(const RenderBlockFlow&);
 LineBoxIterator lastLineBoxFor(const RenderBlockFlow&);
 
 inline LineBoxRange lineBoxesFor(const RenderBlockFlow&);
-LineBox LEGACY_NODELETE lineBoxFor(const LayoutIntegration::InlineContent&, size_t lineIndex);
+NODELETE LineBox lineBoxFor(const LayoutIntegration::InlineContent&, size_t lineIndex);
 
 LeafBoxIterator closestBoxForHorizontalPosition(const LineBox&, float horizontalPosition, bool editableOnly = false);
 
@@ -235,18 +253,28 @@ inline LineBox::LineBox(const LayoutIntegration::InlineContent& inlineContent, s
 
 inline float LineBox::contentLogicalTop() const
 {
-    return line().enclosingContentLogicalTop();
+    return line().enclosingBorderBoxLogicalTop();
 }
 
 inline float LineBox::contentLogicalBottom() const
 {
-    return line().enclosingContentLogicalBottom();
+    return line().enclosingBorderBoxLogicalBottom();
 }
 
-inline float LineBox::contentLogicalTopAdjustedForPrecedingLineBox() const
+inline float LineBox::contentAreaLogicalTop() const
+{
+    return line().enclosingContentAreaLogicalTop();
+}
+
+inline float LineBox::contentAreaLogicalBottom() const
+{
+    return line().enclosingContentAreaLogicalBottom();
+}
+
+inline std::optional<LineBox> LineBox::precedingLineBoxForSelection() const
 {
     if (formattingContextRoot().writingMode().isLineInverted() || !m_lineIndex)
-        return contentLogicalTop();
+        return { };
     for (auto precedingLineIndex = m_lineIndex; precedingLineIndex--;) {
         auto precedingLineBox = LineBox { *m_inlineContent, precedingLineIndex };
         if (!precedingLineBox.hasContentfulInFlowBox())
@@ -255,19 +283,66 @@ inline float LineBox::contentLogicalTopAdjustedForPrecedingLineBox() const
             break;
         if (precedingLineBox.logicalBottom() < logicalTop())
             break;
-        return precedingLineBox.contentLogicalBottom();
+        return precedingLineBox;
     }
+    return { };
+}
+
+inline std::optional<LineBox> LineBox::followingLineBoxForSelection() const
+{
+    if (!formattingContextRoot().writingMode().isLineInverted() || m_lineIndex == lines().size() - 1)
+        return { };
+    auto followingLineBox = LineBox { *m_inlineContent, m_lineIndex + 1 };
+    if (followingLineBox.hasBlockContent())
+        return { };
+    return followingLineBox;
+}
+
+inline float LineBox::contentLogicalTopAdjustedForPrecedingLineBox() const
+{
+    if (auto precedingLineBox = precedingLineBoxForSelection())
+        return precedingLineBox->contentLogicalBottom();
     return contentLogicalTop();
 }
 
 inline float LineBox::contentLogicalBottomAdjustedForFollowingLineBox() const
 {
-    if (!formattingContextRoot().writingMode().isLineInverted() || m_lineIndex == lines().size() - 1)
-        return contentLogicalBottom();
-    auto followingLineBox = LineBox { *m_inlineContent, m_lineIndex + 1 };
-    if (followingLineBox.hasBlockContent())
-        return contentLogicalBottom();
-    return followingLineBox.contentLogicalTop();
+    if (auto followingLineBox = followingLineBoxForSelection())
+        return followingLineBox->contentLogicalTop();
+    return contentLogicalBottom();
+}
+
+inline float LineBox::contentAreaLogicalTopAdjustedForPrecedingLineBox() const
+{
+    if (auto precedingLineBox = precedingLineBoxForSelection())
+        return precedingLineBox->contentAreaLogicalBottom();
+    return contentAreaLogicalTop();
+}
+
+inline float LineBox::contentAreaLogicalBottomAdjustedForFollowingLineBox() const
+{
+    if (auto followingLineBox = followingLineBoxForSelection())
+        return followingLineBox->contentAreaLogicalTop();
+    return contentAreaLogicalBottom();
+}
+
+inline FloatRect LineBox::contentAreaLogicalRectAdjustedForAdjacentLineBoxes() const
+{
+    return { FloatPoint { contentLogicalLeft(), contentAreaLogicalTopAdjustedForPrecedingLineBox() }, FloatPoint { contentLogicalRight(), contentAreaLogicalBottomAdjustedForFollowingLineBox() } };
+}
+
+inline float LineBox::selectionLogicalTop() const
+{
+    if (auto precedingLineBox = precedingLineBoxForSelection())
+        return std::max(precedingLineBox->contentAreaLogicalBottom(), precedingLineBox->logicalBottom());
+    return std::min(contentAreaLogicalTop(), logicalTop());
+}
+
+inline float LineBox::selectionLogicalBottom() const
+{
+    if (auto followingLineBox = followingLineBoxForSelection())
+        return std::min(followingLineBox->contentAreaLogicalTop(), followingLineBox->logicalTop());
+    return std::max(contentAreaLogicalBottom(), logicalBottom());
 }
 
 inline float LineBox::logicalTop() const
@@ -283,6 +358,13 @@ inline float LineBox::logicalBottom() const
 inline float LineBox::logicalWidth() const
 {
     return line().lineBoxLogicalRect().width();
+}
+
+inline float LineBox::logicalBaseline() const
+{
+    if (formattingContextRoot().writingMode().isLineInverted())
+        return logicalBottom() - line().baseline();
+    return logicalTop() + line().baseline();
 }
 
 inline float LineBox::inkOverflowLogicalTop() const
@@ -318,15 +400,15 @@ inline FloatRect LineBox::ellipsisVisualRect(AdjustedForSelection adjustedForSel
 
     // FIXME: Add pixel snapping here.
     if (adjustedForSelection == AdjustedForSelection::No) {
-        formattingContextRoot().flipForWritingMode(visualRect);
+        formattingContextRoot().blockStartRelativeToPhysical(visualRect);
         return visualRect;
     }
-    auto selectionTop = formattingContextRoot().adjustEnclosingTopForPrecedingBlock(LayoutUnit { contentLogicalTopAdjustedForPrecedingLineBox() });
-    auto selectionBottom = contentLogicalBottomAdjustedForFollowingLineBox();
+    auto selectionTop = protect(formattingContextRoot())->adjustEnclosingTopForPrecedingBlock(LayoutUnit { selectionLogicalTop() });
+    auto selectionBottom = selectionLogicalBottom();
 
     visualRect.setY(selectionTop);
     visualRect.setHeight(selectionBottom - selectionTop);
-    formattingContextRoot().flipForWritingMode(visualRect);
+    formattingContextRoot().blockStartRelativeToPhysical(visualRect);
     return visualRect;
 }
 

@@ -1,0 +1,38 @@
+# what stands between the call and its await is walked in front of both. A read of a variable that the callee may write would then find the old value, so the call keeps its promise
+# let count = 0;  async function load(x) { count = x; await x; return x; }  async function run(x) { const p = load(x); const c = count; return [c, await p]; }
+# RUN: walk f2:CoroutineBody mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = CallDirect
+# CHECK: = GetModuleVariable
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=none+DirectCalls
+# NEVER-NOT: = AwaitCallBySavingFrame
+
+variable g0 name="count" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v4
+    Return v5
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Await v0
+    Return v0
+}
+function f2 name="run" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="load"
+    v3 = GetModuleVariable variable=g0
+    v4 = Await v2
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}

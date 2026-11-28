@@ -1,0 +1,238 @@
+# WHAT LIES BETWEEN AN OBJECT AND THE PROTOTYPE OF ITS CLASS IS HEARD BY NAME ALONE. Under a name that is no field and that no class above declares, a string or a symbol, an object laid between (as a framework lays its own prototype under every request) may hold
+# a getter, a setter or a value that is not writable, AND `$isPlainInstanceOf` GOES ON SAYING YES: "nobody but the library has defined an accessor, under any name" holds of the prototypes of the classes, not of what is laid between with all that it holds.
+# So a yes says nothing of such a name: a read under it behind the yes finds what the getter hands back, and a store runs the setter or throws, as in plain Bun. (Under the name of a field, or of a member: the test beside this one.)
+# One that is defined on the object between LATER, when it stands above an object already, is heard as on a prototype of a class: the door falls for every object. That is more than the contract asks.
+# const mark = Symbol("mark");
+# function Response() { this.code = 1; }
+# Response.prototype.end = function () { return 1; };
+# function ask(response) { return $isPlainInstanceOf(response, Response) ? "yes " + response.code + " " + response.other + " " + response[mark] : "no " + response.code + " " + response.other + " " + response[mark]; }            in a file of the library
+# function stamp(response, value) { if ($isPlainInstanceOf(response, Response)) { holder(response).other = value; return "stored behind a yes"; } return "no"; }            in a file of the library
+# const Responses = keep(Response), asks = keep(ask), stamps = keep(stamp);
+# const response = new Responses();
+# print(asks(response), "|", asks(new Responses()));
+# lay(response, Responses.prototype, mark);
+# print(asks(response), "|", asks(new Responses()));
+# later(response);
+# print(asks(response), "|", asks(new Responses()));
+# print(attempt(stamps, response), "|", seen(), "|", asks(response), "|", asks(new Responses()));
+# OPTIONS: mechanisms=all
+# RUN(QUIET): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function () { }; later = function () { };
+# QUIET: yes 1 undefined undefined | yes 1 undefined undefined
+# QUIET-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# QUIET-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# QUIET-NEXT: stored behind a yes | nothing caught | yes 1 5 undefined | yes 1 undefined undefined
+# QUIET-NEXT: exited with 0
+# RUN(GETTER): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above); Object.defineProperty(upper, "other", { get() { return "got"; }, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { };
+# GETTER: yes 1 undefined undefined | yes 1 undefined undefined
+# GETTER-NEXT: yes 1 got undefined | yes 1 undefined undefined
+# GETTER-NEXT: yes 1 got undefined | yes 1 undefined undefined
+# GETTER-NEXT: TypeError | nothing caught | yes 1 got undefined | yes 1 undefined undefined
+# RUN(SETTER): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above); Object.defineProperty(upper, "other", { set(value) { caught = "caught " + value; }, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { };
+# SETTER: yes 1 undefined undefined | yes 1 undefined undefined
+# SETTER-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# SETTER-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# SETTER-NEXT: stored behind a yes | caught 5 | yes 1 undefined undefined | yes 1 undefined undefined
+# RUN(READONLY): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above); Object.defineProperty(upper, "other", { value: "fixed", writable: false, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { };
+# READONLY: yes 1 undefined undefined | yes 1 undefined undefined
+# READONLY-NEXT: yes 1 fixed undefined | yes 1 undefined undefined
+# READONLY-NEXT: yes 1 fixed undefined | yes 1 undefined undefined
+# READONLY-NEXT: TypeError | nothing caught | yes 1 fixed undefined | yes 1 undefined undefined
+# RUN(GETTERUNDERSYMBOL): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above); Object.defineProperty(upper, mark, { get() { return "got"; }, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { };
+# GETTERUNDERSYMBOL: yes 1 undefined undefined | yes 1 undefined undefined
+# GETTERUNDERSYMBOL-NEXT: yes 1 undefined got | yes 1 undefined undefined
+# GETTERUNDERSYMBOL-NEXT: yes 1 undefined got | yes 1 undefined undefined
+# GETTERUNDERSYMBOL-NEXT: stored behind a yes | nothing caught | yes 1 5 got | yes 1 undefined undefined
+# RUN(READONLYUNDERSYMBOL): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above); Object.defineProperty(upper, mark, { value: "fixed", writable: false, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { };
+# READONLYUNDERSYMBOL: yes 1 undefined undefined | yes 1 undefined undefined
+# READONLYUNDERSYMBOL-NEXT: yes 1 undefined fixed | yes 1 undefined undefined
+# READONLYUNDERSYMBOL-NEXT: yes 1 undefined fixed | yes 1 undefined undefined
+# READONLYUNDERSYMBOL-NEXT: stored behind a yes | nothing caught | yes 1 5 fixed | yes 1 undefined undefined
+# RUN(GETTERLATER): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above);  const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { const upper = held, mark = heldMark; Object.defineProperty(upper, "other", { get() { return "got"; }, configurable: true }); };
+# GETTERLATER: yes 1 undefined undefined | yes 1 undefined undefined
+# GETTERLATER-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# GETTERLATER-NEXT: no 1 got undefined | no 1 undefined undefined
+# GETTERLATER-NEXT: no | nothing caught | no 1 got undefined | no 1 undefined undefined
+# RUN(SETTERLATER): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above);  const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { const upper = held, mark = heldMark; Object.defineProperty(upper, "other", { set(value) { caught = "caught " + value; }, configurable: true }); };
+# SETTERLATER: yes 1 undefined undefined | yes 1 undefined undefined
+# SETTERLATER-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# SETTERLATER-NEXT: no 1 undefined undefined | no 1 undefined undefined
+# SETTERLATER-NEXT: no | nothing caught | no 1 undefined undefined | no 1 undefined undefined
+# RUN(READONLYLATER): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above);  const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { const upper = held, mark = heldMark; Object.defineProperty(upper, "other", { value: "fixed", writable: false, configurable: true }); };
+# READONLYLATER: yes 1 undefined undefined | yes 1 undefined undefined
+# READONLYLATER-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# READONLYLATER-NEXT: no 1 fixed undefined | no 1 undefined undefined
+# READONLYLATER-NEXT: no | nothing caught | no 1 fixed undefined | no 1 undefined undefined
+# RUN(GETTERUNDERSYMBOLLATER): run-in-shell keep = x => x; holder = x => x; caught = "nothing caught"; seen = () => caught; attempt = function (stamps, response) { try { return stamps(response, 5); } catch (error) { return error.constructor.name; } }; lay = function (response, above, mark) { const upper = Object.create(above);  const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; heldMark = mark; Object.setPrototypeOf(response, lower); }; later = function () { const upper = held, mark = heldMark; Object.defineProperty(upper, mark, { get() { return "got"; }, configurable: true }); };
+# GETTERUNDERSYMBOLLATER: yes 1 undefined undefined | yes 1 undefined undefined
+# GETTERUNDERSYMBOLLATER-NEXT: yes 1 undefined undefined | yes 1 undefined undefined
+# GETTERUNDERSYMBOLLATER-NEXT: no 1 undefined got | no 1 undefined undefined
+# GETTERUNDERSYMBOLLATER-NEXT: no | nothing caught | no 1 undefined got | no 1 undefined undefined
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Response" module=m0 position=29 constructor=f1 fields=[{key="code" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=29 ownFieldCount=1
+variable g0 name="Response" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="mark" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=Symbol @13
+    v5 = String string="mark" @20
+    v6 = Call v4, -, v5 calleeName="Symbol" callNumber=0 @13
+    PutModuleVariable v6 variable=g1 @6
+    v8 = GetModuleVariable variable=g0 @68
+    v9 = PropGet v8 key="prototype" @68
+    v10 = NewClosure function=f4 @93
+    PropSet v9, v10 key="end" @77
+    v12 = Builtin builtin=GlobalThis @512
+    v13 = PropGet v12 key="keep" [isFreeName] @512
+    v14 = GetModuleVariable variable=g0 @517
+    v15 = Call v13, -, v14 calleeName="keep" @512
+    v16 = Builtin builtin=GlobalThis @535
+    v17 = PropGet v16 key="keep" [isFreeName] @535
+    v18 = Call v17, -, v1 calleeName="keep" @535
+    v19 = Builtin builtin=GlobalThis @555
+    v20 = PropGet v19 key="keep" [isFreeName] @555
+    v21 = Call v20, -, v3 calleeName="keep" @555
+    v22 = Construct v15 calleeName="Responses" @589
+    v23 = Builtin builtin=GlobalThis @602
+    v24 = PropGet v23 key="print" [isFreeName] @602
+    v25 = Call v18, -, v22 calleeName="asks" @608
+    v26 = String string="|" @624
+    v27 = Construct v15 calleeName="Responses" @638
+    v28 = Call v18, -, v27 calleeName="asks" @629
+    v29 = Call v24, -, v25, v26, v28 calleeName="print" @602
+    v30 = Builtin builtin=GlobalThis @653
+    v31 = PropGet v30 key="lay" [isFreeName] @653
+    v32 = PropGet v15 key="prototype" @667
+    v33 = Call v31, -, v22, v32, v6 calleeName="lay" @653
+    v34 = Builtin builtin=GlobalThis @695
+    v35 = PropGet v34 key="print" [isFreeName] @695
+    v36 = Call v18, -, v22 calleeName="asks" @701
+    v37 = String string="|" @717
+    v38 = Construct v15 calleeName="Responses" @731
+    v39 = Call v18, -, v38 calleeName="asks" @722
+    v40 = Call v35, -, v36, v37, v39 calleeName="print" @695
+    v41 = Builtin builtin=GlobalThis @746
+    v42 = PropGet v41 key="later" [isFreeName] @746
+    v43 = Call v42, -, v22 calleeName="later" @746
+    v44 = Builtin builtin=GlobalThis @763
+    v45 = PropGet v44 key="print" [isFreeName] @763
+    v46 = Call v18, -, v22 calleeName="asks" @769
+    v47 = String string="|" @785
+    v48 = Construct v15 calleeName="Responses" @799
+    v49 = Call v18, -, v48 calleeName="asks" @790
+    v50 = Call v45, -, v46, v47, v49 calleeName="print" @763
+    v51 = Builtin builtin=GlobalThis @814
+    v52 = PropGet v51 key="print" [isFreeName] @814
+    v53 = Builtin builtin=GlobalThis @820
+    v54 = PropGet v53 key="attempt" [isFreeName] @820
+    v55 = Call v54, -, v21, v22 calleeName="attempt" @820
+    v56 = String string="|" @847
+    v57 = Builtin builtin=GlobalThis @852
+    v58 = PropGet v57 key="seen" [isFreeName] @852
+    v59 = Call v58 calleeName="seen" @852
+    v60 = String string="|" @860
+    v61 = Call v18, -, v22 calleeName="asks" @865
+    v62 = String string="|" @881
+    v63 = Construct v15 calleeName="Responses" @895
+    v64 = Call v18, -, v63 calleeName="asks" @886
+    v65 = Call v52, -, v55, v56, v59, v60, v61, v62, v64 calleeName="print" @814
+    v66 = Undefined @814
+    Return v66 @814
+}
+function f1 name="Response" module=m0 position=29 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @63
+    PropSet v0, v1 key="code" @51
+    v3 = Undefined @51
+    Return v3 @51
+}
+function f2 name="ask" module=m2 position=120 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @152
+    v2 = Undefined @152
+    v3 = GetModuleVariable variable=g0 @181
+    v4 = IsPlainInstanceOf v0, v3 @152
+    v5 = ToBoolean v4 @152
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @152
+  b1(v6):
+    v7 = String string="yes " @193
+    v8 = PropGet v0 key="code" @202
+    v9 = Add v7, v8 @202
+    v10 = String string=" " @218
+    v11 = Add v9, v10 @218
+    v12 = PropGet v0 key="other" @224
+    v13 = Add v11, v12 @224
+    v14 = String string=" " @241
+    v15 = Add v13, v14 @241
+    v16 = GetModuleVariable variable=g1 @256
+    v17 = CheckInitialized v16 name="mark" @256
+    v18 = ElemGet v0, v17 @247
+    v19 = Add v15, v18 @247
+    Jump -> next b3(v19) @247
+  b2(v20):
+    v21 = String string="no " @264
+    v22 = PropGet v0 key="code" @272
+    v23 = Add v21, v22 @272
+    v24 = String string=" " @288
+    v25 = Add v23, v24 @288
+    v26 = PropGet v0 key="other" @294
+    v27 = Add v25, v26 @294
+    v28 = String string=" " @311
+    v29 = Add v27, v28 @311
+    v30 = GetModuleVariable variable=g1 @326
+    v31 = CheckInitialized v30 name="mark" @326
+    v32 = ElemGet v0, v31 @317
+    v33 = Add v29, v32 @317
+    Jump -> next b3(v33) @317
+  b3(v34):
+    Return v34 @317
+}
+function f3 name="stamp" module=m2 position=335 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined @373
+    v3 = Undefined @373
+    v4 = GetModuleVariable variable=g0 @402
+    v5 = IsPlainInstanceOf v0, v4 @373
+    v6 = ToBoolean v5 @373
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @373
+  b1(v7):
+    v8 = Builtin builtin=GlobalThis @415
+    v9 = PropGet v8 key="holder" [isFreeName] @415
+    v10 = Call v9, -, v0 calleeName="holder" @415
+    PropSet v10, v1 key="other" @430
+    v12 = String string="stored behind a yes" @454
+    Return v12 @454
+  b2(v13):
+    v14 = String string="no" @486
+    Return v14 @486
+}
+function f4 module=m2 position=93 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @114
+    Return v0 @114
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2013 University of Szeged. All rights reserved.
  * Copyright (C) 2013 Samsung Electronics. All rights reserved.
- * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -71,18 +71,6 @@ static bool handleOptionAcceleratedDrawing(Options& options, const char*, const 
     return true;
 }
 
-static bool handleOptionRemoteLayerTree(Options& options, const char*, const char*)
-{
-    options.features.boolTestRunnerFeatures.insert_or_assign("useRemoteLayerTree", true);
-    return true;
-}
-
-static bool handleOptionNoRemoteLayerTree(Options& options, const char*, const char*)
-{
-    options.features.boolTestRunnerFeatures.insert_or_assign("noUseRemoteLayerTree", true);
-    return true;
-}
-
 static bool handleOptionShowWindow(Options& options, const char*, const char*)
 {
     options.features.boolTestRunnerFeatures.insert_or_assign("shouldShowWindow", true);
@@ -130,6 +118,12 @@ static bool handleOptionIPAddressSpaceOverrides(Options& options, const char*, c
 static bool handleOptionAllowedHost(Options& options, const char*, const char* host)
 {
     options.allowedHosts.insert(host);
+    return true;
+}
+
+static bool handleOptionDisabledKeys(Options& options, const char*, const char* keys)
+{
+    options.disabledKeys.merge(parseDisabledKeys(keys));
     return true;
 }
 
@@ -229,9 +223,8 @@ OptionsHandler::OptionsHandler(Options& o)
     optionList.append(Option("-p", "Check pixels.", handleOptionPixelTests));
     optionList.append(Option("--complex-text", "Force complex tests.", handleOptionComplexText));
     optionList.append(Option("--accelerated-drawing", "Use accelerated drawing.", handleOptionAcceleratedDrawing));
-    optionList.append(Option("--remote-layer-tree", "Use remote layer tree.", handleOptionRemoteLayerTree));
-    optionList.append(Option("--no-remote-layer-tree", "Disable remote layer tree.", handleOptionNoRemoteLayerTree));
     optionList.append(Option("--allowed-host", "Allows access to the specified host from tests.", handleOptionAllowedHost, true));
+    optionList.append(Option("--disabled-keys", "Skips tests whose webkit-test-runner header lists one of these comma-separated keys in skipIfDisabled=.", handleOptionDisabledKeys, true));
     optionList.append(Option("--localhost-alias", "Adds hostname alias to localhost if the port supports it.", handleOptionLocalhostAlias, true));
     optionList.append(Option("--allow-any-certificate-for-allowed-hosts", "Allows any HTTPS certificate for an allowed host.", handleOptionAllowAnyHTTPSCertificateForAllowedHosts));
     optionList.append(Option("--show-webview", "DEPRECATED. Same as --show-window", handleOptionShowWindow));

@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import "Device.h"
 #import <CoreVideo/CVPixelBuffer.h>
@@ -67,14 +71,15 @@ public:
     void destroy() final;
     void undestroy() final;
     void setCommandEncoder(CommandEncoder&) const;
-    bool LEGACY_NODELETE isDestroyed() const;
+    NODELETE bool isDestroyed() const;
 
     void setLabel(String&&) final { }
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
     void update(CVPixelBufferRef);
     void updateExternalTexture(CVPixelBufferRef pixelBuffer) final { update(pixelBuffer); }
     size_t openCommandEncoderCount() const;
     void updateExternalTextures(id<MTLTexture>, id<MTLTexture>);
+    Device& device() const { return m_device; }
 
 private:
     ExternalTexture(CVPixelBufferRef, WebGPU::PredefinedColorSpace, simd::uint2 visibleSize, Device&);

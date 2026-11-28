@@ -27,20 +27,18 @@
 
 #include "InlineIteratorBox.h"
 
-namespace WebCore {
-
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 class InlineBox : public Box {
 public:
-    InlineBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
+    NODELETE InlineBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
     const RenderBoxModelObject& renderer() const { return downcast<RenderBoxModelObject>(Box::renderer()); }
 
-    RectEdges<bool> LEGACY_NODELETE closedEdges() const;
+    NODELETE RectEdges<bool> closedEdges() const;
 
-    InlineBoxIterator LEGACY_NODELETE nextInlineBoxLineRightward() const;
-    InlineBoxIterator LEGACY_NODELETE nextInlineBoxLineLeftward() const;
+    NODELETE InlineBoxIterator nextInlineBoxLineRightward() const;
+    NODELETE InlineBoxIterator nextInlineBoxLineLeftward() const;
     InlineBoxIterator iterator() const;
 
     LeafBoxIterator firstLeafBox() const;
@@ -78,7 +76,6 @@ inline bool InlineBox::isSplit() const
     return nextInlineBoxLineRightward() || nextInlineBoxLineLeftward();
 }
 
-}
 }
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::InlineIterator::InlineBox)

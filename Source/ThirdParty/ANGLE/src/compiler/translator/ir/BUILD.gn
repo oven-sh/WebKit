@@ -19,6 +19,7 @@ angle_translator_ir_sources = [
   "src/output.rs",
   "src/output/legacy.rs",
   "src/output/null.rs",
+  "src/output/utils.rs",
   "src/reflection.rs",
   "src/transform.rs",
   "src/transform/add_driver_uniforms.rs",
@@ -30,7 +31,9 @@ angle_translator_ir_sources = [
   "src/transform/dealias.rs",
   "src/transform/emulate_instanced_multiview.rs",
   "src/transform/emulate_multi_draw.rs",
+  "src/transform/ensure_loop_forward_progress.rs",
   "src/transform/expand_fragment_outputs_to_vec4.rs",
+  "src/transform/gather_default_uniforms.rs",
   "src/transform/initialize_uninitialized_variables.rs",
   "src/transform/localized_workarounds.rs",
   "src/transform/monomorphize_unsupported_functions.rs",
@@ -59,10 +62,7 @@ if (angle_enable_hlsl) {
   angle_translator_ir_sources += [ "src/output/hlsl.rs" ]
 }
 if (angle_enable_msl) {
-  angle_translator_ir_sources += [
-    "src/output/msl.rs",
-    "src/transform/msl/ensure_loop_forward_progress.rs",
-  ]
+  angle_translator_ir_sources += [ "src/output/msl.rs" ]
 }
 if (angle_enable_vulkan) {
   angle_translator_ir_sources += [

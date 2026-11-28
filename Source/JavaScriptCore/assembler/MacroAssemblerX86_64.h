@@ -989,13 +989,13 @@ public:
 
     void sub32(RegisterID left, RegisterID right, RegisterID dest)
     {
+        if (left == right) {
+            move(TrustedImm32(0), dest);
+            return;
+        }
         if (dest == right) {
             neg32(dest);
             add32(left, dest);
-            return;
-        }
-        if (left == right) {
-            move(TrustedImm32(0), dest);
             return;
         }
         move(left, dest);
@@ -1336,8 +1336,17 @@ public:
         }
     }
 
+    // Code for an image makes in a register what other code reads from a table of the process that generates it.
+    bool makesConstantsInRegisters() const { return policy().recordsProcessAddresses; }
+
     void negateDouble(FPRegisterID src, FPRegisterID dst)
     {
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dst != fpTempRegister);
+            move64ToDouble(TrustedImm64(std::bit_cast<int64_t>(-0.0)), fpTempRegister);
+            xorDouble(fpTempRegister, src, dst);
+            return;
+        }
         alignas(16) static constexpr double negativeZeroConstants[] = { -0.0, -0.0 };
         static_assert(sizeof(negativeZeroConstants) == 16);
         move(TrustedImmPtr(negativeZeroConstants), scratchRegister());
@@ -1352,6 +1361,12 @@ public:
 
     void negateFloat(FPRegisterID src, FPRegisterID dst)
     {
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dst != fpTempRegister);
+            move32ToFloat(TrustedImm32(std::bit_cast<int32_t>(-0.0f)), fpTempRegister);
+            xorFloat(fpTempRegister, src, dst);
+            return;
+        }
         alignas(16) static constexpr float negativeZeroConstants[] = { -0.0f, -0.0f, -0.0f, -0.0f };
         static_assert(sizeof(negativeZeroConstants) == 16);
         move(TrustedImmPtr(negativeZeroConstants), scratchRegister());
@@ -3125,7 +3140,7 @@ public:
 
     void moveConditionallyTest32(ResultCondition cond, RegisterID testReg, TrustedImm32 mask, RegisterID src, RegisterID dest)
     {
-        test32(testReg, mask);
+        test32(cond, testReg, mask);
         cmov(x86Condition(cond), src, dest);
     }
 
@@ -3134,7 +3149,7 @@ public:
         ASSERT(isInvertible(cond));
         ASSERT_WITH_MESSAGE(cond != Overflow, "TEST does not set the Overflow Flag.");
 
-        test32(testReg, mask);
+        test32(cond, testReg, mask);
 
         if (thenCase != dest && elseCase != dest) {
             move(elseCase, dest);
@@ -3152,7 +3167,7 @@ public:
         ASSERT(isInvertible(cond));
         ASSERT_WITH_MESSAGE(cond != Overflow, "TEST does not set the Overflow Flag.");
 
-        test32(testReg, mask);
+        test32(cond, testReg, mask);
 
         if (elseCase == dest) {
             moveWithoutClobberingFlags(thenCase, scratchRegister());
@@ -3323,6 +3338,12 @@ public:
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
+    Jump branch32(RelationalCondition cond, RegisterID left, BaseIndex right)
+    {
+        m_assembler.cmpl_mr(right.offset, right.base, right.index, right.scale, left);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
     Jump branch32(RelationalCondition cond, Address left, RegisterID right)
     {
         m_assembler.cmpl_rm(right, left.offset, left.base);
@@ -3388,17 +3409,22 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void test32(RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
+    void test32(ResultCondition cond, RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
     {
-        if (mask.m_value == -1)
+        int32_t byteMask = byteMaskForTest32(cond);
+        if (mask.m_value == -1) {
             m_assembler.testl_rr(reg, reg);
-        else if (!(mask.m_value & ~0xff) && (reg < X86Registers::esp || policy().shortensEncodings)) {
+            return;
+        }
+        // Using esp and greater as a byte register yields the upper half of the 16 bit registers ax, cx, dx and bx, e.g. esp, register 4, is actually ah.
+        if (!(mask.m_value & ~byteMask) && (reg < X86Registers::esp || policy().shortensEncodings)) {
             if (mask.m_value == 0xff)
                 m_assembler.testb_rr(reg, reg);
             else
                 m_assembler.testb_i8r(mask.m_value, reg);
-        } else
-            m_assembler.testl_i32r(mask.m_value, reg);
+            return;
+        }
+        m_assembler.testl_i32r(mask.m_value, reg);
     }
 
     Jump branch(ResultCondition cond)
@@ -3408,13 +3434,13 @@ public:
 
     Jump branchTest32(ResultCondition cond, RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
     {
-        test32(reg, mask);
+        test32(cond, reg, mask);
         return branch(cond);
     }
 
     Jump branchTest32(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
     {
-        generateTest32(address, mask);
+        generateTest32(cond, address, mask);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
@@ -3684,6 +3710,10 @@ public:
 
     void breakpoint()
     {
+        if (policy().trapsWithIllegalInstruction) {
+            m_assembler.illegalInstruction();
+            return;
+        }
         m_assembler.int3();
     }
 
@@ -3765,7 +3795,7 @@ public:
 
     void test32(ResultCondition cond, Address address, TrustedImm32 mask, RegisterID dest)
     {
-        generateTest32(address, mask);
+        generateTest32(cond, address, mask);
         set32(x86Condition(cond), dest);
     }
 
@@ -3777,7 +3807,7 @@ public:
 
     void test32(ResultCondition cond, RegisterID reg, TrustedImm32 mask, RegisterID dest)
     {
-        test32(reg, mask);
+        test32(cond, reg, mask);
         set32(x86Condition(cond), dest);
     }
 
@@ -4871,15 +4901,24 @@ protected:
     }
 
 private:
-    ALWAYS_INLINE void generateTest32(Address address, TrustedImm32 mask = TrustedImm32(-1))
+    // A byte-wide TEST takes the sign flag from bit 7 of that byte, which only the top byte shares with the 32-bit result.
+    static constexpr int32_t byteMaskForTest32(ResultCondition cond)
     {
+        return (cond == Zero || cond == NonZero) ? 0xff : 0x7f;
+    }
+
+    ALWAYS_INLINE void generateTest32(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        int32_t byteMask = byteMaskForTest32(cond);
         if (mask.m_value == -1)
             m_assembler.cmpl_im(0, address.offset, address.base);
-        else if (!(mask.m_value & ~0xff))
+        else if (!(mask.m_value & ~byteMask))
             m_assembler.testb_im(mask.m_value, address.offset, address.base);
-        else if (!(mask.m_value & ~0xff00))
+        else if (address.offset > std::numeric_limits<int32_t>::max() - 3)
+            m_assembler.testl_i32m(mask.m_value, address.offset, address.base);
+        else if (!(mask.m_value & ~(byteMask << 8)))
             m_assembler.testb_im(mask.m_value >> 8, address.offset + 1, address.base);
-        else if (!(mask.m_value & ~0xff0000))
+        else if (!(mask.m_value & ~(byteMask << 16)))
             m_assembler.testb_im(mask.m_value >> 16, address.offset + 2, address.base);
         else if (!(mask.m_value & ~0xff000000))
             m_assembler.testb_im(mask.m_value >> 24, address.offset + 3, address.base);
@@ -5499,6 +5538,10 @@ public:
 
     void clearBits64WithMask(RegisterID mask, RegisterID dest, ClearBitsAttributes maskPreservation = ClearBitsAttributes::OKToClobberMask)
     {
+        if (mask == dest) {
+            move(TrustedImm32(0), dest);
+            return;
+        }
         not64(mask);
         m_assembler.andq_rr(mask, dest);
         if (maskPreservation == ClearBitsAttributes::MustPreserveMask)
@@ -5507,6 +5550,15 @@ public:
 
     void clearBits64WithMask(RegisterID src, RegisterID mask, RegisterID dest, ClearBitsAttributes maskPreservation = ClearBitsAttributes::OKToClobberMask)
     {
+        if (mask == dest) {
+            if (src == dest)
+                move(TrustedImm32(0), dest);
+            else {
+                not64(dest);
+                and64(src, dest);
+            }
+            return;
+        }
         move(src, dest);
         clearBits64WithMask(mask, dest, maskPreservation);
     }
@@ -5575,14 +5627,13 @@ public:
 
     void lshift64(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
     {
-        if (shiftAmount == dest) {
-            move(imm, scratchRegister());
-            lshift64(shiftAmount, scratchRegister());
-            move(scratchRegister(), dest);
-        } else {
-            move(imm, dest);
-            lshift64(shiftAmount, dest);
-        }
+        RegisterID target = shiftAmount == dest ? scratchRegister() : dest;
+        if (imm.m_value < 0)
+            signExtend32ToPtr(imm, target);
+        else
+            move(imm, target);
+        lshift64(shiftAmount, target);
+        move(target, dest);
     }
 
     void lshift64(Address src, RegisterID shiftAmount, RegisterID dest)
@@ -5953,13 +6004,13 @@ public:
     
     void sub64(RegisterID left, RegisterID right, RegisterID dest)
     {
+        if (left == right) {
+            move(TrustedImm32(0), dest);
+            return;
+        }
         if (dest == right) {
             neg64(dest);
             add64(left, dest);
-            return;
-        }
-        if (left == right) {
-            move(TrustedImm32(0), dest);
             return;
         }
         move(left, dest);
@@ -6878,6 +6929,12 @@ public:
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
+    Jump branch64(RelationalCondition cond, RegisterID left, BaseIndex right)
+    {
+        m_assembler.cmpq_mr(right.offset, right.base, right.index, right.scale, left);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
     Jump branch64(RelationalCondition cond, AbsoluteAddress left, RegisterID right)
     {
         move(TrustedImmPtr(left.m_ptr), scratchRegister());
@@ -6905,6 +6962,12 @@ public:
     Jump branch64(RelationalCondition cond, BaseIndex address, RegisterID right)
     {
         m_assembler.cmpq_rm(right, address.offset, address.base, address.index, address.scale);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    Jump branch64(RelationalCondition cond, BaseIndex left, TrustedImm32 right)
+    {
+        m_assembler.cmpq_im(right.m_value, left.offset, left.base, left.index, left.scale);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
@@ -7061,6 +7124,12 @@ public:
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
+    Jump branchAdd64(ResultCondition cond, RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        move(src, dest);
+        return branchAdd64(cond, imm, dest);
+    }
+
     Jump branchAdd64(ResultCondition cond, RegisterID src1, RegisterID src2, RegisterID dest)
     {
         if (src1 == dest)
@@ -7074,7 +7143,7 @@ public:
         if (op2 == dest)
             return branchAdd64(cond, op1, dest);
         if (op1.base == dest) {
-            load32(op1, dest);
+            load64(op1, dest);
             return branchAdd64(cond, op2, dest);
         }
         move(op2, dest);
@@ -7124,6 +7193,13 @@ public:
     {
         sub64(src, dest);
         return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    Jump branchSub64(ResultCondition cond, RegisterID src1, RegisterID src2, RegisterID dest)
+    {
+        ASSERT(src1 == dest || src2 != dest);
+        move(src1, dest);
+        return branchSub64(cond, src2, dest);
     }
 
     Jump branchSub64(ResultCondition cond, RegisterID src1, TrustedImm32 src2, RegisterID dest)
@@ -7548,7 +7624,7 @@ public:
         TrustedImm32 mask16(static_cast<int16_t>(mask.m_value));
         TrustedImmPtr addr(reinterpret_cast<void*>(address.offset));
         move(addr, scratchRegister());
-        return branchTest16(cond, BaseIndex(scratchRegister(), address.base, TimesOne), mask16);
+        return branchTest16(cond, BaseIndex(scratchRegister(), address.base, TimesTwo), mask16);
     }
 
     Jump branchTest16(ResultCondition cond, AbsoluteAddress address, TrustedImm32 mask = TrustedImm32(-1))
@@ -8256,6 +8332,29 @@ public:
             m_assembler.vpshufd_i8rr(imm, src, dest);
             break;
         }
+        case SIMDLane::i16x8:
+            if (!lane.m_value && supportsAVX2()) {
+                m_assembler.vpbroadcastw_rr(src, dest);
+                break;
+            }
+            dupInt16Element(lane.m_value, src, dest);
+            break;
+        case SIMDLane::i8x16:
+            if (supportsAVX2()) {
+                if (lane.m_value) {
+                    m_assembler.vpalignr_i8rrr(lane.m_value, src, src, dest);
+                    m_assembler.vpbroadcastb_rr(dest, dest);
+                } else
+                    m_assembler.vpbroadcastb_rr(src, dest);
+                break;
+            }
+            // Interleaving the vector with itself turns each byte into a 16-bit lane holding two copies of it.
+            if (lane.m_value < 8)
+                m_assembler.vpunpcklbw_rrr(src, src, dest);
+            else
+                m_assembler.vpunpckhbw_rrr(src, src, dest);
+            dupInt16Element(lane.m_value % 8, dest, dest);
+            break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -9144,8 +9243,14 @@ public:
             0x1.0p+31f,
             0x1.0p+31f,
         };
-        move(TrustedImmPtr(masks), scratchGPR);                                 // scratchGPR = minimum positive-overflow integer 0x80000000
-        m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR1, scratchFPR2);     // scratchFPR2 = positive-overflow mask by checking src >= 0x80000000
+        if (makesConstantsInRegisters()) {
+            move(TrustedImm32(std::bit_cast<int32_t>(masks[0])), scratchGPR);
+            vectorSplatInt32(scratchGPR, scratchFPR2);
+            m_assembler.vcmpps_rrr(X86Assembler::PackedCompareCondition::GreaterThanOrEqualAndOrdered, scratchFPR2, scratchFPR1, scratchFPR2);
+        } else {
+            move(TrustedImmPtr(masks), scratchGPR);                             // scratchGPR = minimum positive-overflow integer 0x80000000
+            m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR1, scratchFPR2); // scratchFPR2 = positive-overflow mask by checking src >= 0x80000000
+        }
 
         m_assembler.vcvttps2dq_rr(scratchFPR1, scratchFPR1);                    // convert scratchFPR1 to integer with overflow saturated to 0x80000000
 
@@ -9174,12 +9279,19 @@ public:
             2147483647.0f,
             2147483647.0f,
         };
-        move(TrustedImmPtr(masks), scratchGPR);                             // scratchGPR = f[0x80000000]x4
+        if (!makesConstantsInRegisters())
+            move(TrustedImmPtr(masks), scratchGPR);                         // scratchGPR = f[0x80000000]x4
 
         m_assembler.vmovaps_rr(dest, scratchFPR2);
-        m_assembler.vsubps_mrr(0, scratchGPR, scratchFPR2, scratchFPR2);    // scratchFPR2 = f[lane - 0x80000000]x4
-
-        m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR2, scratchFPR1); // scratchFPR1 = mask for [lane >= 0xFFFFFFFF]x4
+        if (makesConstantsInRegisters()) {
+            move(TrustedImm32(std::bit_cast<int32_t>(masks[0])), scratchGPR);
+            vectorSplatInt32(scratchGPR, scratchFPR1);
+            m_assembler.vsubps_rrr(scratchFPR1, scratchFPR2, scratchFPR2);
+            m_assembler.vcmpps_rrr(X86Assembler::PackedCompareCondition::GreaterThanOrEqualAndOrdered, scratchFPR1, scratchFPR2, scratchFPR1);
+        } else {
+            m_assembler.vsubps_mrr(0, scratchGPR, scratchFPR2, scratchFPR2);    // scratchFPR2 = f[lane - 0x80000000]x4
+            m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR2, scratchFPR1); // scratchFPR1 = mask for [lane >= 0xFFFFFFFF]x4
+        }
 
         m_assembler.vcvttps2dq_rr(scratchFPR2, scratchFPR2);                // scratchFPR2 = i[lane - 0x80000000]x4 with satruated lane 0x80000000 for int32 overflow
 
@@ -9191,6 +9303,24 @@ public:
         m_assembler.vcvttps2dq_rr(dest, dest);                              // dest = i[lane]x4 with satruated lane 0x80000000 for int32 positive-overflow
 
         m_assembler.vpaddd_rrr(scratchFPR2, dest, dest);                    // dest = dest + scratchFPR2 = i[lane]x4 with satruated 0xFFFFFFFF for int32 positive-overflow    
+    }
+
+    void vectorRelaxedTruncUnsignedFloat32(FPRegisterID src, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR1, FPRegisterID scratchFPR2)
+    {
+        ASSERT(supportsAVX());
+
+        // cvttps2dq is signed. Lanes in [2^31, 2^32) are 0x80000000 plus trunc(x - 2^31).
+        m_assembler.vcvttps2dq_rr(src, scratchFPR1);
+
+        move(TrustedImm32(0x4f000000), scratchGPR);
+        m_assembler.vmovd_rr(scratchGPR, scratchFPR2);
+        m_assembler.vshufps_i8rrr(0, scratchFPR2, scratchFPR2, scratchFPR2);
+
+        m_assembler.vsubps_rrr(scratchFPR2, src, dest);
+        m_assembler.vcvttps2dq_rr(dest, dest);
+        m_assembler.vxorps_rrr(scratchFPR2, scratchFPR2, scratchFPR2);
+        m_assembler.vpmaxsd_rrr(scratchFPR2, dest, dest);
+        m_assembler.vpaddd_rrr(dest, scratchFPR1, dest);
     }
 
     void vectorTruncSatSignedFloat64(FPRegisterID src, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR)
@@ -9205,8 +9335,15 @@ public:
         using PackedCompareCondition = X86Assembler::PackedCompareCondition;
 
         m_assembler.vcmppd_rrr(PackedCompareCondition::EqualAndOrdered, src, src, scratchFPR);
-        move(TrustedImmPtr(masks), scratchGPR);
-        m_assembler.vandpd_mrr(0, scratchGPR, scratchFPR, scratchFPR);
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dest != fpTempRegister && scratchFPR != fpTempRegister);
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[0])), scratchGPR);
+            vectorSplatInt64(scratchGPR, fpTempRegister);
+            m_assembler.vandpd_rrr(fpTempRegister, scratchFPR, scratchFPR);
+        } else {
+            move(TrustedImmPtr(masks), scratchGPR);
+            m_assembler.vandpd_mrr(0, scratchGPR, scratchFPR, scratchFPR);
+        }
         m_assembler.vminpd_rrr(scratchFPR, src, dest);
         m_assembler.vcvttpd2dq_rr(dest, dest);
     }
@@ -9222,13 +9359,25 @@ public:
             0x1.0p+52,
             0x1.0p+52,
         };
-        move(TrustedImmPtr(masks), scratchGPR);
+        if (!makesConstantsInRegisters())
+            move(TrustedImmPtr(masks), scratchGPR);
 
         m_assembler.vxorpd_rrr(scratchFPR, scratchFPR, scratchFPR);
         m_assembler.vmaxpd_rrr(scratchFPR, src, dest);
-        m_assembler.vminpd_mrr(0, scratchGPR, dest, dest);
-        m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
-        m_assembler.vaddpd_mrr(sizeof(double) * 2, scratchGPR, dest, dest);
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dest != fpTempRegister && scratchFPR != fpTempRegister);
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[0])), scratchGPR);
+            vectorSplatInt64(scratchGPR, fpTempRegister);
+            m_assembler.vminpd_rrr(fpTempRegister, dest, dest);
+            m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[2])), scratchGPR);
+            vectorSplatInt64(scratchGPR, fpTempRegister);
+            m_assembler.vaddpd_rrr(fpTempRegister, dest, dest);
+        } else {
+            m_assembler.vminpd_mrr(0, scratchGPR, dest, dest);
+            m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
+            m_assembler.vaddpd_mrr(sizeof(double) * 2, scratchGPR, dest, dest);
+        }
         m_assembler.vshufps_i8rrr(0x88, scratchFPR, dest, dest);
     }
 
@@ -9432,8 +9581,13 @@ public:
         move(TrustedImm32(high32Bits), scratchGPR);
         vectorSplatInt32(scratchGPR, scratchFPR);
         m_assembler.vunpcklps_rrr(scratchFPR, input, dest);
-        move(TrustedImmPtr(masks), scratchGPR);
-        loadVector(Address(scratchGPR), scratchFPR);
+        if (makesConstantsInRegisters()) {
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[0])), scratchGPR);
+            vectorSplatInt64(scratchGPR, scratchFPR);
+        } else {
+            move(TrustedImmPtr(masks), scratchGPR);
+            loadVector(Address(scratchGPR), scratchFPR);
+        }
         m_assembler.vsubpd_rrr(scratchFPR, dest, dest);
     }
 
@@ -9727,6 +9881,8 @@ public:
     void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         ASSERT(simdInfo.signMode != SIMDSignMode::None);
+        if (dest == right)
+            std::swap(left, right);
 
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
@@ -9767,6 +9923,10 @@ public:
     void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        if (!supportsAVX() && dest == right && dest != left) {
+            moveVector(right, fpTempRegister);
+            right = fpTempRegister;
+        }
 
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
@@ -9984,6 +10144,8 @@ public:
 
     void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest)
     {
+        if (dest == b)
+            std::swap(a, b);
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
             if (supportsAVX())
@@ -10128,84 +10290,108 @@ public:
 
     void convertDoubleToFloat16(FPRegisterID src, FPRegisterID dest)
     {
-        UNUSED_PARAM(src);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        // https://github.com/tc39/proposal-float16array/issues/12#issuecomment-2256642971
+        ASSERT(supportsFloat16());
+        ASSERT(src != fpTempRegister && dest != fpTempRegister);
+        // F16C only narrows from float, and double -> float -> half can round twice. That only goes wrong
+        // when the float lands exactly on a half rounding midpoint, and all of those have their low 12
+        // bits clear. For those, round the float to odd instead (truncate, then set the lowest bit if the
+        // value was inexact), which makes the final rounding match a direct one since float has more than
+        // two bits of precision beyond half.
+        m_assembler.vcvtsd2ss_rrr(src, src, fpTempRegister);
+        m_assembler.vmovd_rr(fpTempRegister, scratchRegister());
+        Jump notMidpoint = branchTest32(NonZero, scratchRegister(), TrustedImm32(0xfff));
+
+        // Converting float32 back to float64, and then clearing signbit in both.
+        m_assembler.vcvtss2sd_rrr(fpTempRegister, fpTempRegister, fpTempRegister);
+        m_assembler.vpsllq_i8rr(1, fpTempRegister, fpTempRegister);
+        m_assembler.vpsrlq_i8rr(1, fpTempRegister, fpTempRegister);
+        m_assembler.vpsllq_i8rr(1, src, dest);
+        m_assembler.vpsrlq_i8rr(1, dest, dest);
+
+        // Now comparing both |x| and |f| (x is src input, f is converted).
+        // - ZF=1 when they are equal (the conversion was exact).
+        // - CF=1 when |x| < |f|, i.e. rounding went up in magnitude.
+        // - ZF=PF=CF=1 when the comparison is unordered (NaN).
+        m_assembler.vucomisd_rr(fpTempRegister, dest);
+        Jump exactOrNaN = Jump(m_assembler.je());
+
+        // The carry is set when rounding to nearest went up in magnitude, i.e. past the truncated value.
+        m_assembler.sbbl_ir(0, scratchRegister());
+        m_assembler.orl_ir(1, scratchRegister());
+        exactOrNaN.link(this);
+        m_assembler.vmovd_rr(scratchRegister(), fpTempRegister);
+        notMidpoint.link(this);
+        m_assembler.vcvtps2ph_i8rr(X86Assembler::RoundingType::ToNearestWithTiesToEven, fpTempRegister, dest);
     }
 
     void convertFloat16ToDouble(FPRegisterID src, FPRegisterID dest)
     {
-        UNUSED_PARAM(src);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        m_assembler.vcvtph2ps_rr(src, dest);
+        m_assembler.vcvtss2sd_rrr(dest, dest, dest);
     }
 
     void loadFloat16(Address address, FPRegisterID dest)
     {
-        UNUSED_PARAM(address);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        moveZeroToFloat(dest);
+        m_assembler.vpinsrw_i8mrr(0, address.offset, address.base, dest, dest);
     }
 
     void loadFloat16(BaseIndex address, FPRegisterID dest)
     {
-        UNUSED_PARAM(address);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        moveZeroToFloat(dest);
+        m_assembler.vpinsrw_i8mrr(0, address.offset, address.base, address.index, address.scale, dest, dest);
     }
 
     void loadFloat16(TrustedImmPtr address, FPRegisterID dest)
     {
-        UNUSED_PARAM(address);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        move(address, scratchRegister());
+        loadFloat16(Address(scratchRegister()), dest);
     }
 
     void moveZeroToFloat16(FPRegisterID reg)
     {
-        UNUSED_PARAM(reg);
-        UNREACHABLE_FOR_PLATFORM();
+        moveZeroToFloat(reg);
     }
 
     void move16ToFloat16(RegisterID src, FPRegisterID dest)
     {
-        UNUSED_PARAM(src);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        moveZeroToFloat(dest);
+        m_assembler.vpinsrw_i8rrr(0, src, dest, dest);
     }
 
     void move16ToFloat16(TrustedImm32 imm, FPRegisterID dest)
     {
-        UNUSED_PARAM(imm);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        move32ToFloat(TrustedImm32(static_cast<uint16_t>(imm.m_value)), dest);
     }
 
     void moveFloat16To16(FPRegisterID src, RegisterID dest)
     {
-        UNUSED_PARAM(src);
-        UNUSED_PARAM(dest);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        m_assembler.vpextrw_i8rr(0, src, dest);
     }
 
     void storeFloat16(FPRegisterID src, Address address)
     {
-        UNUSED_PARAM(src);
-        UNUSED_PARAM(address);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        m_assembler.vpextrw_i8rm(0, src, address.base, address.offset);
     }
 
     void storeFloat16(FPRegisterID src, BaseIndex address)
     {
-        UNUSED_PARAM(src);
-        UNUSED_PARAM(address);
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT(supportsFloat16());
+        m_assembler.vpextrw_i8rm(0, src, address.offset, address.base, address.index, address.scale);
     }
 
     // Misc helper functions.
 
-    static bool supportsFloat16() { return false; }
-    static constexpr bool supportsFloat16(CPUFeatureSet) { return false; }
+    static constexpr bool supportsFloat16(CPUFeatureSet features) { return features.contains(CPUFeature::F16C); }
+    bool supportsFloat16() const { return supportsFloat16(policy().features); }
 
     template<PtrTag resultTag, PtrTag locationTag>
     static CodePtr<resultTag> readCallTarget(CodeLocationCall<locationTag> call)
@@ -10297,12 +10483,110 @@ public:
         return start;
     }
 
+    Label comparePCRelative64(RegisterID left)
+    {
+        Label start = label();
+        m_assembler.cmpq_rip(left);
+        return start;
+    }
+
+    // Relocations of this kind are the last bytes of the instruction. Only a Jump creates a Label that is not at the end of the buffer.
+    Label pcRelativeLoadLabel()
+    {
+        return Jump(m_assembler.buffer().label().labelAtOffset(-static_cast<int>(relocationSize(RelocationKind::Load64)))).label();
+    }
+
+    Label loadPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.movsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label addPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.addsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label subPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.subsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label mulPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.mulsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label divPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.divsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
     Label moveInstanceAddress(RegisterID instance, RegisterID dest)
     {
         RELEASE_ASSERT(instance != X86Registers::esp && instance != X86Registers::r12);
         Label start = label();
         m_assembler.leaq_mr_disp32(0, instance, dest);
         return start;
+    }
+
+    // Instructions of the kinds Number32 and InstanceAccess vary in length, so the site is the number itself: the last four bytes of the instruction.
+    Label moveNumber32WithPatch(RegisterID dest)
+    {
+        m_assembler.movl_i32r(patchableNumberPlaceholder, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceWord8(RegisterID instance, RegisterID dest)
+    {
+        m_assembler.movzbl_mr(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceWord32(RegisterID instance, RegisterID dest)
+    {
+        m_assembler.movl_mr_disp32(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceWord64(RegisterID instance, RegisterID dest)
+    {
+        m_assembler.movq_mr_disp32(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceDouble(RegisterID instance, FPRegisterID dest)
+    {
+        m_assembler.movsd_mr(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceWord8(RegisterID source, RegisterID instance)
+    {
+        m_assembler.movb_rm(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceWord32(RegisterID source, RegisterID instance)
+    {
+        m_assembler.movl_rm_disp32(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceWord64(RegisterID source, RegisterID instance)
+    {
+        m_assembler.movq_rm_disp32(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceDouble(FPRegisterID source, RegisterID instance)
+    {
+        m_assembler.movsd_rm(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
     }
 
     static constexpr unsigned relocationSize(RelocationKind kind)
@@ -10322,6 +10606,9 @@ public:
         case RelocationKind::InstanceOffset:
             return 7;
         case RelocationKind::Distance32:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
             return 4;
         case RelocationKind::ConditionalJumpThenNop:
         case RelocationKind::TestBitJump:
@@ -10343,6 +10630,7 @@ public:
         case RelocationKind::Load64:
         case RelocationKind::Distance32:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::InstanceAccess:
             return nearJumpRange;
         case RelocationKind::ShortJump:
         case RelocationKind::ShortConditionalJump:
@@ -10351,6 +10639,8 @@ public:
         case RelocationKind::TestBitJump:
         case RelocationKind::TestBitJumpThenNop:
         case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::Number32:
+        case RelocationKind::NumberWord:
             return 0;
         }
         RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -10387,6 +10677,9 @@ public:
         case RelocationKind::TestBitJumpThenNop:
         case RelocationKind::InvertedJumpThenJump:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -10397,17 +10690,36 @@ public:
         size_t size = relocationSize(kind);
         RELEASE_ASSERT(size && size <= code.size() && site <= code.size() - size);
         std::span<uint8_t> instructions = code.subspan(site, size);
-        if (kind == RelocationKind::InstanceOffset) {
-            if (!isRepresentableAs<int32_t>(target))
+        switch (kind) {
+        case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
+            // The target is the 32 bits of the number, zero-extended, so a negative distance from the instance does not fit in an int32_t here. The CPU sign-extends a displacement.
+            if (!isRepresentableAs<uint32_t>(target))
                 return false;
-            WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), static_cast<int32_t>(target));
+            WTF::unalignedStore<uint32_t>(instructions.last(sizeof(uint32_t)).data(), static_cast<uint32_t>(target));
             return true;
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ShortJump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::ShortConditionalJump:
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+        case RelocationKind::Distance32:
+            RELEASE_ASSERT(target <= code.size());
+            return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
         }
-        RELEASE_ASSERT(target <= code.size());
-        return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
-    static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
+    ALWAYS_INLINE static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
     {
         RELEASE_ASSERT(instructions.size() == relocationSize(kind));
         switch (kind) {
@@ -10420,6 +10732,9 @@ public:
         case RelocationKind::AddressFar:
         case RelocationKind::Load64:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
             WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), 0);
             return;
         case RelocationKind::ShortJump:
@@ -10441,6 +10756,20 @@ public:
     JS_EXPORT_PRIVATE static CPUFeatureSet collectCPUFeatures();
 
 private:
+    // Too large for a one-byte displacement, so an encoder that picks the form by the value writes four bytes as well.
+    static constexpr int32_t patchableNumberPlaceholder = 0x12345678;
+
+    // The instruction just emitted must end in the placeholder: no immediate may follow a displacement.
+    Label zeroAndLabelPatchableNumber()
+    {
+        auto& buffer = m_assembler.buffer();
+        std::span<uint8_t> number = WTF::unsafeMakeSpan(static_cast<uint8_t*>(buffer.data()), buffer.codeSize()).last(sizeof(int32_t));
+        RELEASE_ASSERT(WTF::unalignedLoad<int32_t>(number.data()) == patchableNumberPlaceholder);
+        WTF::unalignedStore<int32_t>(number.data(), 0);
+        // Only a Jump makes a Label of a place other than the end of the buffer.
+        return Jump(buffer.label().labelAtOffset(-static_cast<int>(sizeof(int32_t)))).label();
+    }
+
     // If lzcnt is not available, use this after BSR
     // to count the leading zeros.
     void clz64AfterBsr(RegisterID dst)
@@ -10452,6 +10781,18 @@ private:
         srcIsNonZero.link(this);
         xor64(TrustedImm32(0x3f), dst);
         skipNonZeroCase.link(this);
+    }
+
+    void dupInt16Element(unsigned lane, FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(lane < 8);
+        uint8_t wordShuffle = (lane % 4) * 0x55;
+        if (lane < 4)
+            m_assembler.vpshuflw_i8rr(wordShuffle, src, dest);
+        else
+            m_assembler.vpshufhw_i8rr(wordShuffle, src, dest);
+        // Every 32-bit lane of that 64-bit half now holds two copies of the word.
+        vectorDupElement(SIMDLane::i32x4, TrustedImm32(lane < 4 ? 0 : 2), dest, dest);
     }
 
     friend class LinkBuffer;

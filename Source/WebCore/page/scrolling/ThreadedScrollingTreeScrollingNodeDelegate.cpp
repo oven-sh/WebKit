@@ -65,8 +65,10 @@ void ThreadedScrollingTreeScrollingNodeDelegate::updateSnapScrollState()
     Ref scrollingNode = this->scrollingNode();
     scrollingNode->setScrollSnapInProgress(m_scrollController.isScrollSnapInProgress());
 
-    if (m_scrollController.activeScrollSnapIndexDidChange())
-        scrollingTree()->setActiveScrollSnapIndices(scrollingNode->scrollingNodeID(), m_scrollController.activeScrollSnapIndexForAxis(ScrollEventAxis::Horizontal), m_scrollController.activeScrollSnapIndexForAxis(ScrollEventAxis::Vertical));
+    if (m_scrollController.activeScrollSnapIndexDidChange()) {
+        if (RefPtr scrollingTree = this->scrollingTree())
+            scrollingTree->setActiveScrollSnapIndices(scrollingNode->scrollingNodeID(), m_scrollController.activeScrollSnapIndexForAxis(ScrollEventAxis::Horizontal), m_scrollController.activeScrollSnapIndexForAxis(ScrollEventAxis::Vertical));
+    }
 }
 
 void ThreadedScrollingTreeScrollingNodeDelegate::updateUserScrollInProgressForEvent(const PlatformWheelEvent& wheelEvent)
@@ -78,16 +80,21 @@ void ThreadedScrollingTreeScrollingNodeDelegate::updateUserScrollInProgressForEv
         scrollingNode()->setUserScrollInProgress(isInUserScroll);
 }
 
-bool ThreadedScrollingTreeScrollingNodeDelegate::startAnimatedScrollToPosition(FloatPoint destinationPosition)
+bool ThreadedScrollingTreeScrollingNodeDelegate::startAnimatedScrollToPosition(FloatPoint destinationPosition, ScrollAnimationCurve curve)
 {
     auto currentOffset = ScrollableArea::scrollOffsetFromPosition(currentScrollPosition(), scrollOrigin());
     auto destinationOffset = ScrollableArea::scrollOffsetFromPosition(destinationPosition, scrollOrigin());
-    return m_scrollController.startAnimatedScrollToDestination(currentOffset, destinationOffset);
+    return m_scrollController.startAnimatedScrollToDestination(currentOffset, destinationOffset, curve);
 }
 
 void ThreadedScrollingTreeScrollingNodeDelegate::stopAnimatedScroll(EnumSet<AnimatedScrollType>)
 {
     m_scrollController.stopAnimatedScroll();
+}
+
+void ThreadedScrollingTreeScrollingNodeDelegate::stopSpringAnimation()
+{
+    m_scrollController.stopSpringAnimation();
 }
 
 void ThreadedScrollingTreeScrollingNodeDelegate::serviceScrollAnimation(MonotonicTime currentTime)
@@ -99,7 +106,11 @@ std::unique_ptr<ScrollingEffectsControllerTimer> ThreadedScrollingTreeScrollingN
 {
     // This is only used for a scroll snap timer.
     return WTF::makeUnique<ScrollingEffectsControllerTimer>(RunLoop::currentSingleton(), [function = WTF::move(function), scrollingNode = this->scrollingNode()] {
-        Locker locker { scrollingNode->scrollingTree()->treeLock() };
+        RefPtr scrollingTree = scrollingNode->scrollingTree();
+        if (!scrollingTree)
+            return;
+
+        Locker locker { scrollingTree->treeLock() };
         function();
     });
 }
@@ -210,20 +221,22 @@ ScrollExtents ThreadedScrollingTreeScrollingNodeDelegate::scrollExtents() const
 
 void ThreadedScrollingTreeScrollingNodeDelegate::deferWheelEventTestCompletionForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason reason) const
 {
-    if (!scrollingTree()->isMonitoringWheelEvents())
+    RefPtr scrollingTree = this->scrollingTree();
+    if (!scrollingTree || !scrollingTree->isMonitoringWheelEvents())
         return;
 
     // Just use the scrolling node ID as the identifier, since we know this is coming from a ScrollingEffectsController associated with this node.
-    scrollingTree()->deferWheelEventTestCompletionForReason(scrollingNode()->scrollingNodeID(), reason);
+    scrollingTree->deferWheelEventTestCompletionForReason(scrollingNode()->scrollingNodeID(), reason);
 }
 
 void ThreadedScrollingTreeScrollingNodeDelegate::removeWheelEventTestCompletionDeferralForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason reason) const
 {
-    if (!scrollingTree()->isMonitoringWheelEvents())
+    RefPtr scrollingTree = this->scrollingTree();
+    if (!scrollingTree || !scrollingTree->isMonitoringWheelEvents())
         return;
 
     // Just use the scrolling node ID as the identifier, since we know this is coming from a ScrollingEffectsController associated with this node.
-    scrollingTree()->removeWheelEventTestCompletionDeferralForReason(scrollingNode()->scrollingNodeID(), reason);
+    scrollingTree->removeWheelEventTestCompletionDeferralForReason(scrollingNode()->scrollingNodeID(), reason);
 }
 
 FloatPoint ThreadedScrollingTreeScrollingNodeDelegate::adjustedScrollPosition(const FloatPoint& position) const

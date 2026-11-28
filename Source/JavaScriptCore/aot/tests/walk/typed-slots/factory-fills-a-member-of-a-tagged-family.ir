@@ -1,0 +1,742 @@
+# `sum()` stores on what `base()` has from one of the closures that lie under `createBase`, and each of them that constructs anything constructs `Made`, one through `counted()`, which returns its argument as it came.
+# So the image has the order `kind pos flags | left right note` for the member of `Made` with the tag 1, and none for that of `Small`. The records are those of answers/factory-fills-a-member-of-a-tagged-family.ir,
+# with what is written of the three objects (`as Sum`: L2, `as Leaf`: L3, `as Name`: L6) laid into the conversions, and `Any` (L2|L3|L6) into the fields `left` and `right` of `Sum`, BY HAND: the tool that makes a test from a source leaves the interfaces out of the types. A store tests what is stored against the field's written type: left as `undefined|null`, that test can only pass while nothing is known of `sum`'s parameters, and they are proven objects.
+# RUN(ORDERS): plan orders mechanisms=all
+# ORDERS-LABEL: orders L7
+# ORDERS: order 1: "kind" "pos" "flags" | "left" "right" "note"
+# ORDERS-LABEL: orders L10
+# ORDERS-NOT: order 1
+# ORDERS-LABEL: orders L11
+# ORDERS: order 1: "pos" "kind" | "value"
+# the test asks for that member alone, one look at the order word says that the object is as its maker left it, each store that creates writes the word that lists its key next, and `flags`, which the maker creates, is only overwritten
+# RUN(FORM): walk f4 mechanisms=all-Inlining
+# FORM-LABEL: code f4:Body
+# FORM: ShapeTest {{*}}layouts=[L7]
+# FORM: HasKeyOrder {{*}}layout=L7 fields=[0, 1, 2]
+# FORM: PutSlotOrAdd {{*}}key="left" {{*}}orderWordAfter=
+# FORM: PutSlotOrAdd {{*}}key="right" {{*}}orderWordAfter=
+# FORM: PutSlot {{*}}key="flags"
+# FORM: PutSlotOrAdd {{*}}key="note" {{*}}orderWordAfter=
+# interface Base { kind: number; pos: number; flags: number; }
+# interface Sum extends Base { kind: 1; left: Any; right: Any; note?: string; }
+# interface Leaf extends Base { kind: 3; value: number; }
+# interface Name extends Base { kind: 4; text: string; }
+# type Any = Sum | Leaf | Name;
+# function Made(this: Base, kind: number, pos: number) { this.kind = kind; this.pos = pos; this.flags = 0; }
+# const Maker = Made as unknown as new (kind: number, pos: number) => Base;
+# function Small(this: Base, kind: number, pos: number) { this.pos = pos; this.kind = kind; }
+# const SmallMaker = Small as unknown as new (kind: number, pos: number) => Base;
+# interface BaseFactory { createBase(kind: number): Base; createSmall(kind: number): Base; }
+# let made = 0;
+# function counted(node: Base) { made++; return node; }
+# const counting: BaseFactory = { createBase: kind => counted(new Maker(kind, 0)), createSmall: kind => counted(new SmallMaker(kind, 0)) };
+# const plain: BaseFactory = { createBase: kind => new Maker(kind, -1), createSmall: kind => new SmallMaker(kind, -1) };
+# let baseFactory = counting;
+# function base(kind: number) { return baseFactory.createBase(kind); }
+# function marked(kind: number) { const node = base(kind) as any; node.mark = undefined; return node; }
+# function sum(left: Any, right: Any) { const node = base(1) as Sum; node.left = left; node.right = right; node.flags = 1; node.note = undefined; return node; }
+# function leaf(value: number) { const node = baseFactory.createSmall(3) as Leaf; node.value = value; return node; }
+# function name(text: string) { const node = baseFactory.createSmall(4) as Name; node.text = text; return node; }
+# function rightOf(node: Sum) { return node.right; }
+# function valueOf(node: Leaf) { return node.value; }
+# function evaluate(node: Any): number { switch (node.kind) { case 1: return evaluate(node.left) + evaluate(rightOf(node)); case 3: return valueOf(node); default: return node.text.length; } }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# const tree = sum(sum(leaf(3), name("four")), leaf(5));
+# tell(() => evaluate(tree));
+# tell(() => Object.keys(tree).join());
+# tell(() => Object.keys(leaf(1)).join());
+# tell(() => JSON.stringify(tree));
+# baseFactory = plain;
+# tell(() => JSON.stringify(sum(leaf(1), name("x"))));
+# tell(() => made);
+# tell(() => { const odd = baseFactory.createSmall(1) as Sum; odd.right = leaf(6); odd.left = leaf(7); return Object.keys(odd).join() + evaluate(odd) + valueOf(rightOf(odd) as Leaf); });
+# tell(() => { const odd = baseFactory.createBase(3) as Leaf; odd.value = 8; return Object.keys(odd).join() + evaluate(odd); });
+# tell(() => { baseFactory = { createBase: kind => ({ kind, pos: 1, flags: 2 }), createSmall: kind => Object.freeze(new SmallMaker(kind, 2)) }; return Object.keys(sum(tree, tree)).join(); });
+# tell(() => leaf(9));
+# tell(() => { baseFactory = { createBase: kind => { const early = new Maker(kind, 3) as Sum; early.right = tree; return early; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); });
+# tell(() => { baseFactory = { createBase: kind => { const more = new Maker(kind, 4) as any; more.extra = 1; return more; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); });
+# tell(() => { baseFactory = { createBase: kind => { const less = new Maker(kind, 5) as any; delete less.flags; return less; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); });
+# tell(() => Object.keys(marked(1)).join());
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function Made(kind, pos) { this.kind = kind; this.pos = pos; this.flags = 0; } const Maker = Made; function Small(kind, pos) { this.pos = pos; this.kind = kind; } const SmallMaker = Small; let made = 0; function counted(node) { made++; return node; } const counting = { createBase: (kind) => counted(new Maker(kind, 0)), createSmall: (kind) => counted(new SmallMaker(kind, 0)) }; const plain = { createBase: (kind) => new Maker(kind, -1), createSmall: (kind) => new SmallMaker(kind, -1) }; let baseFactory = counting; function base(kind) { return baseFactory.createBase(kind); } function marked(kind) { const node = base(kind); node.mark = undefined; return node; } function sum(left, right) { const node = base(1); node.left = left; node.right = right; node.flags = 1; node.note = undefined; return node; } function leaf(value) { const node = baseFactory.createSmall(3); node.value = value; return node; } function name(text) { const node = baseFactory.createSmall(4); node.text = text; return node; } function rightOf(node) { return node.right; } function valueOf(node) { return node.value; } function evaluate(node) { switch (node.kind) { case 1: return evaluate(node.left) + evaluate(rightOf(node)); case 3: return valueOf(node); default: return node.text.length; } } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } const tree = sum(sum(leaf(3), name("four")), leaf(5)); tell(() => evaluate(tree)); tell(() => Object.keys(tree).join()); tell(() => Object.keys(leaf(1)).join()); tell(() => JSON.stringify(tree)); baseFactory = plain; tell(() => JSON.stringify(sum(leaf(1), name("x")))); tell(() => made); tell(() => { const odd = baseFactory.createSmall(1); odd.right = leaf(6); odd.left = leaf(7); return Object.keys(odd).join() + evaluate(odd) + valueOf(rightOf(odd)); }); tell(() => { const odd = baseFactory.createBase(3); odd.value = 8; return Object.keys(odd).join() + evaluate(odd); }); tell(() => { baseFactory = { createBase: (kind) => ({ kind, pos: 1, flags: 2 }), createSmall: (kind) => Object.freeze(new SmallMaker(kind, 2)) }; return Object.keys(sum(tree, tree)).join(); }); tell(() => leaf(9)); tell(() => { baseFactory = { createBase: (kind) => { const early = new Maker(kind, 3); early.right = tree; return early; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => { baseFactory = { createBase: (kind) => { const more = new Maker(kind, 4); more.extra = 1; return more; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => { baseFactory = { createBase: (kind) => { const less = new Maker(kind, 5); delete less.flags; return less; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => Object.keys(marked(1)).join()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 15 of 15 of 15
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=none+TypedOperations+Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function Made(kind, pos) { this.kind = kind; this.pos = pos; this.flags = 0; } const Maker = Made; function Small(kind, pos) { this.pos = pos; this.kind = kind; } const SmallMaker = Small; let made = 0; function counted(node) { made++; return node; } const counting = { createBase: (kind) => counted(new Maker(kind, 0)), createSmall: (kind) => counted(new SmallMaker(kind, 0)) }; const plain = { createBase: (kind) => new Maker(kind, -1), createSmall: (kind) => new SmallMaker(kind, -1) }; let baseFactory = counting; function base(kind) { return baseFactory.createBase(kind); } function marked(kind) { const node = base(kind); node.mark = undefined; return node; } function sum(left, right) { const node = base(1); node.left = left; node.right = right; node.flags = 1; node.note = undefined; return node; } function leaf(value) { const node = baseFactory.createSmall(3); node.value = value; return node; } function name(text) { const node = baseFactory.createSmall(4); node.text = text; return node; } function rightOf(node) { return node.right; } function valueOf(node) { return node.value; } function evaluate(node) { switch (node.kind) { case 1: return evaluate(node.left) + evaluate(rightOf(node)); case 3: return valueOf(node); default: return node.text.length; } } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } const tree = sum(sum(leaf(3), name("four")), leaf(5)); tell(() => evaluate(tree)); tell(() => Object.keys(tree).join()); tell(() => Object.keys(leaf(1)).join()); tell(() => JSON.stringify(tree)); baseFactory = plain; tell(() => JSON.stringify(sum(leaf(1), name("x")))); tell(() => made); tell(() => { const odd = baseFactory.createSmall(1); odd.right = leaf(6); odd.left = leaf(7); return Object.keys(odd).join() + evaluate(odd) + valueOf(rightOf(odd)); }); tell(() => { const odd = baseFactory.createBase(3); odd.value = 8; return Object.keys(odd).join() + evaluate(odd); }); tell(() => { baseFactory = { createBase: (kind) => ({ kind, pos: 1, flags: 2 }), createSmall: (kind) => Object.freeze(new SmallMaker(kind, 2)) }; return Object.keys(sum(tree, tree)).join(); }); tell(() => leaf(9)); tell(() => { baseFactory = { createBase: (kind) => { const early = new Maker(kind, 3); early.right = tree; return early; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => { baseFactory = { createBase: (kind) => { const more = new Maker(kind, 4); more.extra = 1; return more; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => { baseFactory = { createBase: (kind) => { const less = new Maker(kind, 5); delete less.flags; return less; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => Object.keys(marked(1)).join()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 15 of 15 of 15
+# ALSO1-NEXT: exited with 0
+# RUN(ALSO2): run-in-shell mechanisms=-ParameterGuards (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function Made(kind, pos) { this.kind = kind; this.pos = pos; this.flags = 0; } const Maker = Made; function Small(kind, pos) { this.pos = pos; this.kind = kind; } const SmallMaker = Small; let made = 0; function counted(node) { made++; return node; } const counting = { createBase: (kind) => counted(new Maker(kind, 0)), createSmall: (kind) => counted(new SmallMaker(kind, 0)) }; const plain = { createBase: (kind) => new Maker(kind, -1), createSmall: (kind) => new SmallMaker(kind, -1) }; let baseFactory = counting; function base(kind) { return baseFactory.createBase(kind); } function marked(kind) { const node = base(kind); node.mark = undefined; return node; } function sum(left, right) { const node = base(1); node.left = left; node.right = right; node.flags = 1; node.note = undefined; return node; } function leaf(value) { const node = baseFactory.createSmall(3); node.value = value; return node; } function name(text) { const node = baseFactory.createSmall(4); node.text = text; return node; } function rightOf(node) { return node.right; } function valueOf(node) { return node.value; } function evaluate(node) { switch (node.kind) { case 1: return evaluate(node.left) + evaluate(rightOf(node)); case 3: return valueOf(node); default: return node.text.length; } } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } const tree = sum(sum(leaf(3), name("four")), leaf(5)); tell(() => evaluate(tree)); tell(() => Object.keys(tree).join()); tell(() => Object.keys(leaf(1)).join()); tell(() => JSON.stringify(tree)); baseFactory = plain; tell(() => JSON.stringify(sum(leaf(1), name("x")))); tell(() => made); tell(() => { const odd = baseFactory.createSmall(1); odd.right = leaf(6); odd.left = leaf(7); return Object.keys(odd).join() + evaluate(odd) + valueOf(rightOf(odd)); }); tell(() => { const odd = baseFactory.createBase(3); odd.value = 8; return Object.keys(odd).join() + evaluate(odd); }); tell(() => { baseFactory = { createBase: (kind) => ({ kind, pos: 1, flags: 2 }), createSmall: (kind) => Object.freeze(new SmallMaker(kind, 2)) }; return Object.keys(sum(tree, tree)).join(); }); tell(() => leaf(9)); tell(() => { baseFactory = { createBase: (kind) => { const early = new Maker(kind, 3); early.right = tree; return early; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => { baseFactory = { createBase: (kind) => { const more = new Maker(kind, 4); more.extra = 1; return more; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => { baseFactory = { createBase: (kind) => { const less = new Maker(kind, 5); delete less.flags; return less; }, createSmall: plain.createSmall }; return Object.keys(sum(leaf(1), leaf(2))).join(); }); tell(() => Object.keys(marked(1)).join()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO2: 15 of 15 of 15
+# ALSO2-NEXT: exited with 0
+
+module m0 path="factory-fills-a-member-of-a-tagged-family.ts" displayPath="factory-fills-a-member-of-a-tagged-family.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Made" module=m0 position=327 constructor=f10 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L4 originField=1}, {key="pos" declared={type=number} flags=[IsRequired] originLayout=L4 originField=2}, {key="flags" declared={type=number} flags=[IsRequired] originLayout=L4 originField=0}] supertypes=[L4] flags=[IsConstructorFunction] ownFieldCount=3
+layout L1 kind=Instance name="Small" module=m0 position=508 constructor=f11 fields=[{key="pos" declared={type=number} flags=[IsRequired] originLayout=L4 originField=2}, {key="kind" declared={type=number} flags=[IsRequired] originLayout=L4 originField=1}] supertypes=[L4] flags=[IsConstructorFunction] ownFieldCount=2
+layout L2 module=m0 position=118 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=1} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L2|L3|L6 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="note" declared={type=undefined|null|string flags=[OmitsNull]}}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L2|L3|L6 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L4] flags=[IsNeverAllocated] declaredOrder=[1, 2, 5, 3, 4, 0] ownFieldCount=6
+layout L3 module=m0 position=196 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=3} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L4] flags=[IsNeverAllocated] declaredOrder=[1, 3, 2, 0] ownFieldCount=4
+layout L4 module=m0 position=57 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2, L3, L6] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L5 module=m0 position=690 fields=[{key="createBase" declared={type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="createSmall" declared={type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=2
+layout L6 module=m0 position=252 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=4} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L4] flags=[IsNeverAllocated] declaredOrder=[1, 3, 2, 0] ownFieldCount=4
+variable g0 name="counted" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="base" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="marked" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="sum" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="leaf" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="name" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="rightOf" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="valueOf" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="evaluate" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="Maker" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g10 name="SmallMaker" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g11 name="made" module=m0 declared={type=number|absent}
+variable g12 name="plain" module=m0 declared={type=undefined|null|absent|L5 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g13 name="baseFactory" module=m0 declared={type=undefined|null|absent|L5 flags=[OmitsNull, OmitsUndefined]}
+variable g14 name="tree" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f10 @0
+    v1 = Convert v0 declared={type=f10 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f11 @0
+    v3 = Convert v2 declared={type=f11 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f12 @0
+    v5 = Convert v4 declared={type=f12 flags=[IsFromCompiler]} @0
+    v6 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @448
+    PutModuleVariable v6 variable=g9 @440
+    v8 = Convert v3 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @619
+    PutModuleVariable v8 variable=g10 @606
+    v10 = Integer @782
+    v11 = Convert v10 declared={type=number} @782
+    PutModuleVariable v11 variable=g11 @775
+    v13 = NewClosure function=f13 @883
+    v14 = Convert v13 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @883
+    v15 = NewClosure function=f14 @933
+    v16 = Convert v15 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @933
+    v17 = NewObject -, v14, v16 layout=L5 fields=[0, 1] @869
+    v18 = FinishObject v17 @869
+    v19 = Convert v18 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @869
+    v20 = NewClosure function=f15 @1018
+    v21 = Convert v20 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @1018
+    v22 = NewClosure function=f16 @1060
+    v23 = Convert v22 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @1060
+    v24 = NewObject -, v21, v23 layout=L5 fields=[0, 1] @1004
+    v25 = FinishObject v24 @1004
+    v26 = Convert v25 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @1004
+    PutModuleVariable v26 variable=g12 @983
+    PutModuleVariable v19 variable=g13 @1100
+    v29 = GetModuleVariable variable=g3 @2085
+    v30 = GetModuleVariable variable=g3 @2089
+    v31 = GetModuleVariable variable=g4 @2093
+    v32 = Integer integer=3 @2098
+    v33 = Call v31, -, v32 calleeName="leaf" @2093
+    v34 = GetModuleVariable variable=g5 @2102
+    v35 = String string="four" @2107
+    v36 = Call v34, -, v35 calleeName="name" @2102
+    v37 = Call v30, -, v33, v36 calleeName="sum" @2089
+    v38 = GetModuleVariable variable=g4 @2117
+    v39 = Integer integer=5 @2122
+    v40 = Call v38, -, v39 calleeName="leaf" @2117
+    v41 = Call v29, -, v37, v40 calleeName="sum" @2085
+    v42 = Convert v41 declared={type=undefined|null flags=[IsExpected]} @2085
+    PutModuleVariable v42 variable=g14 @2078
+    v44 = NewClosure function=f17 @2132
+    v45 = Call v5, -, v44 calleeName="tell" @2127
+    v46 = NewClosure function=f18 @2160
+    v47 = Call v5, -, v46 calleeName="tell" @2155
+    v48 = NewClosure function=f19 @2198
+    v49 = Call v5, -, v48 calleeName="tell" @2193
+    v50 = NewClosure function=f20 @2239
+    v51 = Call v5, -, v50 calleeName="tell" @2234
+    v52 = GetModuleVariable variable=g13 @2268
+    v53 = CheckInitialized v52 name="baseFactory" @2268
+    PutModuleVariable v26 variable=g13 @2268
+    v55 = NewClosure function=f21 @2294
+    v56 = Call v5, -, v55 calleeName="tell" @2289
+    v57 = NewClosure function=f22 @2347
+    v58 = Call v5, -, v57 calleeName="tell" @2342
+    v59 = NewClosure function=f23 @2365
+    v60 = Call v5, -, v59 calleeName="tell" @2360
+    v61 = NewClosure function=f24 @2550
+    v62 = Call v5, -, v61 calleeName="tell" @2545
+    v63 = NewClosure function=f25 @2677
+    v64 = Call v5, -, v63 calleeName="tell" @2672
+    v65 = NewClosure function=f26 @2867
+    v66 = Call v5, -, v65 calleeName="tell" @2862
+    v67 = NewClosure function=f27 @2888
+    v68 = Call v5, -, v67 calleeName="tell" @2883
+    v69 = NewClosure function=f28 @3105
+    v70 = Call v5, -, v69 calleeName="tell" @3100
+    v71 = NewClosure function=f29 @3316
+    v72 = Call v5, -, v71 calleeName="tell" @3311
+    v73 = NewClosure function=f30 @3530
+    v74 = Call v5, -, v73 calleeName="tell" @3525
+    v75 = Builtin builtin=GlobalThis @3568
+    v76 = PropGet v75 key="report" [isFreeName] @3568
+    v77 = String string="end" @3575
+    v78 = Call v76, -, v77 calleeName="report" @3568
+    v79 = Undefined @3568
+    Return v79 @3568
+}
+function f1 name="counted" module=m0 position=785 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L4):
+    Jump -> next b1() @785
+  b1():
+    v1 = GetModuleVariable variable=g11 @816
+    v2 = CheckInitialized v1 name="made" @816
+    v3 = Increment v2 @816
+    v4 = Convert v3 declared={type=number} @816
+    v5 = GetModuleVariable variable=g11 @816
+    v6 = CheckInitialized v5 name="made" @816
+    PutModuleVariable v4 variable=g11 @816
+    Return v0 @831
+}
+function f2 name="base" module=m0 position=1124 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1124
+  b1():
+    v1 = GetModuleVariable variable=g13 @1161
+    v2 = CheckInitialized v1 name="baseFactory" @1161
+    v3 = PropGet v2 key="createBase" @1161
+    v4 = Call v3, v2, v0 calleeKey="createBase" calleeName="baseFactory.createBase" @1173
+    ReturnCall v4 @1173
+}
+function f3 name="marked" module=m0 position=1193 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1193
+  b1():
+    v1 = GetModuleVariable variable=g1 @1238
+    v2 = Call v1, -, v0 calleeName="base" @1238
+    v3 = Undefined @1269
+    PropSet v2, v3 key="mark" @1257
+    Return v2 @1287
+}
+function f4 name="sum" module=m0 position=1295 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null, v1: undefined|null):
+    Jump -> next b1() @1295
+  b1():
+    v2 = GetModuleVariable variable=g1 @1346
+    v3 = Integer integer=1 @1351
+    v4 = Call v2, -, v3 calleeName="base" @1346
+    v5 = Convert v4 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1346
+    PropSet v5, v0 key="left" @1362
+    PropSet v5, v1 key="right" @1380
+    v8 = Integer integer=1 @1413
+    PropSet v5, v8 key="flags" @1400
+    v10 = Undefined @1428
+    PropSet v5, v10 key="note" @1416
+    Return v5 @1446
+}
+function f5 name="leaf" module=m0 position=1454 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1454
+  b1():
+    v1 = GetModuleVariable variable=g13 @1498
+    v2 = CheckInitialized v1 name="baseFactory" @1498
+    v3 = PropGet v2 key="createSmall" @1498
+    v4 = Integer integer=3 @1522
+    v5 = Call v3, v2, v4 calleeKey="createSmall" calleeName="baseFactory.createSmall" @1510
+    v6 = Convert v5 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1498
+    PropSet v6, v0 key="value" @1534
+    Return v6 @1561
+}
+function f6 name="name" module=m0 position=1569 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1569
+  b1():
+    v1 = GetModuleVariable variable=g13 @1612
+    v2 = CheckInitialized v1 name="baseFactory" @1612
+    v3 = PropGet v2 key="createSmall" @1612
+    v4 = Integer integer=4 @1636
+    v5 = Call v3, v2, v4 calleeKey="createSmall" calleeName="baseFactory.createSmall" @1624
+    v6 = Convert v5 declared={type=undefined|null|L6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1612
+    PropSet v6, v0 key="text" @1648
+    Return v6 @1673
+}
+function f7 name="rightOf" module=m0 position=1681 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null):
+    Jump -> next b1() @1681
+  b1():
+    v1 = PropGet v0 key="right" @1718
+    Return v1 @1718
+}
+function f8 name="valueOf" module=m0 position=1732 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null):
+    Jump -> next b1() @1732
+  b1():
+    v1 = PropGet v0 key="value" @1770
+    Return v1 @1770
+}
+function f9 name="evaluate" module=m0 position=1784 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null):
+    Jump -> next b1() @1784
+  b1():
+    v1 = PropGet v0 key="kind" @1831
+    Switch v1 cases=[1, 3] -> case b2(| 0), case b4(| 0), otherwise b6() @1849
+  b2(v2):
+    v3 = NarrowByField v0, v2 key="kind" @1849
+    Jump -> next b3() @1849
+  b3():
+    v4 = GetModuleVariable variable=g8 @1859
+    v5 = PropGet v3 key="left" @1868
+    v6 = Call v4, -, v5 calleeName="evaluate" @1859
+    v7 = GetModuleVariable variable=g8 @1881
+    v8 = GetModuleVariable variable=g6 @1890
+    v9 = Call v8, -, v3 calleeName="rightOf" @1890
+    v10 = Call v7, -, v9 calleeName="evaluate" @1881
+    v11 = Add v6, v10 @1881
+    v12 = Convert v11 declared={type=number} @1881
+    Return v12 @1881
+  b4(v13):
+    v14 = NarrowByField v0, v13 key="kind" @1849
+    Jump -> next b5() @1849
+  b5():
+    v15 = GetModuleVariable variable=g7 @1921
+    v16 = Call v15, -, v14 calleeName="valueOf" @1921
+    ReturnCall v16 casts=[{declared={type=number}}] @1921
+  b6():
+    Jump -> next b7() @1849
+  b7():
+    v17 = PropGet v0 key="text" @1952
+    v18 = PropGet v17 key="length" @1957
+    v19 = Convert v18 declared={type=number} @1952
+    Return v19 @1952
+}
+function f10 name="Made" module=m0 position=327 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L4, v1: number, v2: number):
+    Jump -> next b1() @327
+  b1():
+    PropSet v0, v1 key="kind" @382
+    PropSet v0, v2 key="pos" @400
+    v5 = Integer @429
+    PropSet v0, v5 key="flags" @416
+    v7 = Undefined @416
+    Return v7 @416
+}
+function f11 name="Small" module=m0 position=508 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: undefined|null|L4, v1: number, v2: number):
+    Jump -> next b1() @508
+  b1():
+    PropSet v0, v2 key="pos" @564
+    PropSet v0, v1 key="kind" @580
+    v5 = Undefined @580
+    Return v5 @580
+}
+function f12 name="tell" module=m0 position=1974 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @1974
+  b1():
+    Jump -> next b2() @2008
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @2014
+    v2 = PropGet v1 key="report" [isFreeName] @2014
+    v3 = Call v0 calleeName="f" @2021
+    v4 = Call v2, -, v3 calleeName="report" @2014
+    Jump -> next b3() @2014
+  b3():
+    Jump -> next b5() @2014
+  b4() role=CatchHandler:
+    v5 = CatchValue @2039
+    v6 = Builtin builtin=GlobalThis @2041
+    v7 = PropGet v6 key="report" [isFreeName] @2041
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @2049
+    v9 = PropGet v8 key="name" @2049
+    v10 = Call v7, -, v9 calleeName="report" @2041
+    Jump -> next b5() @2041
+  b5():
+    v11 = Undefined @2041
+    Return v11 @2041
+}
+function f13 name="createBase" module=m0 position=883 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @883
+  b1():
+    v1 = GetModuleVariable variable=g0 @891
+    v2 = GetModuleVariable variable=g9 @903
+    v3 = CheckInitialized v2 name="Maker" @903
+    v4 = Integer @915
+    v5 = Construct v3, -, v0, v4 calleeName="Maker" @903
+    v6 = Call v1, -, v5 calleeName="counted" @891
+    ReturnCall v6 @891
+}
+function f14 name="createSmall" module=m0 position=933 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @933
+  b1():
+    v1 = GetModuleVariable variable=g0 @941
+    v2 = GetModuleVariable variable=g10 @953
+    v3 = CheckInitialized v2 name="SmallMaker" @953
+    v4 = Integer @970
+    v5 = Construct v3, -, v0, v4 calleeName="SmallMaker" @953
+    v6 = Call v1, -, v5 calleeName="counted" @941
+    ReturnCall v6 @941
+}
+function f15 name="createBase" module=m0 position=1018 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1018
+  b1():
+    v1 = GetModuleVariable variable=g9 @1030
+    v2 = CheckInitialized v1 name="Maker" @1030
+    v3 = Integer integer=-1 @1042
+    v4 = Construct v2, -, v0, v3 calleeName="Maker" @1030
+    Return v4 @1026
+}
+function f16 name="createSmall" module=m0 position=1060 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1060
+  b1():
+    v1 = GetModuleVariable variable=g10 @1072
+    v2 = CheckInitialized v1 name="SmallMaker" @1072
+    v3 = Integer integer=-1 @1089
+    v4 = Construct v2, -, v0, v3 calleeName="SmallMaker" @1072
+    Return v4 @1068
+}
+function f17 module=m0 position=2132 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2132
+  b1():
+    v0 = GetModuleVariable variable=g8 @2138
+    v1 = GetModuleVariable variable=g14 @2147
+    v2 = CheckInitialized v1 name="tree" @2147
+    v3 = Call v0, -, v2 calleeName="evaluate" @2138
+    ReturnCall v3 @2138
+}
+function f18 module=m0 position=2160 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2160
+  b1():
+    v0 = Builtin builtin=Object @2166
+    v1 = Builtin builtin=ObjectKeys @2166
+    v2 = GetModuleVariable variable=g14 @2178
+    v3 = CheckInitialized v2 name="tree" @2178
+    v4 = Call v1, v0, v3 calleeName="Object.keys" @2173
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2166
+    v6 = PropGet v5 key="join" @2182
+    v7 = Call v6, v5 calleeKey="join" calleeName="join" @2184
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2184
+}
+function f19 module=m0 position=2198 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2198
+  b1():
+    v0 = Builtin builtin=Object @2204
+    v1 = Builtin builtin=ObjectKeys @2204
+    v2 = GetModuleVariable variable=g4 @2216
+    v3 = Integer integer=1 @2221
+    v4 = Call v2, -, v3 calleeName="leaf" @2216
+    v5 = Call v1, v0, v4 calleeName="Object.keys" @2211
+    v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2204
+    v7 = PropGet v6 key="join" @2223
+    v8 = Call v7, v6 calleeKey="join" calleeName="join" @2225
+    ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2225
+}
+function f20 module=m0 position=2239 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2239
+  b1():
+    v0 = Builtin builtin=JSON @2245
+    v1 = PropGet v0 key="stringify" @2245
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2245
+    v3 = GetModuleVariable variable=g14 @2260
+    v4 = CheckInitialized v3 name="tree" @2260
+    v5 = Call v2, v0, v4 calleeKey="stringify" calleeName="JSON.stringify" @2250
+    ReturnCall v5 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2250
+}
+function f21 module=m0 position=2294 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2294
+  b1():
+    v0 = Builtin builtin=JSON @2300
+    v1 = PropGet v0 key="stringify" @2300
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2300
+    v3 = GetModuleVariable variable=g3 @2315
+    v4 = GetModuleVariable variable=g4 @2319
+    v5 = Integer integer=1 @2324
+    v6 = Call v4, -, v5 calleeName="leaf" @2319
+    v7 = GetModuleVariable variable=g5 @2328
+    v8 = String string="x" @2333
+    v9 = Call v7, -, v8 calleeName="name" @2328
+    v10 = Call v3, -, v6, v9 calleeName="sum" @2315
+    v11 = Call v2, v0, v10 calleeKey="stringify" calleeName="JSON.stringify" @2305
+    ReturnCall v11 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2305
+}
+function f22 module=m0 position=2347 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2347
+  b1():
+    v0 = GetModuleVariable variable=g11 @2353
+    v1 = CheckInitialized v0 name="made" @2353
+    Return v1 @2353
+}
+function f23 module=m0 position=2365 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2365
+  b1():
+    v0 = GetModuleVariable variable=g13 @2385
+    v1 = CheckInitialized v0 name="baseFactory" @2385
+    v2 = PropGet v1 key="createSmall" @2385
+    v3 = Integer integer=1 @2409
+    v4 = Call v2, v1, v3 calleeKey="createSmall" calleeName="baseFactory.createSmall" @2397
+    v5 = Convert v4 declared={type=undefined|null flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @2385
+    v6 = GetModuleVariable variable=g4 @2432
+    v7 = Integer integer=6 @2437
+    v8 = Call v6, -, v7 calleeName="leaf" @2432
+    PropSet v5, v8 key="right" @2420
+    v10 = GetModuleVariable variable=g4 @2452
+    v11 = Integer integer=7 @2457
+    v12 = Call v10, -, v11 calleeName="leaf" @2452
+    PropSet v5, v12 key="left" @2441
+    v14 = Builtin builtin=Object @2468
+    v15 = Builtin builtin=ObjectKeys @2468
+    v16 = Call v15, v14, v5 calleeName="Object.keys" @2475
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2468
+    v18 = PropGet v17 key="join" @2483
+    v19 = Call v18, v17 calleeKey="join" calleeName="join" @2485
+    v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2468
+    v21 = GetModuleVariable variable=g8 @2494
+    v22 = Call v21, -, v5 calleeName="evaluate" @2494
+    v23 = Add v20, v22 @2494
+    v24 = GetModuleVariable variable=g7 @2510
+    v25 = GetModuleVariable variable=g6 @2518
+    v26 = Call v25, -, v5 calleeName="rightOf" @2518
+    v27 = Convert v26 declared={type=undefined|null flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @2518
+    v28 = Call v24, -, v27 calleeName="valueOf" @2510
+    v29 = Add v23, v28 @2510
+    Return v29 @2510
+}
+function f24 module=m0 position=2550 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2550
+  b1():
+    v0 = GetModuleVariable variable=g13 @2570
+    v1 = CheckInitialized v0 name="baseFactory" @2570
+    v2 = PropGet v1 key="createBase" @2570
+    v3 = Integer integer=3 @2593
+    v4 = Call v2, v1, v3 calleeKey="createBase" calleeName="baseFactory.createBase" @2582
+    v5 = Convert v4 declared={type=undefined|null flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @2570
+    v6 = Integer integer=8 @2617
+    PropSet v5, v6 key="value" @2605
+    v8 = Builtin builtin=Object @2627
+    v9 = Builtin builtin=ObjectKeys @2627
+    v10 = Call v9, v8, v5 calleeName="Object.keys" @2634
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2627
+    v12 = PropGet v11 key="join" @2642
+    v13 = Call v12, v11 calleeKey="join" calleeName="join" @2644
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2627
+    v15 = GetModuleVariable variable=g8 @2653
+    v16 = Call v15, -, v5 calleeName="evaluate" @2653
+    v17 = Add v14, v16 @2653
+    Return v17 @2653
+}
+function f25 module=m0 position=2677 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2677
+  b1():
+    v0 = GetModuleVariable variable=g13 @2685
+    v1 = CheckInitialized v0 name="baseFactory" @2685
+    v2 = NewClosure function=f31 @2713
+    v3 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @2713
+    v4 = NewClosure function=f32 @2764
+    v5 = Convert v4 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @2764
+    v6 = NewObject -, v3, v5 layout=L5 fields=[0, 1] @2699
+    v7 = FinishObject v6 @2699
+    v8 = Convert v7 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @2685
+    PutModuleVariable v8 variable=g13 @2685
+    v10 = Builtin builtin=Object @2821
+    v11 = Builtin builtin=ObjectKeys @2821
+    v12 = GetModuleVariable variable=g3 @2833
+    v13 = GetModuleVariable variable=g14 @2837
+    v14 = CheckInitialized v13 name="tree" @2837
+    v15 = GetModuleVariable variable=g14 @2843
+    v16 = CheckInitialized v15 name="tree" @2843
+    v17 = Call v12, -, v14, v16 calleeName="sum" @2833
+    v18 = Call v11, v10, v17 calleeName="Object.keys" @2828
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2821
+    v20 = PropGet v19 key="join" @2848
+    v21 = Call v20, v19 calleeKey="join" calleeName="join" @2850
+    ReturnCall v21 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2850
+}
+function f26 module=m0 position=2867 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2867
+  b1():
+    v0 = GetModuleVariable variable=g4 @2873
+    v1 = Integer integer=9 @2878
+    v2 = Call v0, -, v1 calleeName="leaf" @2873
+    ReturnCall v2 @2873
+}
+function f27 module=m0 position=2888 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2888
+  b1():
+    v0 = GetModuleVariable variable=g13 @2896
+    v1 = CheckInitialized v0 name="baseFactory" @2896
+    v2 = NewClosure function=f33 @2924
+    v3 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @2924
+    v4 = GetModuleVariable variable=g12 @3025
+    v5 = CheckInitialized v4 name="plain" @3025
+    v6 = PropGet v5 key="createSmall" @3025
+    v7 = Convert v6 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @3025
+    v8 = NewObject -, v3, v7 layout=L5 fields=[0, 1] @2910
+    v9 = FinishObject v8 @2910
+    v10 = Convert v9 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @2896
+    PutModuleVariable v10 variable=g13 @2896
+    v12 = Builtin builtin=Object @3053
+    v13 = Builtin builtin=ObjectKeys @3053
+    v14 = GetModuleVariable variable=g3 @3065
+    v15 = GetModuleVariable variable=g4 @3069
+    v16 = Integer integer=1 @3074
+    v17 = Call v15, -, v16 calleeName="leaf" @3069
+    v18 = GetModuleVariable variable=g4 @3078
+    v19 = Integer integer=2 @3083
+    v20 = Call v18, -, v19 calleeName="leaf" @3078
+    v21 = Call v14, -, v17, v20 calleeName="sum" @3065
+    v22 = Call v13, v12, v21 calleeName="Object.keys" @3060
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3053
+    v24 = PropGet v23 key="join" @3086
+    v25 = Call v24, v23 calleeKey="join" calleeName="join" @3088
+    ReturnCall v25 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @3088
+}
+function f28 module=m0 position=3105 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3105
+  b1():
+    v0 = GetModuleVariable variable=g13 @3113
+    v1 = CheckInitialized v0 name="baseFactory" @3113
+    v2 = NewClosure function=f34 @3141
+    v3 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @3141
+    v4 = GetModuleVariable variable=g12 @3236
+    v5 = CheckInitialized v4 name="plain" @3236
+    v6 = PropGet v5 key="createSmall" @3236
+    v7 = Convert v6 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @3236
+    v8 = NewObject -, v3, v7 layout=L5 fields=[0, 1] @3127
+    v9 = FinishObject v8 @3127
+    v10 = Convert v9 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @3113
+    PutModuleVariable v10 variable=g13 @3113
+    v12 = Builtin builtin=Object @3264
+    v13 = Builtin builtin=ObjectKeys @3264
+    v14 = GetModuleVariable variable=g3 @3276
+    v15 = GetModuleVariable variable=g4 @3280
+    v16 = Integer integer=1 @3285
+    v17 = Call v15, -, v16 calleeName="leaf" @3280
+    v18 = GetModuleVariable variable=g4 @3289
+    v19 = Integer integer=2 @3294
+    v20 = Call v18, -, v19 calleeName="leaf" @3289
+    v21 = Call v14, -, v17, v20 calleeName="sum" @3276
+    v22 = Call v13, v12, v21 calleeName="Object.keys" @3271
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3264
+    v24 = PropGet v23 key="join" @3297
+    v25 = Call v24, v23 calleeKey="join" calleeName="join" @3299
+    ReturnCall v25 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @3299
+}
+function f29 module=m0 position=3316 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3316
+  b1():
+    v0 = GetModuleVariable variable=g13 @3324
+    v1 = CheckInitialized v0 name="baseFactory" @3324
+    v2 = NewClosure function=f35 @3352
+    v3 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @3352
+    v4 = GetModuleVariable variable=g12 @3450
+    v5 = CheckInitialized v4 name="plain" @3450
+    v6 = PropGet v5 key="createSmall" @3450
+    v7 = Convert v6 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @3450
+    v8 = NewObject -, v3, v7 layout=L5 fields=[0, 1] @3338
+    v9 = FinishObject v8 @3338
+    v10 = Convert v9 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @3324
+    PutModuleVariable v10 variable=g13 @3324
+    v12 = Builtin builtin=Object @3478
+    v13 = Builtin builtin=ObjectKeys @3478
+    v14 = GetModuleVariable variable=g3 @3490
+    v15 = GetModuleVariable variable=g4 @3494
+    v16 = Integer integer=1 @3499
+    v17 = Call v15, -, v16 calleeName="leaf" @3494
+    v18 = GetModuleVariable variable=g4 @3503
+    v19 = Integer integer=2 @3508
+    v20 = Call v18, -, v19 calleeName="leaf" @3503
+    v21 = Call v14, -, v17, v20 calleeName="sum" @3490
+    v22 = Call v13, v12, v21 calleeName="Object.keys" @3485
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3478
+    v24 = PropGet v23 key="join" @3511
+    v25 = Call v24, v23 calleeKey="join" calleeName="join" @3513
+    ReturnCall v25 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @3513
+}
+function f30 module=m0 position=3530 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3530
+  b1():
+    v0 = Builtin builtin=Object @3536
+    v1 = Builtin builtin=ObjectKeys @3536
+    v2 = GetModuleVariable variable=g2 @3548
+    v3 = Integer integer=1 @3555
+    v4 = Call v2, -, v3 calleeName="marked" @3548
+    v5 = Call v1, v0, v4 calleeName="Object.keys" @3543
+    v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3536
+    v7 = PropGet v6 key="join" @3557
+    v8 = Call v7, v6 calleeKey="join" calleeName="join" @3559
+    ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @3559
+}
+function f31 name="createBase" module=m0 position=2713 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @2713
+  b1():
+    v1 = Convert v0 declared={type=number} @2724
+    v2 = Integer integer=1 @2735
+    v3 = Convert v2 declared={type=number} @2735
+    v4 = Integer integer=2 @2745
+    v5 = Convert v4 declared={type=number} @2745
+    v6 = NewObject -, v1, v3, v5 layout=L4 fields=[1, 2, 0] @2722
+    v7 = FinishObject v6 @2722
+    Return v7 @2722
+}
+function f32 name="createSmall" module=m0 position=2764 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @2764
+  b1():
+    v1 = Builtin builtin=Object @2772
+    v2 = Builtin builtin=ObjectFreeze @2772
+    v3 = GetModuleVariable variable=g10 @2790
+    v4 = CheckInitialized v3 name="SmallMaker" @2790
+    v5 = Integer integer=2 @2807
+    v6 = Construct v4, -, v0, v5 calleeName="SmallMaker" @2790
+    v7 = Call v2, v1, v6 calleeName="Object.freeze" @2779
+    ReturnCall v7 casts=[{declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}}] @2779
+}
+function f33 name="createBase" module=m0 position=2924 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @2924
+  b1():
+    v1 = GetModuleVariable variable=g9 @2952
+    v2 = CheckInitialized v1 name="Maker" @2952
+    v3 = Integer integer=3 @2964
+    v4 = Construct v2, -, v0, v3 calleeName="Maker" @2952
+    v5 = Convert v4 declared={type=undefined|null flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @2948
+    v6 = GetModuleVariable variable=g14 @2989
+    v7 = CheckInitialized v6 name="tree" @2989
+    PropSet v5, v7 key="right" @2975
+    Return v5 @3002
+}
+function f34 name="createBase" module=m0 position=3141 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3141
+  b1():
+    v1 = GetModuleVariable variable=g9 @3168
+    v2 = CheckInitialized v1 name="Maker" @3168
+    v3 = Integer integer=4 @3180
+    v4 = Construct v2, -, v0, v3 calleeName="Maker" @3168
+    v5 = Integer integer=1 @3204
+    PropSet v4, v5 key="extra" @3191
+    Return v4 @3214
+}
+function f35 name="createBase" module=m0 position=3352 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3352
+  b1():
+    v1 = GetModuleVariable variable=g9 @3379
+    v2 = CheckInitialized v1 name="Maker" @3379
+    v3 = Integer integer=5 @3391
+    v4 = Construct v2, -, v0, v3 calleeName="Maker" @3379
+    v5 = PropDelete v4 key="flags" @3409
+    Return v4 @3428
+}

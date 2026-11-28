@@ -4,6 +4,11 @@ framework module WebKit_Private [system] {
 
   module * { export * }
 
+  explicit module CocoaObjectForKeyHelpers {
+    header "CocoaObjectForKeyHelpers.h"
+    export *
+  }
+
   explicit module DOMDocumentFragmentPrivate {
     header "DOMDocumentFragmentPrivate.h"
     export *
@@ -1189,11 +1194,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKWebProcessPlugInNodeHandlePrivate {
-    header "WKWebProcessPlugInNodeHandlePrivate.h"
-    export *
-  }
-
   explicit module WKWebProcessPlugInPageGroup {
     header "WKWebProcessPlugInPageGroup.h"
     export *
@@ -2084,6 +2084,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module _WKViewportFitEdges {
+    header "_WKViewportFitEdges.h"
+    export *
+  }
+
   explicit module _WKWebAuthenticationAssertionResponse {
     header "_WKWebAuthenticationAssertionResponse.h"
     export *
@@ -2101,6 +2106,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKWebExtensionBookmark {
     header "_WKWebExtensionBookmarks.h"
+    export *
+  }
+
+  explicit module _WKWebExtensionBookmarkConfiguration {
+    header "_WKWebExtensionBookmarkConfiguration.h"
     export *
   }
 

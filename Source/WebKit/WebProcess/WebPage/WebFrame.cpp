@@ -45,13 +45,13 @@
 #include "NetworkProcessConnection.h"
 #include "PluginView.h"
 #include "ProvisionalFrameCreationParameters.h"
+#include "SessionState.h"
 #include "SessionStateConversion.h"
 #include "WKAPICast.h"
 #include "WKBundleAPICast.h"
 #include "WebChromeClient.h"
 #include "WebContextMenu.h"
 #include "WebEventConversion.h"
-#include "WebEventFactory.h"
 #include "WebFrameProxyMessages.h"
 #include "WebHistoryItemClient.h"
 #include "WebImage.h"
@@ -70,6 +70,7 @@
 #include <JavaScriptCore/JSValueRef.h>
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/ArchiveResource.h>
+#include <WebCore/BackForwardCache.h>
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/ContainerNodeInlines.h>
@@ -102,6 +103,8 @@
 #include <WebCore/HTMLSelectElement.h>
 #include <WebCore/HTMLTextAreaElement.h>
 #include <WebCore/HandleUserInputEventResult.h>
+#include <WebCore/HistoryController.h>
+#include <WebCore/HistoryItem.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/ImageData.h>
 #include <WebCore/JSCSSStyleDeclaration.h>
@@ -126,6 +129,7 @@
 #include <WebCore/RemoteFrame.h>
 #include <WebCore/RemoteFrameView.h>
 #include <WebCore/RemoteUserInputEventData.h>
+#include <WebCore/RenderLayer.h>
 #include <WebCore/RenderLayerCompositor.h>
 #include <WebCore/RenderTreeAsText.h>
 #include <WebCore/RenderView.h>
@@ -316,7 +320,6 @@ FrameInfoData WebFrame::info() const
     return {
         // FIXME: This should use the full request.
         ResourceRequest(url()),
-        coreFrame ? SecurityOriginData::fromFrame(*coreFrame) : SecurityOriginData { },
         coreFrame ? coreFrame->tree().specifiedName().string() : String(),
         frameID(),
         document ? std::optional { document->identifier() } : std::nullopt,
@@ -333,8 +336,7 @@ std::optional<FrameTreeNodeData> WebFrame::frameTreeData() const
         return std::nullopt;
     }
 
-    Vector<FrameTreeNodeData> children;
-    children.reserveInitialCapacity(m_coreFrame->tree().childCount());
+    Vector<FrameTreeNodeData> children(ReserveCapacityTag { }, m_coreFrame->tree().childCount());
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr childWebFrame = WebFrame::fromCoreFrame(*child);
         if (!childWebFrame) {
@@ -418,26 +420,49 @@ bool WebFrame::newerNavigationOwnsDownloadAttributePolicyCheckLoad(const PolicyC
     return !localFrame || localFrame->loader().policyDocumentLoader() != policyCheck.downloadAttributePolicyDocumentLoader.get();
 }
 
-void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier)
+DidCacheOutgoingDocument WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier, std::optional<BackForwardItemIdentifiers>&& cacheIdentifiers)
 {
     RefPtr localFrame = coreLocalFrame();
     if (!localFrame) {
         ASSERT_NOT_REACHED();
-        return;
+        return DidCacheOutgoingDocument::No;
     }
 
     RefPtr corePage = localFrame->page();
     if (!corePage) {
         ASSERT_NOT_REACHED();
-        return;
+        return DidCacheOutgoingDocument::No;
     }
 
     RefPtr parent = localFrame->tree().parent();
     RefPtr ownerElement = localFrame->ownerElement();
 
+    // Subframes in the back/forward cache are detached from their parents.
+    if (!parent && !localFrame->isMainFrame()) {
+        RELEASE_LOG(SiteIsolation, "WebFrame::loadDidCommitInAnotherProcess: evicting the cached page of detached subframe %" PRIu64, m_frameID.toUInt64());
+        auto removedItems = WebCore::BackForwardCache::singleton().removeItemsContainingFrame(*localFrame);
+        if (RefPtr page = m_page) {
+            for (auto frameItemID : removedItems)
+                page->send(Messages::WebPageProxy::DidEvictBackForwardFrameItem(frameItemID));
+        }
+        return DidCacheOutgoingDocument::No;
+    }
+
     // loadDidCommitInAnotherProcess implies the new frame is cross-origin to the current frame.
     // Cross-origin navigation doesn't trigger view transitions, and does not provide any activation information.
     protect(localFrame->document())->dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition::No, nullptr);
+
+    // Must precede setMainFrame() because CachedPage captures the page's current main frame.
+    bool didCache = false;
+    if (!parent) {
+        if (cacheIdentifiers)
+            didCache = BackForwardCache::singleton().addIfCacheable(cacheIdentifiers->mainFrameItemID, *corePage, LoadWillContinueInAnotherProcess::Yes, cacheIdentifiers->itemID);
+        if (!didCache) {
+            // Tearing down the uncached document detaches this frame from the page, so pages cached
+            // earlier in it can no longer be restored.
+            BackForwardCache::singleton().removeAllItemsForMainFrame(*localFrame);
+        }
+    }
 
     RefPtr ownerRenderer = localFrame->ownerRenderer();
 
@@ -466,7 +491,7 @@ void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingP
     if (parent)
         parent->tree().replaceChild(*localFrame, newFrame);
     else {
-        localFrame->loader().detachFromParent();
+        localFrame->willBeReplacedByRemoteFrame();
         corePage->setMainFrame(newFrame.copyRef());
         if (RefPtr page = m_page.get())
             page->updateRemoteMainFrameViewDelegatedScrolling();
@@ -488,6 +513,8 @@ void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingP
 
     if (ownerElement)
         ownerElement->scheduleInvalidateStyleAndLayerComposition();
+
+    return didCache ? DidCacheOutgoingDocument::Yes : DidCacheOutgoingDocument::No;
 }
 
 void WebFrame::createProvisionalFrame(ProvisionalFrameCreationParameters&& parameters)
@@ -567,6 +594,37 @@ void WebFrame::updateSandboxFlags(SandboxFlags sandboxFlags)
         provisionalFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
 }
 
+static bool shouldClearWindowNameOnReplacement(const WebCore::RemoteFrame& remoteFrame, const WebCore::LocalFrame& localFrame)
+{
+    if (!remoteFrame.isMainFrame() || remoteFrame.opener())
+        return false;
+
+    RefPtr document = localFrame.document();
+    return !document || !protect(document->securityOrigin())->isSameOriginAs(protect(remoteFrame.frameDocumentSecurityOriginOrOpaque()));
+}
+
+NODELETE static void setBackForwardItemIdentifier(HistoryItem& item, BackForwardItemIdentifier itemID)
+{
+    item.setItemID(itemID);
+    for (auto& child : item.children())
+        setBackForwardItemIdentifier(child, itemID);
+}
+
+void WebFrame::didAddHistoryItemToBackForwardItem(BackForwardFrameItemIdentifier frameItemID, BackForwardItemIdentifier itemID)
+{
+    RefPtr localFrame = coreLocalFrame();
+    if (!localFrame)
+        return;
+
+    RefPtr currentItem = localFrame->loader().history().currentItem();
+    if (!currentItem || currentItem->frameItemID() != frameItemID)
+        return;
+
+    // The UI process looks up the items by the identifier of the back/forward item they belong to, so updates have to
+    // carry it.
+    setBackForwardItemIdentifier(*currentItem, itemID);
+}
+
 void WebFrame::commitProvisionalFrame()
 {
     RefPtr localFrame = std::exchange(m_provisionalFrame, nullptr);
@@ -603,12 +661,15 @@ void WebFrame::commitProvisionalFrame()
 
     m_coreFrame = localFrame.get();
     remoteFrame->setView(nullptr);
-    localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
+    if (!shouldClearWindowNameOnReplacement(*remoteFrame, *localFrame))
+        localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
 
     if (ownerRenderer)
         ownerRenderer->setWidget(localFrame->view());
 
     localFrame->setOwnerElement(ownerElement.get());
+    // Reading the owner zoom needs the parent and owner element set above.
+    localFrame->frameOwnerZoomDidChange();
     if (remoteFrame->isMainFrame())
         corePage->setMainFrame(*localFrame);
     localFrame->takeWindowProxyAndOpenerFrom(*remoteFrame);
@@ -766,12 +827,13 @@ void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, Pol
                 provisionalDocumentLoader->setAgentClusterAssignment(policyDecision.agentClusterAssignment);
                 if (forNavigationAction)
                     provisionalDocumentLoader->setUnpartitionedStorageSite(WTF::move(policyDecision.unpartitionedStorageSite));
-            }
+            } else if (forNavigationAction && policyDecision.policyAction == PolicyAction::Use && loader.isWaitingForDelegatedBackForwardLoad())
+                loader.setDelegatedBackForwardLoadDecision({ policyDecision.navigationID, policyDecision.agentClusterAssignment, WTF::move(policyDecision.unpartitionedStorageSite) });
         }
     }
 
     if (policyDecision.backForwardFrameState) {
-        RELEASE_LOG(Loading, "didReceivePolicyDecision: Received FrameState for child frame, URL=%" SENSITIVE_LOG_STRING, policyDecision.backForwardFrameState->urlString.utf8());
+        RELEASE_LOG(Loading, "didReceivePolicyDecision: Received FrameState for child frame, URL=%" SENSITIVE_LOG_STRING, makeUTF8CString(policyDecision.backForwardFrameState->urlString));
         setHistoryItemForBackForwardNavigation(protect(*policyDecision.backForwardFrameState));
     }
 
@@ -814,8 +876,12 @@ void WebFrame::startDownload(const WebCore::ResourceRequest& request, const Stri
 
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     isAppBound = m_isNavigatingToAppBoundDomain;
-    if (localFrame)
-        protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request, topOrigin, isAppBound, suggestedName, fromDownloadAttribute, localFrame->frameID(), localFrame->pageID()), 0);
+    if (localFrame) {
+        OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
+        if (RefPtr documentLoader = localFrame->loader().documentLoader())
+            advancedPrivacyProtections = documentLoader->advancedPrivacyProtections();
+        protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request, topOrigin, isAppBound, advancedPrivacyProtections, suggestedName, fromDownloadAttribute, localFrame->frameID(), localFrame->pageID()), 0);
+    }
 }
 
 void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader, const ResourceRequest& request, const ResourceResponse& response)
@@ -1025,8 +1091,7 @@ Ref<API::Array> WebFrame::childFrames()
     if (!size)
         return API::Array::create();
 
-    Vector<RefPtr<API::Object>> vector;
-    vector.reserveInitialCapacity(size);
+    Vector<RefPtr<API::Object>> vector(ReserveCapacityTag { }, size);
 
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr webFrame = WebFrame::fromCoreFrame(*child);
@@ -1450,14 +1515,12 @@ void WebFrame::setTextDirection(const String& direction)
 }
 
 #if PLATFORM(COCOA)
-RetainPtr<CFDataRef> WebFrame::webArchiveData(FrameFilterFunction callback, void* context, const Vector<WebCore::MarkupExclusionRule>& exclusionRules, const String& mainResourceFileName)
+RetainPtr<CFDataRef> WebFrame::webArchiveData(FrameFilterFunction callback, void* context)
 {
     Ref document = *coreLocalFrame()->document();
     LegacyWebArchive::ArchiveOptions options {
         LegacyWebArchive::ShouldSaveScriptsFromMemoryCache::Yes,
-        LegacyWebArchive::ShouldArchiveSubframes::Yes,
-        exclusionRules,
-        mainResourceFileName
+        LegacyWebArchive::ShouldArchiveSubframes::Yes
     };
     auto archive = LegacyWebArchive::create(document, WTF::move(options), [this, callback, context](auto& frame) -> bool {
         if (!callback)
@@ -1560,10 +1623,10 @@ std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> WebFrame::originat
 }
 
 #if ENABLE(CONTEXT_MENU_EVENT)
-static bool LEGACY_NODELETE isContextClick(const PlatformMouseEvent& event)
+NODELETE static bool isContextClick(const PlatformMouseEvent& event)
 {
 #if USE(APPKIT)
-    return WebEventFactory::shouldBeHandledAsContextClick(event);
+    return event.isContextMenuEvent();
 #else
     return event.button() == WebCore::MouseButton::Right;
 #endif
@@ -1575,7 +1638,7 @@ bool WebFrame::handleContextMenuEvent(const PlatformMouseEvent& platformMouseEve
     if (!coreLocalFrame)
         return false;
     IntPoint point = protect(coreLocalFrame->view())->windowToContents(flooredIntPoint(platformMouseEvent.position()));
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent,  HitTestRequest::Type::AllowChildFrameContent };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent,  HitTestRequest::Type::AllowChildFrameContent };
     HitTestResult result = coreLocalFrame->eventHandler().hitTestResultAtPoint(point, hitType);
 
     Ref frame = *coreLocalFrame;
@@ -1612,7 +1675,7 @@ WebCore::HandleUserInputEventResult WebFrame::handleMouseEvent(const WebMouseEve
 
         auto mousePressEventResult = coreLocalFrame->eventHandler().handleMousePressEvent(platformMouseEvent);
 #if ENABLE(CONTEXT_MENU_EVENT)
-        if (isContextClick(platformMouseEvent) && !mousePressEventResult.remoteUserInputEventData())
+        if (isContextClick(platformMouseEvent) && !mousePressEventResult.remoteUserInputEventData() && !mousePressEventResult.wasHandledByPageOverlay())
             mousePressEventResult.setHandled(handleContextMenuEvent(platformMouseEvent));
 #endif
         return mousePressEventResult;
@@ -1814,6 +1877,21 @@ void WebFrame::findFocusableElementContinuingFromFrame(WebCore::FocusDirection d
     }
 }
 
+void WebFrame::scrollRectToVisibleContinuingFromFrame(WebCore::FrameIdentifier childFrameID, const WebCore::IntRect& rectInChildFrameView, const WebCore::ScrollRectToVisibleOptions& options)
+{
+    RefPtr localFrame = coreLocalFrame();
+    if (!localFrame)
+        return;
+
+    RefPtr childWebFrame = WebFrame::webFrame(childFrameID);
+    RefPtr childFrame = childWebFrame ? childWebFrame->coreFrame() : nullptr;
+    if (!childFrame)
+        return;
+
+    if (RefPtr view = localFrame->view())
+        view->scrollRectToVisibleContinuingFromChildFrame(*childFrame, rectInChildFrameView, options);
+}
+
 static RefPtr<Node> nodeFromJSHandleIdentifier(JSHandleIdentifier identifier)
 {
     auto* object = WebKitJSHandle::objectForIdentifier(identifier);
@@ -1885,8 +1963,10 @@ void WebFrame::takeSnapshotOfNode(JSHandleIdentifier identifier, CompletionHandl
         return completion({ });
 
     RefPtr<ShareableBitmap> bitmap;
-    if (RefPtr node = nodeFromJSHandleIdentifier(identifier))
+    if (RefPtr node = nodeFromJSHandleIdentifier(identifier)) {
+        protect(node->document())->updateLayoutIgnorePendingStylesheets();
         bitmap = page->shareableBitmapForNodeIncludingOffscreen(*node);
+    }
 #if ENABLE(OFFSCREEN_CANVAS)
     else if (RefPtr offscreenCanvas = offscreenCanvasFromJSHandleIdentifier(identifier))
         bitmap = shareableBitmapFromOffscreenCanvas(*offscreenCanvas);

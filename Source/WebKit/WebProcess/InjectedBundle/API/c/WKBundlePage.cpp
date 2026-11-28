@@ -63,6 +63,7 @@
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/CSSPropertyParserConsumer+Color.h>
 #include <WebCore/CaptionUserPreferences.h>
+#include <WebCore/ColorAppearance.h>
 #include <WebCore/CompositionHighlight.h>
 #include <WebCore/FocusController.h>
 #include <WebCore/LocalFrameInlines.h>
@@ -319,11 +320,6 @@ double WKBundlePageGetPageZoomFactor(WKBundlePageRef pageRef)
     return protect(WebKit::toImpl(pageRef))->pageZoomFactor();
 }
 
-WKStringRef WKBundlePageDumpHistoryForTesting(WKBundlePageRef page, WKStringRef directory)
-{
-    return WebKit::toCopiedAPI(protect(WebKit::toImpl(page))->dumpHistoryForTesting(WebKit::toWTFString(directory)));
-}
-
 WKBundleBackForwardListRef WKBundlePageGetBackForwardList(WKBundlePageRef pageRef)
 {
     return nullptr;
@@ -402,8 +398,7 @@ void WKBundlePageReplaceStringMatches(WKBundlePageRef pageRef, WKArrayRef matchI
 {
     RefPtr matchIndices = WebKit::toImpl(matchIndicesRef);
 
-    Vector<uint32_t> indices;
-    indices.reserveInitialCapacity(matchIndices->size());
+    Vector<uint32_t> indices(ReserveCapacityTag { }, matchIndices->size());
 
     auto numberOfMatchIndices = matchIndices->size();
     for (size_t i = 0; i < numberOfMatchIndices; ++i) {
@@ -566,7 +561,7 @@ void WKBundlePageSetUseDarkAppearance(WKBundlePageRef pageRef, bool useDarkAppea
 {
     RefPtr webPage = WebKit::toImpl(pageRef);
     if (RefPtr page = webPage ? webPage->corePage() : nullptr)
-        page->setUseColorAppearance(useDarkAppearance, page->useElevatedUserInterfaceLevel());
+        page->setUseColorAppearance(useDarkAppearance ? WebCore::UseDarkAppearance::Yes : WebCore::UseDarkAppearance::No, page->useElevatedUserInterfaceLevel() ? WebCore::UseElevatedUserInterfaceLevel::Yes : WebCore::UseElevatedUserInterfaceLevel::No);
 }
 
 bool WKBundlePageIsUsingDarkAppearance(WKBundlePageRef pageRef)

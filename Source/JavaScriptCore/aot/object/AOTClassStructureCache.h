@@ -29,6 +29,7 @@ struct ClassStructures {
 
     Structure* classObjectStructure { nullptr };
     Structure* prototypeStructure { nullptr };
+    Structure* prototypeStructureOfHolderLeftOut { nullptr };
 };
 
 class ClassStructureCache {
@@ -45,7 +46,7 @@ private:
 
     static Key keyFor(uint32_t classIndex, JSObject* classObjectParentOrNull, JSCell* prototypeParentOrNull) { return { classIndex + 1, classObjectParentOrNull, prototypeParentOrNull }; }
 
-    UncheckedKeyHashMap<Key, ClassStructures> m_structures;
+    HashMap<Key, ClassStructures> m_structures;
     RememberedSlotSet m_writes;
 };
 

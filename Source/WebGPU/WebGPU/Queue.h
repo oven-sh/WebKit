@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "Instance.h"
 #import <CoreVideo/CVPixelBuffer.h>
 #import <Metal/Metal.h>
@@ -57,6 +61,16 @@ class TextureView;
 // the destination's, which has to stay a no-op rather than a transfer function round trip.
 std::optional<std::array<float, 9>> primariesConversionMatrixForPixelBuffer(CVPixelBufferRef, WebGPU::PredefinedColorSpace destination);
 
+// The HDR transfer functions which importExternalTexture() and copyExternalImageToTexture() decode
+// and tone map to SDR. Anything else is treated as SDR. The values are what the external texture
+// shader finds in the fourth column of its primaries conversion matrix, so they must not change.
+enum class HDRTransferFunction : uint8_t {
+    None = 0,
+    PQ = 1, // NOLINT
+    HLG = 2, // NOLINT
+};
+HDRTransferFunction hdrTransferFunctionForPixelBuffer(CVPixelBufferRef);
+
 // https://gpuweb.github.io/gpuweb/#gpuqueue
 // A device owns its default queue, not the other way around.
 class Queue final : public WebGPU::Queue {
@@ -73,18 +87,17 @@ public:
 
     ~Queue();
 
-    // The callback is called with false when the device is lost.
-    void onSubmittedWorkDone(CompletionHandler<void(bool)>&& callback);
+    void onSubmittedWorkDone(CompletionHandler<void(bool)>&&) final;
     void submit(Vector<Ref<WebGPU::Metal::CommandBuffer>>&& commands);
     void writeBuffer(Buffer&, uint64_t bufferOffset, std::span<uint8_t> data);
     void writeBuffer(id<MTLBuffer>, uint64_t bufferOffset, std::span<uint8_t> data);
     void clearBuffer(id<MTLBuffer>, NSUInteger offset = 0, NSUInteger size = NSUIntegerMax);
+    void copyBuffer(id<MTLBuffer> source, uint64_t sourceOffset, id<MTLBuffer> destination, uint64_t destinationOffset, uint64_t size);
     void writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::span<uint8_t> data, const WebGPU::TexelCopyBufferLayout&, const WebGPU::Extent3D& writeSize, bool skipValidation = false);
     void copyExternalImageToTexture(const WebGPU::ImageCopyExternalImage& source, const WebGPU::ImageCopyTextureTagged& destination, const WebGPU::Extent3D& copySize) final;
     void setLabel(String&&) final;
 
     void submit(Vector<Ref<WebGPU::CommandBuffer>>&&) final;
-    void onSubmittedWorkDone(CompletionHandler<void()>&&) final;
     void writeBuffer(WebGPU::Buffer&, uint64_t bufferOffset, std::span<const uint8_t> data) final;
     void writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::span<const uint8_t> data, const WebGPU::TexelCopyBufferLayout&, const WebGPU::Extent3D& writeSize) final;
 
@@ -94,8 +107,7 @@ public:
     void makeInvalid();
     void setCommittedSignalEvent(id<MTLSharedEvent>, size_t frameIndex);
 
-    const Device& device() const SWIFT_RETURNS_INDEPENDENT_VALUE;
-    void generateAValidationError(String&&);
+    RefPtr<WebGPU::Device> device() const final;
     void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger);
     id<MTLCommandBuffer> _Nullable commandBufferWithDescriptor(MTLCommandBufferDescriptor*);
     void commitMTLCommandBuffer(id<MTLCommandBuffer>);
@@ -104,11 +116,16 @@ public:
     id<MTLCommandEncoder> _Nullable encoderForBuffer(id<MTLCommandBuffer>) const;
     void clearTextureViewIfNeeded(TextureView&);
     void clearTextureViewIfNeeded(Texture&);
-    static bool LEGACY_NODELETE writeWillCompletelyClear(WebGPU::TextureDimension, uint32_t widthForMetal, uint32_t logicalSizeWidth, uint32_t heightForMetal, uint32_t logicalSizeHeight, uint32_t depthForMetal, uint32_t logicalSizeDepthOrArrayLayers);
+    NODELETE static bool writeWillCompletelyClear(WebGPU::TextureDimension, uint32_t widthForMetal, uint32_t logicalSizeWidth, uint32_t heightForMetal, uint32_t logicalSizeHeight, uint32_t depthForMetal, uint32_t logicalSizeDepthOrArrayLayers);
     void endEncoding(id<MTLCommandEncoder>, id<MTLCommandBuffer>) const;
 
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
     void finalizeBlitCommandEncoder();
+
+    void addProvisionalTextureClear(Texture&, uint32_t mipLevel, uint32_t slice, uint64_t commandEncoderId);
+    void removeProvisionalTextureClears(const Texture&, uint32_t mipLevel, uint32_t slice);
+    void discardProvisionalTextureClears(uint64_t commandEncoderId);
+    void resolveProvisionalTextureClears(std::optional<uint64_t> committingCommandEncoderId = std::nullopt);
 
     // This can be called on a background thread.
     void scheduleWork(Instance::WorkItem&&);
@@ -131,10 +148,11 @@ private:
     bool validateWriteBuffer(const Buffer&, uint64_t bufferOffset, size_t) const;
 
 
-    bool LEGACY_NODELETE isIdle() const;
+    NODELETE bool isIdle() const;
     bool isSchedulingIdle() const { return m_submittedCommandBufferCount == m_scheduledCommandBufferCount; }
     id<MTLComputeCommandEncoder> _Nullable ensureStagedCopyEncoder();
     id<MTLComputePipelineState> _Nullable stagedCopyPipelineState();
+    std::pair<id<MTLBuffer>, uint64_t> reserveTemporaryBuffer(size_t);
     void removeMTLCommandBufferInternal(id<MTLCommandBuffer>);
     void clearTextureIfNeeded(Texture&, uint32_t mipLevelCount, uint32_t arrayLayerCount, uint32_t baseMipLevel, uint32_t baseArrayLayer);
 
@@ -143,6 +161,13 @@ private:
     // Renders one source texel per destination texel, so the pipeline only varies by the destination's
     // pixel format. Cached per format, because a copy per animation frame is the expected usage.
     id<MTLRenderPipelineState> _Nullable copyExternalImagePipelineState(MTLPixelFormat);
+
+    struct ProvisionalTextureClear {
+        ThreadSafeWeakPtr<Texture> texture;
+        uint32_t mipLevel { 0 };
+        uint32_t slice { 0 };
+        uint64_t commandEncoderId { 0 };
+    };
 
     id<MTLCommandQueue> _Nullable m_commandQueue { nil };
     id<MTLCommandBuffer> _Nullable m_commandBuffer { nil };
@@ -157,9 +182,9 @@ private:
     uint64_t m_completedCommandBufferCount { 0 };
     uint64_t m_scheduledCommandBufferCount { 0 };
     using OnSubmittedWorkScheduledCallbacks = Vector<WTF::Function<void()>>;
-    HashMap<uint64_t, OnSubmittedWorkScheduledCallbacks, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_onSubmittedWorkScheduledCallbacks;
+    HashMap<uint64_t, OnSubmittedWorkScheduledCallbacks> m_onSubmittedWorkScheduledCallbacks;
     using OnSubmittedWorkDoneCallbacks = Vector<WTF::Function<void(bool)>>;
-    HashMap<uint64_t, OnSubmittedWorkDoneCallbacks, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_onSubmittedWorkDoneCallbacks;
+    HashMap<uint64_t, OnSubmittedWorkDoneCallbacks> m_onSubmittedWorkDoneCallbacks;
     NSMutableDictionary<NSNumber*, NSMutableSet<id<MTLCounterSampleBuffer>>*> * _Nullable m_retainedCounterSampleBuffers;
     NSMutableOrderedSet<id<MTLCommandBuffer>> * _Nullable m_createdNotCommittedBuffers { nil };
     NSMutableOrderedSet<id<MTLCommandBuffer>> * _Nullable m_committedNotCompletedBuffers WTF_GUARDED_BY_LOCK(m_committedNotCompletedBuffersLock) { nil };
@@ -168,6 +193,7 @@ private:
     const ThreadSafeWeakPtr<Instance> m_instance;
     id<MTLBuffer> _Nullable m_temporaryBuffer;
     uint64_t m_temporaryBufferOffset;
+    Vector<ProvisionalTextureClear> m_provisionalTextureClears;
 } DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refQueue, derefQueue) SWIFT_PRIVATE_FILEID("WebGPU/Queue.swift");
 
 } // namespace WebGPU::Metal

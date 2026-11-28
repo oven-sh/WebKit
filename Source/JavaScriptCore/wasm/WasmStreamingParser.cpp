@@ -199,7 +199,7 @@ auto StreamingParser::parseFunctionPayload(Vector<uint8_t>&& data) -> State
     return State::FunctionSize;
 }
 
-auto StreamingParser::parseSectionPayload(Vector<uint8_t>&& data) -> State
+auto StreamingParser::parseSectionPayload(std::span<const uint8_t> data) -> State
 {
     SectionParser parser(data, m_offset, m_info.get());
     switch (m_section) {
@@ -234,6 +234,7 @@ auto StreamingParser::consume(std::span<const uint8_t> bytes, size_t& offsetInBy
     if (m_remaining.size() == requiredSize) {
         Vector<uint8_t> result = WTF::move(m_remaining);
         m_nextOffset += requiredSize;
+        hashConsumedBytes(result.span());
         return result;
     }
 
@@ -241,6 +242,7 @@ auto StreamingParser::consume(std::span<const uint8_t> bytes, size_t& offsetInBy
         auto result = m_remaining.subvector(0, requiredSize);
         m_remaining.removeAt(0, requiredSize);
         m_nextOffset += requiredSize;
+        hashConsumedBytes(result.span());
         return result;
     }
 
@@ -257,7 +259,19 @@ auto StreamingParser::consume(std::span<const uint8_t> bytes, size_t& offsetInBy
     m_remaining.append(bytes.subspan(offsetInBytes, usedSize));
     offsetInBytes += usedSize;
     Vector<uint8_t> result = WTF::move(m_remaining);
+    hashConsumedBytes(result.span());
     m_nextOffset += requiredSize;
+    return result;
+}
+
+auto StreamingParser::consumeInPlace(std::span<const uint8_t> bytes, size_t& offsetInBytes, size_t requiredSize) -> std::optional<std::span<const uint8_t>>
+{
+    if (!m_remaining.isEmpty() || bytes.size() - offsetInBytes < requiredSize)
+        return std::nullopt;
+    auto result = bytes.subspan(offsetInBytes, requiredSize);
+    offsetInBytes += requiredSize;
+    m_nextOffset += requiredSize;
+    hashConsumedBytes(result);
     return result;
 }
 
@@ -265,6 +279,16 @@ auto StreamingParser::consumeVarUInt32(std::span<const uint8_t> bytes, size_t& o
 {
     constexpr size_t maxSize = WTF::LEBDecoder::maxByteLength<uint32_t>();
     size_t bytesRemainingSize = bytes.size() - offsetInBytes;
+    if (m_remaining.isEmpty() && bytesRemainingSize >= maxSize) {
+        size_t end = offsetInBytes;
+        uint32_t result = 0;
+        if (!WTF::LEBDecoder::decodeUInt32(bytes, end, result))
+            return makeUnexpected(State::FatalError);
+        hashConsumedBytes(bytes.subspan(offsetInBytes, end - offsetInBytes));
+        m_nextOffset += end - offsetInBytes;
+        offsetInBytes = end;
+        return result;
+    }
     size_t totalDataSize = m_remaining.size() + bytesRemainingSize;
     if (m_remaining.size() >= maxSize) {
         // Do nothing.
@@ -286,6 +310,7 @@ auto StreamingParser::consumeVarUInt32(std::span<const uint8_t> bytes, size_t& o
     if (!WTF::LEBDecoder::decodeUInt32(m_remaining, offset, result))
         return makeUnexpected(State::FatalError);
     size_t consumedSize = offset;
+    hashConsumedBytes(m_remaining.span().first(consumedSize));
     m_remaining.removeAt(0, consumedSize);
     m_nextOffset += consumedSize;
     return result;
@@ -298,6 +323,19 @@ static bool needsSourceDigest()
 #else
     return false;
 #endif
+}
+
+// Compiled code does not depend on data and custom sections, so the digest of an image skips them.
+// Options::useEagerWasmModuleHashing() uses the same digest, not the SHA-1 of the file.
+void StreamingParser::hashConsumedBytes(std::span<const uint8_t> bytes)
+{
+    if (!Options::useEagerWasmModuleHashing() && !needsSourceDigest()) [[likely]]
+        return;
+    if (m_info->hasSourceDigest)
+        return;
+    if (m_state == State::SectionPayload && (m_section == Section::Data || m_section == Section::Custom))
+        return;
+    m_hasher.addBytes(bytes);
 }
 
 auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isEndOfStream) -> State
@@ -320,9 +358,6 @@ auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isE
         m_state = fail("module size is too large, maximum "_s, maxModuleSize);
         return m_state;
     }
-
-    if (Options::useEagerWasmModuleHashing() || needsSourceDigest()) [[unlikely]]
-        m_hasher.addBytes(bytes);
 
     size_t offsetInBytes = 0;
     while (true) {
@@ -358,10 +393,14 @@ auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isE
         }
 
         case State::SectionPayload: {
+            if (auto payload = consumeInPlace(bytes, offsetInBytes, m_sectionLength)) {
+                m_state = parseSectionPayload(*payload);
+                break;
+            }
             auto result = consume(bytes, offsetInBytes, m_sectionLength);
             if (!result)
                 return m_state;
-            m_state = parseSectionPayload(WTF::move(*result));
+            m_state = parseSectionPayload(result->span());
             break;
         }
 
@@ -392,6 +431,10 @@ auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isE
         }
 
         case State::FunctionPayload: {
+            if (m_info->moduleWithSkippedFunctions && consumeInPlace(bytes, offsetInBytes, m_functionSize)) {
+                m_state = parseFunctionPayload({ });
+                break;
+            }
             auto result = consume(bytes, offsetInBytes, m_functionSize);
             if (!result)
                 return m_state;
@@ -464,9 +507,11 @@ auto StreamingParser::finalize() -> State
 
         if (m_remaining.isEmpty()) {
             if (Options::useEagerWasmModuleHashing() || needsSourceDigest()) [[unlikely]] {
-                m_hasher.computeHash(m_info->sourceDigest);
-                m_info->sourceSize = m_totalSize.value();
-                m_info->hasSourceDigest = true;
+                if (!m_info->hasSourceDigest) {
+                    m_hasher.computeHash(m_info->sourceDigest);
+                    m_info->sourceSize = m_totalSize.value();
+                    m_info->hasSourceDigest = true;
+                }
                 if (Options::useEagerWasmModuleHashing())
                     m_info->nameSection().setHash(SHA1::hexDigest(m_info->sourceDigest));
             }

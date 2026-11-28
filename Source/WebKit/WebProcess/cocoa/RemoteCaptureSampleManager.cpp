@@ -158,7 +158,7 @@ void RemoteCaptureSampleManager::setVideoFrameObjectHeapProxy(RefPtr<RemoteVideo
 
 void RemoteCaptureSampleManager::audioStorageChanged(WebCore::RealtimeMediaSourceIdentifier identifier, ConsumerSharedCARingBuffer::Handle&& handle, const WebCore::CAAudioStreamDescription& description, IPC::Semaphore&& semaphore, const MediaTime& mediaTime, uint64_t frameChunkSize)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
 
     auto iterator = m_audioSources.find(identifier);
     if (iterator == m_audioSources.end()) {
@@ -168,14 +168,14 @@ void RemoteCaptureSampleManager::audioStorageChanged(WebCore::RealtimeMediaSourc
     iterator->value->setStorage(WTF::move(handle), description, WTF::move(semaphore), mediaTime, frameChunkSize);
 }
 
-void RemoteCaptureSampleManager::videoFrameAvailable(RealtimeMediaSourceIdentifier identifier, RemoteVideoFrameProxy::Properties&& properties, VideoFrameTimeMetadata metadata)
+void RemoteCaptureSampleManager::videoFrameAvailable(IPC::Connection& connection, RealtimeMediaSourceIdentifier identifier, RemoteVideoFrameReference reference, RemoteVideoFrameProxy::Properties&& properties, VideoFrameTimeMetadata metadata)
 {
-    ASSERT(!WTF::isMainRunLoop());
-    // Create videoFrame before early outs so that the reference in `properties` is adopted.
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
+    // Create videoFrame before early outs so that the reference is adopted.
     Ref<RemoteVideoFrameProxy> videoFrame = [&] {
         // FIXME: We need to either get GPUProcess or UIProcess object heap proxy. For now we always go to GPUProcess.
         Locker lock(m_videoFrameObjectHeapProxyLock);
-        return RemoteVideoFrameProxy::create(Ref { *m_connection }, Ref { *m_videoFrameObjectHeapProxy }, WTF::move(properties));
+        return RemoteVideoFrameProxy::create(connection, Ref { *m_videoFrameObjectHeapProxy }, reference, WTF::move(properties));
     }();
     auto iterator = m_videoSources.find(identifier);
     if (iterator == m_videoSources.end()) {
@@ -187,7 +187,7 @@ void RemoteCaptureSampleManager::videoFrameAvailable(RealtimeMediaSourceIdentifi
 
 void RemoteCaptureSampleManager::videoFrameAvailableCV(RealtimeMediaSourceIdentifier identifier, RetainPtr<CVPixelBufferRef>&& pixelBuffer, WebCore::VideoFrame::Rotation rotation, bool mirrored, MediaTime presentationTime, WebCore::VideoFrameTimeMetadata metadata)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     auto iterator = m_videoSources.find(identifier);
     if (iterator == m_videoSources.end()) {
         RELEASE_LOG_ERROR(WebRTC, "Unable to find source %llu for videoFrameAvailableCV", identifier.toUInt64());

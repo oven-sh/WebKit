@@ -98,7 +98,7 @@ public:
 
     void reportAPIException(JSC::JSGlobalObject*, JSC::Exception*);
 
-    CheckedPtr<JSC::ConsoleClient> LEGACY_NODELETE consoleClient() const;
+    NODELETE CheckedPtr<JSC::ConsoleClient> consoleClient() const;
 
     bool developerExtrasEnabled() const final;
     bool canAccessInspectedScriptState(JSC::JSGlobalObject*) const final { return true; }
@@ -107,6 +107,8 @@ public:
     void frontendInitialized() final;
     WTF::Stopwatch& executionStopwatch() const final;
     JSC::Debugger* debugger() final;
+    // JSContexts in one context group share a VM.
+    bool coversGlobalObjectForSampling(JSC::JSGlobalObject& globalObject) const final { return &globalObject == &m_globalObject; }
     JSC::VM& vm() final;
 
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)

@@ -1,0 +1,20 @@
+# a bit operator that leaves its operand as it is, on a proven number that lies boxed, is the conversion alone, whose code looks at the tag: a boxed int32 is its own answer
+# function whole(a) { if (typeof a === "number") return a | 0; }   function unsigned(a) { if (typeof a === "number") return a >>> 0; }
+# with any other operand beside it the operator stays, on the integer that the conversion gives: function odd(a) { if (typeof a === "number") return a | 1; }
+# RUN: walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f4:Body
+# CHECK: = ToInt32
+# RUN(GONE): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# GONE-NOT: = BitOr
+# RUN(UNSIGNED): walk f5 mechanisms=none+TypedOperations+UnboxedNumbers
+# UNSIGNED-LABEL: code f5:Body
+# UNSIGNED: = ToUint32
+# RUN(ALL): walk f4 mechanisms=all-ParameterGuards
+# ALL-LABEL: code f4:Body
+# ALL: = ToInt32
+# RUN(ODD): walk f6 mechanisms=none+TypedOperations+UnboxedNumbers
+# ODD-LABEL: code f6:Body
+# ODD: = ToInt32
+# ODD: = BitOr {{*}}form=Integers
+# PROGRAM-OF: chain-of-operators-on-boxed-numbers-is-walked-on-integers-and-on-doubles.ir

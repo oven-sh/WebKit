@@ -32,7 +32,7 @@
 #include <WebCore/HTMLMediaElementEnums.h>
 #include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/MediaPlayerClientIdentifier.h>
-#if HAVE(PIP_SKIP_PREROLL)
+#if HAVE(PIP_SKIP_PREROLL) || ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
 #include <WebCore/MediaSession.h>
 #endif
 #include <WebCore/PlatformCALayer.h>
@@ -119,7 +119,7 @@ class PlaybackSessionManager
     : public RefCounted<PlaybackSessionManager>
     , private IPC::MessageReceiver
     , public CanMakeCheckedPtr<PlaybackSessionManager>
-#if HAVE(PIP_SKIP_PREROLL)
+#if HAVE(PIP_SKIP_PREROLL) || ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
     , public WebCore::MediaSessionObserver
 #endif
     {
@@ -141,14 +141,14 @@ public:
     void mediaEngineChanged(WebCore::HTMLMediaElement&);
     WebCore::HTMLMediaElementIdentifier contextIdForMediaElement(WebCore::HTMLMediaElement&);
 
-    WebCore::HTMLMediaElement* LEGACY_NODELETE mediaElementWithContextId(WebCore::HTMLMediaElementIdentifier) const;
-    WebCore::HTMLMediaElement* LEGACY_NODELETE currentPlaybackControlsElement() const;
+    NODELETE WebCore::HTMLMediaElement* mediaElementWithContextId(WebCore::HTMLMediaElementIdentifier) const;
+    NODELETE WebCore::HTMLMediaElement* currentPlaybackControlsElement() const;
 
 #if ENABLE(IMAGE_ANALYSIS)
     void cancelTextRecognition();
 #endif
 
-#if HAVE(PIP_SKIP_PREROLL)
+#if HAVE(PIP_SKIP_PREROLL) || ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
     void actionHandlersChanged() final;
 #endif
 
@@ -170,7 +170,7 @@ private:
     void removeContext(WebCore::MediaPlayerClientIdentifier);
     void addClientForContext(WebCore::MediaPlayerClientIdentifier);
     void removeClientForContext(WebCore::MediaPlayerClientIdentifier);
-#if HAVE(PIP_SKIP_PREROLL)
+#if HAVE(PIP_SKIP_PREROLL) || ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
     void setMediaSessionAndRegisterAsObserver();
 #endif
 
@@ -228,6 +228,9 @@ private:
 #if HAVE(PIP_SKIP_PREROLL)
     void skipAd(WebCore::MediaPlayerClientIdentifier);
 #endif
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    void triggerCallToAction(WebCore::MediaPlayerClientIdentifier);
+#endif
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     void setSpatialTrackingLabel(WebCore::MediaPlayerClientIdentifier, const String&);
@@ -243,7 +246,7 @@ private:
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "VideoPresentationManager"_s; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     WeakPtr<WebPage> m_page;
@@ -251,7 +254,7 @@ private:
     HashMap<WebCore::MediaPlayerClientIdentifier, ModelInterfaceTuple> m_contextMap;
     Markable<WebCore::MediaPlayerClientIdentifier> m_controlsManagerContextId;
     HashCountedSet<WebCore::MediaPlayerClientIdentifier> m_clientCounts;
-#if HAVE(PIP_SKIP_PREROLL)
+#if HAVE(PIP_SKIP_PREROLL) || ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
     WeakPtr<WebCore::MediaSession> m_mediaSession;
 #endif
 

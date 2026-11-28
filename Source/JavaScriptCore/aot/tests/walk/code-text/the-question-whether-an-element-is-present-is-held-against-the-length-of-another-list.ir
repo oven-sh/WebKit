@@ -1,0 +1,19 @@
+# the question tests its position against the length of ANOTHER list: whatever that one's length lets through is looked for in this one's storage
+# RUN: verify-code
+# CHECK: the length that an access is held against is not that of its holder
+# -- code
+# code f0:Body {
+#   b0(v0: Array @Cell, v1: Array @Cell, v2: int[0, 100] @Int32, v3: anything @JSValue) entry=0:
+#     v4: opaque(ArrayStoragePointer) @RawWord = GetArrayStorage v0 traits=[mayTouchMemory]
+#     v5: int[0, 4294967295] @Int64 = GetArrayLength v1 traits=[mayTouchMemory]
+#     v6: boolean @Boolean = IsElementPresent v0, v2, v4, -, v5 arrayStorage=Double [keyIsIntegral] traits=[mayTouchMemory]
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asks" parameters=[{type=Array}, {type=Array}, {type=i32}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: Array, v2: i32, v3: anything):
+    Return v3
+}
+entry module=m0

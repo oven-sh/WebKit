@@ -30,6 +30,7 @@
 
 #include "AXObjectCache.h"
 #include "AlternativeTextController.h"
+#include "ApplyBlockPresentationIntentCommand.h"
 #include "ApplyStyleCommand.h"
 #include "AttachmentAssociatedElement.h"
 #include "BoundaryPointInlines.h"
@@ -1164,7 +1165,7 @@ static void notifyTextFromControls(Element* startRoot, Element* endRoot, bool wa
         endingTextControl->didEditInnerTextValue(wasUserEdit);
 }
 
-static inline bool LEGACY_NODELETE shouldRemoveAutocorrectionIndicator(bool shouldConsiderApplyingAutocorrection, bool autocorrectionWasApplied, bool isAutocompletion)
+NODELETE static inline bool shouldRemoveAutocorrectionIndicator(bool shouldConsiderApplyingAutocorrection, bool autocorrectionWasApplied, bool isAutocompletion)
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS)
     bool shouldRemoveIndicator = shouldConsiderApplyingAutocorrection && !autocorrectionWasApplied;
@@ -1210,7 +1211,7 @@ static inline bool didApplyAutocorrection(Document& document, AlternativeTextCon
 #endif
 }
 
-static inline void LEGACY_NODELETE adjustMarkerTypesToRemoveForWordsAffectedByEditing(OptionSet<DocumentMarkerType>& markerTypes)
+NODELETE static inline void adjustMarkerTypesToRemoveForWordsAffectedByEditing(OptionSet<DocumentMarkerType>& markerTypes)
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS) && PLATFORM(IOS_FAMILY)
     markerTypes.remove(DocumentMarkerType::CorrectionIndicator);
@@ -1772,6 +1773,19 @@ void Editor::changeSelectionListType()
         ChangeListTypeCommand::create(WTF::move(document), *type)->apply();
 }
 
+void Editor::applyBlockPresentationIntent(const BlockPresentationIntent& intent)
+{
+    if (!canEditRichly())
+        return;
+
+    // fromPresentationIntent() makes a list item its list, but a message from the UI process could still carry one.
+    if (intent.kind == BlockPresentationIntent::Kind::ListItem)
+        return;
+
+    ApplyBlockPresentationIntentCommand::create(protect(document()), intent)->apply();
+    revealSelectionAfterEditingOperation();
+}
+
 void Editor::simplifyMarkup(Node* startNode, Node* endNode)
 {
     if (!startNode)
@@ -2290,12 +2304,13 @@ WritingDirection Editor::baseWritingDirectionForSelectionStart() const
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
     CheckedPtr renderer = node->renderer();
-    if (renderer && !is<RenderBlock>(*renderer))
+    // The base writing direction is the direction of the nearest block in the containing block chain.
+    while (renderer && !is<RenderBlock>(*renderer))
         renderer = renderer->containingBlock();
     if (!renderer)
         return result;
 
-    switch (downcast<RenderBlock>(*renderer).writingMode().bidiDirection()) {
+    switch (renderer->writingMode().bidiDirection()) {
     case TextDirection::LTR:
         return WritingDirection::LeftToRight;
     case TextDirection::RTL:
@@ -2466,9 +2481,12 @@ public:
     UserTypingGestureIndicator m_typingGestureIndicator;
 };
 
-void Editor::setComposition(const String& text, SetCompositionMode mode)
+void Editor::setComposition(const String& passedText, SetCompositionMode mode)
 {
     ASSERT(mode == ConfirmComposition || mode == CancelComposition);
+
+    auto text = passedText;
+
     Ref document = this->document();
     SetCompositionScope setCompositionScope(document.copyRef());
 
@@ -3136,7 +3154,7 @@ void Editor::markMisspellingsAfterTypingToWord(const VisiblePosition& wordStart,
         // with spellcheck disabled. To fix this, we need to refactor markAllMisspellingsAndBadGrammarInRanges so that
         // it can handle a list of spelling ranges, alongside the grammar range.
         while (sentenceStart < spellCheckingStart) {
-            auto previousPosition = spellCheckingStart.previous(CannotCrossEditingBoundary);
+            auto previousPosition = spellCheckingStart.previous(EditingBoundaryCrossingRule::CannotCross);
             if (previousPosition.isNull() || previousPosition == spellCheckingStart)
                 break;
 
@@ -3151,7 +3169,7 @@ void Editor::markMisspellingsAfterTypingToWord(const VisiblePosition& wordStart,
         }
 
         while (spellCheckingEnd < sentenceEnd) {
-            auto nextPosition = spellCheckingEnd.next(CannotCrossEditingBoundary);
+            auto nextPosition = spellCheckingEnd.next(EditingBoundaryCrossingRule::CannotCross);
             if (nextPosition.isNull() || nextPosition == spellCheckingEnd)
                 break;
 
@@ -3335,7 +3353,7 @@ void Editor::markAllMisspellingsAndBadGrammarInRanges(OptionSet<TextCheckingType
 #endif
 }
 
-static bool LEGACY_NODELETE isAutomaticTextReplacementType(TextCheckingType type)
+NODELETE static bool isAutomaticTextReplacementType(TextCheckingType type)
 {
     switch (type) {
     case TextCheckingType::None:
@@ -4129,12 +4147,12 @@ std::optional<SimpleRange> Editor::findString(const String& target, FindOptions 
     return resultRange;
 }
 
-template<typename T> static auto& LEGACY_NODELETE start(T& range, FindOptions options)
+template<typename T> NODELETE static auto& start(T& range, FindOptions options)
 {
     return options.contains(FindOption::Backwards) ? range.end : range.start;
 }
 
-template<typename T> static auto& LEGACY_NODELETE end(T& range, FindOptions options)
+template<typename T> NODELETE static auto& end(T& range, FindOptions options)
 {
     return options.contains(FindOption::Backwards) ? range.start : range.end;
 }
@@ -4753,8 +4771,7 @@ static Vector<TextList> editableTextListsAtPositionInDescendingOrder(const Posit
             enclosingLists.append(WTF::move(ancestor));
     }
 
-    Vector<TextList> textLists;
-    textLists.reserveInitialCapacity(enclosingLists.size());
+    Vector<TextList> textLists(ReserveCapacityTag { }, enclosingLists.size());
     for (auto iterator = enclosingLists.rbegin(); iterator != enclosingLists.rend(); ++iterator) {
         Ref list = *iterator;
         RefPtr orderedList = dynamicDowncast<HTMLOListElement>(list);

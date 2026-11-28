@@ -1,0 +1,134 @@
+# `text += "k" + i + ","` with the builder in the frame: three parts stand side by side, each takes the cursor that the part in front of it gives, and the last alone stores its cursor in the record. The other store is that of StackStringBuilderBegin
+# Behind `i < 16` the type says that the integer has few digits, and nobody asks. A counter up to a number that nobody knows is asked
+# RUN: emit f1 mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-COUNT-2: = Store({{*}}offset = 0, AOTStackStringBuilder_fields
+# CHECK-NOT: = Store({{*}}offset = 0, AOTStackStringBuilder_fields
+# RUN(NARROW): emit f1 mechanisms=all
+# NARROW-NOT: 100000000
+# RUN(WIDE): emit f2 mechanisms=all
+# WIDE-LABEL: unit f2:Body
+# WIDE: AOTStackStringBuilder_fields
+# WIDE: 100000000
+# `s += "ab"; s += "cd"`: the first text writes both, and the second only hands the cursor on. So the first looks past the second for the part that takes the cursor, finds none, and stores
+# RUN(PAIR): emit f3 mechanisms=all
+# PAIR-LABEL: unit f3:Body
+# PAIR-COUNT-2: = Store({{*}}offset = 0, AOTStackStringBuilder_fields
+# PAIR-NOT: = Store({{*}}offset = 0, AOTStackStringBuilder_fields
+# Behind the two texts an integer takes the cursor, and stores its own
+# RUN(THREE): emit f4 mechanisms=all
+# THREE-LABEL: unit f4:Body
+# THREE-COUNT-2: = Store({{*}}offset = 0, AOTStackStringBuilder_fields
+# THREE-NOT: = Store({{*}}offset = 0, AOTStackStringBuilder_fields
+
+variable g0 name="narrow" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="wide" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="pair" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="three" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = String string="[3,2]"
+    v3 = Call v1, v0, v2 calleeKey="parse" calleeName="JSON.parse"
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    v6 = Integer integer=1
+    v7 = ElemGet v3, v6
+    v8 = GetModuleVariable variable=g0
+    v9 = Call v8 calleeName="narrow"
+    v10 = Call v8 calleeName="narrow"
+    v11 = GetModuleVariable variable=g1
+    v12 = Call v11, -, v5 calleeName="wide"
+    v13 = Call v11, -, v7 calleeName="wide"
+    v14 = GetModuleVariable variable=g2
+    v15 = Call v14 calleeName="pair"
+    v16 = Call v14 calleeName="pair"
+    v17 = GetModuleVariable variable=g3
+    v18 = Call v17 calleeName="three"
+    v19 = Call v17 calleeName="three"
+    v20 = NewArray v9, v10, v12, v13, v15, v16, v18, v19 contents=anything
+    Return v20
+}
+function f1 name="narrow" module=m0 thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string=""
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2: undefined|null|string, v3: number):
+    LoopHint
+    v5 = Integer integer=16
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string="k"
+    v8 = Add v7, v3
+    v9 = String string=","
+    v10 = Add v8, v9
+    v11 = Add v2, v10
+    v12 = Increment v3
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v2
+}
+function f2 name="wide" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: undefined|null|string, v4: number):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string="k"
+    v8 = Add v7, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}
+function f3 name="pair" module=m0 thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string=""
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2: undefined|null|string, v3: number):
+    LoopHint
+    v5 = Integer integer=16
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string="ab"
+    v8 = Add v2, v7
+    v9 = String string="cd"
+    v10 = Add v8, v9
+    v11 = Increment v3
+    Jump -> next b1(v10, v11)
+  b3():
+    Return v2
+}
+function f4 name="three" module=m0 thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string=""
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2: undefined|null|string, v3: number):
+    LoopHint
+    v5 = Integer integer=16
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string="ab"
+    v8 = Add v2, v7
+    v9 = String string="cd"
+    v10 = Add v8, v9
+    v11 = Add v10, v3
+    v12 = Increment v3
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v2
+}
+entry module=m0

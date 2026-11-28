@@ -41,7 +41,6 @@
 #import "WebExtensionAPINamespace.h"
 #import "WebExtensionContentWorldType.h"
 #import "WebExtensionContextMessages.h"
-#import "WebExtensionDynamicScripts.h"
 #import "WebExtensionFrameIdentifier.h"
 #import "WebExtensionRegisteredScriptParameters.h"
 #import "WebExtensionScriptInjectionParameters.h"
@@ -58,8 +57,6 @@
 // FIXME: <https://webkit.org/b/264829> Add support for matchOriginAsFallback.
 
 namespace WebKit {
-
-using namespace WebExtensionDynamicScripts;
 
 NSArray *toWebAPI(const Vector<WebExtensionScriptInjectionResultParameters>& parametersVector, bool returnExecutionResultOnly)
 {
@@ -154,16 +151,11 @@ String toWebAPI(WebExtension::InjectionTime injectionTime)
     }
 }
 
-SUPPRESS_NODELETE NSDictionary *WebExtensionAPIScripting::executionWorld()
+JSValueRef WebExtensionAPIScripting::executionWorld(JSContextRef context)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/scripting/ExecutionWorld
 
-    static NSDictionary *worlds = @{
-        @"ISOLATED": @"ISOLATED",
-        @"MAIN": @"MAIN",
-    };
-
-    return worlds;
+    return WebExtensionAPIExtensionTypes::executionWorld(context);
 }
 
 void WebExtensionAPIScripting::executeScript(NSDictionary *script, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)

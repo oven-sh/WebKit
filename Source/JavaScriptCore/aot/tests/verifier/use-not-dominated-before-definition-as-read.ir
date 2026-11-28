@@ -1,5 +1,4 @@
-# On the wire an operand is defined before its use in the order of the blocks, so that typing can follow operands
-# FORM: AsRead
+# On the wire an operand is defined before its use in the order of the blocks, so that one forward walk finds each operand built. An argument on a back edge is built by then too, though the parameter that takes it has a lower number
 # RUN: verify
 # DIAGNOSTIC: UseNotDominated 1
 
@@ -14,4 +13,14 @@ function f1 name="good" parameters=[{type=number}] results=[{type=undefined}] {
     v1 = Add v0, v0
     v2 = Add v0, v1
     Return
+}
+function f2 name="goodBackEdgeArgument" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1(v0)
+  b1(v1: number):
+    LoopHint
+    v3 = Add v1, v0
+    v4 = Less v3, v0
+    Branch v4 -> taken b1(v3), notTaken b2()
+  b2():
+    Return v3
 }

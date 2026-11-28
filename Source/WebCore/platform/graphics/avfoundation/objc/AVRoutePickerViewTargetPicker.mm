@@ -86,7 +86,7 @@ AVRoutePickerViewTargetPicker::~AVRoutePickerViewTargetPicker()
 AVOutputContext * AVRoutePickerViewTargetPicker::outputContextInternal()
 {
     if (!m_outputContext) {
-        m_outputContext = [PAL::getAVOutputContextClassSingleton() iTunesAudioContext];
+        m_outputContext = checked_objc_cast<AVOutputContext>([PAL::getAVOutputContextClassSingleton() iTunesAudioContext]);
         ASSERT(m_outputContext);
         if (m_outputContext)
             [[NSNotificationCenter defaultCenter] addObserver:m_routePickerViewDelegate.get() selector:@selector(notificationHandler:) name:PAL::AVOutputContextOutputDevicesDidChangeNotification object:m_outputContext.get()];
@@ -201,8 +201,7 @@ bool AVRoutePickerViewTargetPicker::hasActiveRoute() const
         return false;
 
     if ([m_outputContext supportsMultipleOutputDevices]) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVOutputDevice *outputDevice in [m_outputContext outputDevices]) {
+        for (AVOutputDevice *outputDevice in [m_outputContext outputDevices]) {
             if (outputDevice.deviceFeatures & (AVOutputDeviceFeatureVideo | AVOutputDeviceFeatureAudio))
                 return true;
         }

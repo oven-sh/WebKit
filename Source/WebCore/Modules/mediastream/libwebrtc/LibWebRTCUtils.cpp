@@ -34,6 +34,7 @@
 #include "RTCIceCandidate.h"
 #include "RTCPeerConnection.h"
 #include "RTCRtpSendParameters.h"
+#include <wtf/Borrow.h>
 #include <wtf/text/WTFString.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
@@ -92,7 +93,7 @@ RTCPriorityType toRTCPriorityType(webrtc::Priority priority)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static inline double LEGACY_NODELETE toWebRTCBitRatePriority(RTCPriorityType priority)
+NODELETE static inline double toWebRTCBitRatePriority(RTCPriorityType priority)
 {
     switch (priority) {
     case RTCPriorityType::VeryLow:
@@ -108,7 +109,7 @@ static inline double LEGACY_NODELETE toWebRTCBitRatePriority(RTCPriorityType pri
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static inline RTCPriorityType LEGACY_NODELETE fromWebRTCBitRatePriority(double priority)
+NODELETE static inline RTCPriorityType fromWebRTCBitRatePriority(double priority)
 {
     if (priority < 0.7)
         return RTCPriorityType::VeryLow;
@@ -169,6 +170,8 @@ static inline RTCRtpEncodingParameters toRTCEncodingParameters(const webrtc::Rtp
         parameters.rid = fromStdString(rtcParameters.rid);
     if (rtcParameters.scale_resolution_down_by && !isAudio)
         parameters.scaleResolutionDownBy = *rtcParameters.scale_resolution_down_by;
+    if (rtcParameters.scalability_mode && !isAudio)
+        parameters.scalabilityMode = fromStdString(*rtcParameters.scalability_mode);
 
     parameters.priority = fromWebRTCBitRatePriority(rtcParameters.bitrate_priority);
     parameters.networkPriority = toRTCPriorityType(rtcParameters.network_priority);
@@ -183,7 +186,7 @@ static inline webrtc::RtpCodec fromRTCRtpCodec(const RTCRtpCodec& codec, webrtc:
         return { };
 
     webrtc::RtpCodec rtcCodec;
-    rtcCodec.name = StringView(codec.mimeType).substring(6).utf8().toStdString();
+    rtcCodec.name = makeUTF8CString(StringView(codec.mimeType).substring(6)).toStdString();
     rtcCodec.kind = type;
     if (codec.clockRate)
         rtcCodec.clock_rate = static_cast<int>(codec.clockRate);
@@ -193,9 +196,9 @@ static inline webrtc::RtpCodec fromRTCRtpCodec(const RTCRtpCodec& codec, webrtc:
     for (auto parameter : StringView(codec.sdpFmtpLine).split(';')) {
         auto position = parameter.find('=');
         if (position != notFound)
-            rtcCodec.parameters.emplace(parameter.left(position).utf8().toStdString(), parameter.substring(position + 1).utf8().toStdString());
+            rtcCodec.parameters.emplace(makeUTF8CString(parameter.left(position)).toStdString(), makeUTF8CString(parameter.substring(position + 1)).toStdString());
         else
-            rtcCodec.parameters.emplace("", parameter.utf8().toStdString());
+            rtcCodec.parameters.emplace("", makeUTF8CString(parameter).toStdString());
     }
 
     return rtcCodec;
@@ -215,9 +218,11 @@ static inline webrtc::RtpEncodingParameters fromRTCEncodingParameters(const RTCR
         rtcParameters.max_bitrate_bps = parameters.maxBitrate;
     if (parameters.maxFramerate)
         rtcParameters.max_framerate = parameters.maxFramerate;
-    rtcParameters.rid = parameters.rid.utf8().toStdString();
+    rtcParameters.rid = makeUTF8CString(parameters.rid).toStdString();
     if (parameters.scaleResolutionDownBy)
         rtcParameters.scale_resolution_down_by = parameters.scaleResolutionDownBy;
+    if (!parameters.scalabilityMode.isNull())
+        rtcParameters.scalability_mode = makeUTF8CString(parameters.scalabilityMode).toStdString();
 
     rtcParameters.bitrate_priority = toWebRTCBitRatePriority(parameters.priority);
     if (parameters.networkPriority)
@@ -240,7 +245,7 @@ static inline webrtc::RtpExtension fromRTCHeaderExtensionParameters(const RTCRtp
 {
     webrtc::RtpExtension rtcParameters;
 
-    rtcParameters.uri = parameters.uri.utf8().toStdString();
+    rtcParameters.uri = makeUTF8CString(parameters.uri).toStdString();
     rtcParameters.id = webrtc::RtpHeaderExtensionId { parameters.id };
     rtcParameters.encrypt = parameters.encrypted;
 
@@ -298,7 +303,7 @@ RTCRtpSendParameters toRTCRtpSendParameters(const webrtc::RtpParameters& rtcPara
 
 void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::RtpParameters& rtcParameters, webrtc::MediaType mediaType)
 {
-    rtcParameters.transaction_id = parameters.transactionId.utf8().toStdString();
+    rtcParameters.transaction_id = makeUTF8CString(parameters.transactionId).toStdString();
 
     if (parameters.encodings.size() != rtcParameters.encodings.size()) {
         // If encodings size is different, setting parameters will fail. Let's make it so.
@@ -331,7 +336,7 @@ void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::
     }
 
     rtcParameters.header_extensions.clear();
-    for (auto& extension : parameters.headerExtensions)
+    for (auto& extension : borrow(parameters.headerExtensions))
         rtcParameters.header_extensions.push_back(fromRTCHeaderExtensionParameters(extension));
     // Codecs parameters are readonly
 
@@ -354,7 +359,7 @@ void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::
     if (parameters.rtcp.reducedSize)
         rtcParameters.rtcp.reduced_size = *parameters.rtcp.reducedSize;
     if (!parameters.rtcp.cname.isNull())
-        rtcParameters.rtcp.cname = parameters.rtcp.cname.utf8().toStdString();
+        rtcParameters.rtcp.cname = makeUTF8CString(parameters.rtcp.cname).toStdString();
 }
 
 RTCRtpTransceiverDirection toRTCRtpTransceiverDirection(webrtc::RtpTransceiverDirection rtcDirection)
@@ -397,14 +402,14 @@ webrtc::RtpTransceiverInit fromRtpTransceiverInit(const RTCRtpTransceiverInit& i
 {
     webrtc::RtpTransceiverInit rtcInit;
     rtcInit.direction = fromRTCRtpTransceiverDirection(init.direction);
-    for (auto& stream : init.streams)
-        rtcInit.stream_ids.push_back(stream->id().utf8().toStdString());
+    for (auto& stream : borrow(init.streams))
+        rtcInit.stream_ids.push_back(makeUTF8CString(stream->id()).toStdString());
 
     if (type == webrtc::MediaType::AUDIO) {
         if (!init.sendEncodings.isEmpty())
-            rtcInit.send_encodings.push_back(fromRTCEncodingParameters(init.sendEncodings[0], type));
+            rtcInit.send_encodings.push_back(fromRTCEncodingParameters(borrow(init.sendEncodings)[0], type));
     } else {
-        for (auto& encoding : init.sendEncodings)
+        for (auto& encoding : borrow(init.sendEncodings))
             rtcInit.send_encodings.push_back(fromRTCEncodingParameters(encoding, type));
     }
     return rtcInit;
@@ -437,7 +442,7 @@ Exception toException(const webrtc::RTCError& error)
     return Exception { toExceptionCode(error.type()), String::fromLatin1(error.message()) };
 }
 
-static inline RTCIceComponent LEGACY_NODELETE toRTCIceComponent(int component)
+NODELETE static inline RTCIceComponent toRTCIceComponent(int component)
 {
     return component == webrtc::ICE_CANDIDATE_COMPONENT_RTP ? RTCIceComponent::Rtp : RTCIceComponent::Rtcp;
 }

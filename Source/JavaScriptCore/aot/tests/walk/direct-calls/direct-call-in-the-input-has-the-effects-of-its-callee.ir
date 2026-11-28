@@ -1,0 +1,49 @@
+# f1 = peek, f2 = callsPeek, f3 = ask, f4 = callsAsk
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(QUIET): walk f2 mechanisms=none+TypedOperations+DirectCalls
+# QUIET-NOT: mayCallUnknownCode
+# RUN(LOUD): walk f4 mechanisms=none+TypedOperations+DirectCalls
+# LOUD-LABEL: code f4:Body
+# LOUD: = CallDirect {{*}}function=f3 {{*}}mayCallUnknownCode
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="last" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f4
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v0, v1 calleeName="sink"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="peek" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="last"
+    Return v1
+}
+function f2 name="callsPeek" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = CallDirect function=f1
+    Return v0
+}
+function f3 name="ask" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="host" [isFreeName]
+    v2 = Call v1 calleeName="host"
+    Return v2
+}
+function f4 name="callsAsk" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}

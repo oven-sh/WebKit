@@ -73,9 +73,9 @@ dictionary WebExtensionTabCreateProperties {
     ReturnsPromiseWhenCallbackIsOmitted,
 ] interface WebExtensionAPITabs {
 
-    [RaisesException, NeedsPageIdentifier, ImplementedAs=createTab] void create([NSDictionary] any properties, [Optional, CallbackHandler] function callback);
+    [RaisesException, NeedsPageIdentifier, ImplementedAs=createTab] void create([Optional, NSDictionary] any properties, [Optional, CallbackHandler] function callback);
 
-    [RaisesException, NeedsPageIdentifier] void query([NSDictionary] any info, [Optional, CallbackHandler] function callback);
+    [RaisesException, NeedsPageIdentifier] void query([Optional, NSDictionary] any info, [Optional, CallbackHandler] function callback);
 
     [RaisesException] void get(double tabID, [Optional, CallbackHandler] function callback);
     [NeedsPageIdentifier] void getCurrent([Optional, CallbackHandler] function callback);
@@ -103,10 +103,13 @@ dictionary WebExtensionTabCreateProperties {
     [RaisesException, Dynamic, NeedsPageIdentifier] void insertCSS([Optional] double tabID, [NSDictionary] any details, [Optional, CallbackHandler] function callback);
     [RaisesException, Dynamic, NeedsPageIdentifier] void removeCSS([Optional] double tabID, [NSDictionary] any details, [Optional, CallbackHandler] function callback);
 
-    [ProcessArgumentsLeftToRight, RaisesException, NeedsFrame] void sendMessage(double tabID, [Serialization=JSON] any message, [Optional, NSDictionary] any options, [Optional, CallbackHandler] function callback);
+    [ProcessArgumentsLeftToRight, RaisesException, NeedsFrame] void sendMessage(double tabID, [Serialization=Message] any message, [Optional, NSDictionary] any options, [Optional, CallbackHandler] function callback);
     [RaisesException, NeedsFrame, NeedsScriptContext] WebExtensionAPIPort connect(double tabID, [Optional, NSDictionary] any options);
 
     [ImplementedAs=tabIdentifierNone] readonly attribute double TAB_ID_NONE;
+
+    [ImplementedAs=tabStatus] readonly attribute any TabStatus;
+    [ImplementedAs=windowType] readonly attribute any WindowType;
 
     readonly attribute WebExtensionAPIEvent onActivated;
     readonly attribute WebExtensionAPIEvent onAttached;

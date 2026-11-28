@@ -1,0 +1,41 @@
+# the copied function returns on two ways, and only one of them ends in a call of an async function. What the other returns is not awaited yet, so the await stays behind the copy
+# const get = id => id === undefined ? id : load(id);  async function run(x) { return await get(x); }
+# RUN: walk f3:CoroutineBody mechanisms=none+DirectCalls+Inlining
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f3:CoroutineBody mechanisms=none+DirectCalls+Inlining
+# NEVER-NOT: = AwaitCallBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="get" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0 calleeName="load"
+    ReturnCall v3
+}
+function f3 name="run" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0 calleeName="get"
+    v3 = Await v2
+    Return v3
+}

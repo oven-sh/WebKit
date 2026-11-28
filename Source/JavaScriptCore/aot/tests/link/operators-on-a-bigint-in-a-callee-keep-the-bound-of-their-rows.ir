@@ -1,0 +1,20 @@
+# the same callee, and one caller hands it a BigInt beside a number: the subtraction throws a TypeError, by a rule of the language
+# const byRank = (a, b) => a - b;  byRank(2, 1n);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}returns=[mayThrow, mayThrowByRule
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = BigInt digits="1"
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0, v1
+    Return v3
+}
+function f1 name="byRank" module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    Return v2
+}

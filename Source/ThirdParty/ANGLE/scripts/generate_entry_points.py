@@ -616,6 +616,45 @@ TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN = """\
 }}
 """
 
+# Used by the entry points whose unlocked tail calls need the display (see
+# egl_tail_call_holds_display()).  The tail calls ({epilog}) run while the entry point still holds
+# its reference to the display, but after the inner scope that holds the object references and the
+# context lock is closed.  That way, the display cannot be terminated while a tail call runs.
+TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN_TAIL_CALL_HOLDS_DISPLAY = """\
+{return_type} EGLAPIENTRY EGL_{name}({params})
+{{
+    {preamble}
+    Thread *thread = egl::GetCurrentThread();
+    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+    {return_type} returnValue;
+    {{
+        {packed_display_conversions}{{
+            EGL_EVENT({name}, "{format_params}"{comma_if_needed}{pass_params});
+
+            {packed_gl_enum_conversions}
+
+            {{
+                {context_lock_statement}
+                if (IsEGLValidationEnabled())
+                {{
+                    {validation_statement}
+                }}
+                else
+                {{
+                    {attrib_map_init}
+                }}
+
+                returnValue = {name}(thread{comma_if_needed}{internal_params});
+            }}
+
+            ANGLE_CAPTURE_EGL({name}, true, {egl_capture_params}, returnValue);
+        }}
+        {epilog}
+    }}
+    return returnValue;
+}}
+"""
+
 TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN_NO_LOCKS = """\
 {return_type} EGLAPIENTRY EGL_{name}({params})
 {{
@@ -1418,7 +1457,7 @@ TEMPLATE_VALIDATION_PROTO = "%s Validate%s(%s);"
 
 TEMPLATE_CONTEXT_PRIVATE_CALL_PROTO = "%s ContextPrivate%s(%s);"
 
-TEMPLATE_CONTEXT_LOCK_PROTO = "ScopedContextMutexLock GetContextLock_%s(%s);"
+TEMPLATE_CONTEXT_LOCK_PROTO = "%s GetContextLock_%s(%s);"
 
 TEMPLATE_WINDOWS_DEF_FILE = """\
 ; GENERATED FILE - DO NOT EDIT.
@@ -1733,14 +1772,11 @@ EGL_PACKED_TYPES = {
 
 EGL_CONTEXT_LOCK_PARAM_TYPES_FILTER = ["Thread *", "gl::ContextID"]
 EGL_CONTEXT_LOCK_PARAM_NAMES_FILTER = ["attribute", "flags"]
-EGL_CONTEXT_LOCK_USES_DPY = [
-    "CreateContext",
-    "QueryContext",
-    "CreateImage",
-    "ReleaseHighPowerGPUANGLE",
-    "ReacquireHighPowerGPUANGLE",
-    "CreateImageKHR",
-]
+
+# EGL entry points take the contexts that they reference (see ScopedContextRef) instead of their
+# handles.  The validation of these entry points tells EGL_NO_CONTEXT apart from an invalid context
+# handle, so it takes the handle as well.
+EGL_VALIDATION_WITH_CONTEXT_HANDLE = ["eglCreateContext", "eglMakeCurrent"]
 
 CAPTURE_BLOCKLIST = ['eglGetProcAddress']
 
@@ -1774,15 +1810,64 @@ def is_lockless_egl_entry_point(cmd_name):
     return False
 
 
-def is_egl_sync_entry_point(cmd_name):
+def is_egl_threadsafe_display_entry_point(cmd_name):
     if cmd_name in [
-            "eglClientWaitSync", "eglCreateSync", "eglDestroySync", "eglGetSyncAttrib",
-            "eglWaitSync", "eglCreateSyncKHR", "eglClientWaitSyncKHR",
-            "eglDupNativeFenceFDANDROID", "eglCopyMetalSharedEventANGLE", "eglDestroySyncKHR",
-            "eglGetSyncAttribKHR", "eglSignalSyncKHR", "eglWaitSyncKHR"
+            # EGLSync entry points
+            "eglClientWaitSync",
+            "eglCreateSync",
+            "eglDestroySync",
+            "eglGetSyncAttrib",
+            "eglWaitSync",
+            "eglCreateSyncKHR",
+            "eglClientWaitSyncKHR",
+            "eglDupNativeFenceFDANDROID",
+            "eglCopyMetalSharedEventANGLE",
+            "eglDestroySyncKHR",
+            "eglGetSyncAttribKHR",
+            "eglSignalSyncKHR",
+            "eglWaitSyncKHR",
+            # EGLSurface entry points
+            "eglBindTexImage",
+            "eglCopyBuffers",
+            "eglDestroySurface",
+            "eglQuerySurface",
+            "eglReleaseTexImage",
+            "eglSurfaceAttrib",
+            "eglSwapBuffers",
+            "eglAcquireExternalContextANGLE",
+            "eglGetCompositorTimingANDROID",
+            "eglGetCompositorTimingSupportedANDROID",
+            "eglGetFrameTimestampsANDROID",
+            "eglGetFrameTimestampSupportedANDROID",
+            "eglGetMscRateANGLE",
+            "eglGetNextFrameIdANDROID",
+            "eglGetSyncValuesCHROMIUM",
+            "eglLockSurfaceKHR",
+            "eglPostSubBufferNV",
+            "eglPrepareSwapBuffersANGLE",
+            "eglPresentationTimeANDROID",
+            "eglQuerySurface64KHR",
+            "eglQuerySurfacePointerANGLE",
+            "eglSetDamageRegionKHR",
+            "eglSwapBuffersWithDamageKHR",
+            "eglUnlockSurfaceKHR",
+            "eglMakeCurrent",
     ]:
         return True
     return False
+
+
+def egl_tail_call_holds_display(cmd_name):
+    # The unlocked tail calls of these entry points wait on the sync through the renderer and
+    # release a ScopedSyncRef, which does not hold a reference to the display, so they must run
+    # before the entry point releases the display.  Other entry points run their tail calls after
+    # releasing the display, so that EGL calls made from a tail call (Android may call back into
+    # EGL, for example from ANativeWindow) don't take a second reference to the display on this
+    # thread, which ThreadSafeDisplay::addRef() forbids.
+    return cmd_name in [
+        "eglClientWaitSync",
+        "eglClientWaitSyncKHR",
+    ]
 
 
 def is_cmd_map_buffer_range(cmd_name):
@@ -2162,6 +2247,8 @@ def get_def_template(api, cmd_name, return_type, has_errcode_ret):
         if api == apis.EGL:
             if is_lockless_egl_entry_point(cmd_name):
                 return TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN_NO_LOCKS
+            elif egl_tail_call_holds_display(cmd_name):
+                return TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN_TAIL_CALL_HOLDS_DISPLAY
             else:
                 return TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN
         elif api == apis.CL:
@@ -2209,6 +2296,8 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
     sync_raw_param_name = None
     surface_params = []
     surface_raw_param_names = []
+    context_params = []
+    context_raw_param_names = []
     if api == apis.EGL:
         for param in params:
             param_type = just_the_type_packed(param, packed_enums)
@@ -2221,6 +2310,20 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
             elif param_type == "SurfaceID":
                 surface_params.append(just_the_name_packed(param, packed_enums))
                 surface_raw_param_names.append(just_the_name(param))
+            elif param_type == "gl::ContextID":
+                context_params.append(just_the_name_packed(param, packed_enums))
+                context_raw_param_names.append(just_the_name(param))
+
+    # The display that ScopedContextRefs are created with.  It must not be const, as dropping the
+    # last reference to a destroyed context frees it.
+    egl_context_ref_display = None
+    if api == apis.EGL and dpy_param:
+        if is_egl_threadsafe_display_entry_point(cmd_name):
+            egl_context_ref_display = "validDisplay"
+        elif is_lockless_egl_entry_point(cmd_name):
+            egl_context_ref_display = f"{dpy_param}Ref.get()"
+        else:
+            egl_context_ref_display = f"{dpy_param}Lock.get()"
 
     for param in params:
         param_name = just_the_name(param)
@@ -2231,11 +2334,18 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
             internal_name = param_name + "Packed"
             internal_type = packed_enums[param_name]
             if api == apis.EGL and param_name == sync_raw_param_name:
-                packed_gl_enum_conversions += [
-                    f"\n        egl::SyncID {internal_name} = PackParam<egl::SyncID>({param_name});\n"
-                    f"        egl::ScopedSyncRef {internal_name}Ref = GetSyncIfValid(validDisplay, {internal_name});\n"
-                    f"        egl::Sync *{internal_name}Object = {internal_name}Ref.get();"
-                ]
+                if cmd_name in ["eglDestroySync", "eglDestroySyncKHR"]:
+                    packed_gl_enum_conversions += [
+                        f"\n        egl::SyncID {internal_name} = PackParam<egl::SyncID>({param_name});\n"
+                        f"        egl::ScopedSyncDestroy {internal_name}Ref = RemoveSyncIfValid(validDisplay, {internal_name});\n"
+                        f"        egl::Sync *{internal_name}Object = {internal_name}Ref.get();"
+                    ]
+                else:
+                    packed_gl_enum_conversions += [
+                        f"\n        egl::SyncID {internal_name} = PackParam<egl::SyncID>({param_name});\n"
+                        f"        egl::ScopedSyncRef {internal_name}Ref = GetSyncIfValid(validDisplay, {internal_name});\n"
+                        f"        egl::Sync *{internal_name}Object = {internal_name}Ref.get();"
+                    ]
             elif api == apis.EGL and param_name in surface_raw_param_names:
                 if cmd_name in ["eglDestroySurface", "eglAcquireExternalContextANGLE"]:
                     packed_gl_enum_conversions += [
@@ -2280,6 +2390,18 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
                         f"        egl::Surface *{first_surface}Object = surfacesPackedRef.get(0);\n"
                         f"        egl::Surface *{internal_name}Object = surfacesPackedRef.get(1);"
                     ]
+            elif api == apis.EGL and param_name in context_raw_param_names:
+                # A thread that has a destroyed context current frees it in eglMakeCurrent(), which
+                # does not lock the display.  Reference the context until the entry point returns,
+                # which keeps it alive, and in the display's context map.  The context lock,
+                # validation and the stub take the referenced context instead of its handle.
+                # eglDestroyContext() hands the reference over to its stub, which drops it in
+                # Display::destroyContext().
+                packed_gl_enum_conversions += [
+                    f"\n        gl::ContextID {internal_name} = PackParam<gl::ContextID>({param_name});\n"
+                    f"        egl::ScopedContextRef {internal_name}Ref = GetContextRefIfValid({egl_context_ref_display}, {internal_name});\n"
+                    f"        gl::Context *{internal_name}Object = {internal_name}Ref.get();"
+                ]
             else:
                 packed_gl_enum_conversions += [
                     "\n        " + internal_type + " " + internal_name + " = PackParam<" +
@@ -2301,7 +2423,11 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
                 "\n        egl::ScopedSurfaceLockAndRef surfaceObjectRef =\n"
                 "            (objectTypePacked == ObjectType::Surface)\n"
                 "                ? GetSurfaceIfValid(validDisplay, PackParam<SurfaceID>(object))\n"
-                "                : egl::ScopedSurfaceLockAndRef();"
+                "                : egl::ScopedSurfaceLockAndRef();\n"
+                "        egl::ScopedContextRef contextObjectRef =\n"
+                "            (objectTypePacked == ObjectType::Context)\n"
+                f"                ? GetContextRefIfValid({egl_context_ref_display}, PackParam<gl::ContextID>(object))\n"
+                "                : egl::ScopedContextRef();"
             ]
         elif cmd_name == "eglDestroyContext":
             packed_gl_enum_conversions += [
@@ -2332,14 +2458,23 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
     name_lower_no_suffix = name_no_suffix[0:1].lower() + name_no_suffix[1:]
     entry_point_name = "angle::EntryPoint::GL" + strip_api_prefix(cmd_name)
 
+    # The context lock takes the referenced contexts instead of their handles.
+    internal_context_lock_params = [
+        f"{p}Object" if p in context_params else p for p in internal_context_lock_params
+    ]
     extra_lock_params = (
         ", " + ", ".join(internal_context_lock_params)) if internal_context_lock_params else ""
     context_lock_statement = f"ANGLE_EGL_SCOPED_CONTEXT_LOCK({name}, thread{extra_lock_params});"
+    if cmd_name == "eglMakeCurrent":
+        # eglMakeCurrent() relies on its context lock for its own thread safety, so it is taken
+        # even if ANGLE_ENABLE_CONTEXT_MUTEX is not defined.  It locks the referenced context along
+        # with the context current on the thread.
+        context_lock_statement = f"ANGLE_EGL_SCOPED_CONTEXT_LOCK_ALWAYS({name}, thread{extra_lock_params});"
     val_prefix = ""
 
     packed_display_conversions = ""
     if api == apis.EGL and dpy_param:
-        if is_egl_sync_entry_point(cmd_name):
+        if is_egl_threadsafe_display_entry_point(cmd_name):
             packed_display_conversions = (
                 f"egl::Display *{dpy_param} = PackParam<egl::Display *>({dpy_raw_param_name});\n"
                 f"    egl::ScopedThreadSafeDisplayRef {dpy_param}Ref = GetThreadSafeDisplayIfValid({dpy_param});\n"
@@ -2349,18 +2484,11 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
                 f"egl::Display *{dpy_param} = PackParam<egl::Display *>({dpy_raw_param_name});\n"
                 f"    egl::ScopedDisplayRef {dpy_param}Ref = GetDisplayIfValid({dpy_param});\n"
                 f"    const egl::Display *validDisplay = {dpy_param}Ref.get();\n\n    ")
-        elif surface_params and cmd_name not in ["eglMakeCurrent", "eglDestroySurface"]:
-            packed_display_conversions = (
-                f"egl::Display *{dpy_param} = PackParam<egl::Display *>({dpy_raw_param_name});\n"
-                f"        egl::ScopedDisplayRef {dpy_param}Ref = GetDisplayIfValid({dpy_param});\n"
-                f"        const egl::Display *validDisplay = {dpy_param}Ref.get();\n\n        ")
         else:
             packed_display_conversions = (
                 f"egl::Display *{dpy_param} = PackParam<egl::Display *>({dpy_raw_param_name});\n"
                 f"        egl::ScopedDisplayLockAndRef {dpy_param}Lock = GetDisplayAndLockIfValid({dpy_param});\n"
                 f"        const egl::Display *validDisplay = {dpy_param}Lock.get();\n\n        ")
-        if name in EGL_CONTEXT_LOCK_USES_DPY:
-            context_lock_statement = f"ANGLE_EGL_SCOPED_CONTEXT_LOCK_DPY({name}, thread, validDisplay{extra_lock_params});"
         if labeled_object == f"GetDisplayIfValid({dpy_param})":
             labeled_object = "validDisplay"
 
@@ -2396,22 +2524,45 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
                 internal_val_params = [
                     f"{p}Object" if p in surface_params else p for p in internal_val_params
                 ]
+        if context_params:
+            new_val_params = []
+            for p in internal_val_params:
+                if p in context_params:
+                    if cmd_name in EGL_VALIDATION_WITH_CONTEXT_HANDLE:
+                        new_val_params.append(p)
+                    new_val_params.append(f"{p}Object")
+                else:
+                    new_val_params.append(p)
+            internal_val_params = new_val_params
         if cmd_name == "eglSwapInterval":
             internal_val_params = [internal_val_params[0], "drawSurface"] + internal_val_params[1:]
 
     internal_stub_params = internal_params
     if api == apis.EGL:
-        if dpy_param and is_egl_sync_entry_point(cmd_name):
+        if dpy_param and is_egl_threadsafe_display_entry_point(cmd_name):
             internal_stub_params = [
                 "validDisplay" if p == dpy_param else p for p in internal_stub_params
             ]
         if sync_param:
-            internal_stub_params = [
-                f"{sync_param}Object" if p == sync_param else p for p in internal_stub_params
-            ]
+            if cmd_name in ["eglDestroySync", "eglDestroySyncKHR"]:
+                internal_stub_params = [
+                    f"{sync_param}Ref.release()" if p == sync_param else p
+                    for p in internal_stub_params
+                ]
+            else:
+                internal_stub_params = [
+                    f"{sync_param}Object" if p == sync_param else p for p in internal_stub_params
+                ]
         if surface_params:
             internal_stub_params = [
                 f"{p}Object" if p in surface_params else p for p in internal_stub_params
+            ]
+        if context_params:
+            # eglDestroyContext() hands its reference to the context over to the stub.
+            context_stub_suffix = "Ref.release()" if cmd_name == "eglDestroyContext" else "Object"
+            internal_stub_params = [
+                f"{p}{context_stub_suffix}" if p in context_params else p
+                for p in internal_stub_params
             ]
         if cmd_name == "eglSwapInterval":
             internal_stub_params = [internal_stub_params[0], "drawSurface"
@@ -2495,6 +2646,11 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
     if is_lockless_egl_entry_point(cmd_name):
         assert "{egl_lock}" not in template, (
             f"Lockless entry point {cmd_name} must not use a template containing {{egl_lock}}")
+    if template == TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN_TAIL_CALL_HOLDS_DISPLAY:
+        # The template has no {egl_lock}; the display reference is taken by
+        # packed_display_conversions, which requires a thread-safe display entry point.
+        assert dpy_param and is_egl_threadsafe_display_entry_point(cmd_name), (
+            f"{cmd_name} must be a thread-safe display entry point that takes an EGLDisplay")
     return template.format(**format_params)
 
 
@@ -2670,7 +2826,7 @@ def get_internal_params(api,
                         is_capture=False):
     packed_gl_enums = get_packed_enums(api, cmd_packed_gl_enums, cmd_name, packed_param_types,
                                        params)
-    use_threadsafe_display = api == apis.EGL and is_egl_sync_entry_point(
+    use_threadsafe_display = api == apis.EGL and is_egl_threadsafe_display_entry_point(
         cmd_name) and not is_capture
 
     def param_type(param):
@@ -2688,7 +2844,7 @@ def get_internal_params(api,
 def get_validation_params(api, cmd_name, params, cmd_packed_gl_enums, packed_param_types):
     packed_gl_enums = get_packed_enums(api, cmd_packed_gl_enums, cmd_name, packed_param_types,
                                        params)
-    use_threadsafe_display = api == apis.EGL and is_egl_sync_entry_point(cmd_name)
+    use_threadsafe_display = api == apis.EGL and is_egl_threadsafe_display_entry_point(cmd_name)
     last = -1 if params and just_the_name(params[-1]) == "errcode_ret" else None
     result = []
     for param in params[:last]:
@@ -2698,6 +2854,10 @@ def get_validation_params(api, cmd_name, params, cmd_packed_gl_enums, packed_par
                                                                  packed_gl_enums) == "SurfaceID":
             result.append(make_param("SurfaceID", param_name))
             result.append(make_param(param_type, f"{param_name}Object"))
+        elif api == apis.EGL and just_the_type_packed(param, packed_gl_enums) == "gl::ContextID":
+            if cmd_name in EGL_VALIDATION_WITH_CONTEXT_HANDLE:
+                result.append(make_param(param_type, param_name))
+            result.append(make_param("const gl::Context *", f"{param_name}Object"))
         else:
             result.append(make_param(param_type, param_name))
             if cmd_name == "eglSwapInterval" and param_name == "dpyPacked":
@@ -2719,19 +2879,16 @@ def get_context_private_call_params(api, cmd_name, params, cmd_packed_gl_enums,
 def get_context_lock_params(api, cmd_name, params, cmd_packed_gl_enums, packed_param_types):
     packed_gl_enums = get_packed_enums(api, cmd_packed_gl_enums, cmd_name, packed_param_types,
                                        params)
-    filter_types = EGL_CONTEXT_LOCK_PARAM_TYPES_FILTER[:]
-    name = strip_api_prefix(cmd_name)
-    is_uses_dpy = api == apis.EGL and name in EGL_CONTEXT_LOCK_USES_DPY
-    if is_uses_dpy:
-        filter_types.append("egl::Display *")
     result = []
     for param in params:
         param_type = just_the_type_packed(param, packed_gl_enums)
         param_name = just_the_name_packed(param, packed_gl_enums)
-        if param_type in filter_types or param_name in EGL_CONTEXT_LOCK_PARAM_NAMES_FILTER:
-            if is_uses_dpy and param_type == "egl::Display *":
-                param_type = "const egl::Display *"
-                param_name = "validDisplay"
+        if (param_type in EGL_CONTEXT_LOCK_PARAM_TYPES_FILTER or
+                param_name in EGL_CONTEXT_LOCK_PARAM_NAMES_FILTER):
+            if api == apis.EGL and param_type == "gl::ContextID":
+                # The entry points pass the contexts, which they reference, instead of their IDs.
+                param_type = "const gl::Context *"
+                param_name += "Object"
             result.append(make_param(param_type, param_name))
     return ", ".join(result)
 
@@ -2821,7 +2978,10 @@ def format_context_lock_proto(api, cmd_name, params, cmd_packed_gl_enums, packed
     with_extra_params = ["Thread *thread"] + params
     internal_params = get_context_lock_params(api, cmd_name, with_extra_params,
                                               cmd_packed_gl_enums, packed_param_types)
-    return TEMPLATE_CONTEXT_LOCK_PROTO % (strip_api_prefix(cmd_name), internal_params)
+    # eglMakeCurrent() locks the ContextMutexes of both the previous and the new context.
+    return_type = ("ScopedContextMutexesLock" if api == apis.EGL and cmd_name == "eglMakeCurrent"
+                   else "ScopedContextMutexLock")
+    return TEMPLATE_CONTEXT_LOCK_PROTO % (return_type, strip_api_prefix(cmd_name), internal_params)
 
 
 def format_capture_proto(api, cmd_name, proto, params, cmd_packed_gl_enums, packed_param_types):
@@ -3710,8 +3870,6 @@ def get_egl_entry_point_labeled_object(ep_to_object, cmd_stripped, params, packe
     if category == "Thread":
         return "GetThreadIfValid(thread)"
     found_param = find_param(params, category, packed_enums)
-    if category == "Context" and not found_param:
-        return "GetContextIfValid(thread->getDisplay(), thread->getContext())"
     assert found_param, "Did not find %s for %s: %s" % (category, cmd_stripped, str(params))
     if category == "Device":
         return "GetDeviceIfValid(%s)" % found_param
@@ -3818,8 +3976,6 @@ def get_preamble(api, cmd_name, params):
 def get_unlocked_tail_call(api, cmd_name):
     # Only the following can generate tail calls:
     #
-    # - eglDestroySurface, eglMakeCurrent and eglReleaseThread -> May destroy
-    #   VkSurfaceKHR in tail call
     # - eglCreateWindowSurface and eglCreatePlatformWindowSurface[EXT] -> May
     #   destroy VkSurfaceKHR in tail call if surface initialization fails
     #
@@ -3839,18 +3995,20 @@ def get_unlocked_tail_call(api, cmd_name):
     # - glCompileShader, glShaderBinary, glLinkProgram -> May perform the compilation /
     #   link in tail call
     #
-    # - eglCreateSync, eglCreateImage, eglDestroySync, eglDestroyImage,
-    #   eglGetCompositorTimingANDROID, eglGetFrameTimestampsANDROID -> Calls
+    # - eglCreateImage, eglGetCompositorTimingANDROID, eglGetFrameTimestampsANDROID -> Calls
     #   native EGL function in tail call
     #
     # - glFlush, glFinish -> May perform the CPU throttling from the implicit swap buffers call when
     #   the current Window Surface is in the single buffer mode.
     #
+    # - eglMakeCurrent -> Runs the internal cleanup of a display that eglTerminate() was called on,
+    #   once the entry point no longer holds the display or any of its surface or context locks
+    #
     if (cmd_name in [
-            'eglDestroySurface', 'eglMakeCurrent', 'eglReleaseThread', 'eglCreateWindowSurface',
-            'eglCreatePlatformWindowSurface', 'eglCreatePlatformWindowSurfaceEXT',
-            'eglPrepareSwapBuffersANGLE', 'glFinishFenceNV', 'glCompileShader', 'glLinkProgram',
-            'glShaderBinary', 'glFlush', 'glFinish'
+            'eglCreateWindowSurface', 'eglCreatePlatformWindowSurface',
+            'eglCreatePlatformWindowSurfaceEXT', 'eglPrepareSwapBuffersANGLE', 'glFinishFenceNV',
+            'glCompileShader', 'glLinkProgram', 'glShaderBinary', 'glFlush', 'glFinish',
+            'eglMakeCurrent'
     ] or cmd_name.startswith('glTexImage2D') or cmd_name.startswith('glTexImage3D') or
             cmd_name.startswith('glTexSubImage2D') or cmd_name.startswith('glTexSubImage3D') or
             cmd_name.startswith('glCompressedTexImage2D') or
@@ -3864,16 +4022,10 @@ def get_unlocked_tail_call(api, cmd_name):
             'eglClientWaitSync',
             'eglCreateImageKHR',
             'eglCreateImage',
-            'eglCreateSyncKHR',
-            'eglCreateSync',
-            'eglDestroySyncKHR',
-            'eglDestroySync',
             'eglGetCompositorTimingANDROID',
             'eglGetFrameTimestampsANDROID',
             'eglSwapBuffers',
             'eglSwapBuffersWithDamageKHR',
-            'eglWaitSyncKHR',
-            'eglWaitSync',
             'glClientWaitSync',
     ]:
         return 'egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);'
@@ -3890,7 +4042,7 @@ def get_epilog(api, cmd_name):
 def get_stub_params(api, cmd_name, params, cmd_packed_egl_enums, packed_param_types):
     packed_enums = get_packed_enums(api, cmd_packed_egl_enums, cmd_name, packed_param_types,
                                     params)
-    use_threadsafe_display = api == apis.EGL and is_egl_sync_entry_point(cmd_name)
+    use_threadsafe_display = api == apis.EGL and is_egl_threadsafe_display_entry_point(cmd_name)
     stub_params = []
     for param in params:
         param_type = just_the_type_packed(param, packed_enums)
@@ -3901,6 +4053,8 @@ def get_stub_params(api, cmd_name, params, cmd_packed_egl_enums, packed_param_ty
             param_type = "egl::Sync *"
         if api == apis.EGL and param_type == "SurfaceID":
             param_type = "egl::Surface *"
+        if api == apis.EGL and param_type == "gl::ContextID":
+            param_type = "gl::Context *"
         stub_params.append(make_param(param_type, param_name))
         if cmd_name == "eglSwapInterval" and param_name == "dpyPacked":
             stub_params.append(make_param("egl::Surface *", "drawSurface"))

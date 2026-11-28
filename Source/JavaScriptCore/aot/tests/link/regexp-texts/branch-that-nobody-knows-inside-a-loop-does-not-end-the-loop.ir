@@ -1,0 +1,111 @@
+# export function compile(loose) { const words = ["a", "b", "c", "d", "e", "f", "g", "h"]; const made = []; for (let i = 0; i < words.length; i++) { let note = "strict"; if (loose) note = "loose"; made[i] = [new RegExp("^" + words[i] + "$"), note]; } return made; }
+# Nobody knows `loose`. Both sides of the branch are gone through up to the block where they meet again, and from there the turn goes on as one: the loop makes all its eight turns.
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-8: text /^
+# CHECK-NOT: text /
+# RUN(LAST): regexp-texts mechanisms=all
+# LAST: text /^h$/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="compile" variable=g0}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}, String{value="c"}, String{value="d"}, String{value="e"}, String{value="f"}, String{value="g"}, String{value="h"}]} module=m0
+data d1 root=Array{contents=anything} module=m0
+variable g0 name="compile" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Undefined @0
+    Return v0 @0
+}
+function f1 name="compile" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = Data data=d0 @47
+    v2 = Data data=d1 @102
+    v3 = Integer @119
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @119
+    Jump -> next b2(v4) @115
+  b2(v5):
+    LoopHint @115
+    v7 = PropGet v1 key="length" @126
+    v8 = Less v5, v7 @126
+    Branch v8 -> taken b3(), notTaken b9() @126
+  b3():
+    v9 = String string="strict" @158
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @158
+    v11 = ToBoolean v0 @172
+    Branch v11 -> taken b4(| 0), notTaken b6(| 0) @172
+  b4(v12):
+    Jump -> next b5() @172
+  b5():
+    v13 = String string="loose" @186
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @179
+    Jump -> next b7(v14) @179
+  b6(v15):
+    Jump -> next b7(v10) @172
+  b7(v16):
+    v17 = Builtin builtin=RegExp @210
+    v18 = String string="^" @217
+    v19 = ElemGet v1, v5 @223
+    v20 = Add v18, v19 @223
+    v21 = String string="$" @234
+    v22 = Add v20, v21 @234
+    v23 = Construct v17, -, v22 calleeName="RegExp" @210
+    v24 = NewArray v23, v16 contents=anything @205
+    ElemSet v2, v5, v24 @195
+    Jump -> next b8() @195
+  b8():
+    v26 = Increment v5 @140
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]} @140
+    Jump -> next b2(v27) @140
+  b9():
+    Return v2 @256
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f3 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b5() @14702
+  b3(v5):
+    Jump -> next b4() @14702
+  b4():
+    v6 = Call v2, v0 @14744
+    Jump -> next b5() @14744
+  b5():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f3
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

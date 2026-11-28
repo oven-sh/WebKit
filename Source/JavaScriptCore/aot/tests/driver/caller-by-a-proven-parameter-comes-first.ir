@@ -1,0 +1,10 @@
+# The queue of Compile holds each mention of finished code against LinkTables::referrers, the first of a unit and every later one, whatever the states of the two cycles happen to be. So a build in which Link lacks a referrer ends with one thread as with 192, and not now and then
+# The code of `guarded` mentions the arrow by the proven type of its parameter: a whole build comes through, and the arrow has its code. Nobody enters the arrow by value, so its entry is closed, and the body that the entry alone would name is not compiled.
+# RUN: units-with-code f1:CoroutineBody f3:Body f3:CoroutineBody mechanisms=all
+# CHECK: unit f1:CoroutineBody {{*}} bytes
+# CHECK: unit f3:Body has no code
+# CHECK: unit f3:CoroutineBody {{*}} bytes
+# Nothing is ordered without Arrivals, and nothing is asked.
+# RUN(UNORDERED): units-with-code f3:CoroutineBody mechanisms=-Arrivals
+# UNORDERED: unit f3:CoroutineBody {{*}} bytes
+# PROGRAM-OF: ../link/caller-by-a-proven-parameter-is-a-referrer.ir

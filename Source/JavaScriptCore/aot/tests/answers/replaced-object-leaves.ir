@@ -1,0 +1,46 @@
+# function grows() { let p = { x: 2147483000, y: 1 }; for (let i = 0; i < 20; i++) p = { x: p.x + 100, y: p.y + 1 }; return p; }
+# sink(grows);
+# Whether or not a turn builds `p`: in the seventh turn the sum leaves int32, and what is returned is the object of the last turn, with its keys in their order.
+# RUN: run-in-shell globalThis.sink = made => print(JSON.stringify(made()));
+# CHECK: {"x":2147485000,"y":21}
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=2147483000}}, {key="y" value=Number{value=1}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="grows" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=20
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v2 key="x"
+    v8 = Integer integer=100
+    v9 = Add v7, v8
+    v10 = PropGet v2 key="y"
+    v11 = Integer integer=1
+    v12 = Add v10, v11
+    v13 = NewObject layout=L0
+    PropDefine v13, v9 key="x"
+    PropDefine v13, v12 key="y"
+    v16 = FinishObject v13
+    v17 = Increment v3
+    Jump -> next b1(v16, v17)
+  b3():
+    Return v2
+}

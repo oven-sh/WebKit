@@ -1,0 +1,12 @@
+# a tail call gives up the frame in front of the callee: it takes no closure that lies there, whoever is called
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: f4 Body b0 v3 (Call): a cell of the frame is an operand of a tail call: v2 (NewClosure)
+# PROGRAM-OF: ../closures-lent/loan-of-a-closure-is-written-into-its-record.ir
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim loan=LeftToStubOfCall
+#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     ReturnCall v3
+# }
+# -- end of code

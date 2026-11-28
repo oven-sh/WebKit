@@ -42,6 +42,7 @@
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineIteratorTextBox.h"
 #include "InlineRunAndOffset.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "Logging.h"
 #include "NodeTraversal.h"
 #include "PositionIterator.h"
@@ -510,11 +511,11 @@ bool Position::atLastEditingPositionForNode() const
 //    positions are both non editable.
 bool Position::atEditingBoundary() const
 {
-    Position nextPosition = downstream(CanCrossEditingBoundary);
+    Position nextPosition = downstream(EditingBoundaryCrossingRule::CanCross);
     if (atFirstEditingPositionForNode() && nextPosition.isNotNull() && !protect(nextPosition.deprecatedNode())->hasEditableStyle())
         return true;
 
-    Position prevPosition = upstream(CanCrossEditingBoundary);
+    Position prevPosition = upstream(EditingBoundaryCrossingRule::CanCross);
     if (atLastEditingPositionForNode() && prevPosition.isNotNull() && !protect(prevPosition.deprecatedNode())->hasEditableStyle())
         return true;
 
@@ -656,7 +657,7 @@ static RefPtr<Node> enclosingVisualBoundary(SUPPRESS_UNCHECKED_LOCAL Node* node)
 // The first-letter and remaining text are separate renderers but share one DOM
 // text node. upstream/downstream must not cross this boundary, just like they
 // must not cross visually distinct node boundaries.
-static bool LEGACY_NODELETE crossesFirstLetterBoundary(const RenderObject& renderer, const PositionIterator& current, const PositionIterator& previousLastVisible)
+NODELETE static bool crossesFirstLetterBoundary(const RenderObject& renderer, const PositionIterator& current, const PositionIterator& previousLastVisible)
 {
     auto* textFragment = dynamicDowncast<RenderTextFragment>(renderer);
     if (!textFragment || !textFragment->firstLetter())
@@ -717,7 +718,7 @@ Position Position::upstream(EditingBoundaryCrossingRule rule) const
             // Don't change editability.
             bool currentEditable = currentNode->hasEditableStyle();
             if (startEditable != currentEditable) {
-                if (rule == CannotCrossEditingBoundary)
+                if (rule == EditingBoundaryCrossingRule::CannotCross)
                     break;
                 boundaryCrossed = true;
             }
@@ -738,7 +739,7 @@ Position Position::upstream(EditingBoundaryCrossingRule rule) const
         if (!renderer || renderer->style().visibility() != Visibility::Visible)
             continue;
 
-        if (rule == CanCrossEditingBoundary && boundaryCrossed) {
+        if (rule == EditingBoundaryCrossingRule::CanCross && boundaryCrossed) {
             lastVisible = currentPosition;
             break;
         }
@@ -825,7 +826,7 @@ Position Position::downstream(EditingBoundaryCrossingRule rule) const
             // Don't change editability.
             bool currentEditable = currentNode->hasEditableStyle();
             if (startEditable != currentEditable) {
-                if (rule == CannotCrossEditingBoundary)
+                if (rule == EditingBoundaryCrossingRule::CannotCross)
                     break;
                 boundaryCrossed = true;
             }
@@ -856,7 +857,7 @@ Position Position::downstream(EditingBoundaryCrossingRule rule) const
         if (!renderer || renderer->style().visibility() != Visibility::Visible)
             continue;
 
-        if (rule == CanCrossEditingBoundary && boundaryCrossed) {
+        if (rule == EditingBoundaryCrossingRule::CanCross && boundaryCrossed) {
             lastVisible = currentPosition;
             break;
         }
@@ -1184,9 +1185,10 @@ Position Position::trailingWhitespacePosition(Affinity, bool considerNonCollapsi
     VisiblePosition v(*this);
     char16_t c = v.characterAfter();
     // The space must not be in another paragraph and it must be editable.
-    if (!isEndOfParagraph(v) && v.next(CannotCrossEditingBoundary).isNotNull())
+    if (!isEndOfParagraph(v) && v.next(EditingBoundaryCrossingRule::CannotCross).isNotNull()) {
         if (considerNonCollapsibleWhitespace ? (isASCIIWhitespace(c) || c == noBreakSpace) : deprecatedIsCollapsibleWhitespace(c))
             return *this;
+    }
     
     return { };
 }
@@ -1196,7 +1198,7 @@ InlineBoxAndOffset Position::inlineBoxAndOffset(Affinity affinity) const
     return inlineBoxAndOffset(affinity, primaryDirection());
 }
 
-static bool LEGACY_NODELETE isNonTextLeafChild(RenderObject& object)
+NODELETE static bool isNonTextLeafChild(RenderObject& object)
 {
     if (auto* renderElement = dynamicDowncast<RenderElement>(object))
         return !renderElement->firstChild();
@@ -1205,9 +1207,13 @@ static bool LEGACY_NODELETE isNonTextLeafChild(RenderObject& object)
 
 static InlineIterator::TextBoxIterator searchAheadForBetterMatch(RenderText& renderer)
 {
-    CheckedPtr container = renderer.containingBlock();
+    // Look for a better match in the same inline formatting context.
+    CheckedPtr lineLayout = LayoutIntegration::LineLayout::containing(renderer);
+    if (!lineLayout)
+        return { };
+    CheckedRef formattingContextRoot = lineLayout->flow();
     CheckedPtr<RenderObject> next = &renderer;
-    while ((next = next->nextInPreOrder(container.get()))) {
+    while ((next = next->nextInPreOrder(formattingContextRoot.ptr()))) {
         if (is<RenderBlock>(next))
             return { };
         if (next->isBR())
@@ -1227,7 +1233,7 @@ static Position downstreamIgnoringEditingBoundaries(Position position)
     Position lastPosition;
     while (position != lastPosition) {
         lastPosition = position;
-        position = position.downstream(CanCrossEditingBoundary);
+        position = position.downstream(EditingBoundaryCrossingRule::CanCross);
     }
     return position;
 }
@@ -1237,12 +1243,12 @@ static Position upstreamIgnoringEditingBoundaries(Position position)
     Position lastPosition;
     while (position != lastPosition) {
         lastPosition = position;
-        position = position.upstream(CanCrossEditingBoundary);
+        position = position.upstream(EditingBoundaryCrossingRule::CanCross);
     }
     return position;
 }
 
-std::pair<RenderObject*, unsigned> Position::rendererAndOffset() const
+std::pair<CheckedPtr<RenderObject>, unsigned> Position::rendererAndOffset() const
 {
     RefPtr node = anchorNode();
     if (!node)
@@ -1253,10 +1259,10 @@ std::pair<RenderObject*, unsigned> Position::rendererAndOffset() const
     unsigned offset = deprecatedEditingOffset();
     CheckedPtr textFragment = dynamicDowncast<RenderTextFragment>(*renderer);
     if (!textFragment || !textFragment->firstLetter())
-        return { renderer, offset };
+        return { WTF::move(renderer), offset };
 
     if (offset >= textFragment->start() && textFragment->text().length())
-        return { renderer, offset - textFragment->start() };
+        return { WTF::move(renderer), offset - textFragment->start() };
 
     // It looks like we are on the first letter renderer.
     CheckedPtr firstLetterRenderer = dynamicDowncast<RenderText>(textFragment->firstLetter()->firstChild());
@@ -1269,14 +1275,14 @@ std::pair<RenderObject*, unsigned> Position::rendererAndOffset() const
     auto firstLetterStart = textFragment->start() - firstLetterRenderer->text().length();
     if (offset < firstLetterStart)
         return { nullptr, 0 };
-    return { firstLetterRenderer, offset - firstLetterStart };
+    return { WTF::move(firstLetterRenderer), offset - firstLetterStart };
 }
 
-std::pair<RenderText*, unsigned> Position::resolvedTextRendererAndOffset() const
+std::pair<CheckedPtr<RenderText>, unsigned> Position::resolvedTextRendererAndOffset() const
 {
     auto [renderer, offset] = rendererAndOffset();
-    if (auto* renderText = dynamicDowncast<RenderText>(renderer))
-        return { renderText, offset };
+    if (CheckedPtr renderText = dynamicDowncast<RenderText>(WTF::move(renderer)))
+        return { WTF::move(renderText), offset };
     return { nullptr, 0 };
 }
 
@@ -1471,7 +1477,7 @@ void Position::debugPosition(ASCIILiteral msg) const
     if (isNull())
         SAFE_FPRINTF(stderr, "Position [%s]: null\n", msg);
     else
-        SAFE_FPRINTF(stderr, "Position [%s]: %s [%p] at %d\n", msg, deprecatedNode()->nodeName().utf8(), deprecatedNode(), m_offset);
+        SAFE_FPRINTF(stderr, "Position [%s]: %s [%p] at %d\n", msg, makeUTF8CString(deprecatedNode()->nodeName()), deprecatedNode(), m_offset);
 }
 
 String Position::debugDescription() const

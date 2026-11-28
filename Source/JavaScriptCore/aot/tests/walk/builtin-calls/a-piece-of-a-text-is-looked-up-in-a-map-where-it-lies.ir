@@ -1,0 +1,100 @@
+# A piece of a text that is the key of Map.prototype.get is looked up by its characters where they lie: no cell is made for it. The lookup gives the place of the value, and a set under the same piece on the same map stores
+# there, if no entry of any collection has moved since. The piece is cut only where the map does not tell the place, or where the key is absent and set has to add it.
+# function count(s) { if (typeof s === "string") { const m = new Map(); const k = s.substring(1, 3); m.set(k, m.get(k)); return m; } }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Substring
+# CHECK: [[place]]: {{*}} = FindStringRangeInMap
+# CHECK: [[moves]]: {{*}} = MovesOfEntriesInCollections
+# CHECK: = GetValueAtPlaceInMap {{*}}, [[place]]
+# CHECK: = Substring
+# CHECK: inlineBuiltin=MapGet
+# CHECK: = TryPutValueAtPlaceInMap {{*}}, [[place]], [[moves]]
+# CHECK: = Substring
+# CHECK: inlineBuiltin=MapSet
+# a set that no lookup stands in front of is the call as written: function put(s) { if (typeof s === "string") { const m = new Map(); m.set(s.substring(1, 3), 1); return m; } }
+# RUN(PUT): walk f2 mechanisms=all
+# PUT-LABEL: code f2:Body
+# PUT-NOT: = TryPutValueAtPlaceInMap
+# PUT: inlineBuiltin=MapSet
+# the place found in one map is none in another: function cross(s) { if (typeof s === "string") { const m = new Map(), n = new Map(); const k = s.substring(1, 3); n.set(k, m.get(k)); return [m, n]; } }
+# RUN(CROSS): walk f3 mechanisms=all
+# CROSS-LABEL: code f3:Body
+# CROSS: = FindStringRangeInMap
+# CROSS-NOT: = TryPutValueAtPlaceInMap
+# CROSS: inlineBuiltin=MapSet
+# with nothing but the closed forms the calls stand as written
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED-NOT: = FindStringRangeInMap
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Map
+    v4 = Construct v3 calleeName="Map"
+    v5 = PropGet v2 key="substring"
+    v6 = Integer integer=1
+    v7 = Integer integer=3
+    v8 = Call v5, v2, v6, v7 calleeKey="substring"
+    v9 = PropGet v4 key="set"
+    v10 = PropGet v4 key="get"
+    v11 = Call v10, v4, v8 calleeKey="get"
+    v12 = Call v9, v4, v8, v11 calleeKey="set"
+    Return v4
+  b2():
+    v13 = Undefined
+    Return v13
+}
+function f2 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Map
+    v4 = Construct v3 calleeName="Map"
+    v5 = PropGet v2 key="substring"
+    v6 = Integer integer=1
+    v7 = Integer integer=3
+    v8 = Call v5, v2, v6, v7 calleeKey="substring"
+    v9 = PropGet v4 key="set"
+    v10 = Call v9, v4, v8, v6 calleeKey="set"
+    Return v4
+  b2():
+    v11 = Undefined
+    Return v11
+}
+function f3 name="cross" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Map
+    v4 = Construct v3 calleeName="Map"
+    v5 = Construct v3 calleeName="Map"
+    v6 = PropGet v2 key="substring"
+    v7 = Integer integer=1
+    v8 = Integer integer=3
+    v9 = Call v6, v2, v7, v8 calleeKey="substring"
+    v10 = PropGet v5 key="set"
+    v11 = PropGet v4 key="get"
+    v12 = Call v11, v4, v9 calleeKey="get"
+    v13 = Call v10, v5, v9, v12 calleeKey="set"
+    Return v13
+  b2():
+    v14 = Undefined
+    Return v14
+}

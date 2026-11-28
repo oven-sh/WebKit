@@ -29,6 +29,7 @@
 
 #include "WebExtensionError.h"
 #include "WebExtensionEventListenerType.h"
+#include "WebExtensionMatchPattern.h"
 #include "WebExtensionTabIdentifier.h"
 #include "WebExtensionTabParameters.h"
 #include "WebPageProxyIdentifier.h"
@@ -49,7 +50,6 @@ OBJC_PROTOCOL(WKWebExtensionTab);
 namespace WebKit {
 
 class WebExtensionContext;
-class WebExtensionMatchPattern;
 class WebExtensionWindow;
 class WebProcessProxy;
 struct WebExtensionTabParameters;
@@ -117,7 +117,7 @@ public:
     HasChanges removeUnchangedParameters(WebExtensionTabParameters&);
     WebExtensionTabParameters parametersApplying(const WebExtensionTabParameters&) const;
 
-    WebExtensionContext* LEGACY_NODELETE extensionContext() const;
+    NODELETE WebExtensionContext* extensionContext() const;
 
     bool operator==(const WebExtensionTab&) const;
 
@@ -212,6 +212,10 @@ public:
     void close(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
     bool shouldGrantPermissionsOnUserGesture() const;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionTabAdditions.h>)
+#include <WebKitAdditions/WebExtensionTabAdditions.h>
+#endif
 
     WebProcessProxySet processes(WebExtensionEventListenerType, WebExtensionContentWorldType) const;
 

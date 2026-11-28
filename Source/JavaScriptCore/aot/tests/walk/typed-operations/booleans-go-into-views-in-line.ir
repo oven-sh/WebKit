@@ -1,0 +1,209 @@
+# function marks(view: Uint8Array, n: number) { for (let i = 0; i < n; i++) view[i] = true; return view[2]; }
+# function compares(view: Uint8Array, n: number) { for (let i = 0; i < n; i++) view[i] = i > 1; return view[2]; }
+# The same into an Int32Array, a Float64Array and a Uint8ClampedArray, and undefined into a Uint16Array.
+# What is no number but becomes one without running code is converted in front of the store. It once went by value: 315 instructions a store for 4.
+# RUN: walk f1 f2 f3 f4 f5 f6 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: ElemSet
+# CHECK: = PutTypedArrayElement
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: ElemSet
+# CHECK: = PutTypedArrayElement
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: ElemSet
+# CHECK: = PutTypedArrayElement
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: ElemSet
+# CHECK: = PutTypedArrayElement
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: ElemSet
+# CHECK: = PutTypedArrayElement
+# CHECK-LABEL: code f6:Body
+# CHECK-NOT: ElemSet
+# CHECK: = PutTypedArrayElement
+# RUN(SHELL): run-in-shell globalThis.sink = (...all) => { print(all.map(String).join(" ")); };
+# SHELL: 1 1 1 1 1 0
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=GlobalThis @548
+    v13 = PropGet v12 key="sink" [isFreeName] @548
+    v14 = Builtin builtin=Uint8Array @564
+    v15 = Integer integer=4 @575
+    v16 = Construct v14, -, v15 calleeName="Uint8Array" @564
+    v17 = Convert v16 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v18 = Integer integer=6 @579
+    v19 = Call v1, -, v17, v18 calleeName="marks" @553
+    v20 = Builtin builtin=Uint8Array @564
+    v21 = Integer integer=4 @575
+    v22 = Construct v20, -, v21 calleeName="Uint8Array" @564
+    v23 = Convert v22 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v24 = Integer integer=6 @579
+    v25 = Call v3, -, v23, v24 calleeName="compares" @553
+    v26 = Builtin builtin=Int32Array @564
+    v27 = Integer integer=4 @575
+    v28 = Construct v26, -, v27 calleeName="Int32Array" @564
+    v29 = Convert v28 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v30 = Integer integer=6 @579
+    v31 = Call v5, -, v29, v30 calleeName="wide" @553
+    v32 = Builtin builtin=Float64Array @564
+    v33 = Integer integer=4 @575
+    v34 = Construct v32, -, v33 calleeName="Float64Array" @564
+    v35 = Convert v34 declared={type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v36 = Integer integer=6 @579
+    v37 = Call v7, -, v35, v36 calleeName="floats" @553
+    v38 = Builtin builtin=Uint8ClampedArray @564
+    v39 = Integer integer=4 @575
+    v40 = Construct v38, -, v39 calleeName="Uint8ClampedArray" @564
+    v41 = Convert v40 declared={type=undefined|null|Uint8ClampedArray flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v42 = Integer integer=6 @579
+    v43 = Call v9, -, v41, v42 calleeName="clamps" @553
+    v44 = Builtin builtin=Uint16Array @564
+    v45 = Integer integer=4 @575
+    v46 = Construct v44, -, v45 calleeName="Uint16Array" @564
+    v47 = Convert v46 declared={type=undefined|null|Uint16Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v48 = Integer integer=6 @579
+    v49 = Call v11, -, v47, v48 calleeName="nothing" @553
+    v50 = Call v13, -, v19, v25, v31, v37, v43, v49 calleeName="sink" @548
+    v51 = Undefined @548
+    Return v51 @548
+}
+function f1 name="marks" module=m0 position=79 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Integer @119
+    v3 = Convert v2 declared={type=number} @119
+    Jump -> next b1(v3) @121
+  b1(v4: number):
+    LoopHint @121
+    v6 = Less v4, v1 @124
+    Branch v6 -> taken b2(), notTaken b3() @124
+  b2():
+    v7 = Boolean boolean=true @139
+    ElemSet v0, v4, v7 @140
+    v9 = Increment v4 @129
+    v10 = Convert v9 declared={type=number} @129
+    Jump -> next b1(v10) @129
+  b3():
+    v11 = Integer integer=2 @149
+    v12 = ElemGet v0, v11 @149
+    Return v12 @149
+}
+function f2 name="compares" module=m0 position=229 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Integer @269
+    v3 = Convert v2 declared={type=number} @269
+    Jump -> next b1(v3) @271
+  b1(v4: number):
+    LoopHint @271
+    v6 = Less v4, v1 @274
+    Branch v6 -> taken b2(), notTaken b3() @274
+  b2():
+    v7 = Integer integer=1 @289
+    v8 = Greater v4, v7 @289
+    ElemSet v0, v4, v8 @290
+    v10 = Increment v4 @279
+    v11 = Convert v10 declared={type=number} @279
+    Jump -> next b1(v11) @279
+  b3():
+    v12 = Integer integer=2 @299
+    v13 = ElemGet v0, v12 @299
+    Return v13 @299
+}
+function f3 name="wide" module=m0 position=379 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @419
+    v3 = Convert v2 declared={type=number} @419
+    Jump -> next b1(v3) @421
+  b1(v4: number):
+    LoopHint @421
+    v6 = Less v4, v1 @424
+    Branch v6 -> taken b2(), notTaken b3() @424
+  b2():
+    v7 = Integer integer=1 @439
+    v8 = Greater v4, v7 @439
+    ElemSet v0, v4, v8 @440
+    v10 = Increment v4 @429
+    v11 = Convert v10 declared={type=number} @429
+    Jump -> next b1(v11) @429
+  b3():
+    v12 = Integer integer=2 @449
+    v13 = ElemGet v0, v12 @449
+    Return v13 @449
+}
+function f4 name="floats" module=m0 position=529 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Float64Array, v1: number):
+    v2 = Integer @569
+    v3 = Convert v2 declared={type=number} @569
+    Jump -> next b1(v3) @571
+  b1(v4: number):
+    LoopHint @571
+    v6 = Less v4, v1 @574
+    Branch v6 -> taken b2(), notTaken b3() @574
+  b2():
+    v7 = Integer integer=1 @589
+    v8 = Greater v4, v7 @589
+    ElemSet v0, v4, v8 @590
+    v10 = Increment v4 @579
+    v11 = Convert v10 declared={type=number} @579
+    Jump -> next b1(v11) @579
+  b3():
+    v12 = Integer integer=2 @599
+    v13 = ElemGet v0, v12 @599
+    Return v13 @599
+}
+function f5 name="clamps" module=m0 position=679 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8ClampedArray flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8ClampedArray, v1: number):
+    v2 = Integer @719
+    v3 = Convert v2 declared={type=number} @719
+    Jump -> next b1(v3) @721
+  b1(v4: number):
+    LoopHint @721
+    v6 = Less v4, v1 @724
+    Branch v6 -> taken b2(), notTaken b3() @724
+  b2():
+    v7 = Integer integer=1 @739
+    v8 = Greater v4, v7 @739
+    ElemSet v0, v4, v8 @740
+    v10 = Increment v4 @729
+    v11 = Convert v10 declared={type=number} @729
+    Jump -> next b1(v11) @729
+  b3():
+    v12 = Integer integer=2 @749
+    v13 = ElemGet v0, v12 @749
+    Return v13 @749
+}
+function f6 name="nothing" module=m0 position=829 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint16Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint16Array, v1: number):
+    v2 = Integer @869
+    v3 = Convert v2 declared={type=number} @869
+    Jump -> next b1(v3) @871
+  b1(v4: number):
+    LoopHint @871
+    v6 = Less v4, v1 @874
+    Branch v6 -> taken b2(), notTaken b3() @874
+  b2():
+    v7 = Undefined @889
+    ElemSet v0, v4, v7 @890
+    v9 = Increment v4 @879
+    v10 = Convert v9 declared={type=number} @879
+    Jump -> next b1(v10) @879
+  b3():
+    v11 = Integer integer=2 @899
+    v12 = ElemGet v0, v11 @899
+    Return v12 @899
+}

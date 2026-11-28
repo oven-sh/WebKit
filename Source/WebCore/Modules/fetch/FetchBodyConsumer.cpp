@@ -42,6 +42,7 @@
 #include "JSDOMFormData.h"
 #include "JSDOMPromiseDeferred.h"
 #include "TextResourceDecoder.h"
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
@@ -55,7 +56,7 @@ static inline Ref<Blob> blobFromData(ScriptExecutionContext* context, Vector<uin
 }
 
 // https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
-static bool LEGACY_NODELETE isHTTPQuotedStringTokenCodePoint(char16_t c)
+NODELETE static bool isHTTPQuotedStringTokenCodePoint(char16_t c)
 {
     return c == 0x09
         || (c >= 0x20 && c <= 0x7E)
@@ -204,7 +205,7 @@ RefPtr<DOMFormData> FetchBodyConsumer::packageFormData(ScriptExecutionContext* c
     auto mimeType = parseMIMEType(contentType);
     if (auto multipartBoundary = parseMultipartBoundary(mimeType)) {
         auto boundaryWithDashes = makeString("--"_s, *multipartBoundary);
-        auto boundary = boundaryWithDashes.utf8();
+        auto boundary = makeUTF8CString(boundaryWithDashes);
         size_t boundaryLength = boundary.length();
 
         size_t currentBoundaryIndex = find(data, byteCast<uint8_t>(boundary.span()));
@@ -487,18 +488,16 @@ Ref<Blob> FetchBodyConsumer::takeAsBlob(ScriptExecutionContext* context, const S
         return Blob::create(context, buffer->extractData(), normalizedContentType);
 
     size_t packedBufferSize = std::min(buffer->size(), MinimumBlobSize);
-    Vector<uint8_t> packedBuffer;
-    packedBuffer.reserveInitialCapacity(packedBufferSize);
+    Vector<uint8_t> packedBuffer(ReserveCapacityTag { }, packedBufferSize);
 
-    Vector<Ref<SharedBuffer>> segments;
-    segments.reserveInitialCapacity(buffer->segmentsCount());
+    Vector<Ref<SharedBuffer>> segments(ReserveCapacityTag { }, buffer->segmentsCount());
     buffer->forEachSegmentAsSharedBuffer([&](Ref<SharedBuffer>&& sharedBuffer) {
         segments.append(WTF::move(sharedBuffer));
     });
     buffer = nullptr; // So that the segments above hold each a single refcount to allow extractData to move the content.
 
     SharedBufferBuilder bufferBuilder;
-    for (auto&& segment : segments) {
+    for (auto&& segment : borrow(segments)) {
         if (segment->size() >= MinimumBlobSize) {
             if (packedBuffer.size()) {
                 bufferBuilder.append(std::exchange(packedBuffer, { }));

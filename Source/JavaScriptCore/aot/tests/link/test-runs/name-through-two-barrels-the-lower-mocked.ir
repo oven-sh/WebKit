@@ -1,0 +1,52 @@
+# one step further than name-through-a-mocked-barrel.ir: top.js is not mocked, and has the name through a barrel that is
+# lib.js: export const text = "real"   barrel.js, which a test mocks: export * from "./lib.js"   top.js: export * from "./barrel.js"; export const own = "own"
+# main.test.js: import * as top from "./top.js"; out = top.text; mine = top.own
+# the control: what top.js declares itself comes through nobody
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link variables mechanisms=all
+# CHECK-NOT: variable g1 proven=
+# CHECK: variable g3 proven={{*}}string
+# RUN(MOCKS): test-run
+# MOCKS-NOT: through-mock m1 "own"
+# MOCKS: through-mock m1 "text"
+# MOCKS: through-mock m2 "text"
+# MOCKS-NOT: through-mock m3
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/top.js" displayPath="top.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="own" variable=g2}, {name="text" variable=g0 isFromStarExport=true}]
+module m2 path="/barrel.js" displayPath="barrel.js" flags=[MayBeMocked] body=f2 requests=[{target=m3 completes=true}] exports=[{name="text" variable=g0 isFromStarExport=true}]
+module m3 path="/lib.js" displayPath="lib.js" body=f3 exports=[{name="text" variable=g0}]
+entry module=m0
+variable g0 name="text" module=m3 declared={type=anything}
+variable g1 name="out" module=m0 declared={type=anything}
+variable g2 name="own" module=m1 declared={type=anything}
+variable g3 name="mine" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="text"
+    PutModuleVariable v1 variable=g1
+    v3 = PropGet v0 key="own"
+    PutModuleVariable v3 variable=g3
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="own"
+    PutModuleVariable v0 variable=g2
+    v2 = Undefined
+    Return v2
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}

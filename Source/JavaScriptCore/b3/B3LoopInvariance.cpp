@@ -32,7 +32,7 @@ struct LoopInvariance::ExecutedValueSearch {
 };
 
 struct LoopInvariance::PeelingAttempt {
-    UncheckedKeyHashMap<Value*, FirstIterationValue> values;
+    HashMap<Value*, FirstIterationValue> values;
     Vector<HoistStep, 16> steps;
     unsigned numberOfVisitedValues { 0 };
 };
@@ -306,7 +306,7 @@ bool LoopInvariance::matchesValueBeforeLoop(Value* inside, Value* before, Invali
             if (!load || !load->isLoad() || load->offset() != before->as<MemoryValue>()->offset() || !m_executedValues.contains(before))
                 return false;
             Effects effects = load->effects();
-            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes) && !m_proc.policy().validation.overlooksWritesToWhatLoopsReadAgain)
+            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes) && !m_proc.policy().validation.ignoresWritesToLocationsReloadedInLoops)
                 return false;
             walked.add(effects);
         }
@@ -596,7 +596,7 @@ static std::optional<int64_t> foldIntegers(Opcode opcode, Type typeOfOperands, i
     }
 }
 
-std::optional<int64_t> LoopInvariance::evaluateOnFirstIteration(Value* value, UncheckedKeyHashMap<Value*, int64_t>& known) const
+std::optional<int64_t> LoopInvariance::evaluateOnFirstIteration(Value* value, HashMap<Value*, int64_t>& known) const
 {
     if (value->hasInt())
         return value->asInt();
@@ -643,7 +643,7 @@ bool LoopInvariance::passesOnFirstIteration(const PendingGuard& pending) const
     Value* guard = pending.guard;
     if (guard->opcode() != Branch && guard->opcode() != Check)
         return false;
-    UncheckedKeyHashMap<Value*, int64_t> known;
+    HashMap<Value*, int64_t> known;
     std::optional<int64_t> condition = evaluateOnFirstIteration(guard->child(0), known);
     if (!condition)
         return false;

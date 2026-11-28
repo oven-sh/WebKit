@@ -181,17 +181,12 @@ public:
     }
 
     template<PtrTag tag>
-    LinkBuffer(MacroAssembler& macroAssembler, CodePtr<tag> code, size_t size, Profile profile = Profile::Uncategorized, JITCompilationEffort effort = JITCompilationMustSucceed, bool shouldPerformBranchCompaction = true)
+    LinkBuffer(MacroAssembler& macroAssembler, CodePtr<tag> code, size_t size, Profile profile = Profile::Uncategorized, JITCompilationEffort effort = JITCompilationMustSucceed)
         : m_size(size)
         , m_isRewriting(true)
         , m_profile(profile)
         , m_code(code.template retagged<LinkBufferPtrTag>())
     {
-#if ENABLE(BRANCH_COMPACTION)
-        m_shouldPerformBranchCompaction = shouldPerformBranchCompaction;
-#else
-        UNUSED_PARAM(shouldPerformBranchCompaction);
-#endif
         linkCode(macroAssembler, effort);
     }
 
@@ -397,12 +392,12 @@ ALLOW_NONLITERAL_FORMAT_END
         return m_code.dataLocation();
     }
 
-    size_t LEGACY_NODELETE size() const { return m_size; }
+    NODELETE size_t size() const { return m_size; }
     
     bool wasAlreadyDisassembled() const { return m_alreadyDisassembled; }
     void didAlreadyDisassemble() { m_alreadyDisassembled = true; }
 
-    JS_EXPORT_PRIVATE static void LEGACY_NODELETE clearProfileStatistics();
+    NODELETE JS_EXPORT_PRIVATE static void clearProfileStatistics();
     JS_EXPORT_PRIVATE static void dumpProfileStatistics(std::optional<PrintStream*> = std::nullopt);
 
     void setIsThunk() { m_isThunk = true; }
@@ -422,6 +417,9 @@ ALLOW_NONLITERAL_FORMAT_END
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
         return m_records->externalLinks;
     }
+
+    // A branch of code for an image could not be encoded, and was left as it was emitted. The code must not be used.
+    bool hasBranchOutOfReach() const { return m_hasBranchOutOfReach; }
 
     bool hasProcessAddress() const
     {
@@ -447,7 +445,7 @@ private:
 
 #if CPU(X86_64)
         Vector<X86JumpShift> jumpShifts;
-        size_t jumpShiftCursor { 0 };
+        Vector<uint32_t, 64> firstJumpShiftByStretch;
         Vector<X86EmittedJump> emittedJumps;
 #endif
         unsigned patchablePointerCount { 0 };
@@ -504,7 +502,10 @@ private:
     void takeRecords(MacroAssembler&);
     void finalizeRecords();
 #if CPU(X86_64)
-    JS_EXPORT_PRIVATE uint32_t jumpShiftAt(uint32_t offset) const;
+    uint32_t jumpShiftAt(uint32_t offset) const
+    {
+        return shortenedJumpShiftAt(m_records->jumpShifts.span(), m_records->firstJumpShiftByStretch.span(), offset);
+    }
 #endif
     JS_EXPORT_PRIVATE void didLinkCall(Call, AssemblerLabel emittedLabel, const void* target);
     JS_EXPORT_PRIVATE void didLinkJump(Jump, AssemblerLabel emittedLabel, BranchEncoding, const void* target);
@@ -552,10 +553,10 @@ private:
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
     AssemblerHashes m_assemblerHashesStorage;
 #endif
-    bool m_shouldPerformBranchCompaction { true };
 #endif
     bool m_didAllocate { false };
     bool m_didFinalize { false };
+    bool m_hasBranchOutOfReach { false };
     AssemblerPolicy m_policy;
 #ifndef NDEBUG
     bool m_completed { false };

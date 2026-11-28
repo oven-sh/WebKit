@@ -62,7 +62,7 @@ public:
     iterator end() const LIFETIME_BOUND { return { this, size() }; }
 
     bool hasValue(CSSValue&) const;
-    bool LEGACY_NODELETE hasValue(CSSValueID) const;
+    NODELETE bool hasValue(CSSValueID) const;
 
     void serializeItems(StringBuilder&, const CSS::SerializationContext&) const;
     String serializeItems(const CSS::SerializationContext&) const;
@@ -80,14 +80,13 @@ public:
     // Consider removing these functions and having callers use size() and operator[] instead.
     unsigned length() const { return size(); }
     const CSSValue* item(unsigned index) const LIFETIME_BOUND { return index < size() ? &(*this)[index] : nullptr; }
-    const CSSValue* itemWithoutBoundsCheck(unsigned index) const LIFETIME_BOUND { return &(*this)[index]; }
 
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
 
 protected:
     friend bool CSSValue::addHash(Hasher&) const;
 
-    CSSValueContainingVector(ClassType, ValueSeparator);
+    NODELETE CSSValueContainingVector(ClassType, ValueSeparator);
     CSSValueContainingVector(ClassType, ValueSeparator, CSSValueListBuilder);
     CSSValueContainingVector(ClassType, ValueSeparator, Ref<CSSValue>);
     CSSValueContainingVector(ClassType, ValueSeparator, Ref<CSSValue>, Ref<CSSValue>);
@@ -112,7 +111,7 @@ public:
     static Ref<CSSValueList> createCommaSeparated(Ref<CSSValue>); // FIXME: Upgrade callers to not use a list at all.
 
     static Ref<CSSValueList> createSpaceSeparated(CSSValueListBuilder);
-    static Ref<CSSValueList> LEGACY_NODELETE createSpaceSeparated(); // FIXME: Get rid of the caller that needs to create an empty list.
+    NODELETE static Ref<CSSValueList> createSpaceSeparated(); // FIXME: Get rid of the caller that needs to create an empty list.
     static Ref<CSSValueList> createSpaceSeparated(Ref<CSSValue>); // FIXME: Upgrade callers to not use a list at all.
     static Ref<CSSValueList> createSpaceSeparated(Ref<CSSValue>, Ref<CSSValue>);
     static Ref<CSSValueList> createSpaceSeparated(Ref<CSSValue>, Ref<CSSValue>, Ref<CSSValue>);
@@ -130,7 +129,7 @@ public:
 private:
     friend void add(Hasher&, const CSSValueList&);
 
-    explicit CSSValueList(ValueSeparator);
+    NODELETE explicit CSSValueList(ValueSeparator);
     CSSValueList(ValueSeparator, CSSValueListBuilder);
     CSSValueList(ValueSeparator, Ref<CSSValue>);
     CSSValueList(ValueSeparator, Ref<CSSValue>, Ref<CSSValue>);
@@ -148,7 +147,7 @@ inline const CSSValue& CSSValueContainingVector::operator[](unsigned index) cons
 {
     unsigned maxInlineSize = m_inlineStorage.size();
     if (index < maxInlineSize) {
-        ASSERT(index < m_size);
+        ASSERT_WITH_SECURITY_IMPLICATION(index < m_size);
         return *m_inlineStorage[index];
     }
     ASSERT(index < m_size);

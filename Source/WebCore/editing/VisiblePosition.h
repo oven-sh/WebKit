@@ -55,8 +55,8 @@ public:
     // FIXME: Change the following functions' parameter from a boolean to StayInEditableContent.
 
     // next() and previous() increment/decrement by a character cluster.
-    WEBCORE_EXPORT VisiblePosition next(EditingBoundaryCrossingRule = CanCrossEditingBoundary, bool* reachedBoundary = nullptr) const;
-    WEBCORE_EXPORT VisiblePosition previous(EditingBoundaryCrossingRule = CanCrossEditingBoundary, bool* reachedBoundary = nullptr) const;
+    WEBCORE_EXPORT VisiblePosition next(EditingBoundaryCrossingRule = EditingBoundaryCrossingRule::CanCross, bool* reachedBoundary = nullptr) const;
+    WEBCORE_EXPORT VisiblePosition previous(EditingBoundaryCrossingRule = EditingBoundaryCrossingRule::CanCross, bool* reachedBoundary = nullptr) const;
 
     VisiblePosition honorEditingBoundaryAtOrBefore(const VisiblePosition&, bool* reachedBoundary = nullptr) const;
     VisiblePosition honorEditingBoundaryAtOrAfter(const VisiblePosition&, bool* reachedBoundary = nullptr) const;
@@ -90,7 +90,7 @@ public:
 
     // This is a tentative enhancement of operator== to account for affinity.
     // FIXME: Combine this function with operator==.
-    bool LEGACY_NODELETE equals(const VisiblePosition&) const;
+    NODELETE bool equals(const VisiblePosition&) const;
 
 #if ENABLE(TREE_DEBUGGING)
     void debugPosition(ASCIILiteral msg = ""_s) const;
@@ -120,7 +120,7 @@ WEBCORE_EXPORT Element* enclosingBlockFlowElement(const VisiblePosition&);
 bool isFirstVisiblePositionInNode(const VisiblePosition&, const Node*);
 bool isLastVisiblePositionInNode(const VisiblePosition&, const Node*);
 
-bool LEGACY_NODELETE areVisiblePositionsInSameTreeScope(const VisiblePosition&, const VisiblePosition&);
+NODELETE bool areVisiblePositionsInSameTreeScope(const VisiblePosition&, const VisiblePosition&);
 
 Node* commonInclusiveAncestor(const VisiblePosition&, const VisiblePosition&);
 

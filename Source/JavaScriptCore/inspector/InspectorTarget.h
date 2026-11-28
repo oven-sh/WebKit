@@ -52,8 +52,9 @@ public:
     virtual InspectorTargetType type() const = 0;
 
     virtual bool isProvisional() const { return false; }
+    virtual String processIdentifier() const { return { }; }
     bool isPaused() const { return m_isPaused; }
-    void LEGACY_NODELETE pause();
+    NODELETE void pause();
     JS_EXPORT_PRIVATE void resume();
     JS_EXPORT_PRIVATE void setResumeCallback(WTF::Function<void()>&&);
 

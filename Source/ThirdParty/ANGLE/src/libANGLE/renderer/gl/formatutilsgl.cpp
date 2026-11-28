@@ -533,23 +533,19 @@ static GLenum GetNativeInternalFormat(const FunctionsGL *functions,
     {
         if (internalFormat.componentType == GL_FLOAT)
         {
-            if (!internalFormat.isLUMA())
+            if (IsLUMAFormat(internalFormat.format))
+            {
+                // The legacy luminance/alpha formats from OES_texture_float and
+                // OES_texture_half_float are emulated with sized R/RG textures on ES 3.0+ so that
+                // they have sized internal formats (which is required when copying from
+                // floating-point framebuffers via glCopyTexImage2D / glCopyTexSubImage2D).
+                result = EmulateLUMA(internalFormat).sizedInternalFormat;
+            }
+            else
             {
                 // Use sized internal formats for floating point textures.  Extensions such as
                 // EXT_color_buffer_float require the sized formats to be renderable.
                 result = internalFormat.sizedInternalFormat;
-            }
-            else if ((internalFormat.type == GL_FLOAT &&
-                      !functions->hasGLESExtension("GL_OES_texture_float")) ||
-                     (internalFormat.type == GL_HALF_FLOAT_OES &&
-                      !functions->hasGLESExtension("GL_OES_texture_half_float")))
-            {
-                // The legacy luminance/alpha formats from OES_texture_float are emulated with R/RG
-                // textures.
-                if (IsLUMAFormat(internalFormat.format))
-                {
-                    result = EmulateLUMA(internalFormat).sizedInternalFormat;
-                }
             }
         }
         else if (internalFormat.format == GL_RED_EXT || internalFormat.format == GL_RG_EXT)
@@ -658,6 +654,30 @@ static GLenum GetTexStorageNativeInternalFormat(const FunctionsGL *functions,
             // internal format. http://anglebug.com/42267264
             result = GL_BGRA8_EXT;
         }
+        else if (features.virtualizeBaseLevelAndMipchain.enabled)
+        {
+            // virtualizeBaseLevelAndMipchain allocates mutable texture levels and assembled
+            // mipchains with glTexStorage* and copies between them with glCopyImageSubData, which
+            // require sized internal formats and R/RG emulation for LUMA formats (since
+            // GL_LUMINANCE8_EXT / GL_LUMINANCE8_ALPHA8_EXT / GL_ALPHA8_EXT are not supported by
+            // glCopyImageSubData).
+            if (IsLUMAFormat(internalFormat.format))
+            {
+                result = EmulateLUMA(internalFormat).sizedInternalFormat;
+            }
+            else if (internalFormat.sizedInternalFormat == GL_DEPTH_COMPONENT32_OES &&
+                     !functions->hasGLESExtension("GL_OES_depth32"))
+            {
+                // Best-effort attempt to provide as many bits as possible when glTexStorage* is
+                // used for GL_DEPTH_COMPONENT / GL_UNSIGNED_INT (whose sizedInternalFormat is
+                // GL_DEPTH_COMPONENT32_OES) without GL_OES_depth32.
+                result = GL_DEPTH_COMPONENT24;
+            }
+            else
+            {
+                result = internalFormat.sizedInternalFormat;
+            }
+        }
         else
         {
             result = GetNativeInternalFormat(functions, features, internalFormat);
@@ -700,10 +720,13 @@ static GLenum GetNativeFormat(const FunctionsGL *functions,
     }
     else if (functions->isAtLeastGLES(gl::Version(3, 0)))
     {
-        // Transform sRGB formats to RGB if either the GLES driver doesn't support GL_EXT_sRGB, or
-        // to work around Adreno driver bugs reading back unsized sRGB texture data.
+        // Transform sRGB formats to RGB if either the GLES driver doesn't support GL_EXT_sRGB, to
+        // work around Adreno driver bugs reading back unsized sRGB texture data, or when
+        // virtualizeBaseLevelAndMipchain allocates sized GL_SRGB8 / GL_SRGB8_ALPHA8 storage and
+        // uploads via glTexSubImage* (which requires GL_RGB / GL_RGBA in ES 3.0).
         if (!functions->hasGLESExtension("GL_EXT_sRGB") ||
-            features.unsizedSRGBReadPixelsDoesntTransform.enabled)
+            features.unsizedSRGBReadPixelsDoesntTransform.enabled ||
+            features.virtualizeBaseLevelAndMipchain.enabled)
         {
             if (format == GL_SRGB)
             {
@@ -716,12 +739,12 @@ static GLenum GetNativeFormat(const FunctionsGL *functions,
             }
         }
 
-        if ((type == GL_FLOAT && !functions->hasGLESExtension("GL_OES_texture_float")) ||
-            (type == GL_HALF_FLOAT_OES &&
-             !functions->hasGLESExtension("GL_OES_texture_half_float")))
+        if (features.virtualizeBaseLevelAndMipchain.enabled || type == GL_FLOAT ||
+            type == GL_HALF_FLOAT_OES || type == GL_HALF_FLOAT)
         {
-            // On ES 3.0 systems that don't have GL_OES_texture_float or OES_texture_half_float, the
-            // LUMINANCE/ALPHA formats from those extensions must be emulated with R/RG textures.
+            // On ES 3.0+, floating-point LUMINANCE/ALPHA formats (and all LUMA formats when
+            // virtualizeBaseLevelAndMipchain is enabled) are emulated with sized R/RG storage,
+            // so the LUMINANCE/ALPHA formats must be uploaded with GL_RED / GL_RG.
             if (IsLUMAFormat(format))
             {
                 result = EmulateLUMAFormat(format);
@@ -767,26 +790,13 @@ static GLenum GetNativeType(const FunctionsGL *functions,
 {
     GLenum result = type;
 
-    if (functions->standard == STANDARD_GL_DESKTOP)
+    if (functions->standard == STANDARD_GL_DESKTOP || functions->isAtLeastGLES(gl::Version(3, 0)))
     {
         if (type == GL_HALF_FLOAT_OES)
         {
-            // The enums differ for the OES half float extensions and desktop GL spec.
-            // Update it.
+            // The enums differ for the OES half float extensions and desktop GL / ES 3.0+ spec
+            // (where half-float LUMA formats are emulated with sized R/RG textures). Update it.
             result = GL_HALF_FLOAT;
-        }
-    }
-    else if (functions->isAtLeastGLES(gl::Version(3, 0)))
-    {
-        if (type == GL_HALF_FLOAT_OES)
-        {
-            if (!IsLUMAFormat(format) || !functions->hasGLESExtension("GL_OES_texture_half_float"))
-            {
-                // In ES3, the luminance formats come from OES_texture_half_float, which uses
-                // HALF_FLOAT_OES. Other formats (like RGBA) use HALF_FLOAT (non-OES) in ES3.
-                // If they're emulated (see above), use HALF_FLOAT.
-                result = GL_HALF_FLOAT;
-            }
         }
     }
     else if (functions->isAtLeastGLES(gl::Version(2, 0)))
@@ -880,15 +890,80 @@ CompressedTexSubImageFormat GetCompressedSubTexImageFormat(const FunctionsGL *fu
     return result;
 }
 
+const gl::InternalFormat &GetCopyTexImageInternalFormatInfo(GLenum internalFormat, GLenum type)
+{
+    if (type == GL_HALF_FLOAT)
+    {
+        type = GL_HALF_FLOAT_OES;
+    }
+    else if (type == GL_UNSIGNED_SHORT_4_4_4_4 || type == GL_UNSIGNED_SHORT_5_5_5_1 ||
+             type == GL_UNSIGNED_SHORT_5_6_5)
+    {
+        // Each 16-bit packed type is only valid with one specific unsized format (GL_RGBA or
+        // GL_RGB), and copying from a 16-bit packed framebuffer into an unsized destination
+        // internal format (including GL_LUMINANCE, GL_LUMINANCE_ALPHA, or GL_ALPHA, or when sizing
+        // for glTexStorage2D) resolves to an 8-bit per channel unsigned normalized format.
+        type = GL_UNSIGNED_BYTE;
+    }
+    const gl::InternalFormat &formatInfo = gl::GetInternalFormatInfo(internalFormat, type);
+    if (formatInfo.internalFormat == GL_NONE)
+    {
+        return gl::GetInternalFormatInfo(internalFormat, GL_UNSIGNED_BYTE);
+    }
+    return formatInfo;
+}
+
 CopyTexImageImageFormat GetCopyTexImageImageFormat(const FunctionsGL *functions,
                                                    const angle::FeaturesGL &features,
-                                                   GLenum internalFormat)
+                                                   GLenum internalFormat,
+                                                   GLenum type)
 {
     CopyTexImageImageFormat result;
-    const gl::InternalFormat &formatInfo =
-        gl::GetInternalFormatInfo(internalFormat, GL_UNSIGNED_BYTE);
+    const gl::InternalFormat &formatInfo = GetCopyTexImageInternalFormatInfo(internalFormat, type);
     result.internalFormat = GetTexImageNativeInternalFormat(functions, features, formatInfo);
     return result;
+}
+
+bool ShouldUseScratchTextureForCopySubImage(const FunctionsGL *functions,
+                                            const angle::FeaturesGL &features,
+                                            const gl::InternalFormat &sourceFormatInfo,
+                                            GLenum destInternalFormat)
+{
+    if (!features.useScratchTextureForConvertingCopySubImage.enabled ||
+        functions->copyImageSubData == nullptr)
+    {
+        return false;
+    }
+
+    const gl::InternalFormat &destFormatInfo =
+        GetCopyTexImageInternalFormatInfo(destInternalFormat, sourceFormatInfo.type);
+    if (destFormatInfo.internalFormat == GL_NONE || destFormatInfo.isDepthOrStencil() ||
+        destFormatInfo.isLUMA() || destFormatInfo.format == GL_BGRA_EXT)
+    {
+        return false;
+    }
+
+    // glCopyTexImage2D with a sized destination internal format requires that any non-zero channel
+    // bit sizes in the destination match the source format's channel bit sizes, along with matching
+    // componentType and colorEncoding.
+    if (destFormatInfo.componentType != sourceFormatInfo.componentType ||
+        destFormatInfo.colorEncoding != sourceFormatInfo.colorEncoding ||
+        (destFormatInfo.redBits != 0 && destFormatInfo.redBits != sourceFormatInfo.redBits) ||
+        (destFormatInfo.greenBits != 0 && destFormatInfo.greenBits != sourceFormatInfo.greenBits) ||
+        (destFormatInfo.blueBits != 0 && destFormatInfo.blueBits != sourceFormatInfo.blueBits) ||
+        (destFormatInfo.alphaBits != 0 && destFormatInfo.alphaBits != sourceFormatInfo.alphaBits))
+    {
+        return false;
+    }
+
+    // PowerVR's glCopyTexSubImage2D/3D fails with GL_INVALID_OPERATION when converting between
+    // differing source and destination formats (such as dropping channels from RGBA to R, RG, or
+    // RGB) or when copying to 3-channel RGB/SRGB formats.
+    const bool isThreeChannelDest = destFormatInfo.format == GL_RGB ||
+                                    destFormatInfo.format == GL_RGB_INTEGER ||
+                                    destFormatInfo.format == GL_SRGB;
+    return sourceFormatInfo.sizedInternalFormat != destFormatInfo.sizedInternalFormat ||
+           isThreeChannelDest;
 }
 
 TexStorageFormat GetTexStorageFormat(const FunctionsGL *functions,

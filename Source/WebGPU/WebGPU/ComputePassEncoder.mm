@@ -35,6 +35,7 @@
 #import "IsValidToUseWith.h"
 #import "Pipeline.h"
 #import "QuerySet.h"
+#import <wtf/Borrow.h>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebGPU::Metal {
@@ -83,7 +84,7 @@ struct EntryUsageData {
     EntryUsage usage;
     uint32_t bindGroup;
 };
-using EntryMap = HashMap<uint64_t, EntryUsageData, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using EntryMap = HashMap<uint64_t, EntryUsageData>;
 using TextureEntryMapContainer = HashMap<const void*, EntryMap>;
 using EntryMapContainer = HashMap<const void*, EntryUsage>;
 struct BindGroupId {
@@ -229,7 +230,7 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
             continue;
 
         Ref bindGroupLayout = pipelineLayout->bindGroupLayout(bindGroupIndex);
-        for (auto* bindGroupResources : kvp.value) {
+        for (auto* bindGroupResources : borrow(kvp.value)) {
             for (size_t i = 0, sz = bindGroupResources->mtlResources.size(); i < sz; ++i) {
                 auto& usageData = bindGroupResources->resourceUsages[i];
                 constexpr ShaderStage shaderStages[] = { ShaderStage::Vertex, ShaderStage::Fragment, ShaderStage::Compute, ShaderStage::Undefined };
@@ -258,14 +259,14 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
     for (auto& kvp : m_bindGroupDynamicOffsets) {
         Ref pipelineLayout = pipeline->pipelineLayout();
         auto bindGroupIndex = kvp.key;
-        if (!pipelineLayout->updateComputeOffsets(bindGroupIndex, kvp.value, m_computeDynamicOffsets)) {
+        if (!pipelineLayout->updateComputeOffsets(bindGroupIndex, kvp.value, borrow(m_computeDynamicOffsets)->mutableSpan())) {
             makeInvalid(@"Invalid offset calculation");
             return;
         }
     }
 
     if (m_computeDynamicOffsets != m_priorComputeDynamicOffsets) {
-        [computeCommandEncoder() setBytes:&m_computeDynamicOffsets[0] length:m_computeDynamicOffsets.size() * sizeof(m_computeDynamicOffsets[0]) atIndex:m_device->maxBuffersForComputeStage()];
+        [computeCommandEncoder() setBytes:&borrow(m_computeDynamicOffsets)[0] length:m_computeDynamicOffsets.size() * sizeof(m_computeDynamicOffsets[0]) atIndex:m_device->maxBuffersForComputeStage()];
         m_priorComputeDynamicOffsets = m_computeDynamicOffsets;
     }
 }
@@ -523,7 +524,7 @@ void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* grou
         makeInvalid(@"GPUComputePassEncoder.setBindGroup: bind group is nil");
         return;
     }
-    if (NSString* error = bindGroupLayout->errorValidatingDynamicOffsets(dynamicOffsets ? dynamicOffsets->span() : std::span<const uint32_t> { }, group, m_maxDynamicOffsetAtIndex[groupIndex])) {
+    if (NSString* error = bindGroupLayout->errorValidatingDynamicOffsets(dynamicOffsets ? borrow(*dynamicOffsets)->span() : std::span<const uint32_t> { }, group, m_maxDynamicOffsetAtIndex[groupIndex])) {
         makeInvalid([NSString stringWithFormat:@"GPUComputePassEncoder.setBindGroup: %@", error]);
         return;
     }
@@ -537,13 +538,14 @@ void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* grou
     Vector<const BindableResources*> resourceList;
     for (const auto& resource : group.resources()) {
         if (resource.renderStages == BindGroup::MTLRenderStageCompute && resource.mtlResources.size())
-            [computeCommandEncoder() useResources:&resource.mtlResources[0] count:resource.mtlResources.size() usage:resource.usage];
+            [computeCommandEncoder() useResources:&borrow(resource.mtlResources)[0] count:resource.mtlResources.size() usage:resource.usage];
 
         ASSERT(resource.mtlResources.size() == resource.resourceUsages.size());
         resourceList.append(&resource);
         ASSERT(resource.mtlResources.size() == resource.resourceUsages.size());
         for (size_t i = 0, sz = resource.mtlResources.size(); i < sz; ++i) {
             auto& resourceUsage = resource.resourceUsages[i];
+            m_parentEncoder->addResidentResource(resource.mtlResources[i]);
             setCommandEncoder(resourceUsage.resource, m_parentEncoder);
         }
     }
@@ -586,62 +588,3 @@ id<MTLComputeCommandEncoder> ComputePassEncoder::computeCommandEncoder() const
 #undef RETURN_IF_FINISHED
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuComputePassEncoderAddRef(WGPUComputePassEncoder computePassEncoder)
-{
-    WebGPU::Metal::fromAPI(computePassEncoder).ref();
-}
-
-void wgpuComputePassEncoderRelease(WGPUComputePassEncoder computePassEncoder)
-{
-    WebGPU::Metal::fromAPI(computePassEncoder).deref();
-}
-
-void wgpuComputePassEncoderDispatchWorkgroups(WGPUComputePassEncoder computePassEncoder, uint32_t x, uint32_t y, uint32_t z)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->dispatch(x, y, z);
-}
-
-void wgpuComputePassEncoderDispatchWorkgroupsIndirect(WGPUComputePassEncoder computePassEncoder, WGPUBuffer indirectBuffer, uint64_t indirectOffset)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->dispatchIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
-}
-
-void wgpuComputePassEncoderEnd(WGPUComputePassEncoder computePassEncoder)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->endPass();
-}
-
-void wgpuComputePassEncoderInsertDebugMarker(WGPUComputePassEncoder computePassEncoder, WGPUStringView markerLabel)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->insertDebugMarker(WebGPU::Metal::fromAPI(markerLabel));
-}
-
-void wgpuComputePassEncoderPopDebugGroup(WGPUComputePassEncoder computePassEncoder)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->popDebugGroup();
-}
-
-void wgpuComputePassEncoderPushDebugGroup(WGPUComputePassEncoder computePassEncoder, WGPUStringView groupLabel)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->pushDebugGroup(WebGPU::Metal::fromAPI(groupLabel));
-}
-
-// No dynamic offsets is std::nullopt.
-void wgpuComputePassEncoderSetBindGroup(WGPUComputePassEncoder computePassEncoder, uint32_t groupIndex, WGPUBindGroup group, size_t dynamicOffsetCount, const uint32_t* dynamicOffsets)
-{
-    auto offsets = dynamicOffsetCount ? std::optional { unsafeMakeSpan(dynamicOffsets, dynamicOffsetCount) } : std::nullopt;
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setBindGroup(groupIndex, group ? protect(WebGPU::Metal::fromAPI(group)).ptr() : nullptr, offsets);
-}
-
-void wgpuComputePassEncoderSetPipeline(WGPUComputePassEncoder computePassEncoder, WGPUComputePipeline pipeline)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setPipeline(protect(WebGPU::Metal::fromAPI(pipeline)));
-}
-
-void wgpuComputePassEncoderSetLabel(WGPUComputePassEncoder computePassEncoder, WGPUStringView label)
-{
-    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setLabel(WebGPU::Metal::fromAPI(label));
-}

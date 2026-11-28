@@ -48,9 +48,7 @@
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <queue>
 
-namespace WebCore {
-
-namespace AXTableHelpers {
+namespace WebCore::AXTableHelpers {
 
 using namespace HTMLNames;
 
@@ -176,7 +174,7 @@ bool tableSectionIndicatesAccessibleTable(HTMLTableSectionElement& sectionElemen
     return false;
 }
 
-static const Style::ComputedStyle* LEGACY_NODELETE styleFrom(Element& element)
+NODELETE static const Style::ComputedStyle* styleFrom(Element& element)
 {
     if (auto* renderStyle = element.renderStyle())
         return renderStyle;
@@ -390,6 +388,4 @@ bool isDataTableWithTraversal(HTMLTableElement& tableElement, AXObjectCache& cac
     return false;
 }
 
-} // namespace AXTableHelpers
-
-} // namespace WebCore
+} // namespace WebCore::AXTableHelpers

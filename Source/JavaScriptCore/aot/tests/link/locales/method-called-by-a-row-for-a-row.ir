@@ -1,0 +1,23 @@
+# Reflect.apply calls Function.prototype.call, which calls the method: two rows deep nobody goes by rows, so nobody lists the call. The method is let go there, or the program would ask for no locale
+# Reflect.apply(Function.prototype.call, (5).toLocaleString, [5, globalThis.input]);
+# LIBRARY: own
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = NewArray v0, v3 contents=anything
+    v5 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder]
+    v6 = Builtin builtin=Reflect
+    v7 = Builtin builtin=ReflectApply
+    v8 = Call v7, v6, v5, v1, v4 calleeKey="apply" calleeName="Reflect.apply"
+    Return v8
+}

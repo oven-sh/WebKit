@@ -63,6 +63,7 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/ScriptCallStack.h>
+#include <wtf/Borrow.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
@@ -86,7 +87,7 @@ Lock WebSocket::s_allActiveWebSocketsLock;
 
 const size_t maxReasonSizeInBytes = 123;
 
-static inline bool LEGACY_NODELETE isValidProtocolCharacter(char16_t character)
+NODELETE static inline bool isValidProtocolCharacter(char16_t character)
 {
     // Hybi-10 says "(Subprotocol string must consist of) characters in the range U+0021 to U+007E not including
     // separator characters as defined in [RFC2616]."
@@ -99,7 +100,7 @@ static inline bool LEGACY_NODELETE isValidProtocolCharacter(char16_t character)
         && character != '{' && character != '}';
 }
 
-static bool LEGACY_NODELETE isValidProtocolString(StringView protocol)
+NODELETE static bool isValidProtocolString(StringView protocol)
 {
     if (protocol.isEmpty())
         return false;
@@ -130,7 +131,7 @@ static String joinStrings(const Vector<String>& strings, ASCIILiteral separator)
     for (size_t i = 0; i < strings.size(); ++i) {
         if (i)
             builder.append(separator);
-        builder.append(strings[i]);
+        builder.append(borrow(strings)[i]);
     }
     return builder.toString();
 }
@@ -138,7 +139,7 @@ static String joinStrings(const Vector<String>& strings, ASCIILiteral separator)
 // bufferedAmount is only ever added to while the socket is closing or closed, so it accumulates without
 // anything draining it. No single payload comes close to overflowing, but repeated sends do, and the
 // attribute has no value to report past its own range, so it stops there.
-static uint64_t LEGACY_NODELETE saturateAdd(uint64_t a, uint64_t b)
+NODELETE static uint64_t saturateAdd(uint64_t a, uint64_t b)
 {
     if (std::numeric_limits<uint64_t>::max() - a < b)
         return std::numeric_limits<uint64_t>::max();
@@ -147,7 +148,7 @@ static uint64_t LEGACY_NODELETE saturateAdd(uint64_t a, uint64_t b)
 
 // Every channel implementation stages a binary payload into a Vector or a SharedBuffer before it
 // reaches the network, so a payload longer than one of those can hold can never be framed at all.
-static bool LEGACY_NODELETE isFramablePayloadSize(size_t payloadSize)
+NODELETE static bool isFramablePayloadSize(size_t payloadSize)
 {
     return WTF::isValidCapacityForVector<uint8_t>(payloadSize);
 }
@@ -280,7 +281,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             message = makeString("WebSocket port "_s, m_url.port().value(), " blocked"_s);
         else
             message = "WebSocket without port blocked"_s;
-        context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, message);
+        context->addConsoleMessage(MessageSource::Security, MessageLevel::Error, message);
         failAsynchronously();
         return { };
     }
@@ -297,12 +298,6 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { ExceptionCode::SecurityError };
     }
 
-    if (RefPtr provider = context->socketProvider())
-        m_channel = ThreadableWebSocketChannel::create(context.get(), *this, *provider);
-
-    // Every ScriptExecutionContext should have a SocketProvider.
-    RELEASE_ASSERT(m_channel);
-
     // FIXME: There is a disagreement about restriction of subprotocols between WebSocket API and hybi-10 protocol
     // draft. The former simply says "only characters in the range U+0021 to U+007E are allowed," while the latter
     // imposes a stricter rule: "the elements MUST be non-empty strings with characters as defined in [RFC2616],
@@ -310,7 +305,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     //
     // Here, we throw SyntaxError if the given protocols do not meet the latter criteria. This behavior does not
     // comply with WebSocket API specification, but it seems to be the only reasonable way to handle this conflict.
-    for (auto& protocol : protocols) {
+    for (auto& protocol : borrow(protocols)) {
         if (!isValidProtocolString(protocol)) {
             context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), '\''));
             m_state = CLOSED;
@@ -318,13 +313,22 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         }
     }
     HashSet<String> visited;
-    for (auto& protocol : protocols) {
+    for (auto& protocol : borrow(protocols)) {
         if (!visited.add(protocol).isNewEntry) {
             context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("WebSocket protocols contain duplicates: '"_s, encodeProtocolString(protocol), '\''));
             m_state = CLOSED;
             return Exception { ExceptionCode::SyntaxError };
         }
     }
+
+    if (isContextStopped())
+        return { };
+
+    if (RefPtr provider = context->socketProvider())
+        m_channel = ThreadableWebSocketChannel::create(context.get(), *this, *provider);
+
+    // Every ScriptExecutionContext should have a SocketProvider.
+    RELEASE_ASSERT(m_channel);
 
     RunLoop::mainSingleton().dispatch([targetURL = m_url.isolatedCopy(), mainFrameURL = context->url().isolatedCopy()]() {
         ResourceLoadObserver::singleton().logWebSocketLoading(targetURL, mainFrameURL);
@@ -370,7 +374,7 @@ ExceptionOr<void> WebSocket::send(const String& message)
     LOG_WITH_STREAM(Network, stream << "WebSocket "_s << this << " send() Sending String '"_s << message << "'"_s);
     if (m_state == CONNECTING)
         return Exception { ExceptionCode::InvalidStateError };
-    auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    auto utf8 = makeUTF8CString(message);
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
         size_t payloadSize = utf8.length();
@@ -450,8 +454,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         LOG_WITH_STREAM(Network, stream << "WebSocket "_s << this << " close() code="_s << code << " reason='"_s << reason << "'"_s);
         if (!(code == ThreadableWebSocketChannel::CloseEventCodeNormalClosure || (ThreadableWebSocketChannel::CloseEventCodeMinimumUserDefined <= code && code <= ThreadableWebSocketChannel::CloseEventCodeMaximumUserDefined)))
             return Exception { ExceptionCode::InvalidAccessError };
-        auto utf8 = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-        if (utf8.length() > maxReasonSizeInBytes) {
+        if (utf8Length(reason) > maxReasonSizeInBytes) {
             protect(scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "WebSocket close message is too long."_s);
             return Exception { ExceptionCode::SyntaxError };
         }
@@ -584,7 +587,7 @@ void WebSocket::didReceiveMessage(String&& message)
         if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
             RefPtr channel = socket.m_channel;
             if (auto* inspector = channel->channelInspector()) {
-                auto utf8Message = message.utf8();
+                auto utf8Message = makeUTF8CString(message);
                 inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(byteCast<uint8_t>(utf8Message.span()), WebSocketFrame::OpCode::OpCodeText));
             }
         }
@@ -612,7 +615,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
             socket.dispatchEvent(MessageEvent::create(Blob::create(protect(socket.scriptExecutionContext()).get(), WTF::move(binaryData), emptyString()), socket.m_origin.copyRef()));
             break;
         case BinaryType::Arraybuffer:
-            socket.dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData), socket.m_origin.copyRef()));
+            socket.dispatchEvent(MessageEvent::create(ArrayBuffer::create(borrow(binaryData)->span()), socket.m_origin.copyRef()));
             break;
         }
     });

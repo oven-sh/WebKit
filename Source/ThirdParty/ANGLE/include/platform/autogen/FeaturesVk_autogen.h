@@ -446,6 +446,18 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo splitCrossFormatLayeredImageCopy = {
+        "splitCrossFormatLayeredImageCopy",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
+    FeatureInfo mutableFormatForIntColorImages = {
+        "mutableFormatForIntColorImages",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
     FeatureInfo supportsImageFormatList = {
         "supportsImageFormatList",
         FeatureCategory::VulkanFeatures,
@@ -800,6 +812,12 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo supportsExtendedDynamicState3 = {
+        "supportsExtendedDynamicState3",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
     FeatureInfo usePrimitiveRestartEnableDynamicState = {
         "usePrimitiveRestartEnableDynamicState",
         FeatureCategory::VulkanWorkarounds,
@@ -820,6 +838,78 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo supportsLogicOpDynamicState = {
         "supportsLogicOpDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsPatchControlPointsDynamicState = {
+        "supportsPatchControlPointsDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsAlphaToCoverageEnableDynamicState = {
+        "supportsAlphaToCoverageEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsAlphaToOneEnableDynamicState = {
+        "supportsAlphaToOneEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsColorBlendEnableDynamicState = {
+        "supportsColorBlendEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsColorWriteMaskDynamicState = {
+        "supportsColorWriteMaskDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsDepthClampEnableDynamicState = {
+        "supportsDepthClampEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsDepthClipNegativeOneToOneDynamicState = {
+        "supportsDepthClipNegativeOneToOneDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsLineRasterizationModeDynamicState = {
+        "supportsLineRasterizationModeDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsLogicOpEnableDynamicState = {
+        "supportsLogicOpEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsPolygonModeDynamicState = {
+        "supportsPolygonModeDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsRasterizationSamplesDynamicState = {
+        "supportsRasterizationSamplesDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsSampleMaskDynamicState = {
+        "supportsSampleMaskDynamicState",
         FeatureCategory::VulkanFeatures,
         &members,
     };
@@ -986,8 +1076,8 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
-    FeatureInfo syncMonolithicPipelinesToBlobCache = {
-        "syncMonolithicPipelinesToBlobCache",
+    FeatureInfo syncGlobalPipelineCacheToBlobCache = {
+        "syncGlobalPipelineCacheToBlobCache",
         FeatureCategory::VulkanWorkarounds,
         &members,
     };
@@ -1556,12 +1646,6 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
-    FeatureInfo supportsClipCullDistanceInGSAndTS = {
-        "supportsClipCullDistanceInGSAndTS",
-        FeatureCategory::VulkanFeatures,
-        &members,
-    };
-
     FeatureInfo supportsMaintenance9 = {
         "supportsMaintenance9",
         FeatureCategory::VulkanFeatures,
@@ -1708,7 +1792,7 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo initializeColorAttachmentWithWhite = {
         "initializeColorAttachmentWithWhite",
-        FeatureCategory::VulkanWorkarounds,
+        FeatureCategory::VulkanAppWorkarounds,
         &members,
     };
 
@@ -1738,6 +1822,24 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo supportsClFp64 = {
         "supportsClFp64",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsPipelineBinary = {
+        "supportsPipelineBinary",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo preferPipelineBinaries = {
+        "preferPipelineBinaries",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo allowPipelineBinariesForTesting = {
+        "allowPipelineBinariesForTesting",
         FeatureCategory::VulkanFeatures,
         &members,
     };

@@ -1,0 +1,328 @@
+# type Table = { handler: (x: number) => number; bias: number }   type Counter = { count: number }   type Source = { text: string }
+# function run(table: Table, times: number) { let sum = 0; for (let i = 0; i < times; i++) sum = (table.handler(sum) + table.bias) | 0; return sum; }
+# function add(counter: Counter) { counter.count = (counter.count + 1) | 0; }
+# function addAndRead(counter: Counter) { const before = counter.count; counter.count = (before + 1) | 0; return before; }
+# function count(source: Source) { let turns = 0; while (turns < source.text.length) turns++; return turns; }
+# function runs(table: Table, change) { for (let i = 0; i < 6; i++) { if (i === 3) change(table); report(run(table, 4)); } }
+# function adds(counter: Counter, change) { for (let i = 0; i < 6; i++) { if (i === 3) change(counter); report(addAndRead(counter)); add(counter); } }
+# function counts(source: Source, change) { for (let i = 0; i < 6; i++) { if (i === 3) change(source); report(count(source)); } }
+# register(runs, adds, counts, { handler, bias: 1 }, { handler, bias: 1 }, { count: 1 }, { text: "abcde" }, run, addAndRead, count)
+# The records are made in sight, every field at birth.
+# The records have escaped, and a slot is empty once its field is deleted, is redefined or has left for the extra properties. So a read of a slot stands behind a test: of the slot, or of the mark of the cell, which answers for every field of the birth.
+# A read without it hands the empty marker on as a value: to a sum as a wild number, to `.length` as a wild pointer.
+# The shell takes a field away in turn 3 of a compiled loop, behind whatever test stands in front of the loop, and each way of taking it away has a run of its own. Three answers in front of the act, then what the language says.
+# How often a getter is asked is printed: no read asks a second time.
+# The same with text in the place of the shell, on many records, with and without types: field-of-an-escaped-record-goes-away.ts and .erased.js among the stored programs.
+# RUN: run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { }); drive("other", runs, other, o => { }); drive("counter", adds, counter, o => { }); drive("source", counts, source, o => { }); };
+# CHECK: table 16 16 16 16 16 16 asked 0
+# CHECK-NEXT: other 16 16 16 16 16 16 asked 0
+# CHECK-NEXT: counter 1 3 5 7 9 11 asked 0
+# CHECK-NEXT: source 5 5 5 5 5 5 asked 0
+# CHECK-NEXT: exited with 0
+# RUN(DELETES): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { delete o.bias; }); drive("other", runs, other, o => { delete o.handler; }); drive("counter", adds, counter, o => { delete o.count; }); drive("source", counts, source, o => { delete o.text; }); };
+# DELETES: table 16 16 16 0 0 0 asked 0
+# DELETES-NEXT: other 16 16 16 TypeError asked 0
+# DELETES-NEXT: counter 1 3 5 undefined 1 3 asked 0
+# DELETES-NEXT: source 5 5 5 TypeError asked 0
+# DELETES-NEXT: exited with 0
+# A getter alone: the store of `addAndRead` throws behind its read.
+# RUN(GETTER): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { Object.defineProperty(o, "bias", { get() { asked++; return 10; } }); }); drive("other", runs, other, o => { Object.defineProperty(o, "handler", { get() { asked++; return x => x * 2; } }); }); drive("counter", adds, counter, o => { Object.defineProperty(o, "count", { get() { asked++; return 41; } }); }); drive("source", counts, source, o => { Object.defineProperty(o, "text", { get() { asked++; return "ab"; } }); }); };
+# GETTER: table 16 16 16 52 52 52 asked 12
+# GETTER-NEXT: other 16 16 16 15 15 15 asked 12
+# GETTER-NEXT: counter 1 3 5 TypeError asked 1
+# GETTER-NEXT: source 5 5 5 2 2 2 asked 9
+# GETTER-NEXT: exited with 0
+# A getter that puts a value in its own place, a getter with a setter that keeps another number than it is handed, and a getter that throws.
+# RUN(ACCESSOR): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { Object.defineProperty(o, "bias", { get() { asked++; Object.defineProperty(o, "bias", { value: 2, writable: true }); return 5; } }); }); drive("counter", adds, counter, o => { let held = 41; Object.defineProperty(o, "count", { get() { asked++; return held; }, set(value) { held = value + 10; } }); }); drive("source", counts, source, o => { Object.defineProperty(o, "text", { get() { asked++; throw new RangeError("no"); } }); }); };
+# ACCESSOR: table 16 16 16 23 20 20 asked 1
+# ACCESSOR-NEXT: counter 1 3 5 41 63 85 asked 6
+# ACCESSOR-NEXT: source 5 5 5 RangeError asked 1
+# ACCESSOR-NEXT: exited with 0
+# RUN(READONLY): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { Object.defineProperty(o, "bias", { writable: false }); }); drive("other", runs, other, o => { Object.defineProperty(o, "handler", { writable: false }); }); drive("counter", adds, counter, o => { Object.defineProperty(o, "count", { writable: false }); }); drive("source", counts, source, o => { Object.defineProperty(o, "text", { writable: false }); }); };
+# READONLY: table 16 16 16 16 16 16 asked 0
+# READONLY-NEXT: other 16 16 16 16 16 16 asked 0
+# READONLY-NEXT: counter 1 3 5 TypeError asked 0
+# READONLY-NEXT: source 5 5 5 5 5 5 asked 0
+# READONLY-NEXT: exited with 0
+# The field leaves its slot and holds what it held.
+# RUN(HIDDEN): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { Object.defineProperty(o, "bias", { enumerable: false }); }); drive("other", runs, other, o => { Object.defineProperty(o, "handler", { enumerable: false }); }); drive("counter", adds, counter, o => { Object.defineProperty(o, "count", { enumerable: false }); }); drive("source", counts, source, o => { Object.defineProperty(o, "text", { enumerable: false }); }); };
+# HIDDEN: table 16 16 16 16 16 16 asked 0
+# HIDDEN-NEXT: other 16 16 16 16 16 16 asked 0
+# HIDDEN-NEXT: counter 1 3 5 7 9 11 asked 0
+# HIDDEN-NEXT: source 5 5 5 5 5 5 asked 0
+# HIDDEN-NEXT: exited with 0
+# A value of another type than is written.
+# RUN(OTHER): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { o.bias = "1"; }); drive("other", runs, other, o => { o.handler = 7; }); drive("counter", adds, counter, o => { o.count = "40"; }); drive("source", counts, source, o => { o.text = [1, 2]; }); };
+# OTHER: table 16 16 16 34441 34441 34441 asked 0
+# OTHER-NEXT: other 16 16 16 TypeError asked 0
+# OTHER-NEXT: counter 1 3 5 40 402 404 asked 0
+# OTHER-NEXT: source 5 5 5 2 2 2 asked 0
+# OTHER-NEXT: exited with 0
+# A value of the written type that nothing in sight has stored: a fraction, a number past the integers, a function of the shell, another text.
+# RUN(WIDE): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { o.bias = 0.5; }); drive("other", runs, other, o => { o.handler = x => x + 0.25; }); drive("counter", adds, counter, o => { o.count = 4294967296.5; }); drive("source", counts, source, o => { o.text = "xy"; }); };
+# WIDE: table 16 16 16 12 12 12 asked 0
+# WIDE-NEXT: other 16 16 16 4 4 4 asked 0
+# WIDE-NEXT: counter 1 3 5 4294967296.5 2 4 asked 0
+# WIDE-NEXT: source 5 5 5 2 2 2 asked 0
+# WIDE-NEXT: exited with 0
+# A slot of raw numbers holds null and undefined as markers, and stays filled: the field has not left, and the word is no number.
+# RUN(NULLS): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { o.bias = null; }); drive("other", runs, other, o => { o.handler = null; }); drive("counter", adds, counter, o => { o.count = null; }); drive("source", counts, source, o => { o.text = null; }); };
+# NULLS: table 16 16 16 12 12 12 asked 0
+# NULLS-NEXT: other 16 16 16 TypeError asked 0
+# NULLS-NEXT: counter 1 3 5 null 2 4 asked 0
+# NULLS-NEXT: source 5 5 5 TypeError asked 0
+# NULLS-NEXT: exited with 0
+# RUN(UNDEFINED): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { o.bias = undefined; }); drive("other", runs, other, o => { o.handler = undefined; }); drive("counter", adds, counter, o => { o.count = undefined; }); drive("source", counts, source, o => { o.text = undefined; }); };
+# UNDEFINED: table 16 16 16 0 0 0 asked 0
+# UNDEFINED-NEXT: other 16 16 16 TypeError asked 0
+# UNDEFINED-NEXT: counter 1 3 5 undefined 1 3 asked 0
+# UNDEFINED-NEXT: source 5 5 5 TypeError asked 0
+# UNDEFINED-NEXT: exited with 0
+# Both fields of a table go and one comes back. One mark answers for both, so it stays while either is missing.
+# RUN(RETURNS): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { const held = o.handler; delete o.handler; delete o.bias; o.handler = held; }); drive("other", runs, other, o => { const held = o.bias; delete o.bias; delete o.handler; o.bias = held; }); drive("counter", adds, counter, o => { delete o.count; o.count = 100; }); drive("source", counts, source, o => { delete o.text; o.text = "xy"; }); };
+# RETURNS: table 16 16 16 0 0 0 asked 0
+# RETURNS-NEXT: other 16 16 16 TypeError asked 0
+# RETURNS-NEXT: counter 1 3 5 100 102 104 asked 0
+# RETURNS-NEXT: source 5 5 5 2 2 2 asked 0
+# RETURNS-NEXT: exited with 0
+# An empty slot is no undefined: the name is found one level up.
+# RUN(ABOVE): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { delete o.bias; Object.setPrototypeOf(o, { bias: 100 }); }); drive("other", runs, other, o => { delete o.handler; Object.setPrototypeOf(o, { handler: x => x * 2 }); }); drive("counter", adds, counter, o => { delete o.count; Object.setPrototypeOf(o, { count: 50 }); }); drive("source", counts, source, o => { delete o.text; Object.setPrototypeOf(o, { text: "abc" }); }); };
+# ABOVE: table 16 16 16 412 412 412 asked 0
+# ABOVE-NEXT: other 16 16 16 15 15 15 asked 0
+# ABOVE-NEXT: counter 1 3 5 50 52 54 asked 0
+# ABOVE-NEXT: source 5 5 5 3 3 3 asked 0
+# ABOVE-NEXT: exited with 0
+# RUN(FROZEN): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source) => { let said = "", asked = 0; globalThis.report = value => { said += " " + value; }; const drive = (name, loop, object, act) => { said = ""; asked = 0; try { loop(object, act); } catch (error) { said += " " + error.name; } print(name + said + " asked " + asked); }; drive("table", runs, table, o => { Object.freeze(o); }); drive("other", runs, other, o => { Object.freeze(o); }); drive("counter", adds, counter, o => { Object.freeze(o); }); drive("source", counts, source, o => { Object.freeze(o); }); };
+# FROZEN: table 16 16 16 16 16 16 asked 0
+# FROZEN-NEXT: other 16 16 16 16 16 16 asked 0
+# FROZEN-NEXT: counter 1 3 5 TypeError asked 0
+# FROZEN-NEXT: source 5 5 5 5 5 5 asked 0
+# FROZEN-NEXT: exited with 0
+# The shell calls the typed functions itself, between two calls of which it deletes, and in the last run ahead of the first call.
+# RUN(DIRECT): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source, run, addAndRead, count) => { print(run(table, 4), addAndRead(counter), count(source)); delete table.bias; delete counter.count; delete source.text; print(run(table, 4), addAndRead(counter), addAndRead(counter)); try { count(source); } catch (error) { print(error.name); } print(run(other, 4)); delete other.handler; try { run(other, 4); } catch (error) { print(error.name); } };
+# DIRECT: 16 1 5
+# DIRECT-NEXT: 0 undefined 0
+# DIRECT-NEXT: TypeError
+# DIRECT-NEXT: 16
+# DIRECT-NEXT: TypeError
+# DIRECT-NEXT: exited with 0
+# RUN(FIRST): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source, run, addAndRead, count) => { delete table.bias; delete other.handler; delete counter.count; delete source.text; print(run(table, 4), addAndRead(counter), addAndRead(counter)); try { count(source); } catch (error) { print(error.name); } try { run(other, 4); } catch (error) { print(error.name); } };
+# FIRST: 0 undefined 0
+# FIRST-NEXT: TypeError
+# FIRST-NEXT: TypeError
+# FIRST-NEXT: exited with 0
+# Records that the shell writes itself, with the names of a record of the program or with some of them. The run time may give such a literal the layout (literal-of-text-gets-the-layout-of-a-record.ir): no maker in sight has filled it.
+# RUN(LITERALS): run-in-shell globalThis.register = (runs, adds, counts, table, other, counter, source, run, addAndRead, count) => { print(run({ handler: x => x + 3, bias: 1 }, 4), run({ bias: 1, handler: x => x + 3 }, 4), run({ handler: x => x + 3 }, 4)); print(addAndRead({ count: 5 }), addAndRead({ }), addAndRead({ count: "5" })); print(count({ text: "ab" })); try { count({ }); } catch (error) { print(error.name); } try { run({ bias: 1 }, 4); } catch (error) { print(error.name); } };
+# LITERALS: 16 16 0
+# LITERALS-NEXT: 5 undefined 5
+# LITERALS-NEXT: 2
+# LITERALS-NEXT: TypeError
+# LITERALS-NEXT: TypeError
+# LITERALS-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="bias" declared={type=number} flags=[IsRequired]}, {key="handler" declared={type=undefined|null|function|f2 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="run" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="add" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g2 name="addAndRead" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g3 name="count" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g4 name="runs" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g5 name="adds" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g6 name="counts" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    v4 = NewObject -, v1, v3 layout=L0 fields=[1, 0]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v7 = NewObject -, v1, v3 layout=L0 fields=[1, 0]
+    v8 = FinishObject v7
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v10 = NewObject -, v3 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = Convert v11 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v13 = String string="abcde"
+    v14 = NewObject -, v13 layout=L2 fields=[0]
+    v15 = FinishObject v14
+    v16 = Convert v15 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="register" [isFreeName]
+    v19 = GetModuleVariable variable=g4
+    v20 = GetModuleVariable variable=g5
+    v21 = GetModuleVariable variable=g6
+    v22 = GetModuleVariable variable=g0
+    v23 = GetModuleVariable variable=g2
+    v24 = GetModuleVariable variable=g3
+    v25 = Call v18, -, v19, v20, v21, v6, v9, v12, v16, v22, v23, v24 calleeName="register"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3, v3)
+  b1(v4: number, v5: number):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="handler"
+    v9 = Call v8, v0, v4 calleeKey="handler" calleeName="table.handler"
+    v10 = Convert v9 declared={type=number}
+    v11 = PropGet v0 key="bias"
+    v12 = Add v10, v11
+    v13 = Integer
+    v14 = BitOr v12, v13
+    v15 = Convert v14 declared={type=number}
+    v16 = Increment v5
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b3():
+    v18 = Convert v4 declared={type=number}
+    Return v18
+}
+function f2 name="handler" module=m0 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=3
+    v2 = Add v0, v1
+    v3 = Convert v2 declared={type=number}
+    Return v3
+}
+function f3 name="add" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Convert v5 declared={type=number}
+    PropSet v0, v6 key="count"
+    v8 = Integer
+    v9 = Convert v8 declared={type=number}
+    Return v9
+}
+function f4 name="addAndRead" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Convert v5 declared={type=number}
+    PropSet v0, v6 key="count"
+    v8 = Convert v1 declared={type=number}
+    Return v8
+}
+function f5 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = PropGet v0 key="text"
+    v5 = PropGet v4 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Increment v2
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+}
+function f6 name="runs" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=6
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Integer integer=3
+    v8 = StrictEq v3, v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v1, -, v0 calleeName="change"
+    Jump -> next b4()
+  b4():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="report" [isFreeName]
+    v12 = GetModuleVariable variable=g0
+    v13 = Integer integer=4
+    v14 = Convert v13 declared={type=number}
+    v15 = Call v12, -, v0, v14 calleeName="run"
+    v16 = Convert v15 declared={type=number}
+    v17 = Call v11, -, v16 calleeName="report"
+    v18 = Increment v3
+    Jump -> next b1(v18)
+  b5():
+    v19 = Undefined
+    Return v19
+}
+function f7 name="adds" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=6
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Integer integer=3
+    v8 = StrictEq v3, v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v1, -, v0 calleeName="change"
+    Jump -> next b4()
+  b4():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="report" [isFreeName]
+    v12 = GetModuleVariable variable=g2
+    v13 = Call v12, -, v0 calleeName="addAndRead"
+    v14 = Convert v13 declared={type=number}
+    v15 = Call v11, -, v14 calleeName="report"
+    v16 = GetModuleVariable variable=g1
+    v17 = Call v16, -, v0 calleeName="add"
+    v18 = Increment v3
+    Jump -> next b1(v18)
+  b5():
+    v19 = Undefined
+    Return v19
+}
+function f8 name="counts" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=6
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Integer integer=3
+    v8 = StrictEq v3, v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v1, -, v0 calleeName="change"
+    Jump -> next b4()
+  b4():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="report" [isFreeName]
+    v12 = GetModuleVariable variable=g3
+    v13 = Call v12, -, v0 calleeName="count"
+    v14 = Call v11, -, v13 calleeName="report"
+    v15 = Increment v3
+    Jump -> next b1(v15)
+  b5():
+    v16 = Undefined
+    Return v16
+}

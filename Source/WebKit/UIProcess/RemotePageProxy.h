@@ -101,10 +101,10 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    WebPageProxy* LEGACY_NODELETE page() const;
+    NODELETE WebPageProxy* page() const;
 
     void injectPageIntoNewProcess();
-    void processDidTerminate(WebProcessProxy&, ProcessTerminationReason);
+    void processDidTerminate();
 
     WebPageProxyMessageReceiverRegistration& messageReceiverRegistration() LIFETIME_BOUND { return m_messageReceiverRegistration; }
 
@@ -114,7 +114,7 @@ public:
     WebCore::PageIdentifier identifierInSiteIsolatedProcess() const { return m_webPageID; }
     const WebCore::Site& site() const LIFETIME_BOUND { return m_site; }
 
-    WebProcessActivityState& LEGACY_NODELETE processActivityState();
+    NODELETE WebProcessActivityState& processActivityState();
 
     WebCore::MediaProducerMediaStateFlags mediaState() const { return m_mediaState; }
     void setDrawingArea(DrawingAreaProxy*);
@@ -126,8 +126,12 @@ public:
 
     bool hasNetworkRequestsInProgress() const { return m_hasNetworkRequestsInProgress; }
     bool canShortCircuitHorizontalWheelEvents() const { return m_canShortCircuitHorizontalWheelEvents; }
+#if ENABLE(MODEL_PROCESS)
+    bool hasModelElement() const { return m_hasModelElement; }
+#endif
 
     void disconnect(ShouldSendCloseMessage = ShouldSendCloseMessage::Yes);
+    bool isDisconnected() const { return m_disconnected; }
 
 #if ENABLE(DEVICE_ORIENTATION)
     void clearDeviceOrientationAndMotionPermissions();
@@ -151,6 +155,9 @@ private:
 
     void setNetworkRequestsInProgress(bool);
     void setCanShortCircuitHorizontalWheelEvents(bool);
+#if ENABLE(MODEL_PROCESS)
+    void setHasModelElement(bool hasModelElement) { m_hasModelElement = hasModelElement; }
+#endif
 
     const WebCore::PageIdentifier m_webPageID;
     const Ref<WebProcessProxy> m_process;
@@ -183,9 +190,10 @@ private:
 #endif
     bool m_hasNetworkRequestsInProgress { false };
     bool m_canShortCircuitHorizontalWheelEvents { true };
-#if ASSERT_ENABLED
-    bool m_disconnected { false };
+#if ENABLE(MODEL_PROCESS)
+    bool m_hasModelElement { false };
 #endif
+    bool m_disconnected { false };
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
     LayerHostingContextID m_contextIDForVisibilityPropagationInWebProcess { 0 };
 #endif

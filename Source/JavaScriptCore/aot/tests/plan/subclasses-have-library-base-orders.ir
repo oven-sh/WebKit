@@ -1,0 +1,43 @@
+# function OfLibrary() { this.second = 1; this.first = 1; }      a function of Bun's own library
+# function Heir() { OfLibrary.call(this); this.mine = 2; }  Heir.prototype.__proto__ = OfLibrary.prototype;
+# The constructor of the library lays the fields of an heir of the program in an order of its own class: the heir has that order too.
+# RUN: plan orders mechanisms=all
+# CHECK: orders L1
+# CHECK: order {{*}}"second" "first"
+
+layout L0 kind=Instance name="OfLibrary" module=m0 constructor=f1 fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Heir" module=m0 base=L0 constructor=f2 fields=[{key="first" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}, {key="second" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}, {key="mine" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="lay"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="OfLibrary" module=m0 role=Library flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="second"
+    PropSet v0, v1 key="first"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="Heir" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="mine"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="lay" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Construct v0, v0 calleeName="OfLibrary"
+    v2 = NewClosure function=f2
+    v3 = Construct v2, v2 calleeName="Heir"
+    v4 = NewArray v1, v3
+    Return v4
+}

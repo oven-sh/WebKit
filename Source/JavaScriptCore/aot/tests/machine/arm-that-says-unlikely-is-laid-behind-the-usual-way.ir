@@ -1,0 +1,53 @@
+# function marked(o, c) { if (c) { "unlikely"; o.rare; } return o.common; }   function plain(o, c) { if (c) { o.rare; } return o.common; }
+# The head of a block on the wire may say frequency=Unlikely: the front end lays it on an arm of an `if` in Bun's own modules whose first statement is the string "unlikely".
+# The walk enters such a block as an unlikely one, and the order of blocks lays it, and what is reached through it alone, behind the usual way: the test falls through.
+# The twin without the word is the control: its arm stands where it is written.
+# RUN: print
+# CHECK: b1() frequency=Unlikely:
+# RUN(WALK): walk f1:Body f2:Body
+# WALK-LABEL: code f1:Body
+# WALK: frequency=Unlikely
+# WALK-LABEL: code f2:Body
+# WALK-NOT: frequency=Unlikely
+# RUN(BYTES): bytes f1:Body f2:Body
+# BYTES-LABEL: unit f1:Body
+# BYTES: "common"
+# BYTES: "rare"
+# BYTES-LABEL: unit f2:Body
+# BYTES: "rare"
+# BYTES: "common"
+# RUN(SHELL): run-in-shell globalThis.publish = (marked, plain) => { const o = { rare: 1, common: 2 }; print([marked(o, true), marked(o, false), plain(o, true), plain(o, false)].join()); let reads = []; const seen = { get rare() { reads.push("rare"); return 1; }, get common() { reads.push("common"); return 2; } }; marked(seen, 1); marked(seen, 0); plain(seen, 1); plain(seen, 0); print(reads.join()); };
+# SHELL: 2,2,2,2
+# SHELL-NEXT: rare,common,common,rare,common,common
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="marked" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v1 -> taken b1(), notTaken b2() @10
+  b1() frequency=Unlikely:
+    v2 = PropGet v0 key="rare" @20
+    Jump -> next b2() @20
+  b2():
+    v3 = PropGet v0 key="common" @30
+    Return v3 @30
+}
+function f2 name="plain" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v1 -> taken b1(), notTaken b2() @10
+  b1():
+    v2 = PropGet v0 key="rare" @20
+    Jump -> next b2() @20
+  b2():
+    v3 = PropGet v0 key="common" @30
+    Return v3 @30
+}

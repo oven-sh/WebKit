@@ -56,10 +56,9 @@
 - (NSString *)_web_description;
 @end
 
-namespace JSC {
-namespace Bindings {
+namespace JSC::Bindings {
 
-static RetainPtr<NSString>& LEGACY_NODELETE globalException()
+NODELETE static RetainPtr<NSString>& globalException()
 {
     static NeverDestroyed<RetainPtr<NSString>> exception;
     return exception;
@@ -69,7 +68,7 @@ static RetainPtr<NSString>& LEGACY_NODELETE globalException()
 // FIXME: A new object can happen to be equal to the old one, so even pointer comparison is not safe. Maybe we can use NeverDestroyed<JSC::Weak>?
 static JSGlobalObject* s_exceptionEnvironment;
 
-static HashMap<CFTypeRef, ObjcInstance*>& LEGACY_NODELETE wrapperCache()
+NODELETE static HashMap<CFTypeRef, ObjcInstance*>& wrapperCache()
 {
     static NeverDestroyed<HashMap<CFTypeRef, ObjcInstance*>> map;
     return map;
@@ -332,7 +331,7 @@ JSC::JSValue ObjcInstance::invokeObjcMethod(JSGlobalObject* lexicalGlobalObject,
     // of return value will never exceed the size of largest scalar
     // or a pointer.
     char buffer[1024];
-    ASSERT([signature methodReturnLength] < 1024);
+    RELEASE_ASSERT([signature methodReturnLength] < 1024);
 
     if (*type != 'v') {
         [invocation getReturnValue:buffer];
@@ -505,7 +504,6 @@ JSC::JSValue ObjcInstance::valueOf(JSGlobalObject* lexicalGlobalObject) const
     return stringValue(lexicalGlobalObject);
 }
 
-}
 }
 
 @implementation NSObject (WebDescriptionCategory)

@@ -20,7 +20,7 @@ export const scalarKinds = [
 ] as const;
 export type ScalarKind = (typeof scalarKinds)[number];
 
-export const placedWordKinds = ["Request", "StaticsOffset", "OrderWord"] as const;
+export const placedWordKinds = ["OrderWord"] as const;
 export type PlacedWordKind = (typeof placedWordKinds)[number];
 
 export const generatedEnumNames = [
@@ -184,7 +184,6 @@ export interface SchemaRecord {
   readonly isCustomEngine: boolean;
   readonly isCustomText: boolean;
   readonly isExtendedEngine: boolean;
-  // The struct stands in AOT<name>.h with the same fields, and what is generated for it is its friend.
   readonly isHandwrittenStruct: boolean;
   readonly fields: readonly Field[];
   readonly wireFields: readonly Field[];
@@ -209,19 +208,16 @@ export interface PackedField {
   readonly name: string;
   readonly kind: PackedKind;
   readonly shift: number;
-  /** Null: all the bits that the fields in front of it leave. */
   readonly width: number | null;
   readonly location: Location;
 }
 
-/** A Bool field of an earlier word, or a Bool column of an enumerator there. */
 export interface PackedCondition {
   readonly field: PackedField;
   readonly column: EnumColumn | null;
   readonly isNegated: boolean;
 }
 
-/** What the bits above the common fields hold goes by one of those fields. */
 export interface PackedArms {
   readonly condition: PackedField;
   readonly whenTrue: readonly PackedField[];
@@ -424,7 +420,7 @@ export type DeclaredResult =
   | { readonly tag: "BlockParameter" }
   | { readonly tag: "Variable" | "Function" | "Layout" | "Module" | "Type" | "Overload"; readonly field: PayloadField }
   | { readonly tag: "Field"; readonly layout: PayloadField; readonly field: PayloadField }
-  | { readonly tag: "Key"; readonly key: PayloadField; readonly receiver: Operand }
+  | { readonly tag: "Key"; readonly key: PayloadField; readonly receiver: Operand | null }
   | { readonly tag: "Contents"; readonly operand: Operand; readonly slot: Member | null }
   | { readonly tag: "ResultAt"; readonly producer: Operand; readonly index: PayloadField };
 
@@ -510,11 +506,10 @@ export interface InlineBuiltin {
   readonly effects: Effects;
   readonly family: string;
   readonly hasOptionalSlowPath: boolean;
-  readonly isFormOnly: boolean;
+  readonly reckonsInLine: boolean;
   readonly location: Location;
 }
 
-/** The fields from the record of the options down to the member. */
 export type OptionMember = readonly Field[];
 
 export type OptionWordAction =
@@ -612,6 +607,13 @@ export function mayThrow(effects: Effects): boolean {
 
 export function reportsException(effects: Effects): boolean {
   return mayThrow(effects) || effects.terminates;
+}
+
+export const bitsInNarrowFlagWord = 32;
+export const bitsInWideFlagWord = 64;
+
+export function isWideFlagWord(type: SchemaEnum): boolean {
+  return type.isFlags && type.members.length > bitsInNarrowFlagWord;
 }
 
 export function innermostKindOf(kind: Kind): Kind {

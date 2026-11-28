@@ -83,6 +83,9 @@
 #include "JSWeakMap.h"
 #include "JSWeakObjectRef.h"
 #include "JSWeakSet.h"
+#if ENABLE(WEBASSEMBLY)
+#include "JSWebAssemblySuspendingWrapper.h"
+#endif
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
 #include "MarkedBlockCage.h"
@@ -227,19 +230,19 @@ void recordType(TypeCountSet& set, JSCell* cell)
     set.add(typeName);
 }
 
-constexpr bool LEGACY_NODELETE measurePhaseTiming()
+NODELETE constexpr bool measurePhaseTiming()
 {
     return false;
 }
 
-UncheckedKeyHashMap<const char*, GCTypeMap<SimpleStats>>& timingStats()
+HashMap<const char*, GCTypeMap<SimpleStats>>& timingStats()
 {
-    static UncheckedKeyHashMap<const char*, GCTypeMap<SimpleStats>>* result;
+    static HashMap<const char*, GCTypeMap<SimpleStats>>* result;
     static std::once_flag once;
     std::call_once(
         once,
         [] {
-            result = new UncheckedKeyHashMap<const char*, GCTypeMap<SimpleStats>>();
+            result = new HashMap<const char*, GCTypeMap<SimpleStats>>();
         });
     return *result;
 }
@@ -264,12 +267,12 @@ public:
     {
     }
     
-    void LEGACY_NODELETE setScope(std::optional<CollectionScope> scope)
+    NODELETE void setScope(std::optional<CollectionScope> scope)
     {
         m_scope = scope;
     }
     
-    void LEGACY_NODELETE setScope(JSC::Heap& heap)
+    NODELETE void setScope(JSC::Heap& heap)
     {
         setScope(heap.collectionScope());
     }
@@ -426,9 +429,12 @@ Heap::~Heap()
 
     m_mutatorMarkStack->clear();
 
-    while (WeakBlock* block = m_detachedWeakBlocks.removeHead())
-        WeakBlock::destroy(*this, block);
-    destroyAllPooledWeakBlocks();
+    {
+        Locker locker { m_weakBlockLock };
+        while (WeakBlock* block = m_detachedWeakBlocks.removeHead())
+            WeakBlock::destroy(*this, block);
+        destroyAllPooledWeakBlocks();
+    }
     ASSERT(!m_weakBlockCount);
 }
 
@@ -491,6 +497,7 @@ void Heap::shutDown()
     m_isSafeToCollect = false;
     dataLogIf(Options::logGC(), "disabled collection, ");
 
+    assertIsAccessHolder();
     if (hadJoined) {
         waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::Leave, this, nullptr }));
         dataLogIf(Options::logGC(), "left the collector, ");
@@ -522,16 +529,40 @@ void Heap::lastChanceToFinalize()
 }
 
 #if ASSERT_ENABLED
-void Heap::assertIsMutatorOrMutatorIsStopped() const
+void Heap::assertIsAccessHolder() const
+{
+    ASSERT(currentThreadIsAccessHolder());
+}
+
+void Heap::assertIsExclusiveAccessHolder() const
+{
+    assertIsAccessHolder();
+    ASSERT(m_accessHolderCount.loadRelaxed() == 1);
+}
+
+void Heap::assertIsExclusiveAccessHolderOrConductorWithWorldStopped() const
 {
     if (worldIsStopped())
-        return;
-    if (auto owner = vm().apiLock().ownerThread())
-        ASSERT(owner->get() == &Thread::currentSingleton());
-    else {
-        // FIXME: It feels like heap access should be tied to holding the API lock.
-        ASSERT(hasAccess());
+        ASSERT(m_collector->currentThreadIsConductor());
+    else
+        assertIsExclusiveAccessHolder();
+}
+
+bool Heap::currentThreadIsAccessHolder() const
+{
+    return !worldIsStopped() && currentThreadAcquiredAccess();
+}
+
+bool Heap::currentThreadAcquiredAccess() const
+{
+    if (!hasAccess())
+        return false;
+    if (vm().apiLock().isWebThreadAware()) {
+        // In iOS's legacy WebKit, the UI thread and WebThread share heap access: one of them acquired it, and whichever
+        // holds the web lock uses it. isMainThread() is true only on the thread holding that lock.
+        return isMainThread();
     }
+    return m_accessHolderThreadUID.loadRelaxed() == Thread::currentSingleton().uid();
 }
 #endif
 
@@ -766,7 +797,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
 #if ENABLE(AOT)
     if (vm().hasCompiledCode())
-        AOT::HeapHooks::finalize(vm(), collectionScope, m_collector->m_phaseVersion);
+        AOT::HeapHooks::finalize(vm(), collectionScope);
 #endif
 
     {
@@ -897,7 +928,7 @@ void Heap::beginMarking()
     TimingScope timingScope(*this, "Heap::beginMarking"_s);
     ASSERT(isInPhase(CollectorPhase::Begin));
     ASSERT(m_collectionScope);
-    ASSERT(!m_bytesMarkedThisCycle.load(std::memory_order_relaxed));
+    ASSERT(!m_bytesMarkedThisCycle.load<MemoryOrder::Relaxed>());
     if (*m_collectionScope == CollectionScope::Full)
         m_mutatorMarkStack->clear();
     m_jitStubRoutines->clearMarks();
@@ -996,9 +1027,10 @@ void Heap::endMarking()
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(m_objectSpace.isMarking());
 
-    updateOldGenerationCellBytes(m_bytesMarkedThisCycle.exchange(0, std::memory_order_relaxed));
+    updateOldGenerationCellBytes(m_bytesMarkedThisCycle.exchange<MemoryOrder::Relaxed>(0));
 
     m_objectSpace.endMarking();
+    trimPooledWeakBlocksAfterMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
 #if USE(BUN_JSC_ADDITIONS)
     if (vm().clientData) {
@@ -1043,9 +1075,6 @@ void Heap::pruneDeadReferences()
     auto scopeExit = makeScopeExit([&] {
         Thread::currentSingleton().setCurrentAtomStringTable(previous);
     });
-#if ENABLE(AOT)
-    AOT::HeapHooks::WorkForStoppedVMScope workForStoppedVM(vm());
-#endif
 
     if (vm().typeProfiler())
         vm().typeProfiler()->invalidateTypeSetCache(vm());
@@ -1259,7 +1288,7 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
     // What they allocate must not start a collection either (this thread could still start one): returning code to its
     // cache rewrites an executable's code block slots into something a marker must not see half done.
     bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache);
-    UncheckedKeyHashSet<UnlinkedCodeBlock*> linkedAgainst;
+    HashSet<UnlinkedCodeBlock*> linkedAgainst;
     std::optional<DeferGC> deferGC;
     if (returnsCodeToCache) {
         deferGC.emplace(vm);
@@ -1281,7 +1310,7 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
         // decoding it again first would only hand the resumed activation new copies of everything it already has.
         // Suspended, or not started yet: the state is a resume point (not negative). One that is running has a CodeBlock,
         // and one that has finished is Completed, or for an async function, which never gets there, still Executing.
-        UncheckedKeyHashSet<UnlinkedFunctionExecutable*> suspended;
+        HashSet<UnlinkedFunctionExecutable*> suspended;
         auto addIfSuspended = [&] (JSValue state, JSValue next) {
             if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
                 return;
@@ -1469,7 +1498,12 @@ void Heap::sweepSynchronously()
     }
     m_objectSpace.sweepBlocks();
     m_objectSpace.shrink();
-    destroyAllPooledWeakBlocks();
+    // collectNow() can get here after the mutator, conducting, has already begun the next collection.
+    // trimPooledWeakBlocksAfterMarking() trims the pool once those markers stop.
+    if (!m_objectSpace.isMarking()) {
+        Locker locker { m_weakBlockLock };
+        destroyAllPooledWeakBlocks();
+    }
 #if ENABLE(WEBASSEMBLY)
     Wasm::TypeInformation::cleanupIfRequested();
 #endif
@@ -1585,7 +1619,7 @@ ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
 #endif
     if (!vm.currentThreadIsHoldingAPILock())
         return "the caller does not hold the API lock"_s;
-    if (!hasHeapAccess())
+    if (!hasAccess())
         return "the caller has released heap access"_s;
     if (!m_isSafeToCollect || m_isShuttingDown)
         return "the heap is not ready for collections"_s;
@@ -1671,10 +1705,10 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
         unsigned count { 0 };
     };
     Vector<Candidate> candidates;
-    UncheckedKeyHashSet<MarkedBlock*> candidateBlocks;
-    UncheckedKeyHashSet<HeapCell*> pinned;
-    UncheckedKeyHashSet<HeapCell*> cellsOnStack;
-    UncheckedKeyHashMap<HeapCell*, Claim> claims;
+    HashSet<MarkedBlock*> candidateBlocks;
+    HashSet<HeapCell*> pinned;
+    HashSet<HeapCell*> cellsOnStack;
+    HashMap<HeapCell*, Claim> claims;
 
     // A candidate that is not evacuated in the end hands out its free cells again.
     auto restoreCandidates = makeScopeExit([&] {
@@ -1885,7 +1919,7 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
         m_lastAuxiliaryEvacuationVersion = m_objectSpace.markingVersion();
 
     if (isTesting) [[unlikely]] {
-        UncheckedKeyHashSet<HeapCell*> evacuated;
+        HashSet<HeapCell*> evacuated;
         for (HeapCell* cell : evacuatedCells)
             evacuated.add(cell);
         HeapIterationScope iterationScope(*this);
@@ -1932,11 +1966,13 @@ void Heap::collect(Synchronousness synchronousness, GCRequest request)
     if (!m_isSafeToCollect)
         return;
 
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    assertIsAccessHolder();
+
     // A synchronous request needs a collection that starts after it; an asynchronous one doesn't.
     if (synchronousness == Async && m_collector->isSubsumedByQueuedRequest(request))
         return;
 
-    ASSERT(vm().currentThreadIsHoldingAPILock());
     RELEASE_ASSERT(vm().atomStringTable() == Thread::currentSingleton().atomStringTable());
 
     stopIfNecessary();
@@ -1953,6 +1989,8 @@ void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
 
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
+
+    assertIsAccessHolder();
 
     switch (synchronousness) {
     case Async: {
@@ -2013,10 +2051,10 @@ void Heap::stopThePeriphery()
 {
     RELEASE_ASSERT(!m_worldIsStopped);
     
-    if (m_mutatorDidRun)
+    if (m_mutatorHadAccessSinceLastStop)
         m_mutatorExecutionVersion++;
     
-    m_mutatorDidRun = false;
+    m_mutatorHadAccessSinceLastStop = false;
 
     m_worldIsStopped = true;
 
@@ -2036,13 +2074,14 @@ void Heap::resumeThePeriphery()
     m_objectSpace.resumeAllocating();
 
     m_barriersExecuted = 0;
-    
+
     RELEASE_ASSERT(m_worldIsStopped);
     m_worldIsStopped = false;
 }
 
 bool Heap::stopTheMutator()
 {
+    m_collector->assertIsCollectorThread();
     for (;;) {
         unsigned oldState = m_worldState.load();
         // Only called by the collector thread when it is conducting.
@@ -2077,6 +2116,7 @@ bool Heap::stopTheMutator()
 
 NEVER_INLINE void Heap::resumeTheMutator()
 {
+    m_collector->assertIsCollectorThread();
     dataLogLnIf(HeapInternal::verbose, "Resuming the mutator.");
     for (;;) {
         unsigned oldState = m_worldState.load();
@@ -2099,37 +2139,43 @@ void Heap::stopIfNecessarySlow()
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
-    while (stopIfNecessarySlow(m_worldState.load())) { }
-    
-    // RELEASE_ASSERT(m_worldState.load() & hasAccessBit);
-    // RELEASE_ASSERT(!(m_worldState.load() & stoppedBit));
-    
-    handleNeedCollectionEpilogue();
-    m_mutatorDidRun = true;
+    assertIsAccessHolder();
+    stopIfNecessarySlow(m_worldState.load());
 }
 
-bool Heap::stopIfNecessarySlow(unsigned oldState)
+void Heap::stopIfNecessarySlow(unsigned oldState)
 {
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
-    // RELEASE_ASSERT(oldState & hasAccessBit);
-    // RELEASE_ASSERT(!(oldState & stoppedBit));
-    
-    // It's possible for us to wake up with the epilogue already requested but the world not yet
-    // resumed. If that happens, we can't run the epilogue yet.
-    if (handleNeedCollectionEpilogue(oldState))
-        return true;
+    // RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+    // RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
+    // Bun: with the two assertions above off, a caller may have no heap access. For it the epilogue can be pending, and
+    // its next acquireAccess() runs it.
+    RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit) || !(oldState & hasAccessBit), oldState);
 
     // FIXME: When entering the concurrent phase, we could arrange for this branch not to fire, and then
     // have the SlotVisitor do things to the m_worldState to make this branch fire again. That would
     // prevent us from polling this so much. Ideally, stopIfNecessary would ignore the mutatorHasConnBit
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
-    if ((oldState & mutatorHasConnBit) && !(Options::runsCompiledImage() && m_collector->isNotRunning()))
+    if ((oldState & mutatorHasConnBit) && !(Options::runsCompiledImage() && m_collector->isNotRunning())) {
+        // Bun: a caller without heap access runs an epilogue that is pending before it conducts, as it did when this
+        // function began with handleNeedCollectionEpilogue(): the Collector asserts that none is pending.
+        bool hasAccess = oldState & hasAccessBit;
+        if (!hasAccess) [[unlikely]]
+            handleNeedCollectionEpilogue();
         collectInMutatorThread();
-    
-    return false;
+
+        // Conducting leaves the mutator with heap access, and resuming the world ran any epilogue.
+        unsigned state = m_worldState.load();
+        if (hasAccess) [[likely]] {
+            RELEASE_ASSERT(state & hasAccessBit, state);
+            RELEASE_ASSERT(!(state & stoppedBit), state);
+        }
+        RELEASE_ASSERT(!(state & needCollectionEpilogueBit), state);
+        m_mutatorHadAccessSinceLastStop = true;
+    }
 }
 
 NEVER_INLINE void Heap::collectInMutatorThread()
@@ -2142,6 +2188,8 @@ NEVER_INLINE void Heap::collectInMutatorThreadUntilDone()
 {
     SetForScope marksInConcurrentPhase { m_collector->m_conductorMarksInConcurrentPhase, true };
     collectInMutatorThread();
+    // As where stopIfNecessarySlow() conducts: stopThePeriphery() cleared this, and the mutator resumes with heap access.
+    m_mutatorHadAccessSinceLastStop = true;
 }
 
 // Kept out of line so waitForCollector's frame has no rarely written slots. When the mutator runs the collection itself it does so
@@ -2151,32 +2199,22 @@ static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, uns
     ParkingLot::compareAndPark(&worldState, expected);
 }
 
-template<typename Func>
-void Heap::waitForCollector(NOESCAPE const Func& func)
+void Heap::waitForCollector(NOESCAPE const ConstInvocable<bool()> auto& isDone)
 {
     for (;;) {
-        bool done;
-        {
-            Locker locker { *m_collector->m_threadLock };
-            done = func(locker);
-            if (!done) {
-                setMutatorWaiting();
-                
-                // At this point, the collector knows that we intend to wait, and he will clear the
-                // waiting bit and then unparkAll when the GC cycle finishes. Clearing the bit
-                // prevents us from parking except if there is also stop-the-world. Unparking after
-                // clearing means that if the clearing happens after we park, then we will unpark.
-            }
-        }
-        
-        // If we're in a stop-the-world scenario, we need to wait for that even if done is true.
+        // Set the waiting bit before checking, so that if what we wait for completes after the check, the Collector
+        // always sees that we're waiting, and clears the bit and wakes us.
+        setMutatorWaiting();
+        bool done = isDone();
+        if (done)
+            clearMutatorWaiting();
+
+        // We hold access, so the collector cannot stop us. If it handed us the conn, we must run the phase ourselves.
         unsigned oldState = m_worldState.load();
-        if (stopIfNecessarySlow(oldState))
-            continue;
-        
-        m_mutatorDidRun = true;
-        // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
-        // do the collection.
+        stopIfNecessarySlow(oldState);
+
+        // Give the conn back so the collector thread can carry the collection forward, since we won't poll while parked.
+        // FIXME: Could conduct the whole collection here instead, since this thread has nothing else to do.
         if (!Options::runsCompiledImage())
             relinquishConn();
         else if (relinquishConn(oldState))
@@ -2187,12 +2225,10 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
             continue;
         }
 
-        if (done) {
-            clearMutatorWaiting(); // Clean up just in case.
+        if (done)
             return;
-        }
-        
-        // If mutatorWaitingBit is still set then we want to wait.
+
+        // Park only if the waiting bit is still set. The Collector clears it before unparking, so we cannot miss the unpark.
         parkWhileWorldStateIs(m_worldState, oldState | mutatorWaitingBit);
     }
 }
@@ -2218,8 +2254,9 @@ void Heap::acquireAccessSlow()
         RELEASE_ASSERT(!(oldState & stoppedBit));
         unsigned newState = oldState | hasAccessBit;
         if (m_worldState.compareExchangeWeak(oldState, newState)) {
+            noteAccessAcquired();
+            assertIsAccessHolder();
             handleNeedCollectionEpilogue();
-            m_mutatorDidRun = true;
             stopIfNecessary();
             return;
         }
@@ -2233,17 +2270,19 @@ void Heap::releaseAccessSlow()
         RELEASE_ASSERT(oldState & hasAccessBit, oldState);
         RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
         RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
-
-        if (handleNeedCollectionEpilogue(oldState))
-            continue;
+        RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit), oldState);
 
         if ((oldState & mutatorHasConnBit) && !m_collector->tryEnsureThreadForWork()) [[unlikely]] {
+            // releaseAccess() has noted that this thread gave its access up. It still has it, and conducts with it.
+            noteAccessAcquired();
+            assertIsAccessHolder();
             collectInMutatorThreadUntilDone();
+            noteAccessReleased();
             continue;
         }
-        
+
         unsigned newState = oldState & ~(hasAccessBit | mutatorHasConnBit);
-        
+
         if ((oldState & mutatorHasConnBit)
             && m_collector->m_nextPhase != m_collector->m_currentPhase) {
             // This means that the collector thread had given us the conn so that we would do something
@@ -2279,19 +2318,14 @@ bool Heap::relinquishConn(unsigned oldState)
     return true;
 }
 
-// Out of line for the same reason: its Locker would be two more such slots.
+// Out of line for the same reason: the Locker of Collector::didRelinquishConn() would be two more such slots.
 NEVER_INLINE void Heap::finishRelinquishingConn()
 {
     dataLogLnIf(HeapInternal::verbose, "Relinquished the conn.");
-    
+
     sanitizeStackForVM(vm());
-    
-    Locker locker { *m_collector->m_threadLock };
-    if (m_collector->hasWorkWithLock()) {
-        RELEASE_ASSERT(!m_collector->m_threadShouldStop);
-        m_collector->m_threadCondition->notifyOne(locker);
-    }
-    ParkingLot::unparkAll(&m_worldState);
+
+    m_collector->didRelinquishConn();
 }
 
 void Heap::relinquishConn()
@@ -2311,8 +2345,7 @@ NEVER_INLINE bool Heap::handleNeedCollectionEpilogue(unsigned oldState)
         return false;
     if (m_worldState.compareExchangeWeak(oldState, oldState & ~needCollectionEpilogueBit)) {
         runCollectionEpilogue();
-        // Wake up anyone waiting for us to run the epilogue. Note that they may have woken up already, in
-        // which case they would be waiting for us to release heap access.
+        // Wake the collector thread if it is waiting for the epilogue to run.
         ParkingLot::unparkAll(&m_worldState);
         return true;
     }
@@ -2328,20 +2361,21 @@ void Heap::setNeedCollectionEpilogue()
 {
     unsigned oldState = m_worldState.exchangeOr(needCollectionEpilogueBit);
     // Only End sets this, once per collection, while the mutator is stopped or conducting.
+    ASSERT(isInPhase(CollectorPhase::End));
     RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit), oldState);
     RELEASE_ASSERT((oldState & stoppedBit) || (oldState & mutatorHasConnBit), oldState);
-    ParkingLot::unparkAll(&m_worldState);
     m_stopIfNecessaryTimer->scheduleSoon();
 }
 
 void Heap::waitWhileNeedCollectionEpilogue()
 {
+    m_collector->assertIsCollectorThread();
     for (;;) {
         unsigned oldState = m_worldState.load();
         if (!(oldState & needCollectionEpilogueBit)) {
-            // This means that either there was no epilogue request or the main thread will run it
-            // with heap access, so a subsequent call to stopTheWorld() will return only when
-            // the epilogue finishes.
+            // The mutator clears the bit just before running the epilogue, so the epilogue may still be running.
+            // Returning is still safe: the mutator holds access while it runs, so stopTheMutator() hands it the conn
+            // instead of stopping it, and the mutator conducts only once the epilogue has finished.
             return;
         }
         ParkingLot::compareAndPark(&m_worldState, oldState);
@@ -2357,6 +2391,8 @@ void Heap::setMutatorWaiting()
 
 void Heap::clearMutatorWaiting()
 {
+    // The waiter, or the conductor serving it.
+    ASSERT(currentThreadIsAccessHolder() || m_collector->currentThreadIsConductor());
     unsigned oldState = m_worldState.exchangeAnd(~mutatorWaitingBit);
     if (oldState & mutatorWaitingBit) {
         RELEASE_ASSERT(oldState & hasAccessBit, oldState);
@@ -2400,6 +2436,9 @@ void Heap::sweepAndClearCachesInEpilogue()
     m_stringsFoundOnStack.clear();
 
     vm().immutableButterflyToStringCache.clear();
+
+    for (auto* observer : m_observers)
+        observer->clearCachesInEpilogue();
 }
 
 void Heap::runCollectionEpilogue()
@@ -2413,8 +2452,13 @@ void Heap::runCollectionEpilogue()
     if (!m_didSkipMarkingInLastCollection)
         sweepAndClearCachesInEpilogue();
 
-    for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
+    // A callback may add or remove callbacks, so index into the vector rather than iterating it.
+    for (size_t i = 0; i < m_gcCompletionCallbacks.size();) {
+        GCCompletionCallback callback = m_gcCompletionCallbacks[i];
         callback.run(vm());
+        if (i < m_gcCompletionCallbacks.size() && m_gcCompletionCallbacks[i] == callback)
+            ++i;
+    }
 
 #if USE(BUN_JSC_ADDITIONS)
     if (Options::evacuateAuxiliaryBlocksAfterEveryFullCollection() && m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) [[unlikely]]
@@ -2432,26 +2476,23 @@ void Heap::runCollectionEpilogue()
 
 void Heap::waitForMembershipChange(Collector::MembershipChange::Ticket ticket)
 {
-    waitForCollector(
-        [&](const AbstractLocker&) WTF_REQUIRES_LOCK(*m_collector->m_threadLock) -> bool {
-            return m_collector->hasAppliedMembershipChangeWithLock(ticket);
-        });
+    waitForCollector([&] {
+        return m_collector->hasAppliedMembershipChange(ticket);
+    });
 }
 
 void Heap::waitForCollection(GCRequest::Ticket ticket)
 {
-    waitForCollector(
-        [&](const AbstractLocker&) WTF_REQUIRES_LOCK(*m_collector->m_threadLock) -> bool {
-            return m_collector->hasServedTicketWithLock(ticket);
-        });
+    waitForCollector([&] {
+        return m_collector->hasServedTicket(ticket);
+    });
 }
 
 void Heap::waitForAllCollections()
 {
-    waitForCollector(
-        [&](const AbstractLocker&) WTF_REQUIRES_LOCK(*m_collector->m_threadLock) -> bool {
-            return !m_collector->hasPendingGCRequestWithLock();
-        });
+    waitForCollector([&] {
+        return !m_collector->hasPendingGCRequest();
+    });
 }
 
 void Heap::sweepEagerlyInEpilogue()
@@ -2759,20 +2800,18 @@ void Heap::addFinalizer(JSCell* cell, LambdaFinalizer function)
     WeakSet::allocate(cell, &m_lambdaFinalizerOwner, function.leak()); // Balanced by LambdaFinalizerOwner::finalize().
 }
 
-void Heap::CFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
+WeakHandleOwner::FinalizeResult Heap::CFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
 {
-    HandleSlot slot = handle.slot();
     CFinalizer finalizer = std::bit_cast<CFinalizer>(context);
-    finalizer(slot->asCell());
-    WeakSet::deallocate(WeakImpl::asWeakImpl(slot));
+    finalizer(handle.get().asCell());
+    return FinalizeResult::DeallocateImpl;
 }
 
-void Heap::LambdaFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
+WeakHandleOwner::FinalizeResult Heap::LambdaFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
 {
     auto finalizer = WTF::adopt(static_cast<LambdaFinalizer::Impl*>(context));
-    HandleSlot slot = handle.slot();
-    finalizer(slot->asCell());
-    WeakSet::deallocate(WeakImpl::asWeakImpl(slot));
+    finalizer(handle.get().asCell());
+    return FinalizeResult::DeallocateImpl;
 }
 
 void Heap::collectNowFullIfNotDoneRecently(Synchronousness synchronousness)
@@ -2840,35 +2879,56 @@ void Heap::setInitialAllocationBudget(size_t bytes)
 }
 #endif
 
-void Heap::addDetachedWeakBlock(WeakBlock* block)
+void Heap::addDetachedWeakBlock(Locker<Lock>& locker, WeakBlock* block)
 {
     RELEASE_ASSERT(!block->next() && !block->prev());
     ASSERT(&block->heap() == this);
-    block->setDetached();
+    block->setDetached(locker);
     m_detachedWeakBlocks.append(block);
 }
 
-void Heap::releaseDetachedWeakBlock(WeakBlock* block)
+void Heap::releaseDetachedWeakBlock(Locker<Lock>& locker, WeakBlock* block, IsConcurrent isConcurrent)
 {
     ASSERT(&block->heap() == this);
     m_detachedWeakBlocks.remove(block);
-    returnWeakBlockToPool(block);
+    returnWeakBlockToPool(locker, block, isConcurrent);
 }
 
-void Heap::returnWeakBlockToPool(WeakBlock* block)
+void Heap::returnWeakBlockToPool(Locker<Lock>& locker, WeakBlock* block, IsConcurrent isConcurrent)
 {
-    RELEASE_ASSERT(!block->next() && !block->prev());
     ASSERT(&block->heap() == this);
     ASSERT(block->isEmpty());
 
-    if (m_pooledWeakBlockCount >= maxPooledWeakBlocks()) {
-        WeakBlock::destroy(*this, block);
-        return;
-    }
+    addWeakBlockToPool(locker, block);
 
-    block->setPooled();
+    // Destroying a block updates the mutator's block accounting, so a concurrent caller can leave the
+    // pool over its limit for the mutator to trim here. Concurrent markers read Weak<>s without a lock
+    // (e.g. SlotVisitor::append(const Weak<T>&)), so one may still hold a WeakImpl* into a pooled
+    // block; trimPooledWeakBlocksAfterMarking() trims once they have stopped.
+    if (isConcurrent == IsConcurrent::No && !m_objectSpace.isMarking())
+        trimWeakBlockPool();
+}
+
+void Heap::trimWeakBlockPool()
+{
+    unsigned maxPooled = maxPooledWeakBlocks();
+    while (m_pooledWeakBlockCount > maxPooled)
+        WeakBlock::destroy(*this, takeWeakBlockFromPool());
+}
+
+void Heap::addWeakBlockToPool(Locker<Lock>& locker, WeakBlock* block)
+{
+    RELEASE_ASSERT(!block->next() && !block->prev());
+    block->setPooled(locker);
     m_pooledWeakBlocks.push(block);
     ++m_pooledWeakBlockCount;
+}
+
+void Heap::trimPooledWeakBlocksAfterMarking()
+{
+    ASSERT(isInPhase(CollectorPhase::End));
+    Locker locker { m_weakBlockLock };
+    trimWeakBlockPool();
 }
 
 unsigned Heap::maxPooledWeakBlocks()
@@ -2971,14 +3031,11 @@ void Heap::collectForExhaustedCage()
     if (vm().hasCompiledCode())
         AOT::HeapHooks::willCollectForExhaustedCage(vm());
 #endif
-    // Helper threads allocate memory of their own.
-    collector().willCollectWithoutHelpers();
     collectNow(Sync, CollectionScope::Full);
 #if ASAN_ENABLED
     // Under ASan a block keeps the cells that a collection found dead until the next collection.
     collectNow(Sync, CollectionScope::Full);
 #endif
-    collector().didCollectWithoutHelpers();
 }
 
 bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
@@ -3053,6 +3110,7 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
 
     if (!m_isSafeToCollect)
         return;
+    assertIsAccessHolder();
 
     switch (mutatorState()) {
     case MutatorState::Running:
@@ -3198,7 +3256,7 @@ void Heap::didFreeBlock(size_t capacity)
 #if ENABLE(SAMPLING_PROFILER)
 constexpr bool samplingProfilerSupported = true;
 template<typename Visitor>
-static ALWAYS_INLINE void visitSamplingProfiler(VM& vm, Visitor& visitor)
+static ALWAYS_INLINE void visitSamplingProfiler(VM& vm, Visitor& visitor) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole)
 {
     SamplingProfiler* samplingProfiler = vm.samplingProfiler();
     if (samplingProfiler) [[unlikely]] {
@@ -3213,7 +3271,7 @@ static ALWAYS_INLINE void visitSamplingProfiler(VM& vm, Visitor& visitor)
 };
 #else
 constexpr bool samplingProfilerSupported = false;
-static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { };
+static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole) { };
 #endif
 
 Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
@@ -3234,6 +3292,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                 return;
             
             TimingScope preConvergenceTimingScope(*this, "Constraint: conservative scan"_s);
+            m_collector->assertIsMarkerWithWorldStopped();
             m_objectSpace.prepareForConservativeScan();
             m_jitStubRoutines->prepareForConservativeScan();
 
@@ -3243,7 +3302,6 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                 // If we tried to scan while not under a safepoint we could stop a thread that's in the process of calling
                 // one of the callees we are looking for.
                 // FIXME: Should we have two constraints for this? One for concurrent and one under safepoint at the bitter end.
-                ASSERT(worldIsStopped());
                 ConservativeRoots conservativeRoots(*this);
 
                 gatherStackRoots(conservativeRoots);
@@ -3251,17 +3309,9 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
 
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ConservativeScan);
                 visitor.append(conservativeRoots);
-#if ENABLE(AOT)
-                if (vm().hasCompiledCode())
-                    AOT::HeapHooks::visitCalleesOfFrames(vm(), visitor, m_collector->m_phaseVersion);
-#endif
                 if (auto* verifierVisitor = m_collector->m_verifierSlotVisitor.get()) [[unlikely]] {
                     SetRootMarkReasonScope rootScope(*verifierVisitor, RootMarkReason::ConservativeScan);
                     verifierVisitor->append(conservativeRoots);
-#if ENABLE(AOT)
-                    if (vm().hasCompiledCode())
-                        AOT::HeapHooks::visitCalleesOfFrames(vm(), static_cast<AbstractSlotVisitor&>(*verifierVisitor), m_collector->m_phaseVersion);
-#endif
                 }
             }
 
@@ -3283,6 +3333,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "Msr"_s, "Misc Small Roots"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            m_collector->assertIsMarkerWithWorldStopped();
             VM& vm = this->vm();
 #if JSC_OBJC_API_ENABLED
             {
@@ -3309,6 +3360,11 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                     visitor.appendUnbarriered(pair.key);
             }
             
+            for (auto* observer : m_observers) {
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
+                observer->visitRoots(visitor);
+            }
+
             if (m_storedCellLog) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ExternalRememberedSet);
                 m_storedCellLog->visitAndReset(visitor);
@@ -3338,6 +3394,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "Sh"_s, "Strong Handles"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            m_collector->assertIsMarkerWithWorldStopped();
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongHandles);
             m_strongSet.visitAggregate(visitor);
             vm().visitAggregate(visitor);
@@ -3349,6 +3406,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "D"_s, "Debugger"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            m_collector->assertIsMarkerWithWorldStopped();
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::Debugger);
 
             VM& vm = this->vm();
@@ -3368,6 +3426,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "Ws"_s, "Weak Sets"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            m_collector->assertIsMarkerWithWorldStopped();
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakSets);
             RefPtr<SharedTask<void(decltype(visitor)&)>> task = m_objectSpace.forEachWeakInParallel<decltype(visitor)>(visitor);
             visitor.addParallelConstraintTask(WTF::move(task));
@@ -3379,6 +3438,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "O"_s, "Output"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            m_collector->assertIsMarkerWithWorldStopped();
             auto callOutputConstraint = [] (auto& visitor, HeapCell* heapCell, HeapCell::Kind) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::Output);
                 JSCell* cell = static_cast<JSCell*>(heapCell);
@@ -3422,13 +3482,15 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             IsoSubspace* subspace = m_pinballCompletionSpace.get();
             if (!subspace)
                 return;
-            ASSERT(worldIsStopped());
+            m_collector->assertIsMarkerWithWorldStopped();
             // ConservativeRoots gathering requires an up-to-date precise allocations snapshot.
             m_objectSpace.prepareForConservativeScan();
             // FIXME: Add a second CellState for PinballCompletion so we can skip
             // pinballs whose conservative roots have already been gathered this cycle.
             ConservativeRoots conservativeRoots(*this);
             subspace->forEachMarkedCell([&](HeapCell* cell, HeapCell::Kind) {
+                // For thread-safety analysis, which does not carry the capability asserted above into this lambda.
+                m_collector->assertIsMarkerWithWorldStopped();
                 auto* pinball = uncheckedDowncast<PinballCompletion>(static_cast<JSCell*>(cell));
                 pinball->gatherConservativeRoots(conservativeRoots);
             });
@@ -3445,6 +3507,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
         constraints.append(makeUnique<SimpleMarkingConstraint>(
             "Jw"_s, "JIT Worklist"_s,
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+                m_collector->assertIsMarkerWithWorldStopped();
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::JITWorkList);
 
                 ASSERT_IMPLIES(vm().numberOfActiveJITPlans(), m_collector->m_isCompilerThreadsSuspended);
@@ -3470,6 +3533,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "Cb"_s, "CodeBlocks"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            m_collector->assertIsMarkerWithWorldStopped();
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(visitor,
                 [&] (CodeBlock* codeBlock) {
@@ -3501,6 +3565,7 @@ void Heap::addMarkingConstraint(std::unique_ptr<MarkingConstraint> constraint)
     if (!Options::useGC()) [[unlikely]]
         return;
     ASSERT(!m_isShuttingDown);
+    assertIsAccessHolder();
     waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::AddConstraint, this, WTF::move(constraint) }));
 }
 
@@ -3532,6 +3597,7 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     if (!m_isSafeToCollect)
         return;
+    assertIsAccessHolder();
     
     // Stops the collectContinuously thread from starting a collection. Unlocked by allowCollection(),
     // see PreventCollectionScope.
@@ -3733,6 +3799,10 @@ void Heap::releaseUnmarkedWasmCallees()
     // Realistically, this is probably not needed, since we're essentially guarenteed to make a syscall
     // that will syncronize the instruction cache during GC. That said, this happens so infrequently it's
     // better to just have the code be clear.
+    //
+    // Note that this fence only covers callsites that were already repatched but might not be visible
+    // here yet. It does not keep live Callee from holding a not yet repatched direct call to
+    // the code about to freed.
     if (!wasmCalleesToRelease.isEmpty())
         WTF::crossModifyingCodeFence();
 

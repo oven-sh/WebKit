@@ -1,0 +1,67 @@
+# class Context { text = (value) => this.respond(value); respond(value) { return value; } }
+# function label(target) { target.text = "label"; }
+# const context = new Context; publish(context, label); print(context.text); print(new Context().text(7));
+# RUN(ANSWER): run-in-shell globalThis.publish = (made, label) => { label(made); };
+# ANSWER: label
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Context" module=m0 constructor=f1 fields=[{key="text" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f5
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = NewClosure function=f2
+    DefineMethod v2, v3 layout=L0 key="respond"
+    v5 = FinishClass v2 layout=L0
+    v6 = Construct v5, - calleeName="Context"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="publish" [isFreeName]
+    v9 = Call v8, -, v6, v0 calleeName="publish"
+    v10 = PropGet v7 key="print" [isFreeName]
+    v11 = PropGet v6 key="text"
+    v12 = Call v10, -, v11 calleeName="print"
+    v13 = Construct v5, - calleeName="Context"
+    v14 = PropGet v13 key="text"
+    v15 = Integer integer=7
+    v16 = Call v14, v13, v15 calleeKey="text" calleeName="text"
+    v17 = Call v10, -, v16 calleeName="print"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="Context" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f3
+    Return v3
+}
+function f2 name="respond" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = NewClosure v0 function=f4
+    PropDefine v1, v2 key="text"
+    v4 = Undefined
+    Return v4
+}
+function f4 name="text" module=m0 kind=Arrow length=1 captures=[{type=L0 variableName="this"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="respond"
+    v3 = Call v2, v0, v1 calleeKey="respond" calleeName="this.respond"
+    Return v3
+}
+function f5 name="label" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = String string="label"
+    PropSet v0, v1 key="text"
+    v3 = Undefined
+    Return v3
+}

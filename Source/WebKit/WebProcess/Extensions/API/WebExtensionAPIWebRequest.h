@@ -40,6 +40,8 @@ class WebExtensionAPIWebRequest : public WebExtensionAPIObject, public JSWebExte
 
 public:
 #if PLATFORM(COCOA)
+    NODELETE NSDictionary *resourceType();
+
     WebExtensionAPIWebRequestEvent& onBeforeRequest();
     WebExtensionAPIWebRequestEvent& onBeforeSendHeaders();
     WebExtensionAPIWebRequestEvent& onSendHeaders();

@@ -27,6 +27,7 @@
 
 #include "ArrayBuffer.h"
 #include "TypedArrayType.h"
+#include <JavaScriptCore/Weak.h>
 #include <algorithm>
 #include <limits.h>
 #include <wtf/CheckedArithmetic.h>
@@ -46,7 +47,7 @@ class ArrayBufferView : public RefCounted<ArrayBufferView>, public NoVirtualDest
 public:
     TypedArrayType getType() const { return m_type; }
 
-    SUPPRESS_NODELETE bool LEGACY_NODELETE isDetached() const
+    NODELETE SUPPRESS_NODELETE bool isDetached() const
     {
         return !m_buffer || m_buffer->isDetached();
     }
@@ -72,7 +73,7 @@ public:
         return m_buffer->isShared();
     }
 
-    SUPPRESS_NODELETE void* LEGACY_NODELETE baseAddress() const LIFETIME_BOUND
+    NODELETE SUPPRESS_NODELETE void* baseAddress() const LIFETIME_BOUND
     {
         if (isDetached())
             return nullptr;
@@ -108,7 +109,7 @@ public:
 
     size_t byteLengthRaw() const { return m_byteLength; }
 
-    size_t LEGACY_NODELETE byteLength() const
+    NODELETE size_t byteLength() const
     {
         if (isDetached()) [[unlikely]]
             return 0;
@@ -130,7 +131,7 @@ public:
         return roundDownToMultipleOf(JSC::elementSize(m_type), bufferByteLength - byteOffsetStart);
     }
 
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE setDetachable(bool);
+    NODELETE JS_EXPORT_PRIVATE void setDetachable(bool);
     bool isDetachable() const { return m_isDetachable; }
     bool isResizableOrGrowableShared() const { return m_isResizableNonShared || m_isGrowableShared; }
     bool isResizableNonShared() const { return m_isResizableNonShared; }
@@ -209,12 +210,15 @@ protected:
     // This is the address of the ArrayBuffer's storage, plus the byte offset.
     BaseAddress m_baseAddress;
 
+public:
+    Weak<JSArrayBufferView> m_wrapper;
+
 private:
     friend class ArrayBuffer;
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&);
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&) const;
 
-    RefPtr<ArrayBuffer> m_buffer;
+    const RefPtr<ArrayBuffer> m_buffer;
 };
 
 ArrayBufferView::~ArrayBufferView()

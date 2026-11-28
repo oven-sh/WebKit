@@ -1,0 +1,220 @@
+# `$isAsBornExceptForAddedNames(object, maker)`: `$isAsBorn` WITH ONE CONDITION FEWER: values added under other names leave it true. The same stamped operation with one more engine flag: the emitter leaves the bit "has an extra property" out of the word that it asks.
+# Behind the yes a read of a name of the literal is a read of a slot; a read under another name stays a lookup and finds what was added (ADDED: 1). The strict question is asked of the same object beside it.
+# An accessor added under another name makes both false: such an object bears a mark, and the shape test refuses marked objects. False says nothing: what was added and deleted again leaves the strict form false (ADDEDANDDELETED), an accessor that was added and deleted again leaves both false.
+# function make() { return { close: undefined, error: undefined, data: undefined }; }
+# function ask(table) { return $isAsBornExceptForAddedNames(table, make) ? "yes " + table.close + " " + table.other : "no"; }            in a file of the library
+# function askStrictly(table) { return $isAsBorn(table, make) ? "yes " + table.close : "no"; }            in a file of the library
+# const makes = keep(make), asks = keep(ask), asksStrictly = keep(askStrictly);
+# const table = makes();
+# print(asks(table), "|", asksStrictly(table), "|", asks(makes()));
+# change(table);
+# print(asks(table), "|", asksStrictly(table), "|", asks(makes()));
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f2
+# FORM: = IsPlainInstanceOf v0{{*}}receivers=[L0]{{*}}mayHoldAddedNames
+# FORM: = GetSlot {{*}}key="close"
+# FORM-NOT: = GetSlot {{*}}key="other"
+# RUN(STRICT): walk f3
+# STRICT: = IsPlainInstanceOf v0{{*}}receivers=[L0]{{*}}isAskedWhetherAsBorn
+# STRICT-NOT: mayHoldAddedNames
+# RUN(WITHHELD): walk f2 mechanisms=all-Guesses
+# WITHHELD: = IsAsBornExceptForAddedNames
+# RUN(QUIET): run-in-shell keep = x => x; change = function () { };
+# QUIET: yes undefined undefined | yes undefined | yes undefined undefined
+# QUIET-NEXT: yes undefined undefined | yes undefined | yes undefined undefined
+# QUIET-NEXT: exited with 0
+# RUN(STORED): run-in-shell keep = x => x; change = function (table) { table.close = 5; };
+# STORED: yes undefined undefined | yes undefined | yes undefined undefined
+# STORED-NEXT: yes 5 undefined | yes 5 | yes undefined undefined
+# RUN(ADDED): run-in-shell keep = x => x; change = function (table) { table.other = 1; };
+# ADDED: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDED-NEXT: yes undefined 1 | no | yes undefined undefined
+# RUN(ADDEDMANY): run-in-shell keep = x => x; change = function (table) { table.other = 1; table.more = 2; table[Symbol.iterator] = 3; table.close = 4; };
+# ADDEDMANY: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDMANY-NEXT: yes 4 1 | no | yes undefined undefined
+# RUN(ADDEDANDDELETED): run-in-shell keep = x => x; change = function (table) { table.other = 1; delete table.other; };
+# ADDEDANDDELETED: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDANDDELETED-NEXT: yes undefined undefined | no | yes undefined undefined
+# RUN(INDEX): run-in-shell keep = x => x; change = function (table) { table[0] = 1; };
+# INDEX: yes undefined undefined | yes undefined | yes undefined undefined
+# INDEX-NEXT: yes undefined undefined | no | yes undefined undefined
+# RUN(DELETED): run-in-shell keep = x => x; change = function (table) { delete table.close; };
+# DELETED: yes undefined undefined | yes undefined | yes undefined undefined
+# DELETED-NEXT: no | no | yes undefined undefined
+# RUN(DELETEDANDSTORED): run-in-shell keep = x => x; change = function (table) { delete table.close; table.close = 5; };
+# DELETEDANDSTORED: yes undefined undefined | yes undefined | yes undefined undefined
+# DELETEDANDSTORED-NEXT: yes 5 undefined | yes 5 | yes undefined undefined
+# RUN(ADDEDTHENDELETED): run-in-shell keep = x => x; change = function (table) { table.other = 1; delete table.error; };
+# ADDEDTHENDELETED: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDTHENDELETED-NEXT: no | no | yes undefined undefined
+# RUN(ACCESSOR): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "close", { get() { return 9; }, configurable: true }); };
+# ACCESSOR: yes undefined undefined | yes undefined | yes undefined undefined
+# ACCESSOR-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDTHENACCESSOR): run-in-shell keep = x => x; change = function (table) { table.other = 1; Object.defineProperty(table, "close", { get() { return 9; }, configurable: true }); };
+# ADDEDTHENACCESSOR: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDTHENACCESSOR-NEXT: no | no | yes undefined undefined
+# RUN(SETTER): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "error", { set(value) { }, configurable: true }); };
+# SETTER: yes undefined undefined | yes undefined | yes undefined undefined
+# SETTER-NEXT: no | no | yes undefined undefined
+# RUN(READONLY): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "close", { writable: false }); };
+# READONLY: yes undefined undefined | yes undefined | yes undefined undefined
+# READONLY-NEXT: no | no | yes undefined undefined
+# RUN(HIDDEN): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "close", { enumerable: false }); };
+# HIDDEN: yes undefined undefined | yes undefined | yes undefined undefined
+# HIDDEN-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDACCESSOR): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "other", { get() { return 9; }, configurable: true }); };
+# ADDEDACCESSOR: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDACCESSOR-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDACCESSORASBEFORE): run-in-shell kept = []; keep = x => (kept.push(x), x); change = function (table) { Object.defineProperty(kept[0](), "other", { get() { return 9; }, configurable: true }); Object.defineProperty(table, "other", { get() { return 9; }, configurable: true }); };
+# ADDEDACCESSORASBEFORE: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDACCESSORASBEFORE-NEXT: no | no | yes undefined undefined
+# RUN(THIRDNAMEANACCESSORASBEFORE): run-in-shell kept = []; keep = x => (kept.push(x), x); change = function (table) { for (const each of [kept[0](), table]) { each.more = 1; each.evenMore = 2; each.yetMore = 3; Object.defineProperty(each, "other", { get() { return 9; }, configurable: true }); } };
+# THIRDNAMEANACCESSORASBEFORE: yes undefined undefined | yes undefined | yes undefined undefined
+# THIRDNAMEANACCESSORASBEFORE-NEXT: no | no | yes undefined undefined
+# RUN(FIVEVALUESASBEFORE): run-in-shell kept = []; keep = x => (kept.push(x), x); change = function (table) { for (const each of [kept[0](), table]) for (const name of ["a", "b", "c", "d", "other"]) Object.defineProperty(each, name, { value: name, writable: true, enumerable: true, configurable: true }); };
+# FIVEVALUESASBEFORE: yes undefined undefined | yes undefined | yes undefined undefined
+# FIVEVALUESASBEFORE-NEXT: yes undefined other | no | yes undefined undefined
+# RUN(ADDEDSETTER): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "more", { set(value) { }, configurable: true }); };
+# ADDEDSETTER: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDSETTER-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDVALUETHENACCESSOR): run-in-shell keep = x => x; change = function (table) { table.more = 1; Object.defineProperty(table, "other", { get() { return 9; }, configurable: true }); };
+# ADDEDVALUETHENACCESSOR: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDVALUETHENACCESSOR-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDACCESSORTHENDELETED): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "other", { get() { return 9; }, configurable: true }); delete table.other; };
+# ADDEDACCESSORTHENDELETED: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDACCESSORTHENDELETED-NEXT: no | no | yes undefined undefined
+# RUN(FROZEN): run-in-shell keep = x => x; change = function (table) { Object.freeze(table); };
+# FROZEN: yes undefined undefined | yes undefined | yes undefined undefined
+# FROZEN-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDTHENFROZEN): run-in-shell keep = x => x; change = function (table) { table.other = 1; Object.freeze(table); };
+# ADDEDTHENFROZEN: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDTHENFROZEN-NEXT: no | no | yes undefined undefined
+# RUN(SEALED): run-in-shell keep = x => x; change = function (table) { Object.seal(table); };
+# SEALED: yes undefined undefined | yes undefined | yes undefined undefined
+# SEALED-NEXT: no | no | yes undefined undefined
+# RUN(CLOSED): run-in-shell keep = x => x; change = function (table) { Object.preventExtensions(table); };
+# CLOSED: yes undefined undefined | yes undefined | yes undefined undefined
+# CLOSED-NEXT: no | no | yes undefined undefined
+# RUN(LINK): run-in-shell keep = x => x; change = function (table) { Object.setPrototypeOf(table, { }); };
+# LINK: yes undefined undefined | yes undefined | yes undefined undefined
+# LINK-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDTHENLINK): run-in-shell keep = x => x; change = function (table) { table.other = 1; Object.setPrototypeOf(table, { close: 3 }); };
+# ADDEDTHENLINK: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDTHENLINK-NEXT: no | no | yes undefined undefined
+# RUN(NOLINK): run-in-shell keep = x => x; change = function (table) { Object.setPrototypeOf(table, null); };
+# NOLINK: yes undefined undefined | yes undefined | yes undefined undefined
+# NOLINK-NEXT: no | no | yes undefined undefined
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0 position=25 fields=[{key="close" declared={type=anything} flags=[IsRequired]}, {key="data" declared={type=anything} flags=[IsRequired]}, {key="error" declared={type=anything} flags=[IsRequired]}] declaredOrder=[0, 2, 1] place=25 ownFieldCount=3
+data d0 root=Object{layout=L0 members=[{key="close"}, {key="error"}, {key="data"}]} module=m0
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @315
+    v5 = PropGet v4 key="keep" [isFreeName] @315
+    v6 = GetModuleVariable variable=g0 @320
+    v7 = Call v5, -, v6 calleeName="keep" @315
+    v8 = Builtin builtin=GlobalThis @334
+    v9 = PropGet v8 key="keep" [isFreeName] @334
+    v10 = Call v9, -, v1 calleeName="keep" @334
+    v11 = Builtin builtin=GlobalThis @360
+    v12 = PropGet v11 key="keep" [isFreeName] @360
+    v13 = Call v12, -, v3 calleeName="keep" @360
+    v14 = Call v7 calleeName="makes" @393
+    v15 = Builtin builtin=GlobalThis @402
+    v16 = PropGet v15 key="print" [isFreeName] @402
+    v17 = Call v10, -, v14 calleeName="asks" @408
+    v18 = String string="|" @421
+    v19 = Call v13, -, v14 calleeName="asksStrictly" @426
+    v20 = String string="|" @447
+    v21 = Call v7 calleeName="makes" @457
+    v22 = Call v10, -, v21 calleeName="asks" @452
+    v23 = Call v16, -, v17, v18, v19, v20, v22 calleeName="print" @402
+    v24 = Builtin builtin=GlobalThis @468
+    v25 = PropGet v24 key="change" [isFreeName] @468
+    v26 = Call v25, -, v14 calleeName="change" @468
+    v27 = Builtin builtin=GlobalThis @483
+    v28 = PropGet v27 key="print" [isFreeName] @483
+    v29 = Call v10, -, v14 calleeName="asks" @489
+    v30 = String string="|" @502
+    v31 = Call v13, -, v14 calleeName="asksStrictly" @507
+    v32 = String string="|" @528
+    v33 = Call v7 calleeName="makes" @538
+    v34 = Call v10, -, v33 calleeName="asks" @533
+    v35 = Call v28, -, v29, v30, v31, v32, v34 calleeName="print" @483
+    v36 = Undefined @483
+    Return v36 @483
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0 @25
+    Return v0 @25
+}
+function f2 name="ask" module=m2 position=84 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @113
+    v2 = Undefined @113
+    v3 = GetModuleVariable variable=g0 @149
+    v4 = IsAsBornExceptForAddedNames v0, v3 @113
+    v5 = ToBoolean v4 @113
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @113
+  b1(v6):
+    v7 = String string="yes " @157
+    v8 = PropGet v0 key="close" @166
+    v9 = Add v7, v8 @166
+    v10 = String string=" " @180
+    v11 = Add v9, v10 @180
+    v12 = PropGet v0 key="other" @186
+    v13 = Add v11, v12 @186
+    Jump -> next b3(v13) @186
+  b2(v14):
+    v15 = String string="no" @200
+    Jump -> next b3(v15) @200
+  b3(v16):
+    Return v16 @200
+}
+function f3 name="askStrictly" module=m2 position=208 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @245
+    v2 = Undefined @245
+    v3 = GetModuleVariable variable=g0 @262
+    v4 = IsAsBorn v0, v3 @245
+    v5 = ToBoolean v4 @245
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @245
+  b1(v6):
+    v7 = String string="yes " @270
+    v8 = PropGet v0 key="close" @279
+    v9 = Add v7, v8 @279
+    Jump -> next b3(v9) @279
+  b2(v10):
+    v11 = String string="no" @293
+    Jump -> next b3(v11) @293
+  b3(v12):
+    Return v12 @293
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

@@ -60,19 +60,19 @@ private:
     bool invalidatingImagesWithAsyncDecodes() const final { return m_paintInvalidationReasons == PaintInvalidationReasons::InvalidatingImagesWithAsyncDecodes; }
     bool detectingContentfulPaint() const final { return m_paintInvalidationReasons == PaintInvalidationReasons::DetectingContentfulPaint; }
 
+#if !USE(CG) && !USE(SKIA)
     void didUpdateState(GraphicsContextState&) final { }
+#endif
 
-    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImageDrawingOptions) final { }
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, RasterDrawingOptions) final { }
 
     void drawSystemImage(SystemImage&, const FloatRect&) final { };
 
-    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImageDrawingOptions) final { }
+    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, RasterDrawingOptions) final { }
 
     IntRect clipBounds() const final { return { }; }
 
 #if USE(CG)
-    void applyStrokePattern() final { }
-    void applyFillPattern() final { }
     void drawPath(const Path&) final { }
 #endif
 
@@ -82,11 +82,12 @@ private:
     void fillPath(const Path&) final { }
     void strokePath(const Path&) final { }
     void fillRect(const FloatRect&, RequiresClipToRect) final { }
-    void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect) final { }
+    void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect) final { }
     void fillRect(const FloatRect&, const Color&) final { }
     void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) final { }
     void strokeRect(const FloatRect&, float) final { }
     void clipPath(const Path&, WindRule = WindRule::EvenOdd) final { }
+    void clipTransformedPath(const AffineTransform&, const Path&, WindRule = WindRule::EvenOdd) final { }
     void drawLinesForText(const FloatPoint&, float, std::span<const FloatSegment>, bool, bool, StrokeStyle) final { }
     void setLineCap(LineCap) final { }
     void setLineDash(const DashArray&, float) final { }
@@ -104,7 +105,9 @@ private:
     void clip(const FloatRect&) final { }
     void clipOut(const FloatRect&) final { }
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final { }
-    void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final { }
+    bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final { return true; }
+    void saveTransform() final { }
+    bool restoreTransform() final { return true; }
 
     void drawRaisedEllipse(const FloatRect&, const Color&, const Color&) final { }
 
@@ -118,23 +121,26 @@ private:
 
     void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) final { }
 
+    void drawFreeformGradient(FreeformGradient&, const FloatRect&) final { }
+    void drawMeshGradient(MeshGradient&, const FloatRect&) final { }
+
     void drawFocusRing(const Path&, float, const Color&, float) final { }
     void drawFocusRing(const Vector<FloatRect>&, float, const Color&, float) final { }
 
-    void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, ImageDrawingOptions = { }) final { }
+    void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, RasterDrawingOptions = { }) final { }
 
     void clipRoundedRect(const FloatRoundedRect&) final { }
     void clipOutRoundedRect(const FloatRoundedRect&) final { }
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final { }
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final { }
 
-    void fillRect(const FloatRect&, Gradient&) final { }
+    void fillRect(const FloatRect&, const Gradient&) final { }
     void fillRect(const FloatRect&, const Color&, CompositeOperator, BlendMode = BlendMode::Normal) final { }
 
     void fillRoundedRect(const FloatRoundedRect&, const Color&, BlendMode = BlendMode::Normal) final { }
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect&, const Color&) final { }
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, ImageDrawingOptions) final { }
+    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, RasterDrawingOptions) final { }
 #endif
 
 private:

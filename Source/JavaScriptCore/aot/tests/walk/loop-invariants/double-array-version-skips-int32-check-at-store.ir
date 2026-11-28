@@ -1,0 +1,82 @@
+# function means(points, centers, counts) { for (let i = 0; i < 6; i++) { let best = 0; for (let k = 0; k < 3; k++) if (points[i] > centers[k]) best = k; counts[best]++; } return counts; }
+# The version asked `counts` for doubles in front of the loop, to read it, and for int32s, to store into it: no list has both, so the loop always ran as written.
+# RUN(KIND): walk f1 mechanisms=all
+# KIND-NOT: arrayStorage=Int32 [isWritable]
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 6,4,2
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Double number=0.5
+    v4 = Double number=1.5
+    v5 = Double number=2.5
+    v6 = Double number=3.5
+    v7 = Double number=4.5
+    v8 = Double number=5.5
+    v9 = NewArray v3, v4, v5, v6, v7, v8
+    v10 = Integer
+    v11 = NewArray v10, v10, v10
+    v12 = NewArray v3, v5, v7
+    v13 = Call v0, -, v9, v12, v11 calleeName="means"
+    v14 = Call v0, -, v9, v12, v11 calleeName="means"
+    v15 = Call v2, -, v11 calleeName="sink"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="means" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Integer integer=6
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b11()
+  b2():
+    v9 = Integer
+    v10 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    v11 = Integer
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b3(v10, v12)
+  b3(v13, v14):
+    LoopHint
+    v16 = Integer integer=3
+    v17 = Less v14, v16
+    Branch v17 -> taken b4(), notTaken b7()
+  b4():
+    v18 = ElemGet v0, v5
+    v19 = ElemGet v1, v14
+    v20 = Greater v18, v19
+    Branch v20 -> taken b5(), notTaken b6(v13)
+  b5():
+    v21 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b6(v21)
+  b6(v22):
+    v23 = Increment v14
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b3(v22, v24)
+  b7():
+    v25 = TypeTest v13 testedType=object
+    Branch v25 -> taken b8(| 0), notTaken b9(| 0)
+  b8(v26):
+    v27 = ToPropertyKey v26
+    Jump -> next b10(v27)
+  b9(v28):
+    Jump -> next b10(v28)
+  b10(v29):
+    v30 = ElemGet v2, v29
+    v31 = Increment v30
+    ElemSet v2, v29, v31 mode=Sloppy
+    v33 = Increment v5
+    v34 = Convert v33 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v34)
+  b11():
+    Return v2
+}

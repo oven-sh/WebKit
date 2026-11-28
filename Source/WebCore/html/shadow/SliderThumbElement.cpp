@@ -78,7 +78,7 @@ inline static Decimal sliderPosition(HTMLInputElement& element)
     return stepRange.proportionFromValue(stepRange.clampValue(oldValue));
 }
 
-inline static bool LEGACY_NODELETE hasVerticalAppearance(HTMLInputElement& input)
+NODELETE inline static bool hasVerticalAppearance(HTMLInputElement& input)
 {
     ASSERT(input.renderer());
     return !input.renderer()->isHorizontalWritingMode() || input.renderer()->style().usedAppearance() == StyleAppearance::SliderVertical;
@@ -92,7 +92,7 @@ class RenderSliderContainer final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderSliderContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSliderContainer);
 public:
-    RenderSliderContainer(SliderContainerElement& element, Style::ComputedStyle&& style)
+    RenderSliderContainer(SliderContainerElement& element, UniqueRef<Style::ComputedStyle>&& style)
         : RenderFlexibleBox(Type::SliderContainer, element, WTF::move(style))
     {
     }
@@ -102,7 +102,7 @@ public:
 
 private:
     void layout() override;
-    bool LEGACY_NODELETE isFlexibleBoxImpl() const override { return true; }
+    NODELETE bool isFlexibleBoxImpl() const override { return true; }
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSliderContainer);
@@ -153,7 +153,7 @@ void RenderSliderContainer::layout()
     // Force a layout to reset the position of the thumb so the code below doesn't move the thumb to the wrong place.
     // FIXME: Make a custom Render class for the track and move the thumb positioning code there.
     if (track)
-        track->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        track->setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
     RenderFlexibleBox::layout();
 
@@ -414,7 +414,7 @@ void SliderThumbElement::clearExclusiveTouchIdentifier()
     m_exclusiveTouchIdentifier = NoIdentifier;
 }
 
-// FIXME: Share these functions with CheckboxInputType somehow?
+// FIXME: Share these functions with CheckboxSwitch somehow?
 static Touch* findTouchWithIdentifier(TouchList& list, unsigned identifier)
 {
     unsigned length = list.length();
@@ -621,7 +621,7 @@ Ref<SliderContainerElement> SliderContainerElement::create(Document& document)
     return element;
 }
 
-RenderPtr<RenderElement> SliderContainerElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SliderContainerElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderSliderContainer>(*this, WTF::move(style));
 }

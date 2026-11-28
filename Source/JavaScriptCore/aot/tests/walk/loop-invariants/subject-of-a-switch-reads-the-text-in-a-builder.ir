@@ -1,0 +1,94 @@
+# the subject of a switch reads the text that grows: it gets the string of what the builder holds, and every case stays. The type of a builder says nothing of a text, so nobody decides by it where the switch leads
+# function switched(n) { let s = ""; let out = 0; for (let i = 0; i < n; i++) { s += "a"; switch (s) { case "a": out += 1; break; case "aaa": out += 100; break; default: out += 10000; } } return out; }
+#   the names that the cases prove go on round the loop, so they are the builder
+# function numbered(n) { let s = ""; let out = 0; for (let i = 0; i < n; i++) { s += "1"; switch (s) { case 1: out += 1; break; default: out += 100; } } return out; }
+#   no string equals a number: that is known of the string, which is made for whoever asks
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: [[text]]: string{{*}}StringBuilderToString
+# CHECK: SwitchString [[text]] strings=["a", "aaa"]
+# RUN(ROUND): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# ROUND-COUNT-1: StringBuilderBegin
+# ROUND-COUNT-1: StringBuilderToString
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderBegin
+# ALL: SwitchString
+# RUN(NUMBERED): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NUMBERED-LABEL: code f2:Body
+# NUMBERED: StringBuilderBegin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="switched" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v1, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b7()
+  b2():
+    v9 = String string="a"
+    v10 = Add v4, v9
+    SwitchString v10 strings=["a", "aaa"] -> case b3(| 0), case b4(| 0), otherwise b5()
+  b3(v11):
+    v12 = Integer integer=1
+    v13 = Add v5, v12
+    Jump -> next b6(v11, v13)
+  b4(v14):
+    v15 = Integer integer=100
+    v16 = Add v5, v15
+    Jump -> next b6(v14, v16)
+  b5():
+    v17 = Integer integer=10000
+    v18 = Add v5, v17
+    Jump -> next b6(v10, v18)
+  b6(v19, v20):
+    v21 = Increment v6
+    Jump -> next b1(v19, v20, v21)
+  b7():
+    Return v5
+}
+function f2 name="numbered" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v1, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    v9 = String string="1"
+    v10 = Add v4, v9
+    Switch v10 cases=[1] -> case b3(), otherwise b4()
+  b3():
+    v11 = Integer integer=1
+    v12 = Add v5, v11
+    Jump -> next b5(v12)
+  b4():
+    v13 = Integer integer=100
+    v14 = Add v5, v13
+    Jump -> next b5(v14)
+  b5(v15):
+    v16 = Increment v6
+    Jump -> next b1(v10, v15, v16)
+  b6():
+    Return v5
+}

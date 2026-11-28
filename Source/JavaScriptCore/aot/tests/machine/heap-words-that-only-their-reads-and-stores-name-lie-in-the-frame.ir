@@ -1,0 +1,29 @@
+# No walk runs: the Code is written out. Nothing suspends, and nothing names the heap words but the store and the read of a word, the read in another block: they lie in a slot of the frame, and no stub makes a cell.
+# RUN: emit-code mechanisms=all
+# CHECK: unit f1:Body
+# CHECK: = SlotBase(slot0)
+# CHECK-NOT: slot1
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=3 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v2 @Void = PutHeapFrameWord v1, v0 [remembersFrame] traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b1()
+#   b1():
+#     v3: anything @JSValue = GetHeapFrameWord v1 valueType=anything traits=[mayTouchMemory]
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="kept" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

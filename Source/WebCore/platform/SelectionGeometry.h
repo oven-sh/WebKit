@@ -39,19 +39,19 @@ enum class SelectionRenderingBehavior : bool { CoalesceBoundingRects, UseIndivid
 class SelectionGeometry {
     WTF_MAKE_TZONE_ALLOCATED(SelectionGeometry);
 public:
-    WEBCORE_EXPORT explicit SelectionGeometry(const FloatQuad&, SelectionRenderingBehavior, bool isHorizontal, int columnNumber);
+    NODELETE WEBCORE_EXPORT explicit SelectionGeometry(const FloatQuad&, SelectionRenderingBehavior, bool isHorizontal, int columnNumber);
 
     // FIXME: We should move some of these arguments to an auxillary struct.
-    SelectionGeometry(const FloatQuad&, SelectionRenderingBehavior, TextDirection, int, int, int, int, bool, bool, bool, bool, bool, bool, bool, int);
-    WEBCORE_EXPORT SelectionGeometry(const FloatQuad&, SelectionRenderingBehavior, TextDirection, int, int, int, int, bool, bool, bool, bool, bool, bool);
+    NODELETE SelectionGeometry(const FloatQuad&, SelectionRenderingBehavior, TextDirection, int, int, int, int, bool, bool, bool, bool, bool, bool, bool, int);
+    NODELETE WEBCORE_EXPORT SelectionGeometry(const FloatQuad&, SelectionRenderingBehavior, TextDirection, int, int, int, int, bool, bool, bool, bool, bool, bool);
     SelectionGeometry() = default;
     ~SelectionGeometry() = default;
 
     FloatQuad quad() const { return m_quad; }
-    WEBCORE_EXPORT void LEGACY_NODELETE setQuad(const FloatQuad&);
+    NODELETE WEBCORE_EXPORT void setQuad(const FloatQuad&);
 
-    WEBCORE_EXPORT IntRect rect() const;
-    WEBCORE_EXPORT void setRect(const IntRect&);
+    NODELETE WEBCORE_EXPORT IntRect rect() const;
+    NODELETE WEBCORE_EXPORT void setRect(const IntRect&);
 
     int logicalLeft() const { return m_isHorizontal ? rect().x() : rect().y(); }
     int logicalWidth() const { return m_isHorizontal ? rect().width() : rect().height(); }
@@ -75,10 +75,10 @@ public:
     SelectionRenderingBehavior behavior() const { return m_behavior; }
     bool separateFromPreviousLine() const { return m_separateFromPreviousLine; }
 
-    void setLogicalLeft(int);
-    void setLogicalWidth(int);
-    void setLogicalTop(int);
-    void setLogicalHeight(int);
+    NODELETE void setLogicalLeft(int);
+    NODELETE void setLogicalWidth(int);
+    NODELETE void setLogicalTop(int);
+    NODELETE void setLogicalHeight(int);
 
     void setDirection(TextDirection direction) { m_direction = direction; }
     void setMinX(int minX) { m_minX = minX; }
@@ -94,7 +94,7 @@ public:
     void setBehavior(SelectionRenderingBehavior behavior) { m_behavior = behavior; }
     void setSeparateFromPreviousLine(bool separate) { m_separateFromPreviousLine = separate; }
 
-    WEBCORE_EXPORT void LEGACY_NODELETE move(float x, float y);
+    NODELETE WEBCORE_EXPORT void move(float x, float y);
 
 private:
     FloatQuad m_quad;

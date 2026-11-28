@@ -69,10 +69,6 @@
 #include <wtf/RetainPtr.h>
 #endif
 
-namespace WTF {
-class MachSendRight;
-}
-
 namespace WebCore {
 class AudioTrackPrivate;
 struct MediaPlayerLoadOptions;
@@ -125,6 +121,10 @@ public:
     WebCore::MediaPlayerIdentifier identifier() const { return m_id; }
     void invalidate();
 
+#if PLATFORM(COCOA)
+    std::optional<WebCore::FloatRect> hostedVideoLayerBoundsForTesting(WebCore::MediaPlayerClientIdentifier) const;
+#endif
+
     // Ensure that all previously queued messages to the content process have completed.
     Ref<WebCore::MediaPromise> commitAllTransactions();
 
@@ -137,8 +137,6 @@ public:
     void setBufferingPolicy(WebCore::MediaPlayer::BufferingPolicy);
 
 #if PLATFORM(IOS_FAMILY)
-    void accessLog(CompletionHandler<void(String)>&&);
-    void errorLog(CompletionHandler<void(String)>&&);
     void setSceneIdentifier(String&&);
 #endif
 
@@ -364,10 +362,9 @@ private:
 
 #if PLATFORM(COCOA)
     WebCore::FloatSize mediaPlayerVideoLayerSize() const final;
-    void nativeImageForCurrentTime(CompletionHandler<void(std::optional<WTF::MachSendRight>&&, WebCore::ColorSpace)>&&);
     void colorSpace(CompletionHandler<void(WebCore::ColorSpace)>&&);
 #endif
-    void videoFrameForCurrentTimeIfChanged(CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&&);
+    void videoFrameForCurrentTimeIfChanged(RemoteVideoFrameReference, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&&);
     void bitmapImageForCurrentTime(CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
 
     void setShouldDisableHDR(bool);
@@ -401,7 +398,7 @@ private:
     const Logger& logger() { return mediaPlayerLogger(); }
     uint64_t logIdentifier() { return mediaPlayerLogIdentifier(); }
     ASCIILiteral logClassName() const { return "RemoteMediaPlayerProxy"_s; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     Vector<Ref<RemoteAudioTrackProxy>> m_audioTracks;

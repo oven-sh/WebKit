@@ -108,7 +108,7 @@ private:
         dataLogLnIf(verboseFixPointLoops, "Iterated ", counter, " times in propagateToFixpoint.");
     }
     
-    bool LEGACY_NODELETE setPrediction(SpeculatedType prediction)
+    NODELETE bool setPrediction(SpeculatedType prediction)
     {
         ASSERT(m_currentNode->hasResult());
         
@@ -121,14 +121,14 @@ private:
         return m_currentNode->predict(prediction);
     }
     
-    bool LEGACY_NODELETE mergePrediction(SpeculatedType prediction)
+    NODELETE bool mergePrediction(SpeculatedType prediction)
     {
         ASSERT(m_currentNode->hasResult());
         
         return m_currentNode->predict(prediction);
     }
 
-    bool LEGACY_NODELETE setTuplePrediction(SpeculatedType prediction, unsigned index)
+    NODELETE bool setTuplePrediction(SpeculatedType prediction, unsigned index)
     {
         ASSERT(index < m_currentNode->tupleSize());
 
@@ -141,7 +141,7 @@ private:
         return mergeSpeculation(speculation, prediction);
     }
 
-    bool LEGACY_NODELETE mergeTuplePrediction(SpeculatedType prediction, unsigned index)
+    NODELETE bool mergeTuplePrediction(SpeculatedType prediction, unsigned index)
     {
         ASSERT(index < m_currentNode->tupleSize());
 
@@ -159,7 +159,7 @@ private:
         return updatedPrediction;
     }
     
-    SpeculatedType LEGACY_NODELETE speculatedDoubleTypeForPrediction(SpeculatedType value)
+    NODELETE SpeculatedType speculatedDoubleTypeForPrediction(SpeculatedType value)
     {
         SpeculatedType result = SpecDoubleReal;
         if (value & SpecDoubleImpureNaN)
@@ -171,7 +171,7 @@ private:
         return result;
     }
 
-    SpeculatedType LEGACY_NODELETE speculatedDoubleTypeForPredictions(SpeculatedType left, SpeculatedType right)
+    NODELETE SpeculatedType speculatedDoubleTypeForPredictions(SpeculatedType left, SpeculatedType right)
     {
         return speculatedDoubleTypeForPrediction(mergeSpeculations(left, right));
     }
@@ -437,9 +437,10 @@ private:
                     changed |= mergePrediction(SpecInt32Only);
                 else if (m_graph.unaryArithShouldSpeculateInt52(node, m_pass))
                     changed |= mergePrediction(SpecInt52Any);
-                else if (isBytecodeNumberSpeculation(prediction))
-                    changed |= mergePrediction(speculatedDoubleTypeForPrediction(node->child1()->prediction()));
-                else {
+                else if (isNotCellNorBigIntSpeculation(prediction)) {
+                    // Fixup computes this negation on doubles, so an Int32 prediction would make every Int32 speculation on the result fail.
+                    changed |= mergePrediction(speculatedDoubleTypeForPrediction(prediction));
+                } else {
                     changed |= mergePrediction(SpecInt32Only);
                     if (node->op() == ValueNegate && node->mayHaveBigIntResult())
                         changed |= mergePrediction(SpecBigInt);
@@ -533,6 +534,17 @@ private:
                         || (right & SpecBigInt)))
                         changed |= mergePrediction(SpecBigInt);
                 }
+            }
+            break;
+        }
+
+        case ArithSign: {
+            SpeculatedType childPrediction = node->child1()->prediction();
+            if (childPrediction) {
+                if (isInt32OrBooleanSpeculation(childPrediction))
+                    changed |= mergePrediction(SpecInt32Only);
+                else
+                    changed |= mergePrediction(speculatedDoubleTypeForPrediction(childPrediction));
             }
             break;
         }
@@ -862,7 +874,14 @@ private:
                 
             m_graph.voteNode(node->child1(), ballot, weight);
             break;
-                
+
+        case ArithSign:
+            if (node->child1()->shouldSpeculateNumber() && !node->child1()->shouldSpeculateInt32OrBoolean())
+                m_graph.voteNode(node->child1(), VoteDouble, weight);
+            else
+                m_graph.voteNode(node->child1(), VoteValue, weight);
+            break;
+
         case ArithSqrt:
         case ArithUnary:
             if (node->child1()->shouldSpeculateNumber())
@@ -1052,6 +1071,7 @@ private:
         case Construct:
         case DirectConstruct:
         case CallVarargs:
+        case CallVarargsWithSpread:
         case CallDirectEval:
         case TailCallVarargsInlinedCaller:
         case ConstructVarargs:
@@ -1461,7 +1481,8 @@ private:
             break;
         }
 
-        case NewTypedArrayBuffer: {
+        case NewTypedArrayBuffer:
+        case GetTypedArrayBuffer: {
             setPrediction(SpecObjectOther);
             break;
         }
@@ -1488,6 +1509,11 @@ private:
 
         case NewWeakSet: {
             setPrediction(SpecWeakSetObject);
+            break;
+        }
+
+        case NewProxyObject: {
+            setPrediction(SpecProxyObject);
             break;
         }
 
@@ -1664,6 +1690,7 @@ private:
         case ArithDiv:
         case ArithMod:
         case ArithAbs:
+        case ArithSign:
         case GetByVal:
         case MultiGetByVal:
         case ToThis:
@@ -1846,6 +1873,8 @@ private:
         case ExitOK:
         case VarargsLength:
         case LoadVarargs:
+        case VarargsLengthWithSpread:
+        case LoadVarargsWithSpread:
         case ForwardVarargs:
         case PutDynamicVar:
         case NukeStructureAndSetButterfly:

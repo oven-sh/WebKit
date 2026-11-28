@@ -240,6 +240,7 @@ MediaSource::~MediaSource()
     }
 #endif
     detachFromElement();
+    removeAllSourceBuffersAndShutdownPrivate();
 
     ASSERT(isClosed());
 }
@@ -1065,10 +1066,12 @@ void MediaSource::detachFromElement()
     if (detachable())
         m_readyStateBeforeDetached = readyState();
 
+    // Queue endstreaming ahead of sourceclose.
+    elementDetached();
+
     // 1. Set the readyState attribute to "closed".
     // 7. Queue a task to fire a simple event named sourceclose at the MediaSource.
     setReadyState(ReadyState::Closed);
-    elementDetached();
 
     // 2. Update duration to NaN.
     // Step is done in duration() method which will now always return invalidTime() if MediaSource is not detachable.
@@ -1098,17 +1101,26 @@ void MediaSource::detachFromElement()
         return;
     }
 
+    removeAllSourceBuffersAndShutdownPrivate();
+
+    m_mediaElement = nullptr;
+    m_isAttached = false;
+}
+
+void MediaSource::removeAllSourceBuffersAndShutdownPrivate()
+{
     // 5. Remove all the SourceBuffer objects from sourceBuffers.
     // 6. Queue a task to fire a simple event named removesourcebuffer at sourceBuffers.
     // can be called from the destructor, where we may no longer have a scriptExecutionContext.
     if (scriptExecutionContext()) {
         while (m_sourceBuffers->length())
             removeSourceBuffer(*m_sourceBuffers->item(0));
-    } else
+    } else {
+        m_activeSourceBuffers->replaceWith({ });
+        for (Ref sourceBuffer : m_sourceBuffers.get())
+            sourceBuffer->removedFromMediaSource();
         m_sourceBuffers->replaceWith({ });
-
-    m_mediaElement = nullptr;
-    m_isAttached = false;
+    }
 
     if (RefPtr msp = m_private) {
         msp->shutdown();
@@ -1378,7 +1390,7 @@ void MediaSource::failedToCreateRenderer(RendererType type)
     ERROR_LOG(LOGIDENTIFIER, type == RendererType::Video ? "video"_s : "audio"_s);
 
     if (RefPtr context = scriptExecutionContext())
-        context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("MediaSource "_s, type == RendererType::Video ? "video"_s : "audio"_s, " renderer creation failed."_s));
+        context->addConsoleMessage(MessageSource::MediaSource, MessageLevel::Error, makeString("MediaSource "_s, type == RendererType::Video ? "video"_s : "audio"_s, " renderer creation failed."_s));
 
     ensureWeakOnHTMLMediaElementContext([](auto& mediaElement) {
         mediaElement.mediaLoadingFailedFatally(MediaPlayer::NetworkState::DecodeError);

@@ -77,7 +77,7 @@ private:
 
 class ImageBufferIOSurfaceDisplayDelegate final : public GraphicsLayerContentsDisplayDelegate {
 public:
-    static Ref<ImageBufferIOSurfaceDisplayDelegate> LEGACY_NODELETE create(ContentsFormat contentsFormat)
+    NODELETE static Ref<ImageBufferIOSurfaceDisplayDelegate> create(ContentsFormat contentsFormat)
     {
         return adoptRef(*new ImageBufferIOSurfaceDisplayDelegate(contentsFormat));
     }
@@ -201,6 +201,9 @@ void ImageBufferIOSurfaceBackend::prepareForDisplay()
 
 ImageBufferIOSurfaceBackend::~ImageBufferIOSurfaceBackend()
 {
+    // sinkIntoNativeImage() moves the surface into the image.
+    if (!m_surface)
+        return;
     ensureNativeImagesHaveCopiedBackingStore();
     releaseGraphicsContext();
     IOSurface::moveToPool(WTF::move(m_surface), m_ioSurfacePool.get());
@@ -340,6 +343,11 @@ void ImageBufferIOSurfaceBackend::releaseGraphicsContext()
 {
     m_context = nullptr;
     m_platformContext = nullptr;
+}
+
+bool ImageBufferIOSurfaceBackend::hasGraphicsContext() const
+{
+    return !!m_context;
 }
 
 bool ImageBufferIOSurfaceBackend::setVolatile()

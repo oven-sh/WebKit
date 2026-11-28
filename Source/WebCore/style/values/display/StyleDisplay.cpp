@@ -32,12 +32,11 @@
 #include "StyleBuilderChecking.h"
 #include <wtf/EnumeratedArray.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 using DisplayOutsideInsideToDisplayTypeMap = EnumeratedArray<CSSPropertyParserHelpers::DisplayOutside, EnumeratedArray<CSSPropertyParserHelpers::DisplayInside, std::optional<DisplayType>>>;
 
-consteval DisplayOutsideInsideToDisplayTypeMap LEGACY_NODELETE makeDisplayOutsideInsideToDisplayTypeMap()
+NODELETE consteval DisplayOutsideInsideToDisplayTypeMap makeDisplayOutsideInsideToDisplayTypeMap()
 {
     using enum CSSPropertyParserHelpers::DisplayOutside;
     using enum CSSPropertyParserHelpers::DisplayInside;
@@ -78,7 +77,7 @@ consteval DisplayOutsideInsideToDisplayTypeMap LEGACY_NODELETE makeDisplayOutsid
 constexpr auto displayOutsideInsideToDisplayTypeMap = makeDisplayOutsideInsideToDisplayTypeMap();
 
 template<CSSPropertyParserHelpers::DisplayOutside outside, CSSPropertyParserHelpers::DisplayInside inside>
-consteval DisplayType LEGACY_NODELETE mappedDisplayType()
+NODELETE consteval DisplayType mappedDisplayType()
 {
     return *displayOutsideInsideToDisplayTypeMap[outside][inside];
 }
@@ -233,5 +232,4 @@ auto Blending<Display>::blend(Display a, Display b, const BlendingContext& conte
     return a == DisplayType::None ? b : a;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

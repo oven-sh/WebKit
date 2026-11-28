@@ -50,7 +50,7 @@ struct InteractionInformationRequest {
     bool gatherAnimations { false };
     bool linkIndicatorShouldHaveLegacyMargins { false };
 
-    WebEventInputSource inputSource { WebEventInputSource::UserDriven };
+    WebEventInputSource inputSource { WebEventInputSource::Default };
 
     InteractionInformationRequest() { }
     explicit InteractionInformationRequest(WebCore::IntPoint point)
@@ -71,8 +71,8 @@ struct InteractionInformationRequest {
     {
     }
 
-    bool LEGACY_NODELETE isValidForRequest(const InteractionInformationRequest&, int radius = 0) const;
-    bool LEGACY_NODELETE isApproximatelyValidForRequest(const InteractionInformationRequest&, int radius) const;
+    NODELETE bool isValidForRequest(const InteractionInformationRequest&, int radius = 0) const;
+    NODELETE bool isApproximatelyValidForRequest(const InteractionInformationRequest&, int radius) const;
 };
 
 }

@@ -37,7 +37,7 @@ void RegExpCachedResult::visitAggregateImpl(Visitor& visitor)
 {
     visitor.append(m_lastInput);
     visitor.append(m_lastRegExp);
-    if (m_reified) {
+    if (m_state == State::Reified) {
         visitor.append(m_reifiedInput);
         visitor.append(m_reifiedResult);
         visitor.append(m_reifiedLeftContext);
@@ -47,13 +47,56 @@ void RegExpCachedResult::visitAggregateImpl(Visitor& visitor)
 
 DEFINE_VISIT_AGGREGATE(RegExpCachedResult);
 
+NEVER_INLINE void RegExpCachedResult::resolveSubstringInput(JSGlobalObject* globalObject, JSObject* owner)
+{
+    ASSERT(m_state == State::LazyWithSubstringInput);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* input = jsSubstring(globalObject, m_lastInput.get(), m_inputStart, m_inputLength);
+    RETURN_IF_EXCEPTION(scope, void());
+    m_lastInput.set(vm, owner, input);
+    m_result.start -= m_inputStart;
+    m_result.end -= m_inputStart;
+    m_state = State::Lazy;
+}
+
+JSString* RegExpCachedResult::input(JSGlobalObject* globalObject, JSObject* owner)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return m_state == State::Reified ? m_reifiedInput.get() : m_lastInput.get();
+}
+
+void RegExpCachedResult::makeResultPrecise(StringView input)
+{
+    ASSERT(m_oneCharacterMatch);
+    ASSERT(m_lastRegExp->hasValidAtom());
+    const String& pattern = m_lastRegExp->atom();
+    ASSERT(!pattern.isEmpty());
+    ASSERT(pattern.length() == 1);
+    size_t found = input.reverseFind(pattern.codeUnitAt(0));
+    if (found != notFound) {
+        m_result.start = found;
+        m_result.end = found + 1;
+    }
+    m_oneCharacterMatch = false;
+}
+
 NEVER_INLINE JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* owner)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::lastResult);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_reified) {
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (m_state != State::Reified) {
         m_reifiedInput.set(vm, owner, m_lastInput.get());
         if (!m_lastRegExp)
             m_lastRegExp.set(vm, owner, vm.regExpCache()->ensureEmptyRegExp(vm));
@@ -64,19 +107,8 @@ NEVER_INLINE JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObjec
             auto input = string->view(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
 
-            if (m_oneCharacterMatch) {
-                ASSERT(m_lastRegExp->hasValidAtom());
-                const String& pattern = m_lastRegExp->atom();
-                ASSERT(!pattern.isEmpty());
-                ASSERT(pattern.length() == 1);
-                // Reify precise m_result.
-                size_t found = input->reverseFind(pattern.codeUnitAt(0));
-                if (found != notFound) {
-                    m_result.start = found;
-                    m_result.end = found + 1;
-                }
-                m_oneCharacterMatch = false;
-            }
+            if (m_oneCharacterMatch)
+                makeResultPrecise(input);
 
             MatchResult ignoreMatched;
             result = createRegExpMatchesArray(vm, globalObject, string, input, m_lastRegExp.get(), m_result.start, ignoreMatched);
@@ -93,18 +125,72 @@ NEVER_INLINE JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObjec
         m_reifiedResult.setWithoutWriteBarrier(result);
         m_reifiedLeftContext.clear();
         m_reifiedRightContext.clear();
-        m_reified = true;
+        m_state = State::Reified;
         vm.writeBarrier(owner);
     }
     return m_reifiedResult.get();
 }
 
+JSString* RegExpCachedResult::lastInputWithPreciseResult(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT(hasLazyMatch());
+    ASSERT(m_result);
+    JSString* input = m_lastInput.get();
+    if (m_oneCharacterMatch) {
+        auto view = input->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        makeResultPrecise(view);
+    }
+    return input;
+}
+
+// The match itself and the contexts around it are substrings of the last input, so they do not
+// need the matches array, which would rerun the match to compute the captures.
+NEVER_INLINE JSString* RegExpCachedResult::lastMatch(JSGlobalObject* globalObject, JSObject* owner)
+{
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::lastMatch);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (hasLazyMatch()) {
+        JSString* input = lastInputWithPreciseResult(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, jsSubstring(globalObject, input, m_result.start, m_result.end - m_result.start));
+    }
+
+    JSArray* array = lastResult(globalObject, owner);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (array->length()) {
+        JSValue result = JSValue(array).get(globalObject, 0U);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result.isString())
+            return asString(result);
+    }
+    return jsEmptyString(vm);
+}
+
 NEVER_INLINE JSString* RegExpCachedResult::leftContext(JSGlobalObject* globalObject, JSObject* owner)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::leftContext);
-    // Make sure we're reified.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (hasLazyMatch()) {
+        JSString* input = lastInputWithPreciseResult(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, jsSubstring(globalObject, input, 0, m_result.start));
+    }
 
     lastResult(globalObject, owner);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -120,9 +206,19 @@ NEVER_INLINE JSString* RegExpCachedResult::leftContext(JSGlobalObject* globalObj
 NEVER_INLINE JSString* RegExpCachedResult::rightContext(JSGlobalObject* globalObject, JSObject* owner)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::rightContext);
-    // Make sure we're reified.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (hasLazyMatch()) {
+        JSString* input = lastInputWithPreciseResult(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        unsigned length = input->length();
+        RELEASE_AND_RETURN(scope, jsSubstring(globalObject, input, m_result.end, length - m_result.end));
+    }
 
     lastResult(globalObject, owner);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -149,7 +245,7 @@ NEVER_INLINE void RegExpCachedResult::setInput(JSGlobalObject* globalObject, JSO
     RETURN_IF_EXCEPTION(scope, void());
     rightContext(globalObject, owner);
     RETURN_IF_EXCEPTION(scope, void());
-    ASSERT(m_reified);
+    ASSERT(m_state == State::Reified);
     m_reifiedInput.set(vm, owner, input);
 }
 

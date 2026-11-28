@@ -60,17 +60,17 @@ private:
     void close(SocketConnection&, uint64_t connectionID, uint64_t targetID);
     void sendMessageToFrontend(SocketConnection&, uint64_t target, const char*);
     void sendMessageToBackend(SocketConnection&, uint64_t connectionID, uint64_t targetID, const char*);
-    void startAutomationSession(SocketConnection&, const char* sessionID, const RemoteInspector::Client::SessionCapabilities&);
+    bool startAutomationSession(SocketConnection&, const char* sessionID, const RemoteInspector::Client::SessionCapabilities&);
 
     GRefPtr<GSocketService> m_service;
     uint16_t m_port { 0 };
-    UncheckedKeyHashSet<RefPtr<SocketConnection>> m_connections;
-    UncheckedKeyHashMap<SocketConnection*, uint64_t> m_remoteInspectorConnectionToIDMap;
-    UncheckedKeyHashMap<uint64_t, SocketConnection*> m_idToRemoteInspectorConnectionMap;
+    HashSet<RefPtr<SocketConnection>> m_connections;
+    HashMap<SocketConnection*, uint64_t> m_remoteInspectorConnectionToIDMap;
+    HashMap<uint64_t, SocketConnection*> m_idToRemoteInspectorConnectionMap;
     SocketConnection* m_clientConnection { nullptr };
     SocketConnection* m_automationConnection { nullptr };
-    UncheckedKeyHashSet<std::pair<uint64_t, uint64_t>> m_inspectionTargets;
-    UncheckedKeyHashSet<std::pair<uint64_t, uint64_t>> m_automationTargets;
+    HashSet<std::pair<uint64_t, uint64_t>> m_inspectionTargets;
+    HashSet<std::pair<uint64_t, uint64_t>> m_automationTargets;
 };
 
 } // namespace Inspector

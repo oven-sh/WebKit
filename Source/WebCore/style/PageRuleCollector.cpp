@@ -35,12 +35,11 @@
 #include "UserAgentStyle.h"
 #include <ranges>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
-static inline bool LEGACY_NODELETE comparePageRules(const StyleRulePage* r1, const StyleRulePage* r2)
+NODELETE static inline bool comparePageRules(const StyleRulePage& r1, const StyleRulePage& r2)
 {
-    return r1->selector().specificityForPage() < r2->selector().specificityForPage();
+    return r1.selector().specificityForPage() < r2.selector().specificityForPage();
 }
 
 bool PageRuleCollector::isLeftPage(int pageIndex) const
@@ -67,7 +66,7 @@ void PageRuleCollector::matchAllPageRules(int pageIndex)
     auto isFirst = isFirstPage(pageIndex);
     auto page = pageName(pageIndex);
 
-    matchPageRules(protect(UserAgentStyle::defaultPrintStyle), isLeft, isFirst, page);
+    matchPageRules(UserAgentStyle::sheets().defaultPrintStyle.get(), isLeft, isFirst, page);
     matchPageRules(protect(m_ruleSets.userStyle()), isLeft, isFirst, page);
     // Only consider the global author RuleSet for @page rules, as per the HTML5 spec.
     if (m_ruleSets.isAuthorStyleDefined())
@@ -79,7 +78,7 @@ void PageRuleCollector::matchPageRules(RuleSet* rules, bool isLeftPage, bool isF
     if (!rules)
         return;
 
-    Vector<StyleRulePage*> matchedPageRules;
+    Vector<Ref<StyleRulePage>> matchedPageRules;
     matchPageRulesForList(matchedPageRules, rules->pageRules(), isLeftPage, isFirstPage, pageName);
     if (matchedPageRules.isEmpty())
         return;
@@ -91,7 +90,7 @@ void PageRuleCollector::matchPageRules(RuleSet* rules, bool isLeftPage, bool isF
     });
 }
 
-static bool LEGACY_NODELETE checkPageSelectorComponents(const CSSSelector& selector, bool isLeftPage, bool isFirstPage, const WTF::String& pageName)
+NODELETE static bool checkPageSelectorComponents(const CSSSelector& selector, bool isLeftPage, bool isFirstPage, const WTF::String& pageName)
 {
     for (const CSSSelector* component = &selector; component; component = component->precedingInComplexSelector()) {
         if (component->match() == CSSSelector::Match::Tag) {
@@ -111,11 +110,9 @@ static bool LEGACY_NODELETE checkPageSelectorComponents(const CSSSelector& selec
     return true;
 }
 
-void PageRuleCollector::matchPageRulesForList(Vector<StyleRulePage*>& matchedRules, const Vector<StyleRulePage*>& rules, bool isLeftPage, bool isFirstPage, const WTF::String& pageName)
+void PageRuleCollector::matchPageRulesForList(Vector<Ref<StyleRulePage>>& matchedRules, const Vector<Ref<StyleRulePage>>& rules, bool isLeftPage, bool isFirstPage, const WTF::String& pageName)
 {
-    for (unsigned i = 0; i < rules.size(); ++i) {
-        RefPtr rule = rules[i];
-
+    for (auto& rule : rules) {
         if (!checkPageSelectorComponents(rule->selector(), isLeftPage, isFirstPage, pageName))
             continue;
 
@@ -129,5 +126,4 @@ void PageRuleCollector::matchPageRulesForList(Vector<StyleRulePage*>& matchedRul
     }
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

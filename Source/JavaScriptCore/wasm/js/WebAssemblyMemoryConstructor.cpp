@@ -123,13 +123,13 @@ JSWebAssemblyMemory* WebAssemblyMemoryConstructor::createMemoryFromDescriptor(JS
 
             if (initialPageCount > maximumPageCount) {
                 throwException(globalObject, throwScope,
-                    createRangeError(globalObject, "'maximum' page count must be than greater than or equal to the 'initial' page count"_s));
+                    createRangeError(globalObject, "'maximum' page count must be greater than or equal to the 'initial' page count"_s));
                 return { };
             }
         }
     }
 
-    // Even though Options::useSharedArrayBuffer() is false, we can create SharedArrayBuffer through wasm shared memory.
+    // Even though Options::alwaysUseSharedArrayBuffer() is false, we can create SharedArrayBuffer through wasm shared memory.
     // But we cannot send SharedArrayBuffer to the other workers, so it is not effective.
     MemorySharingMode sharingMode = MemorySharingMode::Default;
     if (Options::useWasmFaultSignalHandler()) [[likely]] {

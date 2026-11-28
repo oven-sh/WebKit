@@ -84,7 +84,6 @@ private:
     float pageScaleFactor() const override;
     float deviceScaleFactor() const override;
     std::optional<float> customContentsScale(const WebCore::GraphicsLayer&) const override;
-    bool layerNeedsPlatformContext(const WebCore::GraphicsLayer&) const override;
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     bool layerAllowsDynamicContentScaling(const WebCore::GraphicsLayer*) const override;
 #endif
@@ -96,8 +95,8 @@ private:
     std::optional<WebCore::PlatformLayerIdentifier> contentsLayerIdentifier() const final;
 
     void updatePageBackgroundLayers();
-    std::optional<PDFDocumentLayout::PageIndex> LEGACY_NODELETE pageIndexForPageBackgroundLayer(const WebCore::GraphicsLayer&) const;
-    WebCore::GraphicsLayer* LEGACY_NODELETE backgroundLayerForPage(PDFDocumentLayout::PageIndex) const;
+    NODELETE std::optional<PDFDocumentLayout::PageIndex> pageIndexForPageBackgroundLayer(const WebCore::GraphicsLayer&) const;
+    NODELETE WebCore::GraphicsLayer* backgroundLayerForPage(PDFDocumentLayout::PageIndex) const;
 
     void didGeneratePreviewForPage(PDFDocumentLayout::PageIndex) override;
 

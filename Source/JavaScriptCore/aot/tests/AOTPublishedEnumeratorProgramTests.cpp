@@ -66,72 +66,70 @@ function f6 name="setPrototype" parameters=[{type=anything}, {type=anything}] re
 }
 )IR"_s;
 
-static constexpr ASCIILiteral statements = R"JS(
+static constexpr ASCIILiteral statements = COUNTED_CALLS(R"("GetPropertyEnumerator", "OpenEnumeration")") R"JS(
 globalThis.publish = (makePair, makeReversedPair, walk, set, remove, setPrototype) => {
-    const calls = () => Number(aotOperationCount("operationAOTGetPropertyEnumerator"));
     let keys = "";
     const note = key => { keys += " " + key; };
-    const measure = (what, create) => {
-        const callsBefore = calls();
+    const show = (what, create) => {
+        const before = countedCalls();
         for (let i = 0; i < 50; i++) {
             keys = "";
             walk(create(i), note);
         }
-        const numberOfCalls = calls() - callsBefore;
-        print(what + ": " + (numberOfCalls < 5 ? "found" : numberOfCalls + " calls") + "," + keys);
+        print(what + ":" + keys + servedBy(before, 50, 4));
     };
-    measure("pairs", makePair);
-    measure("reversed pairs", makeReversedPair);
-    measure("both orders in turn", i => i & 1 ? makePair(i) : makeReversedPair(i));
-    measure("one field deleted", i => remove(makePair(i), "first"));
-    measure("extra property", i => set(makePair(i), "third", i));
-    measure("another extra property", i => set(makePair(i), "fourth", i));
-    measure("extra property stored by the interpreter", i => { const pair = makePair(i); pair.third = i; return pair; });
-    measure("index", i => set(makePair(i), "7", i));
+    show("pairs", makePair);
+    show("reversed pairs", makeReversedPair);
+    show("both orders in turn", i => i & 1 ? makePair(i) : makeReversedPair(i));
+    show("one field deleted", i => remove(makePair(i), "first"));
+    show("extra property", i => set(makePair(i), "third", i));
+    show("another extra property", i => set(makePair(i), "fourth", i));
+    show("extra property stored by the interpreter", i => { const pair = makePair(i); pair.third = i; return pair; });
+    show("index", i => set(makePair(i), "7", i));
 
     const prototype = { inherited: 0 };
-    measure("other prototype", i => setPrototype(makePair(i), prototype));
+    show("other prototype", i => setPrototype(makePair(i), prototype));
     prototype[3] = 0;
-    measure("index on the other prototype", i => setPrototype(makePair(i), prototype));
-    measure("no prototype", i => setPrototype(makePair(i), null));
-    measure("no prototype and an extra property", i => set(setPrototype(makePair(i), null), "third", i));
-    measure("pairs after all that", makePair);
+    show("index on the other prototype", i => setPrototype(makePair(i), prototype));
+    show("no prototype", i => setPrototype(makePair(i), null));
+    show("no prototype and an extra property", i => set(setPrototype(makePair(i), null), "third", i));
+    show("pairs after all that", makePair);
     gc();
-    measure("pairs after a collection", makePair);
-    measure("ordinary objects", i => ({ first: i, second: i }));
-    measure("nothing to walk", i => i & 1 ? null : undefined);
+    show("pairs after a collection", makePair);
+    show("ordinary objects", i => ({ first: i, second: i }));
+    show("nothing to walk", i => i & 1 ? null : undefined);
 };
 )JS"_s;
 
 static constexpr ASCIILiteral expectedOutput =
-    "pairs: found, first second\n"
-    "reversed pairs: found, second first\n"
-    "both orders in turn: found, first second\n"
-    "one field deleted: found, second\n"
-    "extra property: found, first second third\n"
-    "another extra property: found, first second fourth\n"
-    "extra property stored by the interpreter: found, first second third\n"
-    "index: 50 calls, 7 first second\n"
-    "other prototype: 50 calls, first second inherited\n"
-    "index on the other prototype: 50 calls, first second 3 inherited\n"
-    "no prototype: 50 calls, first second\n"
-    "no prototype and an extra property: found, first second third\n"
-    "pairs after all that: found, first second\n"
-    "pairs after a collection: found, first second\n"
-    "ordinary objects: found, first second\n"
-    "nothing to walk: found,\n"_s;
+    "pairs: first second\n"
+    "reversed pairs: second first\n"
+    "both orders in turn: first second\n"
+    "one field deleted: second\n"
+    "extra property: first second third\n"
+    "another extra property: first second fourth\n"
+    "extra property stored by the interpreter: first second third\n"
+    "index: 7 first second\n"
+    "other prototype: first second inherited\n"
+    "index on the other prototype: first second 3 inherited\n"
+    "no prototype: first second\n"
+    "no prototype and an extra property: first second third\n"
+    "pairs after all that: first second\n"
+    "pairs after a collection: first second\n"
+    "ordinary objects: first second\n"
+    "nothing to walk:\n"_s;
 
-static void testObjectsOfOneKeyOrderAskOnce()
+static void testForInListsTheKeysOfEachObject()
 {
-    checkOutputOfProgramInShell(programText, expectedOutput, { }, statements, { "--aotCountsPath=/dev/null"_s });
-    for (ASCIILiteral word : { "validate"_s, "references=narrow"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
-        checkOutputOfProgramInShell(programText, expectedOutput, { word }, statements, { "--aotCountsPath=/dev/null"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s }, statements);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s }, statements);
+    checkServicesInShell(__FILE__, __LINE__, programText, expectedOutput, statements, wordsOfCaches, "cccccccnnncccccc"_s, { "references=narrow"_s });
 }
 
 std::span<const NativeTest> publishedEnumeratorProgramTests()
 {
     static constexpr NativeTest tests[] = {
-        { "published-enumerators/programs/objects-of-one-key-order-ask-once"_s, testObjectsOfOneKeyOrderAskOnce },
+        { "published-enumerators/programs/for-in-lists-the-keys-of-each-object"_s, testForInListsTheKeysOfEachObject },
     };
     return tests;
 }

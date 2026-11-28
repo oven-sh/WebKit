@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <Metal/Metal.h>
 #import <WebGPU/WebGPUCpp.h>
 #import <atomic>
@@ -77,7 +81,7 @@ public:
     void setBufferMapCount(int bufferMapCount) { m_bufferMapCount = bufferMapCount; }
     int bufferMapCount() const { return m_bufferMapCount; }
 
-    NSString* LEGACY_NODELETE lastError() const;
+    NODELETE NSString* lastError() const;
     bool waitForCompletion();
     bool preCommitHandler();
     void postCommitHandler();

@@ -1,0 +1,313 @@
+# A QUESTION WHOSE TWO WAYS COME TO ONE PLACE TEACHES NOTHING.
+# The yes of `$isPlainInstanceOf(object, Gauge)` teaches the walk on the taken edge: every field lies in its slot, the object bears no mark and stands below its prototype: a read of a field behind it is one load.
+# `if ($isPlainInstanceOf(object, Gauge)) { }`: both ways of the branch come to one place with the same values, so the walk builds no branch: it goes on along the taken way by a jump, and the question is swept as dead.
+# Nothing was tested there. What a yes teaches is learned only where the branch that the walk has BUILT decides the test, or where its outcome is known on the way.
+# It was learned by the number of the target in the input: the load read an empty slot, and the shell crashed with SIGSEGV in each of the three runs that change the object.
+# function Gauge(level) { this.level = level; this.mark = "m"; }
+# Gauge.prototype.read = function () { return "read"; };
+# function idle(object) { if (!$isPlainInstanceOf(object, Gauge)) return "-"; amid(object); if ($isPlainInstanceOf(object, Gauge)) { } return "level " + object.level; }
+# function heir(object) { if (!$isPlainHeirOf(object, Gauge)) return "-"; amid(object); if ($isPlainHeirOf(object, Gauge)) { } return "level " + object.level; }
+# function unused(object) { if (!$isPlainInstanceOf(object, Gauge)) return "-"; amid(object); if ($isPlainInstanceOf(object, Gauge)) { const mark = "m"; } else { } return "level " + object.level; }
+# function busy(object) { if (!$isPlainInstanceOf(object, Gauge)) return "-"; amid(object); let word = "no "; if ($isPlainInstanceOf(object, Gauge)) word = "yes "; return word + object.level; }
+# function real(object) { if (!$isPlainInstanceOf(object, Gauge)) return "-"; amid(object); if ($isPlainInstanceOf(object, Gauge)) return "yes " + object.level; return "no " + object.level; }
+# print(idle(new Gauge(1)));
+# print(heir(new Gauge(2)));
+# print(unused(new Gauge(3)));
+# print(busy(new Gauge(4)));
+# print(real(new Gauge(5)));
+# The functions that ask lie in a file of the library. f2 = idle, f3 = heir, f4 = unused, f6 = real
+# OPTIONS: mechanisms=all
+# RUN(IDLE): walk f2
+# IDLE: calleeName="amid"
+# IDLE-NOT: level=Proven
+# IDLE: = GetSlot {{*}}key="level" receivers=[L0] level=Expected
+# RUN(HEIR): walk f3
+# HEIR: calleeName="amid"
+# HEIR-NOT: level=Proven
+# HEIR: = GetSlot {{*}}key="level" receivers=[L0] level=Expected
+# RUN(UNUSED): walk f4
+# UNUSED: calleeName="amid"
+# UNUSED-NOT: level=Proven
+# UNUSED: = GetSlot {{*}}key="level" receivers=[L0] level=Expected
+# A branch that is built teaches as ever.
+# RUN(REAL): walk f6
+# REAL: calleeName="amid"
+# REAL: = IsPlainInstanceOf
+# REAL: = GetSlot {{*}}key="level" receivers=[L0] level=Proven
+# RUN(NOTHING): run-in-shell amid = function () { };
+# NOTHING: level 1
+# NOTHING-NEXT: level 2
+# NOTHING-NEXT: level 3
+# NOTHING-NEXT: yes 4
+# NOTHING-NEXT: yes 5
+# NOTHING-NEXT: exited with 0
+# The field leaves its slot between the two questions: the slot is empty.
+# RUN(ACCESSOR): run-in-shell amid = function (made) { Object.defineProperty(made, "level", { get() { return 70; }, configurable: true }); };
+# ACCESSOR: level 70
+# ACCESSOR-NEXT: level 70
+# ACCESSOR-NEXT: level 70
+# ACCESSOR-NEXT: no 70
+# ACCESSOR-NEXT: no 70
+# ACCESSOR-NEXT: exited with 0
+# RUN(DELETED): run-in-shell amid = function (made) { delete made.level; };
+# DELETED: level undefined
+# DELETED-NEXT: level undefined
+# DELETED-NEXT: level undefined
+# DELETED-NEXT: no undefined
+# DELETED-NEXT: no undefined
+# DELETED-NEXT: exited with 0
+# RUN(RELINKED): run-in-shell amid = function (made) { delete made.level; Object.setPrototypeOf(made, { level: "other" }); };
+# RELINKED: level other
+# RELINKED-NEXT: level other
+# RELINKED-NEXT: level other
+# RELINKED-NEXT: no other
+# RELINKED-NEXT: no other
+# RELINKED-NEXT: exited with 0
+
+module m0 path="edge.js" displayPath="edge.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Gauge" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="mark" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+variable g0 name="Gauge" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = GetModuleVariable variable=g0 @63
+    v11 = PropGet v10 key="prototype" @63
+    v12 = NewClosure function=f7 @86
+    PropSet v11, v12 key="read" @69
+    v14 = Builtin builtin=GlobalThis @1022
+    v15 = PropGet v14 key="print" [isFreeName] @1022
+    v16 = GetModuleVariable variable=g0 @1037
+    v17 = Integer integer=1 @1043
+    v18 = Construct v16, -, v17 calleeName="Gauge" @1037
+    v19 = Call v1, -, v18 calleeName="idle" @1028
+    v20 = Call v15, -, v19 calleeName="print" @1022
+    v21 = Builtin builtin=GlobalThis @1049
+    v22 = PropGet v21 key="print" [isFreeName] @1049
+    v23 = GetModuleVariable variable=g0 @1064
+    v24 = Integer integer=2 @1070
+    v25 = Construct v23, -, v24 calleeName="Gauge" @1064
+    v26 = Call v3, -, v25 calleeName="heir" @1055
+    v27 = Call v22, -, v26 calleeName="print" @1049
+    v28 = Builtin builtin=GlobalThis @1076
+    v29 = PropGet v28 key="print" [isFreeName] @1076
+    v30 = GetModuleVariable variable=g0 @1093
+    v31 = Integer integer=3 @1099
+    v32 = Construct v30, -, v31 calleeName="Gauge" @1093
+    v33 = Call v5, -, v32 calleeName="unused" @1082
+    v34 = Call v29, -, v33 calleeName="print" @1076
+    v35 = Builtin builtin=GlobalThis @1105
+    v36 = PropGet v35 key="print" [isFreeName] @1105
+    v37 = GetModuleVariable variable=g0 @1120
+    v38 = Integer integer=4 @1126
+    v39 = Construct v37, -, v38 calleeName="Gauge" @1120
+    v40 = Call v7, -, v39 calleeName="busy" @1111
+    v41 = Call v36, -, v40 calleeName="print" @1105
+    v42 = Builtin builtin=GlobalThis @1132
+    v43 = PropGet v42 key="print" [isFreeName] @1132
+    v44 = GetModuleVariable variable=g0 @1147
+    v45 = Integer integer=5 @1153
+    v46 = Construct v44, -, v45 calleeName="Gauge" @1147
+    v47 = Call v9, -, v46 calleeName="real" @1138
+    v48 = Call v43, -, v47 calleeName="print" @1132
+    v49 = Undefined @1132
+    Return v49 @1132
+}
+function f1 name="Gauge" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = String string="m" @56
+    PropSet v0, v3 key="mark" @44
+    v5 = Undefined @44
+    Return v5 @44
+}
+function f2 name="idle" module=m2 position=118 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @147
+    v2 = Undefined @147
+    v3 = GetModuleVariable variable=g0 @174
+    v4 = IsPlainInstanceOf v0, v3 @147
+    v5 = ToBoolean v4 @147
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0) @147
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @194
+    v8 = PropGet v7 key="amid" [isFreeName] @194
+    v9 = Call v8, -, v0 calleeName="amid" @194
+    v10 = Undefined @212
+    v11 = Undefined @212
+    v12 = GetModuleVariable variable=g0 @239
+    v13 = IsPlainInstanceOf v0, v12 @212
+    v14 = ToBoolean v13 @212
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @212
+  b2(v15):
+    Jump -> next b4() @212
+  b3(v16):
+    Jump -> next b4() @212
+  b4():
+    v17 = String string="level " @258
+    v18 = PropGet v0 key="level" @269
+    v19 = Add v17, v18 @269
+    Return v19 @269
+  b5(v20):
+    v21 = String string="-" @189
+    Return v21 @189
+}
+function f3 name="heir" module=m2 position=285 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @314
+    v2 = Undefined @314
+    v3 = GetModuleVariable variable=g0 @337
+    v4 = IsPlainHeirOf v0, v3 @314
+    v5 = ToBoolean v4 @314
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0) @314
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @357
+    v8 = PropGet v7 key="amid" [isFreeName] @357
+    v9 = Call v8, -, v0 calleeName="amid" @357
+    v10 = Undefined @375
+    v11 = Undefined @375
+    v12 = GetModuleVariable variable=g0 @398
+    v13 = IsPlainHeirOf v0, v12 @375
+    v14 = ToBoolean v13 @375
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @375
+  b2(v15):
+    Jump -> next b4() @375
+  b3(v16):
+    Jump -> next b4() @375
+  b4():
+    v17 = String string="level " @417
+    v18 = PropGet v0 key="level" @428
+    v19 = Add v17, v18 @428
+    Return v19 @428
+  b5(v20):
+    v21 = String string="-" @352
+    Return v21 @352
+}
+function f4 name="unused" module=m2 position=444 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @475
+    v2 = Undefined @475
+    v3 = GetModuleVariable variable=g0 @502
+    v4 = IsPlainInstanceOf v0, v3 @475
+    v5 = ToBoolean v4 @475
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @475
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @522
+    v8 = PropGet v7 key="amid" [isFreeName] @522
+    v9 = Call v8, -, v0 calleeName="amid" @522
+    v10 = Undefined @540
+    v11 = Undefined @540
+    v12 = GetModuleVariable variable=g0 @567
+    v13 = IsPlainInstanceOf v0, v12 @540
+    v14 = ToBoolean v13 @540
+    Branch v14 -> taken b2(| 0), notTaken b3() @540
+  b2(v15):
+    v16 = String string="m" @590
+    Jump -> next b3() @583
+  b3():
+    v17 = String string="level " @613
+    v18 = PropGet v0 key="level" @624
+    v19 = Add v17, v18 @624
+    Return v19 @624
+  b4(v20):
+    v21 = String string="-" @517
+    Return v21 @517
+}
+function f5 name="busy" module=m2 position=640 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @669
+    v2 = Undefined @669
+    v3 = GetModuleVariable variable=g0 @696
+    v4 = IsPlainInstanceOf v0, v3 @669
+    v5 = ToBoolean v4 @669
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @669
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @716
+    v8 = PropGet v7 key="amid" [isFreeName] @716
+    v9 = Call v8, -, v0 calleeName="amid" @716
+    v10 = String string="no " @741
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]} @741
+    v12 = Undefined @752
+    v13 = Undefined @752
+    v14 = GetModuleVariable variable=g0 @779
+    v15 = IsPlainInstanceOf v0, v14 @752
+    v16 = ToBoolean v15 @752
+    Branch v16 -> taken b2(| 0), notTaken b3(v11) @752
+  b2(v17):
+    v18 = String string="yes " @794
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @787
+    Jump -> next b3(v19) @787
+  b3(v20):
+    v21 = PropGet v0 key="level" @816
+    v22 = Add v20, v21 @816
+    Return v22 @816
+  b4(v23):
+    v24 = String string="-" @711
+    Return v24 @711
+}
+function f6 name="real" module=m2 position=832 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @861
+    v2 = Undefined @861
+    v3 = GetModuleVariable variable=g0 @888
+    v4 = IsPlainInstanceOf v0, v3 @861
+    v5 = ToBoolean v4 @861
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @861
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @908
+    v8 = PropGet v7 key="amid" [isFreeName] @908
+    v9 = Call v8, -, v0 calleeName="amid" @908
+    v10 = Undefined @926
+    v11 = Undefined @926
+    v12 = GetModuleVariable variable=g0 @953
+    v13 = IsPlainInstanceOf v0, v12 @926
+    v14 = ToBoolean v13 @926
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @926
+  b2(v15):
+    v16 = String string="yes " @968
+    v17 = PropGet v0 key="level" @977
+    v18 = Add v16, v17 @977
+    Return v18 @977
+  b3(v19):
+    v20 = String string="no " @998
+    v21 = PropGet v0 key="level" @1006
+    v22 = Add v20, v21 @1006
+    Return v22 @1006
+  b4(v23):
+    v24 = String string="-" @903
+    Return v24 @903
+}
+function f7 module=m2 position=86 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="read" @107
+    Return v0 @107
+}
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private

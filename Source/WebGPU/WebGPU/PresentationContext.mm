@@ -77,15 +77,3 @@ TextureView* PresentationContext::getCurrentTextureView()
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuSurfaceAddRef(WGPUSurface surface)
-{
-    WebGPU::Metal::fromAPI(surface).ref();
-}
-
-void wgpuSurfaceRelease(WGPUSurface surface)
-{
-    WebGPU::Metal::fromAPI(surface).deref();
-}

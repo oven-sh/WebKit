@@ -50,7 +50,7 @@ public:
     WEBCORE_EXPORT ProcessIdentity(const ProcessIdentity&) = default;
 
     // Returns true for a process identity or false on empty identity.
-    WEBCORE_EXPORT operator bool LEGACY_NODELETE () const;
+    NODELETE WEBCORE_EXPORT operator bool() const;
 
     WEBCORE_EXPORT ProcessIdentity& operator=(const ProcessIdentity&);
 
@@ -62,7 +62,7 @@ public:
 private:
 #if HAVE(TASK_IDENTITY_TOKEN)
     friend struct IPC::ArgumentCoder<ProcessIdentity>;
-    WEBCORE_EXPORT ProcessIdentity(MachSendRight&& taskIdToken);
+    NODELETE WEBCORE_EXPORT ProcessIdentity(MachSendRight&& taskIdToken);
     MachSendRight m_taskIdToken;
 #endif
 };

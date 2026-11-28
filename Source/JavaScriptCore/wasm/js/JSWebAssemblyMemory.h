@@ -59,7 +59,7 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE adopt(Ref<Wasm::Memory>&&);
+    NODELETE JS_EXPORT_PRIVATE void adopt(Ref<Wasm::Memory>&&);
     Wasm::Memory& memory() { return m_memory.get(); }
     JSArrayBuffer* buffer(JSGlobalObject*);
     JSArrayBuffer* toFixedLengthBuffer(JSGlobalObject*);
@@ -82,10 +82,13 @@ private:
 
     void associateArrayBuffer(JSGlobalObject*, bool shouldBeFixedLength);
     void disassociateArrayBuffer(VM&);
+    JSArrayBuffer* createBufferWrapper(VM&, JSGlobalObject*);
 
     Ref<Wasm::Memory> m_memory;
     WriteBarrier<JSArrayBuffer> m_bufferWrapper;
     RefPtr<ArrayBuffer> m_buffer;
+    // How much of the memory has been reported to the collector.
+    size_t m_reportedBytes { 0 };
 };
 
 } // namespace JSC

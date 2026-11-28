@@ -169,7 +169,7 @@ ALWAYS_INLINE void FastMarkAppender::markAndPush(JSCell* cell)
     if (word->loadRelaxed() >> (atom % 64) & 1)
         return;
     Word mask = static_cast<Word>(1) << (atom % 64);
-    if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
+    if (word->exchangeOr<MemoryOrder::Relaxed>(mask) & mask) [[unlikely]]
         return;
     pushNewlyMarkedCell(cell, block);
 }
@@ -206,7 +206,7 @@ inline NEVER_INLINE void FastMarkAppender::markAndPushCellWithoutMark(JSCell* ce
     uintptr_t atom = std::bit_cast<uintptr_t>(cell) / MarkedBlock::atomSize;
     auto* word = std::bit_cast<Atomic<uint64_t>*>(block.marks().storage().data() + atom / 64 % (MarkedBlock::atomsPerBlock / 64));
     uint64_t mask = static_cast<uint64_t>(1) << (atom % 64);
-    if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
+    if (word->exchangeOr<MemoryOrder::Relaxed>(mask) & mask) [[unlikely]]
         return;
     if (m_cursor.next == m_cursor.end || &block.vm().heap != m_visitor.m_bytesMarkedHeap) [[unlikely]]
         return pushNewlyMarkedCellOutOfLine(cell);

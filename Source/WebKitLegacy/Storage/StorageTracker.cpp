@@ -33,6 +33,7 @@
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SecurityOriginData.h>
 #include <pal/text/TextEncoding.h>
+#include <wtf/Borrow.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
@@ -134,12 +135,12 @@ void StorageTracker::openTrackerDatabase(bool createIfDoesNotExist)
     
     if (!ensureDatabaseFileExists(databasePath, createIfDoesNotExist)) {
         if (createIfDoesNotExist)
-            LOG_ERROR("Failed to create database file '%s'", databasePath.utf8());
+            LOG_ERROR("Failed to create database file '%s'", makeUTF8CString(databasePath));
         return;
     }
     
     if (!m_database.open(databasePath)) {
-        LOG_ERROR("Failed to open databasePath %s.", databasePath.utf8());
+        LOG_ERROR("Failed to open databasePath %s.", makeUTF8CString(databasePath));
         return;
     }
     
@@ -174,7 +175,7 @@ void StorageTracker::syncImportOriginIdentifiers()
 {
     ASSERT(m_isActive);
     
-    ASSERT(!isMainThread());
+    m_thread->assertIsCurrent();
 
     {
         Locker locker { m_databaseMutex };
@@ -254,7 +255,7 @@ void StorageTracker::syncFileSystemAndTrackerDatabase()
     OriginSet foundOrigins;
     String fileExtension = ".localstorage"_s;
 
-    for (auto& fileName : fileNames) {
+    for (auto& fileName : borrow(fileNames)) {
         if (fileName.length() <= fileExtension.length() || !fileName.endsWith(fileExtension))
             continue;
 
@@ -317,7 +318,7 @@ void StorageTracker::syncSetOriginDetails(const String& originIdentifier, const 
 
     auto statement = m_database.prepareStatement("INSERT INTO Origins VALUES (?, ?)"_s);
     if (!statement) {
-        LOG_ERROR("Unable to establish origin '%s' in the tracker", originIdentifier.utf8());
+        LOG_ERROR("Unable to establish origin '%s' in the tracker", makeUTF8CString(originIdentifier));
         return;
     } 
     
@@ -325,7 +326,7 @@ void StorageTracker::syncSetOriginDetails(const String& originIdentifier, const 
     statement->bindText(2, databaseFile);
     
     if (statement->step() != SQLITE_DONE)
-        LOG_ERROR("Unable to establish origin '%s' in the tracker", originIdentifier.utf8());
+        LOG_ERROR("Unable to establish origin '%s' in the tracker", makeUTF8CString(originIdentifier));
 
     {
         Locker locker { m_originSetMutex };
@@ -349,8 +350,7 @@ Vector<SecurityOriginData> StorageTracker::origins()
 
     Locker locker { m_originSetMutex };
 
-    Vector<SecurityOriginData> result;
-    result.reserveInitialCapacity(m_originSet.size());
+    Vector<SecurityOriginData> result(ReserveCapacityTag { }, m_originSet.size());
     for (auto& identifier : m_originSet) {
         auto origin = SecurityOriginData::fromDatabaseIdentifier(identifier);
         if (!origin) {
@@ -392,7 +392,7 @@ static void truncateDatabaseFile(SQLiteDatabase& database)
 
 void StorageTracker::syncDeleteAllOrigins()
 {
-    ASSERT(!isMainThread());
+    m_thread->assertIsCurrent();
 
     SQLiteTransactionInProgressAutoCounter transactionCounter;
     
@@ -494,14 +494,14 @@ void StorageTracker::deleteOrigin(const SecurityOriginData& origin)
 
 void StorageTracker::syncDeleteOrigin(const String& originIdentifier)
 {
-    ASSERT(!isMainThread());
+    m_thread->assertIsCurrent();
 
     SQLiteTransactionInProgressAutoCounter transactionCounter;
 
     Locker locker { m_databaseMutex };
     
     if (!canDeleteOrigin(originIdentifier)) {
-        LOG_ERROR("Attempted to delete origin '%s' while it was being created\n", originIdentifier.utf8());
+        LOG_ERROR("Attempted to delete origin '%s' while it was being created\n", makeUTF8CString(originIdentifier));
         return;
     }
     
@@ -519,12 +519,12 @@ void StorageTracker::syncDeleteOrigin(const String& originIdentifier)
     {
         auto deleteStatement = m_database.prepareStatement("DELETE FROM Origins where origin=?"_s);
         if (!deleteStatement) {
-            LOG_ERROR("Unable to prepare deletion of origin '%s'", originIdentifier.utf8());
+            LOG_ERROR("Unable to prepare deletion of origin '%s'", makeUTF8CString(originIdentifier));
             return;
         }
         deleteStatement->bindText(1, originIdentifier);
         if (!deleteStatement->executeCommand()) {
-            LOG_ERROR("Unable to execute deletion of origin '%s'", originIdentifier.utf8());
+            LOG_ERROR("Unable to execute deletion of origin '%s'", makeUTF8CString(originIdentifier));
             return;
         }
     }
@@ -606,7 +606,7 @@ String StorageTracker::databasePathForOrigin(const String& originIdentifier)
 
     auto pathStatement = m_database.prepareStatement("SELECT path FROM Origins WHERE origin=?"_s);
     if (!pathStatement) {
-        LOG_ERROR("Unable to prepare selection of path for origin '%s'", originIdentifier.utf8());
+        LOG_ERROR("Unable to prepare selection of path for origin '%s'", makeUTF8CString(originIdentifier));
         return String();
     }
     pathStatement->bindText(1, originIdentifier);

@@ -29,7 +29,6 @@
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/PageBlock.h>
-#include <wtf/ParkingLot.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 
@@ -191,19 +190,6 @@ bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
     return m_hasUnderlyingThread;
 }
 
-bool AutomaticThread::s_threadsSayWhenTheyAreUp { false };
-
-void AutomaticThread::setThreadsSayWhenTheyAreUp()
-{
-    s_threadsSayWhenTheyAreUp = true;
-}
-
-void AutomaticThread::waitUntilIsUp(const AbstractLocker&)
-{
-    while (s_threadsSayWhenTheyAreUp && m_hasUnderlyingThread && !m_isUp)
-        m_isUpCondition.wait(*m_lock);
-}
-
 void AutomaticThread::start(const AbstractLocker&, FailedCreation failedCreation)
 #else
 void AutomaticThread::start(const AbstractLocker&)
@@ -214,9 +200,6 @@ void AutomaticThread::start(const AbstractLocker&)
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
-#if ENABLE(AOT)
-    m_isUp = false;
-#endif
 
     auto stackSpec = stackSpecification();
     switch (stackSpec.kind()) {
@@ -242,18 +225,7 @@ void AutomaticThread::start(const AbstractLocker&)
             
             RefPtr<AutomaticThread> thread = preserveThisForThread;
             thread->threadDidStart();
-
-#if ENABLE(AOT)
-            if (s_threadsSayWhenTheyAreUp) [[unlikely]] {
-                // A park whose validation fails allocates this thread's ParkingLot data and the address's bucket, and does not park.
-                for (const void* address : { static_cast<const void*>(m_lock.get()), static_cast<const void*>(&m_waitCondition) })
-                    ParkingLot::parkConditionally(address, [] { return false; }, [] { }, TimeWithDynamicClockType(MonotonicTime::infinity()));
-                Locker locker { *m_lock };
-                m_isUp = true;
-                m_isUpCondition.notifyAll();
-            }
-#endif
-
+            
             if (ASSERT_ENABLED) {
                 Locker locker { *m_lock };
                 ASSERT(m_condition->contains(locker, this));
@@ -262,10 +234,6 @@ void AutomaticThread::start(const AbstractLocker&)
             auto stopImpl = [&] (const AbstractLocker& locker) {
                 thread->threadIsStopping(locker);
                 thread->m_hasUnderlyingThread = false;
-#if ENABLE(AOT)
-                if (s_threadsSayWhenTheyAreUp) [[unlikely]]
-                    m_isUpCondition.notifyAll();
-#endif
             };
             
             auto stopPermanently = [&] (const AbstractLocker& locker) {
@@ -331,14 +299,18 @@ void AutomaticThread::start(const AbstractLocker&)
                             m_waitCondition.waitFor(*m_lock, timeout);
                         if (verbose && !awokenByNotify && !m_isWaiting)
                             dataLog(RawPointer(this), ": waitFor timed out, but notified via m_isWaiting flag!\n");
-                        if (m_isWaiting && shouldSleep(locker)) {
+                        if (m_isWaiting) {
+                            // Clear this even if we keep running, or notifyOne() could pick this thread
+                            // while it works and the notification would be lost.
                             m_isWaiting = false;
-                            if (verbose)
-                                dataLog(RawPointer(this), ": Going to sleep!\n");
-                            // It's important that we don't release the lock until we have completely
-                            // indicated that the thread is kaput. Otherwise we'll have a a notify
-                            // race that manifests as a deadlock on VM shutdown.
-                            return stopForTimeout(locker);
+                            if (shouldSleep(locker)) {
+                                if (verbose)
+                                    dataLog(RawPointer(this), ": Going to sleep!\n");
+                                // It's important that we don't release the lock until we have completely
+                                // indicated that the thread is kaput. Otherwise we'll have a notify
+                                // race that manifests as a deadlock on VM shutdown.
+                                return stopForTimeout(locker);
+                            }
                         }
                     }
                 }

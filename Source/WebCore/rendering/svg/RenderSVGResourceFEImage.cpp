@@ -29,13 +29,14 @@
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderImageResource.h"
 #include "SVGFEImageElement.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceFEImage);
 
-RenderSVGResourceFEImage::RenderSVGResourceFEImage(SVGFEImageElement& element, Style::ComputedStyle&& style)
+RenderSVGResourceFEImage::RenderSVGResourceFEImage(SVGFEImageElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGResourceFilterPrimitive(Type::SVGResourceFEImage, element, WTF::move(style))
     , m_imageResource(makeUniqueRef<RenderImageResource>())
 {
@@ -48,6 +49,13 @@ void RenderSVGResourceFEImage::willBeDestroyed()
 {
     m_imageResource->willBeDestroyed();
     RenderSVGResourceFilterPrimitive::willBeDestroyed();
+}
+
+void RenderSVGResourceFEImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    RenderSVGResourceFilterPrimitive::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
 }
 
 void RenderSVGResourceFEImage::imageChanged(WrappedImagePtr, const IntRect*)

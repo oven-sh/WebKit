@@ -1,0 +1,11 @@
+# The compiler asks the same byte of other holders: `list.hasOwnProperty(..)` asks Array.prototype, which lies below the member. Of them the table of built-ins lists what the compiler knows, not all that they are built with
+# (`shift`; the engine's private aliases): a net that held their yes to the table would stop this right run at its first line.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all testing=CheckWalkAtRunTime const aboveAll = Object.prototype, aboveLists = Array.prototype; globalThis.hidden = () => {}; globalThis.list = [1, 2]; globalThis.lay = () => { Object.defineProperty(aboveAll, "laid", { value: 1, configurable: true }); }; globalThis.shadow = () => { aboveLists.hasOwnProperty = () => 20; }; globalThis.uncover = () => { delete aboveLists.hasOwnProperty; }; globalThis.replace = () => { aboveAll.hasOwnProperty = () => 70; };
+# CHECK: 2
+# CHECK-NEXT: 2
+# CHECK-NEXT: 40
+# CHECK-NEXT: 2
+# CHECK-NEXT: 140
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: member-further-above-an-instance-is-asked-by-its-byte-and-by-a-byte-of-each-holder-below.ir

@@ -353,7 +353,7 @@ private:
         return std::bit_cast<FatEntry*>(m_bits);
     }
     
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE inflate();
+    NODELETE JS_EXPORT_PRIVATE void inflate();
     
     ALWAYS_INLINE intptr_t bits() const
     {
@@ -426,10 +426,10 @@ public:
     typedef JSCell Base;
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
 
-    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, SymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> Map;
-    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, GlobalVariableID, IdentifierRepHash> UniqueIDMap;
-    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<TypeSet>, IdentifierRepHash> UniqueTypeSetMap;
-    typedef UncheckedKeyHashMap<VarOffset, RefPtr<UniquedStringImpl>> OffsetToVariableMap;
+    typedef HashMap<RefPtr<UniquedStringImpl>, SymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> Map;
+    typedef HashMap<RefPtr<UniquedStringImpl>, GlobalVariableID, IdentifierRepHash> UniqueIDMap;
+    typedef HashMap<RefPtr<UniquedStringImpl>, RefPtr<TypeSet>, IdentifierRepHash> UniqueTypeSetMap;
+    typedef HashMap<VarOffset, RefPtr<UniquedStringImpl>> OffsetToVariableMap;
     typedef Vector<SymbolTableEntry*> LocalToEntryVec;
     typedef WTF::IteratorRange<typename PrivateNameEnvironment::iterator> PrivateNameIteratorRange;
 
@@ -713,8 +713,8 @@ public:
 
     void prepareForTypeProfiling(const ConcurrentJSLocker&);
 
-    String LEGACY_NODELETE inferredName();
-    DebuggerLocation LEGACY_NODELETE debuggerLocation();
+    NODELETE String inferredName();
+    NODELETE DebuggerLocation debuggerLocation();
     void collectDebuggerInfo(CodeBlock*);
 
     InferredValue<JSScope>& singleton() LIFETIME_BOUND { return m_singleton; }

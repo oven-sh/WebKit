@@ -29,6 +29,7 @@
 #if ENABLE(APPLE_PAY)
 
 #import "ApplePayLineItem.h"
+#import <wtf/Borrow.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
 #import <pal/cocoa/PassKitSoftLink.h>
@@ -53,7 +54,7 @@ NSDecimalNumber *toDecimalNumber(const String& amount)
     return [NSDecimalNumber decimalNumberWithString:amount.createNSString().get() locale:@{ NSLocaleDecimalSeparator : @"." }];
 }
 
-static PKPaymentSummaryItemType LEGACY_NODELETE toPKPaymentSummaryItemType(ApplePayLineItem::Type type)
+NODELETE static PKPaymentSummaryItemType toPKPaymentSummaryItemType(ApplePayLineItem::Type type)
 {
     switch (type) {
     case ApplePayLineItem::Type::Final:
@@ -82,7 +83,7 @@ static NSDate *toDate(WallTime date)
 
 #if HAVE(PASSKIT_RECURRING_SUMMARY_ITEM)
 
-static NSCalendarUnit LEGACY_NODELETE toCalendarUnit(ApplePayRecurringPaymentDateUnit unit)
+NODELETE static NSCalendarUnit toCalendarUnit(ApplePayRecurringPaymentDateUnit unit)
 {
     switch (unit) {
     case ApplePayRecurringPaymentDateUnit::Year:
@@ -199,7 +200,7 @@ RetainPtr<PKPaymentSummaryItem> platformSummaryItem(const ApplePayLineItem& line
 RetainPtr<NSArray> platformDisbursementSummaryItems(const Vector<ApplePayLineItem>& lineItems)
 {
     RetainPtr paymentSummaryItems = adoptNS([[NSMutableArray alloc] initWithCapacity:lineItems.size()]);
-    for (auto& lineItem : lineItems) {
+    for (auto& lineItem : borrow(lineItems)) {
         if (RetainPtr summaryItem = platformSummaryItem(lineItem))
             [paymentSummaryItems addObject:summaryItem.get()];
     }
@@ -210,7 +211,7 @@ RetainPtr<NSArray> platformDisbursementSummaryItems(const Vector<ApplePayLineIte
 RetainPtr<NSArray> platformSummaryItems(const ApplePayLineItem& total, const Vector<ApplePayLineItem>& lineItems)
 {
     RetainPtr paymentSummaryItems = adoptNS([[NSMutableArray alloc] initWithCapacity:lineItems.size() + 1]);
-    for (auto& lineItem : lineItems) {
+    for (auto& lineItem : borrow(lineItems)) {
         if (RetainPtr summaryItem = platformSummaryItem(lineItem))
             [paymentSummaryItems addObject:summaryItem.get()];
     }

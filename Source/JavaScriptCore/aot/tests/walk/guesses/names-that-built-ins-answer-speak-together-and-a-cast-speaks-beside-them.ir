@@ -1,0 +1,106 @@
+# class Knot { then = 1; next = null }  class Failure { message = 1; name = 2 }
+# function both(e) { return e.then + e.next; }  function same(e) { return e.message + e.name; }  function stated(e) { return e.then + taken(e); }  function alone(e) { return e.then; }  function taken(k) { return 1; }
+# sink(both, same, stated, alone, new Knot(), new Failure());
+# Nothing is written, held or seen to arrive, and one class of the program has all the names that are asked of the value. Each name is asked of some object of the engine's too, so by itself it speaks for no layout: `alone`.
+# `then` a promise answers and `next` an iterator: NO ONE CLASS OF THE ENGINE ANSWERS BOTH, so together they speak for the Knot: `both`. An error answers `message` and `name`: `same` stays closed.
+# `stated`: the value is handed to a parameter of which a Knot is expected, and the cast in front of the call says so: such a guess does not rest on the name alone.
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: key="then" receivers=[L0]
+# CHECK: key="next" receivers=[L0]
+# RUN(STATED): walk f3 mechanisms=none+TypedOperations+Guesses
+# STATED-LABEL: code f3:Body
+# STATED: key="then" receivers=[L0]
+# RUN(NEVER): walk f2 f4 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: = GetSlot
+# NEVER-NOT: = ShapeTest
+# RUN(ANSWER): run-in-shell globalThis.sink = (both, same, stated, alone, knot, failure) => { const asked = []; const show = value => typeof value === "function" ? "function" : String(value); function* steps() { yield 1; } const strangers = [knot, failure, Promise.resolve(1), steps(), new Error("m"), new Proxy(knot, { get(target, name) { asked.push(String(name)); return 2; } }), Object.create(knot), { then: 5, next: 6 }, "text", 7]; for (const stranger of strangers) print(String(both(stranger)).slice(0, 12), String(same(stranger)), String(stated(stranger)).slice(0, 12), show(alone(stranger))); print(asked.join()); try { both(null); } catch (error) { print(error instanceof TypeError); } };
+# ANSWER: 1 NaN 2 1
+# ANSWER-NEXT: NaN 3 NaN undefined
+# ANSWER-NEXT: function the NaN function the function
+# ANSWER-NEXT: undefinedfun NaN NaN undefined
+# ANSWER-NEXT: NaN mError NaN undefined
+# ANSWER-NEXT: 4 4 3 2
+# ANSWER-NEXT: 1 NaN 2 1
+# ANSWER-NEXT: 11 NaN 6 5
+# ANSWER-NEXT: NaN NaN NaN undefined
+# ANSWER-NEXT: NaN NaN NaN undefined
+# ANSWER-NEXT: then,next,message,name,then,then
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Knot" module=m0 constructor=f6 fields=[{key="then" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Failure" module=m0 constructor=f7 fields=[{key="message" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f6
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f7
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = NewClosure function=f3
+    v13 = NewClosure function=f4
+    v14 = Call v1, -, v10, v11, v12, v13, v5, v9
+    Return v14
+}
+function f1 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    v2 = PropGet v0 key="next"
+    v3 = Add v1, v2
+    Return v3
+}
+function f2 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="message"
+    v2 = PropGet v0 key="name"
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="stated" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v3 = CallDirect v2 function=f5
+    v4 = Add v1, v3
+    Return v4
+}
+function f4 name="alone" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    Return v1
+}
+function f5 name="taken" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer integer=1
+    Return v1
+}
+function f6 name="Knot" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="then"
+    v5 = Null
+    PropSet v2, v5 key="next"
+    Return v2
+}
+function f7 name="Failure" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="message"
+    v5 = Integer integer=2
+    PropSet v2, v5 key="name"
+    Return v2
+}

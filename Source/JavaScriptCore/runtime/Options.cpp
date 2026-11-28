@@ -115,10 +115,10 @@ public:
     bool operator==(const Option&) const;
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    ASCIILiteral LEGACY_NODELETE name() const { return g_constMetaData[m_id].name; }
-    ASCIILiteral LEGACY_NODELETE description() const { return g_constMetaData[m_id].description; }
-    Options::Type LEGACY_NODELETE type() const { return g_constMetaData[m_id].type; }
-    Options::Availability LEGACY_NODELETE availability() const { return g_constMetaData[m_id].availability; }
+    NODELETE ASCIILiteral name() const { return g_constMetaData[m_id].name; }
+    NODELETE ASCIILiteral description() const { return g_constMetaData[m_id].description; }
+    NODELETE Options::Type type() const { return g_constMetaData[m_id].type; }
+    NODELETE Options::Availability availability() const { return g_constMetaData[m_id].availability; }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     Option(Options::ID id, void* addressOfValue)
@@ -170,7 +170,7 @@ static const Option defaultFor(Options::ID id)
     return Option(id, addressOfDefault);
 }
 
-inline static void* LEGACY_NODELETE addressOfOption(Options::ID id)
+NODELETE inline static void* addressOfOption(Options::ID id)
 {
     auto offset = g_constMetaData[id].offsetOfOption;
     return reinterpret_cast<uint8_t*>(&g_jscConfig.options) + offset;
@@ -183,18 +183,18 @@ static const Option optionFor(Options::ID id)
     return Option(id, addressOfOption(id));
 }
 
-inline static bool LEGACY_NODELETE hasMetadata()
+NODELETE inline static bool hasMetadata()
 {
     return !!g_metadata.get();
 }
 
-inline static bool LEGACY_NODELETE wasOverridden(Options::ID id)
+NODELETE inline static bool wasOverridden(Options::ID id)
 {
     ASSERT(id < NumberOfOptions);
     return g_optionWasOverridden->get(id);
 }
 
-inline static void LEGACY_NODELETE setWasOverridden(Options::ID id)
+NODELETE inline static void setWasOverridden(Options::ID id)
 {
     ASSERT(id < NumberOfOptions);
     g_optionWasOverridden->set(id);
@@ -319,7 +319,7 @@ std::optional<OptionsStorage::OSLogType> parse(const char* string)
 }
 
 #if PLATFORM(COCOA)
-static os_log_type_t LEGACY_NODELETE asDarwinOSLogType(OSLogType type)
+NODELETE static os_log_type_t asDarwinOSLogType(OSLogType type)
 {
     switch (type) {
     case OSLogType::None:
@@ -423,7 +423,7 @@ bool Options::overrideAliasedOptionWithHeuristic(const char* name)
         return false;
 
     auto aliasedOption = makeString(unsafeSpan(&name[4]), '=', unsafeSpan(stringValue));
-    if (Options::setOption(aliasedOption.utf8().legacyCStringPointer()))
+    if (Options::setOption(makeUTF8CString(aliasedOption).legacyCStringPointer()))
         return true;
 
     fprintf(stderr, "WARNING: failed to parse %s=%s\n", name, stringValue);
@@ -457,6 +457,12 @@ int32_t Options::computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelt
 unsigned Options::computeNumberOfGCMarkers(unsigned maxNumberOfGCMarkers)
 {
     return computeNumberOfWorkerThreads(maxNumberOfGCMarkers);
+}
+
+unsigned Options::defaultThreadPoolCapacity()
+{
+    // Leave a core for the thread running JavaScript.
+    return std::max(kernTCSMAwareNumberOfProcessorCores(), 2) - 1;
 }
 
 bool Options::defaultTCSMValue()
@@ -645,6 +651,14 @@ static void overrideDefaults()
     }
 #endif
 
+#if OS(LINUX) && !OS(ANDROID) && CPU(ARM64)
+    constexpr int maxCoresForThresholdScaling = 4;
+    if (WTF::numberOfProcessorCores() <= maxCoresForThresholdScaling) {
+        Options::thresholdForFTLOptimizeAfterWarmUp() *= Options::ftlThresholdScaleForFewCores();
+        Options::thresholdForFTLOptimizeSoon() *= Options::ftlThresholdScaleForFewCores();
+    }
+#endif
+
 #if USE(MEMORY_FOOTPRINT_API)
     // On iOS and conditionally Linux, we control heap growth using process memory footprint. Therefore these values can be agressive.
     Options::smallHeapRAMFraction() = 0.8;
@@ -695,7 +709,7 @@ void Options::setAllJITCodeValidations(bool value)
     Options::useJITAsserts() = value;
 }
 
-static inline void LEGACY_NODELETE disableAllWasmJITOptions()
+NODELETE static inline void disableAllWasmJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
     // This really only makes sense if could use wasm, otherwise we should not override this.
@@ -711,7 +725,7 @@ static inline void LEGACY_NODELETE disableAllWasmJITOptions()
     Options::dumpOMGDisassembly() = false;
 }
 
-static inline void LEGACY_NODELETE disableAllWasmOptions()
+NODELETE static inline void disableAllWasmOptions()
 {
     disableAllWasmJITOptions();
 
@@ -729,7 +743,7 @@ static inline void LEGACY_NODELETE disableAllWasmOptions()
     Options::useWasmTailCalls() = false;
 }
 
-static inline void LEGACY_NODELETE disableAllJITOptions()
+NODELETE static inline void disableAllJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
     // This really only makes sense if could use wasm, otherwise we should not override this.
@@ -758,10 +772,10 @@ static inline void LEGACY_NODELETE disableAllJITOptions()
 }
 
 #if OS(DARWIN)
-static void LEGACY_NODELETE disableAllSignalHandlerBasedOptions()
+NODELETE static void disableAllSignalHandlerBasedOptions()
 {
     Options::usePollingTraps() = true;
-    Options::useSharedArrayBuffer() = false;
+    Options::alwaysUseSharedArrayBuffer() = false;
     Options::allowSharedArrayBuffer() = false;
     Options::useWasmFastMemory() = false;
     Options::useWasmFaultSignalHandler() = false;
@@ -813,6 +827,8 @@ static void applyCompiledCodeDefaults()
     if (!Options::runsCompiledImage())
         return;
     Options::useJIT() = false;
+    // Compiled code defines a private name as the engine did before WebKit/WebKit@b0be2f45a9, and an image does not record which rule it was built for.
+    Options::useNonExtensibleAppliesToPrivate() = false;
     Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();
     // A heap that stays small gains nothing from blocks that a helper thread keeps resident, and pays for them.
     if (!OptionsHelper::wasOverridden(Options::warmUpMarkedBlockStartAfterBlocksID))
@@ -902,6 +918,9 @@ void Options::notifyOptionsChanged()
 #endif
 #endif
 
+    if (isX86_64() && !isX86_64_AVX())
+        Options::useWasmSIMD() = false;
+
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
@@ -971,9 +990,6 @@ void Options::notifyOptionsChanged()
 
         ASSERT((static_cast<int64_t>(Options::thresholdForOptimizeAfterLongWarmUp()) << Options::reoptimizationRetryCounterMax()) > 0);
         ASSERT((static_cast<int64_t>(Options::thresholdForOptimizeAfterLongWarmUp()) << Options::reoptimizationRetryCounterMax()) <= static_cast<int64_t>(std::numeric_limits<int32_t>::max()));
-
-        if (isX86_64() && !isX86_64_AVX())
-            Options::useWasmSIMD() = false;
 
         if (Options::forceAllFunctionsToUseSIMD() && !Options::useWasmSIMD())
             Options::forceAllFunctionsToUseSIMD() = false;
@@ -1206,7 +1222,7 @@ void Options::finalize()
     OptionsHelper::releaseMetadata();
 }
 
-static bool LEGACY_NODELETE isSeparator(char c)
+NODELETE static bool isSeparator(char c)
 {
     return isUnicodeCompatibleASCIIWhitespace(c) || (c == ',');
 }
@@ -1365,7 +1381,7 @@ bool Options::setAliasedOption(const char* arg, bool verify)
                 return false;                                           \
             unaliasedOption = makeString(unaliasedOption, '=', invertedValueStr); \
         }                                                               \
-        return setOptionWithoutAlias(unaliasedOption.utf8().legacyCStringPointer(), verify);    \
+        return setOptionWithoutAlias(makeUTF8CString(unaliasedOption).legacyCStringPointer(), verify);    \
     }
 
     FOR_EACH_JSC_ALIASED_OPTION(FOR_EACH_OPTION)
@@ -1583,10 +1599,10 @@ SUPPRESS_ASAN bool canUseJITCage()
     return JSC_JIT_CAGE_VERSION() && !ASAN_ENABLED && WTF::processHasEntitlement("com.apple.private.verified-jit"_s);
 }
 #else
-bool LEGACY_NODELETE canUseJITCage() { return false; }
+NODELETE bool canUseJITCage() { return false; }
 #endif
 
-bool LEGACY_NODELETE canUseWasm()
+NODELETE bool canUseWasm()
 {
 #if ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
     return true;
@@ -1595,7 +1611,7 @@ bool LEGACY_NODELETE canUseWasm()
 #endif
 }
 
-bool LEGACY_NODELETE hasCapacityToUseLargeGigacage()
+NODELETE bool hasCapacityToUseLargeGigacage()
 {
     // Gigacage::hasCapacityToUseLargeGigacage is determined based on EFFECTIVE_ADDRESS_WIDTH.
     // If we have enough address range to potentially use a large gigacage,

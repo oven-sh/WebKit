@@ -1,0 +1,78 @@
+# class Knot { constructor(m, b) { this.mark = m; this.beside = b; } }
+# function besideOf(thing) { return thing.beside; }  function besideOrLength(thing, flag) { return flag ? thing.beside : thing.length; }  function lengthOf(thing) { return thing.length; }
+# sink(besideOf, besideOrLength, lengthOf, new Knot(1, null));
+# Of each `thing` a Knot or a list is expected: what the checker makes of an untyped file. No typed form serves a list, so none was built for the Knot either, though no list has a `beside` of its own making.
+# At an access, of a set that holds layouts beside objects without one, the one layout that has the name asked is expected. What else arrives fails the test and is read by name.
+# `length` a list answers: it cuts nothing.
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: key="beside" receivers=[L0]
+# RUN(ATUSE): walk f2 mechanisms=none+TypedOperations+Guesses
+# ATUSE-LABEL: code f2:Body
+# ATUSE: key="beside" receivers=[L0]
+# RUN(NOTHING): walk f3 mechanisms=none+TypedOperations+Guesses
+# NOTHING-NOT: receivers=[L0]
+# RUN(ANSWER): run-in-shell globalThis.sink = (besideOf, besideOrLength, lengthOf, knot) => { const asked = []; const marked = [4]; marked.beside = 9; const strangers = [knot, [1, 2], marked, new Proxy(knot, { get(target, name) { asked.push(String(name)); return 11; } }), Object.create(knot), { beside: 7 }, { get beside() { asked.push("getter"); return 13; } }, function () {}, "text", 5]; for (const stranger of strangers) print(String(besideOf(stranger)), String(besideOrLength(stranger, true)), String(besideOrLength(stranger, false)), String(lengthOf(stranger))); print(asked.join()); for (const nothing of [undefined, null]) { try { besideOf(nothing); } catch (error) { print(error instanceof TypeError); } } };
+# ANSWER: null null undefined undefined
+# ANSWER-NEXT: undefined undefined 2 2
+# ANSWER-NEXT: 9 9 1 1
+# ANSWER-NEXT: 11 11 11 11
+# ANSWER-NEXT: null null undefined undefined
+# ANSWER-NEXT: 7 7 undefined undefined
+# ANSWER-NEXT: 13 13 undefined undefined
+# ANSWER-NEXT: undefined undefined 0 0
+# ANSWER-NEXT: undefined undefined 4 4
+# ANSWER-NEXT: undefined undefined undefined undefined
+# ANSWER-NEXT: beside,beside,length,length,getter,getter
+# ANSWER-NEXT: true
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Knot" module=m0 constructor=f4 fields=[{key="mark" declared={type=anything} flags=[IsRequired]}, {key="beside" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClass v5 layout=L0
+    v7 = FinishClass v6 layout=L0
+    v8 = Integer integer=1
+    v9 = Null
+    v10 = Construct v7, -, v8, v9
+    v11 = Call v1, -, v2, v3, v4, v10 calleeName="sink"
+    Return v11
+}
+function f1 name="besideOf" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|Array):
+    v1 = PropGet v0 key="beside"
+    Return v1
+}
+function f2 name="besideOrLength" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|Array, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="beside"
+    Return v3
+  b2():
+    v4 = PropGet v0 key="length"
+    Return v4
+}
+function f3 name="lengthOf" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f4 name="Knot" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v4, v1 key="mark"
+    PropSet v4, v2 key="beside"
+    Return v4
+}

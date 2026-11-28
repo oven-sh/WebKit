@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSModuleRecord.h"
 
+#include "AOTModuleRecord.h"
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "CodeCache.h"
@@ -265,6 +266,10 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
                 return IterationStatus::Continue;
             Resolution resolution = resolveImport(globalObject, localName);
             RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && resolution.type == Resolution::Type::Resolved && (resolution.moduleRecord->inherits<AOT::ModuleRecord>() || resolution.moduleRecord->isCompiledOriginal()))
+                return IterationStatus::Continue;
+#endif
             if (resolution.type == Resolution::Type::Resolved)
                 environment->importSlot(index).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
             return IterationStatus::Continue;
@@ -313,6 +318,14 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     // 6. Set the VariableEnvironment of moduleContext to module.[[Environment]].
     // 7. Set the LexicalEnvironment of moduleContext to module.[[Environment]].
     // 8. Suspend the running execution context.
+#if ENABLE(AOT)
+    if (isCompiledOriginal()) [[unlikely]] {
+        ASSERT(!capability);
+        scope.release();
+        AOT::evaluateOriginal(globalObject, this);
+        return;
+    }
+#endif
     // 9. If module.[[HasTLA]] is false, then
     if (!hasTLA()) {
         // 9.a. Assert: capability is not present.
@@ -482,7 +495,7 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
             return IterationStatus::Continue;
 #if USE(BUN_JSC_ADDITIONS)
         // Live exports are looked up by name at runtime. The exporter may have no binding with this name.
-        if (resolution.isLiveExport(vm)) [[unlikely]] {
+        if (resolution.isLiveExport(vm) || resolution.isNamespaceOfCompiledOriginal(vm)) [[unlikely]] {
             bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), 0, index, true });
             return IterationStatus::Continue;
         }
@@ -522,7 +535,7 @@ String JSModuleRecord::liveImports(JSGlobalObject* globalObject)
     forEachImportSlot([&](unsigned, const Identifier& localName) {
         Resolution resolution = resolveImport(globalObject, localName);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
-        if (resolution.isLiveExport(vm))
+        if (resolution.isLiveExport(vm) || resolution.isNamespaceOfCompiledOriginal(vm))
             builder.append(StringView(localName.impl()), ',');
         return IterationStatus::Continue;
     });
@@ -625,6 +638,11 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
             }
         }
     }
+
+    // Where an executable is made for the source, as upstream has it, and so not for a record that shares one above: a
+    // direct eval that finds its executable in the cache is not profiled again (evaluateDirectEvalAt in Interpreter.cpp).
+    if (SourceProfiler::g_profilerHook) [[unlikely]]
+        SourceProfiler::profile(SourceProfiler::Type::Module, sourceCode());
 
     String liveImports;
 #if USE(BUN_JSC_ADDITIONS)

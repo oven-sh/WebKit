@@ -31,6 +31,7 @@ namespace WebCore {
 class Image;
 struct ImageOrientation;
 enum class ImageRequestState : uint8_t;
+enum class ReferrerPolicy : uint8_t;
 
 class SVGImageElement final : public SVGGraphicsElement, public SVGURIReference {
     WTF_MAKE_TZONE_ALLOCATED(SVGImageElement);
@@ -38,7 +39,7 @@ class SVGImageElement final : public SVGGraphicsElement, public SVGURIReference 
 public:
     static Ref<SVGImageElement> create(const QualifiedName&, Document&);
 
-    WEBCORE_EXPORT CachedImage* LEGACY_NODELETE cachedImage() const;
+    NODELETE WEBCORE_EXPORT CachedImage* cachedImage() const;
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-state
     ImageRequestState currentRequestState() const;
@@ -48,7 +49,7 @@ public:
 
     RefPtr<Image> sourceImage() const;
 
-    ImageOrientation LEGACY_NODELETE orientationForSourceImage();
+    NODELETE ImageOrientation orientationForSourceImage();
 
     bool renderingTaintsOrigin() const;
     String imageSourceURL() const final;
@@ -61,6 +62,9 @@ public:
 
     void setCrossOrigin(const AtomString&);
     String crossOrigin() const;
+
+    String referrerPolicyForBindings() const;
+    ReferrerPolicy referrerPolicy() const;
 
     SVGAnimatedLength& xAnimated() { return m_x; }
     SVGAnimatedLength& yAnimated() { return m_y; }
@@ -80,7 +84,7 @@ private:
 
     void didAttachRenderers() final;
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
 
     void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
     bool haveLoadedRequiredResources() final;

@@ -54,8 +54,6 @@ enum class VulkanApiFunction : uint8_t
     vkCmdResetEvent,
     vkCmdResetQueryPool,
     vkCmdSetEvent,
-    vkCmdSetRenderingAttachmentLocationsKHR,
-    vkCmdSetRenderingInputAttachmentIndicesKHR,
     vkCmdWaitEvents,
     vkCmdWriteTimestamp,
     vkCopyMemoryToImageEXT,
@@ -193,7 +191,7 @@ enum class VulkanApiFunction : uint8_t
     volkGetInstanceVersion,
     volkInitializeCustom,
     volkLoadDevice,
-    volkLoadInstance,
+    volkLoadInstanceOnly,
 };
 
 // Returns the performance counter group for a given Vulkan API function.
@@ -223,8 +221,6 @@ constexpr angle::VulkanApiPerfCounterGroup GetPerfCounterGroup(VulkanApiFunction
         case VulkanApiFunction::vkCmdResetEvent:
         case VulkanApiFunction::vkCmdResetQueryPool:
         case VulkanApiFunction::vkCmdSetEvent:
-        case VulkanApiFunction::vkCmdSetRenderingAttachmentLocationsKHR:
-        case VulkanApiFunction::vkCmdSetRenderingInputAttachmentIndicesKHR:
         case VulkanApiFunction::vkCmdWaitEvents:
         case VulkanApiFunction::vkCmdWriteTimestamp:
         case VulkanApiFunction::vkCreateCommandPool:
@@ -375,7 +371,7 @@ constexpr angle::VulkanApiPerfCounterGroup GetPerfCounterGroup(VulkanApiFunction
         case VulkanApiFunction::volkGetInstanceVersion:
         case VulkanApiFunction::volkInitializeCustom:
         case VulkanApiFunction::volkLoadDevice:
-        case VulkanApiFunction::volkLoadInstance:
+        case VulkanApiFunction::volkLoadInstanceOnly:
             return angle::VulkanApiPerfCounterGroup::Other;
             // No default to trigger "-Wswitch" if not all enumerations are handled.
     }

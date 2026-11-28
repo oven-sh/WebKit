@@ -15,11 +15,10 @@ class BuildContext;
 class Image;
 
 namespace Typed {
-class Heat;
-class Placement;
+class Facts;
+class Plan;
 class Program;
 class StringTable;
-struct PipelineOutput;
 }
 
 } } // namespace JSC::AOT

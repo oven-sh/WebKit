@@ -1,0 +1,50 @@
+# If the fields that a literal lists did not count as filled, no read of a record would be a plain load. If a field that one literal of the layout leaves out counted as filled because another lists it, a read of it would hand out the mark of an empty slot
+# function whole() { return { a: "a", b: "b" }; }  function half() { const o = { a: "a" }; return o; }  function later() { const o = { a: "a" }; o.c = "c"; return o; }  whole(); half(); later();   (one layout with a, b and c)
+# RUN: summary f2
+# CHECK: leaves-empty L0.1 "b"
+# CHECK-NEXT: leaves-empty L0.2 "c"
+# RUN(LATER): summary f3
+# LATER: leaves-empty L0.1 "b"
+# LATER-NEXT: leaves-empty L0.2 "c"
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "a" {{*}}filled
+# RUN(EMPTY): link fields mechanisms=all
+# EMPTY-NOT: field L0.1 "b" {{*}}filled
+# EMPTY-NOT: field L0.2 "c" {{*}}filled
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="whole"
+    v2 = NewClosure function=f2
+    v3 = Call v2 calleeName="half"
+    v4 = NewClosure function=f3
+    v5 = Call v4 calleeName="later"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="whole" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = String string="c"
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    Return v3
+}
+function f2 name="half" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f3 name="later" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = String string="c"
+    PropSet v1, v2 key="c"
+    Return v1
+}

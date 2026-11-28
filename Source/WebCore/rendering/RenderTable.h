@@ -48,8 +48,8 @@ class RenderTable : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderTable);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTable);
 public:
-    RenderTable(Type, Element&, Style::ComputedStyle&&);
-    RenderTable(Type, Document&, Style::ComputedStyle&&);
+    RenderTable(Type, Element&, UniqueRef<Style::ComputedStyle>&&);
+    RenderTable(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderTable();
 
     // Per CSS 3 writing-mode: "The first and second values of the 'border-spacing' property represent spacing between columns
@@ -57,7 +57,7 @@ public:
     LayoutUnit hBorderSpacing() const { return m_hSpacing; }
     LayoutUnit vBorderSpacing() const { return m_vSpacing; }
     
-    bool LEGACY_NODELETE collapseBorders() const;
+    NODELETE bool collapseBorders() const;
 
     LayoutUnit borderStart() const final;
     LayoutUnit borderEnd() const final;
@@ -100,7 +100,7 @@ public:
     }
 
     // This function returns 0 if the table has no section.
-    RenderTableSection* LEGACY_NODELETE topSection() const;
+    NODELETE RenderTableSection* topSection() const;
     RenderTableSection* bottomSection() const;
 
     // This function returns 0 if the table has no non-empty sections.
@@ -154,7 +154,7 @@ public:
     inline LayoutUnit bordersPaddingAndSpacingInRowDirection() const;
 
     // Return the first column or column-group.
-    RenderTableCol* LEGACY_NODELETE firstColumn() const;
+    NODELETE RenderTableCol* firstColumn() const;
 
     RenderTableCol* colElement(unsigned col, bool* startEdge = nullptr, bool* endEdge = nullptr) const
     {
@@ -180,6 +180,9 @@ public:
     void invalidateCollapsedBorders(RenderTableCell* cellWithStyleChange = nullptr);
     void invalidateCollapsedBordersAfterStyleChangeIfNeeded(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle, RenderTableCell* cellWithStyleChange = nullptr);
     void collapsedEmptyBorderIsPresent() { m_collapsedEmptyBorderIsPresent = true; }
+
+    LayoutUnit maxCollapsedInnerBorderHalfForFirstColumn() { recalcCollapsedBorders(); return m_maxCollapsedInnerBorderHalfFirstColumn; }
+    LayoutUnit maxCollapsedInnerBorderHalfForLastColumn() { recalcCollapsedBorders(); return m_maxCollapsedInnerBorderHalfLastColumn; }
     const CollapsedBorderValue* currentBorderValue() const LIFETIME_BOUND { return m_currentBorder; }
     void paintCollapsedBordersForRow(PaintInfo&, RenderTableRow&, const LayoutPoint& paintOffset);
     
@@ -203,7 +206,7 @@ public:
     
     void markForPaginationRelayoutIfNeeded() final;
 
-    void LEGACY_NODELETE willInsertTableColumn(RenderTableCol& child, RenderObject* beforeChild);
+    NODELETE void willInsertTableColumn(RenderTableCol& child, RenderObject* beforeChild);
     void willInsertTableSection(RenderTableSection& child, RenderObject* beforeChild);
 
     LayoutUnit sumCaptionsLogicalHeight() const;
@@ -220,15 +223,14 @@ protected:
 
     void paint(PaintInfo&, const LayoutPoint&) final;
     void paintObject(PaintInfo&, const LayoutPoint&) final;
-    void paintBoxDecorations(PaintInfo&, const LayoutPoint&) final;
-    void paintMask(PaintInfo&, const LayoutPoint&) final;
 
     template<typename Function> void paintCollapsedBorderPasses(const PaintInfo&, NOESCAPE const Function& paintPass);
     void layout() final;
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths(TableIntrinsics) const;
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const final;
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicKeywordLogicalWidths() const final;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     std::optional<LayoutUnit> firstLineBaseline() const override;
@@ -239,11 +241,11 @@ protected:
     void updateColumnCache() const;
     void invalidateCachedColumns();
 
-    void LEGACY_NODELETE invalidateCachedColumnOffsets();
+    NODELETE void invalidateCachedColumnOffsets();
     
     void updateLogicalWidth() final;
 
-    template<typename SizeType> LayoutUnit convertStyleLogicalWidthToComputedWidth(const SizeType& styleLogicalWidth, LayoutUnit availableWidth);
+    template<typename SizeType> LayoutUnit convertStyleLogicalWidthToComputedWidth(const SizeType& styleLogicalWidth, LayoutUnit availableWidth) const;
     template<typename SizeType> LayoutUnit convertStyleLogicalHeightToComputedHeight(const SizeType& styleLogicalHeight);
 
     LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const final;
@@ -266,8 +268,13 @@ protected:
     mutable Vector<SingleThreadWeakPtr<RenderTableCaption>> m_captions;
     mutable Vector<SingleThreadWeakPtr<RenderTableCol>> m_columnRenderers;
 
+    struct EffectiveColumnRange {
+        unsigned firstEffectiveColumnIndex;
+        unsigned lastEffectiveColumnIndex;
+    };
+    EffectiveColumnRange effectiveColumnRange(const RenderTableCol&) const;
     unsigned effectiveIndexOfColumn(const RenderTableCol&) const;
-    using EffectiveColumnIndexMap = HashMap<SingleThreadWeakRef<const RenderTableCol>, unsigned>;
+    using EffectiveColumnIndexMap = HashMap<SingleThreadWeakRef<const RenderTableCol>, EffectiveColumnRange>;
     mutable EffectiveColumnIndexMap m_effectiveColumnIndexMap;
 
     mutable SingleThreadWeakPtr<RenderTableSection> m_head;
@@ -278,6 +285,8 @@ protected:
 
     CollapsedBorderValues m_collapsedBorders;
     const CollapsedBorderValue* m_currentBorder { nullptr };
+    LayoutUnit m_maxCollapsedInnerBorderHalfFirstColumn;
+    LayoutUnit m_maxCollapsedInnerBorderHalfLastColumn;
     bool m_collapsedBordersValid : 1 { false };
     bool m_collapsedEmptyBorderIsPresent : 1 { false };
 

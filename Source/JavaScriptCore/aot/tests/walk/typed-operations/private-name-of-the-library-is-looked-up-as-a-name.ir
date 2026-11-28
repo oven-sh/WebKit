@@ -1,0 +1,108 @@
+# -- source: private-name-of-the-library-is-looked-up-as-a-name.ts
+# declare function report(value: unknown): void;
+# interface Holder { $state: object; other: number; }
+# function Holder(this: Holder, state: object) { this.$state = state; this.other = 1; }
+# export function read(holder: Holder) { report(holder.$state); }
+# report(new (Holder as any)({}));
+# report(read);
+# -- end of source
+# The text above was compiled with the name written `$state`; in the records below it is a private name of a module of the library, @#"state", which only the library's own text can write.
+# `holder.$state`: an ordinary lookup under a key that no program can say: the field has its slot, the read and the store are typed like those under a name.
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: GetSlot {{*}}key=@#"state" receivers=[L0] level=Expected
+# CHECK-LABEL: code f2:Body
+# CHECK: PutSlotOrAdd {{*}}key=@#"state" receivers=[L0] {{*}}orderWordAfter=
+
+module m0 path="private-name-of-the-library-is-looked-up-as-a-name.ts" displayPath="private-name-of-the-library-is-looked-up-as-a-name.ts" body=f0 exports=[{name="read" variable=g0}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Holder" module=m0 position=99 constructor=f2 fields=[{key=@#"state" declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired] originLayout=L2 originField=0}, {key="other" declared={type=number} flags=[IsRequired] originLayout=L2 originField=1}] supertypes=[L2] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 module=m0 position=276
+layout L2 module=m0 position=57 fields=[{key=@#"state" declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="other" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated] ownFieldCount=2
+data d0 root=Object{layout=L1} module=m0
+variable g0 name="read" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @249
+    v3 = PropGet v2 key="report" [isFreeName] @249
+    v4 = Data data=d0 @276
+    v5 = Construct v1, -, v4 calleeName="Holder" @261
+    v6 = Call v3, -, v5 calleeName="report" @249
+    v7 = Builtin builtin=GlobalThis @282
+    v8 = PropGet v7 key="report" [isFreeName] @282
+    v9 = GetModuleVariable variable=g0 @289
+    v10 = Call v8, -, v9 calleeName="report" @282
+    v11 = Undefined @282
+    Return v11 @282
+}
+function f1 name="read" module=m0 position=185 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @185
+  b1():
+    v1 = Builtin builtin=GlobalThis @224
+    v2 = PropGet v1 key="report" [isFreeName] @224
+    v3 = PropGet v0 key=@#"state" @231
+    v4 = Call v2, -, v3 calleeName="report" @224
+    v5 = Undefined @224
+    Return v5 @224
+}
+function f2 name="Holder" module=m0 position=99 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: undefined|null|object):
+    Jump -> next b1() @99
+  b1():
+    PropSet v0, v1 key=@#"state" @146
+    v3 = Integer integer=1 @180
+    PropSet v0, v3 key="other" @167
+    v5 = Undefined @167
+    Return v5 @167
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b5() @14702
+  b3(v5):
+    Jump -> next b4() @14702
+  b4():
+    v6 = Call v2, v0 @14744
+    Jump -> next b5() @14744
+  b5():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

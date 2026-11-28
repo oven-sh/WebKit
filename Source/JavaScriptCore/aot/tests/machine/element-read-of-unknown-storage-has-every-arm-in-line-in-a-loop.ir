@@ -1,0 +1,80 @@
+# a read of an element off a list whose storage nobody names, behind a guess at the list: storage of boxed values is read in line, in a loop as anywhere; the stub answers for doubles and all else
+# function both(xs: any[], tell) { return tell(xs[0], xs[1]); }
+# function two(xs: any[], i: number, k: number, tell) { return tell(xs[i], xs[k]); }
+# function last(xs: any[], n: number) { let found; for (let i = 0; i < n; i++) found = xs[i]; return found; }
+# function kinds(xs: string[], i: number, k: number, tell) { return tell(typeof xs[i], typeof xs[k]); }
+# Nothing names the storage of `xs` in the first three.
+# RUN(LOOP): emit f3:Body mechanisms=none+TypedOperations+Guesses
+# LOOP-LABEL: unit f3:Body
+# LOOP-NOT: = Load({{*}}indexedDoubleProperties
+# The lists of the shell: integers, doubles, texts, each sharing its storage with a literal, holes among boxed values and among doubles, no storage yet, storage without a form,
+# an element and a name above the list, names that are numbers and no index, a getter under an index.
+# RUN(ANSWER): run-in-shell globalThis.publish = (both, two, last, kinds) => { const tell = (a, b) => String(a) + " " + (Object.is(b, -0) ? "-0" : String(b)); const sparse = ["near", "next"]; sparse[5000000] = "far"; const above = [10, , 30]; Object.setPrototypeOf(above, { __proto__: Array.prototype, 1: "above", "-1": "below" }); const named = ["a", "b"]; named[-1] = "minus"; named[1.5] = "half"; named[4294967296] = "big"; named.NaN = "nan"; const got = [10, 20]; Object.defineProperty(got, 1, { get() { return "got"; } }); const lists = [ [10, 20], [1.5, 2.5], ["a", "b"], [, "b"], [1.5, , 3.5], [], sparse, above, named, got]; for (const list of lists) print([both(list, tell), two(list, 1, 9, tell), two(list, -1, 1.5, tell), two(list, 4294967296, NaN, tell), two(list, 5000000, 0, tell), String(last(list, 2)), kinds(list, 1, 9, tell), kinds(list, -1, 0, tell)].join(" . ")); print(two([0.5, 2, -0], 1, 2, tell)); };
+# ANSWER: 10 20 . 20 undefined . undefined undefined . undefined undefined . undefined 10 . 20 . number undefined . undefined number
+# ANSWER-NEXT: 1.5 2.5 . 2.5 undefined . undefined undefined . undefined undefined . undefined 1.5 . 2.5 . number undefined . undefined number
+# ANSWER-NEXT: a b . b undefined . undefined undefined . undefined undefined . undefined a . b . string undefined . undefined string
+# ANSWER-NEXT: undefined b . b undefined . undefined undefined . undefined undefined . undefined undefined . b . string undefined . undefined undefined
+# ANSWER-NEXT: 1.5 undefined . undefined undefined . undefined undefined . undefined undefined . undefined 1.5 . undefined . undefined undefined . undefined number
+# ANSWER-NEXT: undefined undefined . undefined undefined . undefined undefined . undefined undefined . undefined undefined . undefined . undefined undefined . undefined undefined
+# ANSWER-NEXT: near next . next undefined . undefined undefined . undefined undefined . far near . next . string undefined . undefined string
+# ANSWER-NEXT: 10 above . above undefined . below undefined . undefined undefined . undefined 10 . above . string undefined . string number
+# ANSWER-NEXT: a b . b undefined . minus half . big nan . undefined a . b . string undefined . string string
+# ANSWER-NEXT: 10 got . got undefined . undefined undefined . undefined undefined . undefined 10 . got . string undefined . undefined number
+# ANSWER-NEXT: 2 -0
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5 calleeName="publish"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="both" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<anything> flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<anything>, v1: anything):
+    v2 = Integer
+    v3 = ElemGet v0, v2
+    v4 = Integer integer=1
+    v5 = ElemGet v0, v4
+    v6 = Call v1, -, v3, v5 calleeName="tell"
+    Return v6
+}
+function f2 name="two" module=m0 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Array<anything> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<anything>, v1: number, v2: number, v3: anything):
+    v4 = ElemGet v0, v1
+    v5 = ElemGet v0, v2
+    v6 = Call v3, -, v4, v5 calleeName="tell"
+    Return v6
+}
+function f3 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<anything> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<anything>, v1: number):
+    v2 = Integer
+    v3 = Undefined
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Increment v4
+    Jump -> next b1(v9, v8)
+  b3():
+    Return v5
+}
+function f4 name="kinds" module=m0 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Array<string> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<string>, v1: number, v2: number, v3: anything):
+    v4 = ElemGet v0, v1
+    v5 = TypeOf v4
+    v6 = ElemGet v0, v2
+    v7 = TypeOf v6
+    v8 = Call v3, -, v5, v7 calleeName="tell"
+    Return v8
+}

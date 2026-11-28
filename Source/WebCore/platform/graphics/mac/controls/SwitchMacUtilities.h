@@ -31,8 +31,8 @@ namespace WebCore {
 class FloatRect;
 class FloatSize;
 class GraphicsContext;
-class ImageBuffer;
 class IntSize;
+class NativeImage;
 
 struct ControlStyle;
 
@@ -41,17 +41,17 @@ using IntOutsets = RectEdges<int>;
 
 namespace SwitchMacUtilities {
 
-IntSize LEGACY_NODELETE cellSize(NSControlSize);
-FloatSize LEGACY_NODELETE visualCellSize(IntSize, const ControlStyle&);
-IntOutsets LEGACY_NODELETE cellOutsets(NSControlSize);
-IntOutsets LEGACY_NODELETE visualCellOutsets(NSControlSize, bool);
-FloatRect LEGACY_NODELETE rectForBounds(const FloatRect&);
-NSString *LEGACY_NODELETE coreUISizeForControlSize(const NSControlSize);
-float LEGACY_NODELETE easeInOut(float);
-FloatRect LEGACY_NODELETE rectWithTransposedSize(const FloatRect&, bool);
+NODELETE IntSize cellSize(NSControlSize);
+NODELETE FloatSize visualCellSize(IntSize, const ControlStyle&);
+NODELETE IntOutsets cellOutsets(NSControlSize);
+NODELETE IntOutsets visualCellOutsets(NSControlSize, bool);
+NODELETE FloatRect rectForBounds(const FloatRect&);
+NODELETE NSString *coreUISizeForControlSize(const NSControlSize);
+NODELETE float easeInOut(float);
+NODELETE FloatRect rectWithTransposedSize(const FloatRect&, bool);
 FloatRect trackRectForBounds(const FloatRect&, const FloatSize&);
 void rotateContextForVerticalWritingMode(GraphicsContext&, const FloatRect&);
-RefPtr<ImageBuffer> trackMaskImage(GraphicsContext&, FloatSize, float, bool, NSString *);
+RefPtr<NativeImage> trackMaskImage(GraphicsContext&, FloatSize, float, bool, NSString *);
 
 } // namespace SwitchMacUtilities
 

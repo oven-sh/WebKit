@@ -86,7 +86,7 @@ public:
     void removeIf(NOESCAPE const Functor& functor)
     {
         m_map.removeIf(
-            [&] (UncheckedKeyHashMap<Value*, Matches>::KeyValuePairType& entry) -> bool {
+            [&](HashMap<Value*, Matches>::KeyValuePairType& entry) -> bool {
                 entry.value.removeAllMatching(
                     [&] (Value* value) -> bool {
                         if (MemoryValue* memory = value->as<MemoryValue>())
@@ -136,7 +136,7 @@ private:
     // - It cannot be a MemoryValue* because the key is imprecise. Many MemoryValues could have the
     //   same key while being unaliased.
     // - It can't be a MemoryMatches array because the MemoryValue*'s could be turned into Identity's.
-    UncheckedKeyHashMap<Value*, Matches> m_map;
+    HashMap<Value*, Matches> m_map;
 };
 
 struct ImpureBlockData {
@@ -157,7 +157,7 @@ struct ImpureBlockData {
     MemoryValueMap memoryValuesAtTail;
 
     // This Maps x->y in "y = WasmAddress(@x)"
-    UncheckedKeyHashMap<Value*, Value*> m_candidateWasmAddressesAtTail;
+    HashMap<Value*, Value*> m_candidateWasmAddressesAtTail;
 };
 
 class CSE {
@@ -248,13 +248,12 @@ private:
                 continue;
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Looking at ", *m_block, ":");
 
-            m_data = ImpureBlockData();
             for (m_index = 0; m_index < m_block->size(); ++m_index) {
                 m_value = m_block->at(m_index);
                 process();
             }
             m_insertionSet.execute(m_block);
-            m_impureBlockData[m_block] = m_data;
+            m_impureBlockData[m_block] = std::exchange(m_data, { });
         }
     }
 
@@ -618,7 +617,7 @@ private:
                 [&] (MemoryValue* candidate) -> bool {
                     return candidate->opcode() == Store
                         && candidate->offset() == offset
-                        && candidate->accessWidth() >= clobberWidth;
+                        && (candidate->accessWidth() == clobberWidth || (candidate->accessWidth() > clobberWidth && !candidate->traps()));
                 });
             break;
         }
@@ -688,6 +687,10 @@ private:
         worklist.pushAll(m_block->successorBlocks());
 
         while (BasicBlock* block = worklist.pop()) {
+            // The next iteration computes another address.
+            if (block == ptr->owner)
+                return false;
+
             ImpureBlockData& data = m_impureBlockData[block];
 
             MemoryValue* match = data.memoryStoresAtHead.find(ptr, filter);
@@ -905,7 +908,7 @@ private:
 
     // Match -> extra fixup values (e.g. BitAnd masks for packed Wasm types),
     // flushed at match site during finalize().
-    UncheckedKeyHashMap<Value*, Vector<Value*>> m_sets;
+    HashMap<Value*, Vector<Value*>> m_sets;
     IndexSet<Value*> m_matched;
     // Blocks that own at least one m_sets key, so finalize() can skip whole blocks.
     IndexSet<BasicBlock*> m_blocksWithSets;

@@ -39,10 +39,14 @@
 #include <wtf/Platform.h>
 #include <wtf/text/UniquedStringImpl.h>
 
+namespace WTF {
+class BitVector;
+}
+
 namespace JSC {
 
 typedef int64_t EncodedJSValue;
-    
+
 class ArrayAllocationProfile;
 class ArrayProfile;
 class UnaryArithProfile;
@@ -55,6 +59,7 @@ class CodeBlock;
 class DirectArguments;
 class InlineCacheHandler;
 class JSArray;
+class JSArrayBufferView;
 class JSBoundFunction;
 class JSCell;
 class JSFunction;
@@ -210,6 +215,7 @@ JSC_DECLARE_JIT_OPERATION(operationInByValGaveUp, EncodedJSValue, (EncodedJSValu
 JSC_DECLARE_JIT_OPERATION(operationInByValMegamorphicGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue encodedBase, EncodedJSValue encodedSubscript));
 
 JSC_DECLARE_JIT_OPERATION(operationHasPrivateNameOptimize, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationHasPrivateNameMegamorphic, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationHasPrivateNameGaveUp, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
 
 JSC_DECLARE_JIT_OPERATION(operationHasPrivateBrandOptimize, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
@@ -307,10 +313,12 @@ JSC_DECLARE_JIT_OPERATION(operationInstanceOfGeneric, EncodedJSValue, (JSGlobalO
 
 JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameOptimize, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedFieldName, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameGaveUp, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedFieldName, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameMegamorphic, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedFieldName, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue encodedBase, EncodedJSValue encodedFieldName));
 
 JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameByIdOptimize, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameByIdGaveUp, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameByIdMegamorphic, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetPrivateNameByIdGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uintptr_t));
 
 // End of IC related functions and generic helpers.
@@ -384,6 +392,10 @@ JSC_DECLARE_JIT_OPERATION(operationSizeFrameForForwardArguments, size_t, (JSGlob
 JSC_DECLARE_JIT_OPERATION(operationSizeFrameForVarargs, size_t, (JSGlobalObject*, EncodedJSValue arguments, int32_t numUsedStackSlots, int32_t firstVarArgOffset));
 JSC_DECLARE_JIT_OPERATION(operationSetupForwardArgumentsFrame, CallFrame*, (JSGlobalObject*, CallFrame*, EncodedJSValue, int32_t, int32_t length));
 JSC_DECLARE_JIT_OPERATION(operationSetupVarargsFrame, CallFrame*, (JSGlobalObject*, CallFrame*, EncodedJSValue arguments, int32_t firstVarArgOffset, int32_t length));
+JSC_DECLARE_JIT_OPERATION(operationSizeFrameForVarargsWithSpread, size_t, (JSGlobalObject*, int32_t argvOffset, int32_t argc, const WTF::BitVector*, int32_t numUsedStackSlots));
+JSC_DECLARE_JIT_OPERATION(operationSetupVarargsFrameWithSpread, CallFrame*, (JSGlobalObject*, CallFrame*, int32_t argvOffset, int32_t argc, const WTF::BitVector*, int32_t length));
+JSC_DECLARE_JIT_OPERATION(operationSizeFrameForVarargsWithSpreadBuffer, size_t, (JSGlobalObject*, EncodedJSValue* buffer, int32_t argc, int32_t numUsedStackSlots));
+JSC_DECLARE_JIT_OPERATION(operationSetupVarargsFrameWithSpreadBuffer, CallFrame*, (JSGlobalObject*, CallFrame*, EncodedJSValue* buffer, int32_t argc, int32_t length));
 
 JSC_DECLARE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlobalObject*, EncodedJSValue key, size_t tableIndex));
 JSC_DECLARE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGlobalObject*, const JSInstruction* bytecodePC));
@@ -391,6 +403,7 @@ JSC_DECLARE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject
 JSC_DECLARE_JIT_OPERATION(operationPutToScope, void, (JSGlobalObject*, const JSInstruction* bytecodePC));
 JSC_DECLARE_JIT_OPERATION(operationResolveRope, StringImpl*, (JSGlobalObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject*, JSRopeString*));
+JSC_DECLARE_JIT_OPERATION(operationGetTypedArrayBuffer, JSCell*, (JSGlobalObject*, JSArrayBufferView*));
 
 JSC_DECLARE_JIT_OPERATION(operationReallocateButterflyToHavePropertyStorageWithInitialCapacity, char*, (VM*, JSObject*));
 JSC_DECLARE_JIT_OPERATION(operationReallocateButterflyToGrowPropertyStorage, char*, (VM*, JSObject*, size_t newSize));

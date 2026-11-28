@@ -71,6 +71,10 @@ using CocoaMenuItem = UIMenuElement;
 
 @implementation WKWebExtensionContext
 
+#if __has_include(<WebKitAdditions/WKWebExtensionContextAdditions.mm>)
+#import <WebKitAdditions/WKWebExtensionContextAdditions.mm>
+#endif
+
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtensionContext, WebExtensionContext, Ref { *_webExtensionContext });
@@ -389,7 +393,7 @@ static inline NSSet<WKWebExtensionMatchPattern *> *toAPI(const WebKit::WebExtens
     return extensionContext->hasPermission(url, toImplNullable(tab, extensionContext.get()).get());
 }
 
-static inline WKWebExtensionContextPermissionStatus LEGACY_NODELETE toAPI(WebKit::WebExtensionContext::PermissionState status)
+NODELETE static inline WKWebExtensionContextPermissionStatus toAPI(WebKit::WebExtensionContext::PermissionState status)
 {
     switch (status) {
     case WebKit::WebExtensionContext::PermissionState::DeniedExplicitly:
@@ -409,7 +413,7 @@ static inline WKWebExtensionContextPermissionStatus LEGACY_NODELETE toAPI(WebKit
     }
 }
 
-static inline WebKit::WebExtensionContext::PermissionState LEGACY_NODELETE toImpl(WKWebExtensionContextPermissionStatus status)
+NODELETE static inline WebKit::WebExtensionContext::PermissionState toImpl(WKWebExtensionContextPermissionStatus status)
 {
     switch (status) {
     case WKWebExtensionContextPermissionStatusDeniedExplicitly:
@@ -652,7 +656,7 @@ static inline WebKit::WebExtensionContext::PermissionState LEGACY_NODELETE toImp
     extensionContext->clearUserGesture(toImpl(tab, extensionContext.get()));
 }
 
-static inline id<WKWebExtensionWindow> LEGACY_NODELETE toAPI(const RefPtr<WebKit::WebExtensionWindow>& window)
+NODELETE static inline id<WKWebExtensionWindow> toAPI(const RefPtr<WebKit::WebExtensionWindow>& window)
 {
     return window ? window->delegate() : nil;
 }
@@ -807,7 +811,7 @@ static inline WebKit::WebExtensionContext::TabSet toImpl(NSArray<id<WKWebExtensi
     extensionContext->didReplaceTab(toImpl(oldTab, extensionContext.get()), toImpl(newTab, extensionContext.get()));
 }
 
-static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> LEGACY_NODELETE toImpl(WKWebExtensionTabChangedProperties properties)
+NODELETE static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> toImpl(WKWebExtensionTabChangedProperties properties)
 {
     if (properties == WKWebExtensionTabChangedPropertiesNone)
         return { };
@@ -866,17 +870,20 @@ static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> LEGACY_NODEL
 {
     NSParameterAssert([message isKindOfClass:NSString.class]);
 
-    protect(*_webExtensionContext)->sendTestMessage(message, argument);
+    String argumentJSON = encodeJSONString(argument, WebKit::JSONOptions::FragmentsAllowed);
+    protect(*_webExtensionContext)->sendTestMessage(message, argumentJSON);
 }
 
 - (void)_sendTestStartedWithArgument:(id)argument
 {
-    protect(*_webExtensionContext)->sendTestStarted(argument);
+    String argumentJSON = encodeJSONString(argument, WebKit::JSONOptions::FragmentsAllowed);
+    protect(*_webExtensionContext)->sendTestStarted(argumentJSON);
 }
 
 - (void)_sendTestFinishedWithArgument:(id)argument
 {
-    protect(*_webExtensionContext)->sendTestFinished(argument);
+    String argumentJSON = encodeJSONString(argument, WebKit::JSONOptions::FragmentsAllowed);
+    protect(*_webExtensionContext)->sendTestFinished(argumentJSON);
 }
 
 - (void)_reloadBackgroundContentForTesting

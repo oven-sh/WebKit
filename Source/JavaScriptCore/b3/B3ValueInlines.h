@@ -223,7 +223,11 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case Store: \
         return MACRO(MemoryValue); \
     case MemoryMove: \
-    case MemoryFill: \
+    case MemoryFill8: \
+    case MemoryFill16: \
+    case MemoryFill32: \
+    case MemoryFill64: \
+    case MemoryFill128: \
         return MACRO(BulkMemoryValue); \
     case Switch: \
         return MACRO(SwitchValue); \
@@ -591,6 +595,30 @@ inline bool Value::isSIMDValue() const
 inline SIMDValue* Value::asSIMDValue()
 {
     return as<SIMDValue>();
+}
+
+// A signaling NaN among the operands comes out quiet.
+inline bool givesQuietNaN(const Value* value)
+{
+    switch (value->foldIdentity()->opcode()) {
+    case Add:
+    case Sub:
+    case Mul:
+    case Div:
+    case Ceil:
+    case Floor:
+    case FTrunc:
+    case Sqrt:
+    case FMax:
+    case FMin:
+    case IToD:
+    case IToF:
+    case FloatToDouble:
+    case DoubleToFloat:
+        return true;
+    default:
+        return false;
+    }
 }
 
 } } // namespace JSC::B3

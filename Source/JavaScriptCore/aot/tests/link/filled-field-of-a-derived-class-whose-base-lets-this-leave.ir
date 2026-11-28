@@ -1,0 +1,91 @@
+# If what the constructor of a derived class stores counted as filled whatever the constructor above does, a method that the base constructor calls on `this` would read the field of the subclass as filled while it is still empty
+# class A { constructor() { this.a = "a"; this.m(); } m() { } }  class B extends A { constructor() { super(); this.b = "b"; } m() { return this.b; } }  class C { constructor() { this.c = "c"; } }  class D extends C { constructor() { super(); this.d = "d"; } }  new B(); new D();
+# RUN: summary f1
+# CHECK: construction Allocated fills ["a"] looks-up ["a", "m"] seen-from-outside
+# RUN(BELOW): summary f3
+# BELOW: construction AnsweredBySuperCall fills ["b"] looks-up ["b"]
+# BELOW-NOT: seen-from-outside
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "a" {{*}}filled
+# LINK: field L1.1 "a" {{*}}filled
+# LINK: field L2.0 "c" {{*}}filled
+# LINK: field L3.0 "d" {{*}}filled
+# LINK: field L3.1 "c" {{*}}filled
+# RUN(EMPTY): link fields mechanisms=all
+# EMPTY-NOT: field L1.0 "b" {{*}}filled
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="a" declared={type=anything}}]
+layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f3 fields=[{key="b" declared={type=anything}}] supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="C" module=m0 constructor=f5 fields=[{key="c" declared={type=anything}}]
+layout L3 kind=Instance name="D" module=m0 base=L2 constructor=f6 fields=[{key="d" declared={type=anything}}] supertypes=[L2] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="m"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = NewClosure function=f5
+    v13 = NewClass v12 layout=L2
+    v14 = FinishClass v13 layout=L2
+    v15 = ResolveHeritage v14
+    v16 = NewClosure function=f6
+    v17 = NewClass v16, v14, v15 layout=L3
+    v18 = FinishClass v17 layout=L3
+    v19 = Construct v18
+    v20 = Undefined
+    Return v20
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = String string="a"
+    PropSet v2, v3 key="a"
+    v5 = PropGet v2 key="m"
+    v6 = Call v5, v2 calleeKey="m"
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="B" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = String string="b"
+    PropSet v3, v4 key="b"
+    Return v3
+}
+function f4 name="m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    Return v1
+}
+function f5 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = String string="c"
+    PropSet v2, v3 key="c"
+    Return v2
+}
+function f6 name="D" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    v4 = String string="d"
+    PropSet v3, v4 key="d"
+    Return v3
+}

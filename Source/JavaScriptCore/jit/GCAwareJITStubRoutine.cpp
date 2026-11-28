@@ -178,6 +178,8 @@ bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
             return !key || key.isStillLive(vm);
         });
     }
+    for (auto& accessCase : m_cases)
+        isValid &= accessCase->isStillLive(vm);
     isValid &= Base::reconcileWeakReferencesAtGCEndImpl(vm);
     return isValid;
 }
@@ -248,7 +250,7 @@ GCAwareJITStubRoutineWithExceptionHandler::~GCAwareJITStubRoutineWithExceptionHa
     // We delay deallocation of m_exceptionHandlerCallSiteIndex until GCAwareJITStubRoutineWithExceptionHandler gets destroyed.
     // This means that CallSiteIndex can be reserved correctly so long as the code owned by GCAwareJITStubRoutineWithExceptionHandler is on the stack.
     // This is important since CallSite can be queried so long as this code is on the stack: StackVisitor can retreive CallSiteIndex from the stack.
-    ASSERT((!isCompilationThread() && !Thread::mayBeGCThread()) || vm().heap.isInPhase(CollectorPhase::End));
+    vm().heap.assertIsExclusiveAccessHolderOrConductorWithWorldStopped();
 #if USE(BUN_JSC_ADDITIONS)
     // The handler stays in the CodeBlock's table until this routine is destroyed, as the CallSiteIndex stays reserved.
     if (m_codeBlockWithExceptionHandler && !m_ownerIsDead)

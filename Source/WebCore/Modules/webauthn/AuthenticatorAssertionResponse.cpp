@@ -29,6 +29,7 @@
 #if ENABLE(WEB_AUTHN)
 
 #include "AuthenticatorResponseData.h"
+#include <wtf/Borrow.h>
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -45,26 +46,28 @@ Ref<AuthenticatorAssertionResponse> AuthenticatorAssertionResponse::create(const
 {
     RefPtr<ArrayBuffer> userhandleBuffer;
     if (!userHandle.isEmpty())
-        userhandleBuffer = ArrayBuffer::create(userHandle);
-    return create(ArrayBuffer::create(rawId), ArrayBuffer::create(authenticatorData), ArrayBuffer::create(signature), WTF::move(userhandleBuffer), std::nullopt, attachment);
+        userhandleBuffer = ArrayBuffer::create(borrow(userHandle)->span());
+    return create(ArrayBuffer::create(borrow(rawId)->span()), ArrayBuffer::create(borrow(authenticatorData)->span()), ArrayBuffer::create(borrow(signature)->span()), WTF::move(userhandleBuffer), std::nullopt, attachment);
 }
 
 Ref<AuthenticatorAssertionResponse> AuthenticatorAssertionResponse::create(const Vector<uint8_t>& rawId, const Vector<uint8_t>& authenticatorData, const Vector<uint8_t>& signature, const Vector<uint8_t>& userHandle, std::optional<AuthenticationExtensionsClientOutputs>&& extensions, AuthenticatorAttachment attachment)
 {
     RefPtr<ArrayBuffer> userhandleBuffer;
     if (!userHandle.isEmpty())
-        userhandleBuffer = ArrayBuffer::create(userHandle);
-    return create(ArrayBuffer::create(rawId), ArrayBuffer::create(authenticatorData), ArrayBuffer::create(signature), WTF::move(userhandleBuffer), WTF::move(extensions), attachment);
+        userhandleBuffer = ArrayBuffer::create(borrow(userHandle)->span());
+    return create(ArrayBuffer::create(borrow(rawId)->span()), ArrayBuffer::create(borrow(authenticatorData)->span()), ArrayBuffer::create(borrow(signature)->span()), WTF::move(userhandleBuffer), WTF::move(extensions), attachment);
 }
 
+#if PLATFORM(COCOA)
 Ref<AuthenticatorAssertionResponse> AuthenticatorAssertionResponse::create(Ref<ArrayBuffer>&& rawId, RefPtr<ArrayBuffer>&& userHandle, String&& name, SecAccessControlRef accessControl, AuthenticatorAttachment attachment)
 {
     return adoptRef(*new AuthenticatorAssertionResponse(WTF::move(rawId), WTF::move(userHandle), WTF::move(name), accessControl, attachment));
 }
+#endif
 
 void AuthenticatorAssertionResponse::setAuthenticatorData(Vector<uint8_t>&& authenticatorData)
 {
-    m_authenticatorData = ArrayBuffer::create(authenticatorData);
+    m_authenticatorData = ArrayBuffer::create(borrow(authenticatorData)->span());
 }
 
 AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& authenticatorData, Ref<ArrayBuffer>&& signature, RefPtr<ArrayBuffer>&& userHandle, AuthenticatorAttachment attachment)
@@ -75,6 +78,7 @@ AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(Ref<ArrayBuffer>&
 {
 }
 
+#if PLATFORM(COCOA)
 AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(Ref<ArrayBuffer>&& rawId, RefPtr<ArrayBuffer>&& userHandle, String&& name, SecAccessControlRef accessControl, AuthenticatorAttachment attachment)
     : AuthenticatorResponse(WTF::move(rawId), attachment)
     , m_userHandle(WTF::move(userHandle))
@@ -82,6 +86,7 @@ AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(Ref<ArrayBuffer>&
     , m_accessControl(accessControl)
 {
 }
+#endif
 
 AuthenticatorResponseData AuthenticatorAssertionResponse::data() const
 {

@@ -76,7 +76,7 @@ public:
 
     // disable and enable termination of the process. when disableTermination is called, the
     // process won't terminate unless a corresponding enableTermination call is made.
-    void LEGACY_NODELETE disableTermination();
+    NODELETE void disableTermination();
     void enableTermination();
 
     void addMessageReceiver(IPC::ReceiverName, IPC::MessageReceiver&);
@@ -97,6 +97,7 @@ public:
 
     void mainThreadPing(CompletionHandler<void()>&&);
     void setProcessSuppressionEnabled(bool);
+    void enableIPCSendOnCallingThread();
 
 #if PLATFORM(COCOA)
     void setApplicationIsDaemon();

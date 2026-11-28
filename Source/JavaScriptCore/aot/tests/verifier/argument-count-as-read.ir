@@ -1,5 +1,4 @@
 # in a program as read: the variadic operands of an operation are as many as the parameters of the callee, the listed fields or the captures
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: ArgumentCountMismatch 4
 
@@ -39,4 +38,6 @@ function f6 name="goodNewClosure" parameters=[{type=number}] results=[{type=unde
 function f7 name="callee" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
     Return
 }
-function f8 name="closure" captures=[{type=number}] results=[{type=undefined}]
+function f8 name="closure" captures=[{type=number}] results=[{type=undefined}] {
+    Return
+}

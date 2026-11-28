@@ -1,0 +1,43 @@
+# each turn suspends, and while the function is suspended anybody may store the variable: the read stays at the head of the loop
+# let step; async function list(n, p) { let s = 0; for (let i = 0; step, i < n; i++) { await p; s = [s, step]; } return s; }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK-NOT: GetModuleVariable
+# CHECK: isLoopHead=true
+# CHECK: = GetModuleVariable {{*}}variable=g0
+# CHECK: = AwaitBySavingFrame
+
+variable g0 name="step" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    PutModuleVariable v3 variable=g0
+    Return v3
+}
+function f1 name="list" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=i32
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = Integer
+    Jump -> next b2(v4, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = GetModuleVariable variable=g0
+    v9 = Less v6, v3
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Await v1
+    v11 = NewArray v5, v8 contents=anything
+    v12 = Increment v6
+    Jump -> next b2(v11, v12)
+  b4():
+    Return v5
+  b5():
+    Return v0
+}

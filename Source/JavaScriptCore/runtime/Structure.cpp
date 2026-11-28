@@ -41,7 +41,6 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
 
-#include "AOTAllocationCounts.h"
 #include "AOTCompiledStructure.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeHooks.h"
@@ -51,18 +50,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
-
-static ALWAYS_INLINE void countStructureMade(VM& vm, ASCIILiteral how, const char* detailOrNull = nullptr)
-{
-#if ENABLE(AOT)
-    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
-        AOT::AllocationCounts::didMake(vm, how, detailOrNull);
-#else
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(how);
-    UNUSED_PARAM(detailOrNull);
-#endif
-}
 
 static ALWAYS_INLINE bool hasFastIndexing(const Structure* structure)
 {
@@ -116,7 +103,7 @@ void Structure::checkOffsetConsistency(PropertyTable* propertyTable, NOESCAPE co
 }
 
 #if DUMP_STRUCTURE_ID_STATISTICS
-static UncheckedKeyHashSet<Structure*>& liveStructureSet = *(new UncheckedKeyHashSet<Structure*>);
+static HashSet<Structure*>& liveStructureSet = *(new HashSet<Structure*>);
 #endif
 
 inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner, Structure* structure)
@@ -262,7 +249,7 @@ void Structure::validateFlags()
 
     bool overridesPut = methodTable.put != JSObject::put && ((typeInfo().type() == StringType || typeInfo().type() == SymbolType || typeInfo().type() == HeapBigIntType) || methodTable.put != JSCell::put);
 #if ENABLE(AOT)
-    // InternalFunction sets the flag itself, and only where its put() refuses anything.
+    // InternalFunction sets the flag itself, and only where its put() can reject a write.
     if (methodTable.put == InternalFunction::info()->methodTable.put)
         overridesPut = typeInfo().overridesPut();
 #endif
@@ -336,7 +323,6 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     , m_classInfo(classInfo)
     , m_transitionWatchpointSet(IsWatched)
 {
-    countStructureMade(vm, "Structure:the_first_of_its_line"_s, classInfo->className.characters());
     listIfIndexingIsFast(vm, this);
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
@@ -438,6 +424,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setDictionaryKind(previous->dictionaryKind());
     setIsPinnedPropertyTable(false);
     setHasBeenFlattenedBefore(previous->hasBeenFlattenedBefore());
+    setGrewPastTransitionLimitThroughPutById(previous->grewPastTransitionLimitThroughPutById());
+    m_keyedAddsPastTransitionLimit = previous->m_keyedAddsPastTransitionLimit;
+    setPrototypeReflattenCount(previous->prototypeReflattenCount());
     setHasAnyKindOfGetterSetterProperties(previous->hasAnyKindOfGetterSetterProperties());
     setHasReadOnlyOrGetterSetterPropertiesExcludingProto(previous->hasReadOnlyOrGetterSetterPropertiesExcludingProto());
     setHasNonEnumerableProperties(previous->hasNonEnumerableProperties());
@@ -670,13 +659,12 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
     return false;
 }
 
-// Compiled code asks the cell of an array one bit for its names and its elements.
+// Compiled code asks the cell of an array, a map or a set one bit for its names and its elements.
 void Structure::setPristineBits(PristineBits bits)
 {
     TypeInfo typeInfo = withoutPristine(this->typeInfo());
-    bool isArray = typeInfo.type() == ArrayType || typeInfo.type() == DerivedArrayType;
     TypeInfo::InlineTypeFlags flags = typeInfo.inlineTypeFlags();
-    if (bits.isPristine && (!isArray || bits.hasPristineElements))
+    if (bits.isPristine && (!pristineFlagOfCellCoversElements(typeInfo.type()) || bits.hasPristineElements))
         flags |= IsPristine;
     m_blob = TypeInfoBlob(indexingModeIncludingHistory(), TypeInfo(typeInfo.type(), flags, typeInfo.outOfLineTypeFlags()));
     m_outOfLineTypeFlags = typeInfo.outOfLineTypeFlags() | (bits.isPristine ? HasPristineNames >> numberOfInlineBits : 0);
@@ -698,7 +686,7 @@ static bool isLockedPrototype(const Structure* structure)
 
 static bool mayShadowPrototypeChain(VM& vm, Structure* structure, PropertyName propertyName)
 {
-    if (propertyName.isSymbol() || propertyName == vm.propertyNames->toJSON || propertyName == vm.propertyNames->then)
+    if ((propertyName.isSymbol() && !Structure::isSymbolThatNothingProbes(propertyName.uid())) || propertyName == vm.propertyNames->toJSON || propertyName == vm.propertyNames->then)
         return true;
     JSObject* prototype = structure->storedPrototypeObject();
     while (prototype) {
@@ -878,7 +866,7 @@ Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, Proper
     return addNewPropertyTransition(vm, structure, propertyName, attributes, offset, PutPropertySlot::UnknownContext);
 }
 
-Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred, JSObject* objectThatGetsProperty)
+Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred, JSObject* targetObject)
 {
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
@@ -921,9 +909,9 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     }
     
 #if !ENABLE(AOT)
-    UNUSED_PARAM(objectThatGetsProperty);
+    UNUSED_PARAM(targetObject);
 #else
-    if (objectThatGetsProperty && vm.hasCompiledCode() && AOT::RuntimeHooks::becomesDictionaryByAddition(vm, objectThatGetsProperty, structure, propertyName.uid())) {
+    if (targetObject && vm.hasCompiledCode() && AOT::RuntimeHooks::shouldUseDictionaryForAddition(vm, targetObject, structure, propertyName.uid())) {
         Structure* transition = toCacheableDictionaryTransition(vm, structure, deferred);
         offset = transition->add(vm, propertyName, attributes);
         return transition;
@@ -931,7 +919,12 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 #endif
 
     Structure* transition = Structure::create(vm, structure, deferred);
-    countStructureMade(vm, structure->mayBePrototype() ? "Structure:a_property_more_of_a_prototype"_s : "Structure:a_property_more"_s, structure->classInfoForCells()->className.characters());
+    if (structure->transitionCountEstimate() >= s_maxTransitionLength) {
+        if (context == PutPropertySlot::PutById)
+            transition->setGrewPastTransitionLimitThroughPutById(true);
+        else if (structure->grewPastTransitionLimitThroughPutById())
+            ++transition->m_keyedAddsPastTransitionLimit;
+    }
 
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     
@@ -974,8 +967,8 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->checkOffsetConsistency();
     structure->checkOffsetConsistency();
 #if ENABLE(AOT)
-    if (objectThatGetsProperty && vm.hasCompiledCode())
-        AOT::RuntimeHooks::didMakeStructureForAddition(vm, transition);
+    if (targetObject && vm.hasCompiledCode())
+        AOT::RuntimeHooks::didCreateAdditionTransition(vm, transition);
 #endif
     return transition;
 }
@@ -1044,7 +1037,6 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     }
 
     Structure* transition = Structure::create(vm, structure, deferred);
-    countStructureMade(vm, "Structure:a_property_less"_s);
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
 
     // While we are deleting the property, we need to make sure the table is not cleared.
@@ -1102,7 +1094,6 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
     // This is very likely that this object will behaves differently from the previous one.
     // Let's pin the table and break the edge to the previous Structure.
     Structure* transition = Structure::create(vm, structure, &deferred);
-    countStructureMade(vm, "Structure:another_prototype"_s);
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->m_prototype.set(vm, transition, prototype);
@@ -1123,7 +1114,6 @@ Structure* Structure::changeGlobalProxyTargetTransition(VM& vm, Structure* struc
 {
     DeferGC deferGC(vm);
     Structure* transition = Structure::create(vm, structure, &deferred);
-    countStructureMade(vm, "Structure:another_global_proxy_target"_s);
 
     transition->setRealm(vm, globalObject);
 
@@ -1194,7 +1184,6 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
     // Even if the current structure is dictionary, we should perform transition since this changes attributes of existing properties to keep
     // structure still cacheable.
     Structure* transition = Structure::create(vm, structure, deferred);
-    countStructureMade(vm, "Structure:other_attributes"_s);
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
 
     {
@@ -1233,7 +1222,6 @@ Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, Dicti
     ASSERT(!structure->isUncacheableDictionary());
     Structure* transition = Structure::create(vm, structure, deferred);
     DeferGC deferGC(vm);
-    countStructureMade(vm, "Structure:a_dictionary"_s);
 
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
@@ -1301,11 +1289,30 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
     return materializePropertyTable(vm, setPropertyTable);
 }
 
+#if ENABLE(AOT)
+// For a dictionary or the structure of a possible prototype.
+static NEVER_INLINE bool mayHaveExistingTransition(VM& vm, Structure* structure, IndexingType newIndexingType)
+{
+    if (vm.hasCompiledCode() && structure->mayBePrototype() && hasIndexedProperties(newIndexingType) && !hasIndexedProperties(structure->indexingModeIncludingHistory()))
+        AOT::RuntimeHooks::willAddElementsToPrototype(vm);
+    return !structure->isDictionary();
+}
+#endif
+
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
 {
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
-    
-    if (!structure->isDictionary()) {
+
+#if ENABLE(AOT)
+    // One test asks for both bits.
+    bool mayBeInTable = true;
+    if (structure->hasAnyOfBitFieldFlags(s_dictionaryKindBits | s_mayBePrototypeBits)) [[unlikely]]
+        mayBeInTable = mayHaveExistingTransition(vm, structure, indexingModeIncludingHistory);
+#else
+    bool mayBeInTable = !structure->isDictionary();
+#endif
+
+    if (mayBeInTable) {
         if (Structure* existingTransition = structure->m_transitionTable.get(nullptr, 0, transitionKind)) {
             ASSERT(existingTransition->transitionKind() == transitionKind);
             ASSERT(existingTransition->indexingModeIncludingHistory() == indexingModeIncludingHistory);
@@ -1324,7 +1331,6 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     
     Structure* transition = Structure::create(vm, structure, deferred);
 #endif
-    countStructureMade(vm, transitionKind == TransitionKind::BecomePrototype ? "Structure:becomes_a_prototype"_s : changesIndexingType(transitionKind) ? "Structure:another_indexing_type"_s : "Structure:no_property_changes"_s);
     transition->setTransitionKind(transitionKind);
     transition->m_blob.setIndexingModeIncludingHistory(indexingModeIncludingHistory);
     if (!hasFastIndexing(structure))
@@ -1346,8 +1352,11 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (preventsExtensions(transitionKind))
         transition->setDidPreventExtensions(true);
 
-    if (transitionKind == TransitionKind::BecomePrototype || transitionKind == TransitionKind::FreezeElementsInPlace)
+    if (transitionKind == TransitionKind::BecomePrototype || transitionKind == TransitionKind::FreezeElementsInPlace) {
         transition->setMayBePrototype(true);
+        // Allow one more flattening, since inline caches give up on every access that goes through a dictionary prototype.
+        transition->setHasBeenFlattenedBefore(false);
+    }
 
     if (makesAllPropertiesImmutable(transitionKind)) {
         transition->setHasImmutableProperties(true);
@@ -1358,7 +1367,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         // hasCustomProperties()). This transition adds and changes none, so the answer is the one the object had.
         transition->setDidTransition(structure->didTransition());
     }
-    
+
     if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
         // We pin the property table on transitions that do wholesale editing of the property
         // table, since our logic for walking the property transition chain to rematerialize the
@@ -1410,7 +1419,6 @@ Structure* Structure::makeListedPropertiesImmutableTransition(VM& vm, Structure*
     DeferGC deferGC(vm);
 
     Structure* transition = Structure::create(vm, structure, deferred);
-    countStructureMade(vm, "Structure:listed_properties_immutable"_s);
     transition->setTransitionKind(TransitionKind::MakeListedPropertiesImmutable);
     transition->setHasListedImmutableProperties(true);
     transition->setTransitionWatchpointIsLikelyToBeFired(false);
@@ -1444,7 +1452,7 @@ bool Structure::refusesWriteToListedProperty(UniquedStringImpl* uid) const
     ImmutablePropertyNames* names = rareData()->immutablePropertyNames();
     if (!names)
         return false;
-    if (names->contains(uid))
+    if (names->refusesWrite(uid))
         return true;
     names->willWrite(uid);
     return false;
@@ -1526,7 +1534,6 @@ Structure* Structure::addPropertyRunTransition(VM& vm, Structure* structure, con
     DeferGC deferGC(vm);
 
     Structure* transition = Structure::create(vm, structure, deferred);
-    countStructureMade(vm, "Structure:a_run_of_properties_more"_s);
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     transition->setTransitionKind(TransitionKind::PropertyRunAddition);
     transition->setTransitionPropertyAttributes(0);
@@ -1582,7 +1589,7 @@ static bool hasDuplicateNames(std::span<UniquedStringImpl* const> names)
         }
         return false;
     }
-    UncheckedKeyHashSet<UniquedStringImpl*> seenNames;
+    HashSet<UniquedStringImpl*> seenNames;
     for (UniquedStringImpl* name : names) {
         if (!seenNames.add(name).isNewEntry)
             return true;
@@ -1706,7 +1713,6 @@ Structure* Structure::createForOneObject(VM& vm, Structure* base, std::span<Uniq
     DeferGC deferGC(vm);
 
     Structure* structure = Structure::create(vm, base, nullptr);
-    countStructureMade(vm, isDictionary ? "Structure:a_dictionary"_s : "Structure:a_run_of_properties_more"_s);
     PropertyTable* table = PropertyTable::create(vm, names.size());
     structure->pin(Locker { structure->m_lock }, vm, table);
 
@@ -1831,12 +1837,9 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     ASSERT(object->structure() == this);
 
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode()) {
-        AOT::RuntimeHooks::didFlattenStructure(vm, this);
-        // A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays. Nothing that was learnt about it is out of date.
-        if (mayBePrototype() && isUncacheableDictionary())
-            AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
-    }
+    // A cacheable dictionary becomes an ordinary object: every name still resolves to the same value at the same offset, and the prototype is unchanged. Nothing cached about it goes stale.
+    if (vm.hasCompiledCode() && mayBePrototype() && isUncacheableDictionary())
+        AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
 #endif
 
     // Must outlive cellLocker. The collection this defers until scope exit would otherwise run
@@ -1900,6 +1903,8 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     }
 
     setDictionaryKind(NoneDictionaryKind);
+    if (hasBeenFlattenedBefore())
+        setPrototypeReflattenCount(std::min<unsigned>(prototypeReflattenCount() + 1, s_prototypeReflattenCountMask));
     setHasBeenFlattenedBefore(true);
 
     ASSERT(this->outOfLineCapacity() == afterOutOfLineCapacity);

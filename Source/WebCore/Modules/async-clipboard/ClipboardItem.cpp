@@ -45,10 +45,10 @@ ClipboardItem::~ClipboardItem() = default;
 
 Ref<Blob> ClipboardItem::blobFromString(ScriptExecutionContext* context, const String& stringData, const String& type)
 {
-    return Blob::create(context, Vector(byteCast<uint8_t>(stringData.utf8().span())), Blob::normalizedContentType(type));
+    return Blob::create(context, Vector(byteCast<uint8_t>(makeUTF8CString(stringData).span())), Blob::normalizedContentType(type));
 }
 
-static ClipboardItem::PresentationStyle LEGACY_NODELETE clipboardItemPresentationStyle(const PasteboardItemInfo& info)
+NODELETE static ClipboardItem::PresentationStyle clipboardItemPresentationStyle(const PasteboardItemInfo& info)
 {
     switch (info.preferredPresentationStyle) {
     case PasteboardItemPresentationStyle::Unspecified:

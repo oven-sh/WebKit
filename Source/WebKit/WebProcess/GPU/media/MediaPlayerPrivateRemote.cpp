@@ -650,6 +650,7 @@ void MediaPlayerPrivateRemote::updateCachedState(RemoteMediaPlayerState&& state)
 
     m_cachedState.hasClosedCaptions = state.hasClosedCaptions;
     m_cachedState.hasAvailableVideoFrame = state.hasAvailableVideoFrame;
+    m_cachedState.videoFrameHasAlpha = state.videoFrameHasAlpha;
     m_cachedState.wirelessVideoPlaybackDisabled = state.wirelessVideoPlaybackDisabled;
     m_cachedState.didPassCORSAccessCheck = state.didPassCORSAccessCheck;
     m_cachedState.documentIsCrossOrigin = state.documentIsCrossOrigin;
@@ -1069,20 +1070,6 @@ NSArray* MediaPlayerPrivateRemote::timedMetadata() const
     notImplemented();
     return nullptr;
 }
-
-String MediaPlayerPrivateRemote::accessLog() const
-{
-    auto sendResult = protect(connection())->sendSync(Messages::RemoteMediaPlayerProxy::AccessLog(), m_id);
-    auto [log] = sendResult.takeReplyOr(emptyString());
-    return log;
-}
-
-String MediaPlayerPrivateRemote::errorLog() const
-{
-    auto sendResult = protect(connection())->sendSync(Messages::RemoteMediaPlayerProxy::ErrorLog(), m_id);
-    auto [log] = sendResult.takeReplyOr(emptyString());
-    return log;
-}
 #endif
 
 void MediaPlayerPrivateRemote::setBufferingPolicy(MediaPlayer::BufferingPolicy policy)
@@ -1182,14 +1169,15 @@ RefPtr<WebCore::VideoFrame> MediaPlayerPrivateRemote::videoFrameForCurrentTime()
         return m_videoFrameGatheredWithVideoFrameMetadata;
 #endif
 
-    auto sendResult = protect(connection())->sendSync(Messages::RemoteMediaPlayerProxy::VideoFrameForCurrentTimeIfChanged(), m_id);
+    auto reference = RemoteVideoFrameReference::generateForAdd();
+    auto sendResult = protect(connection())->sendSync(Messages::RemoteMediaPlayerProxy::VideoFrameForCurrentTimeIfChanged(reference), m_id);
     if (!sendResult.succeeded())
         return nullptr;
 
     auto [result, changed] = sendResult.takeReply();
     if (changed) {
         if (result)
-            m_videoFrameForCurrentTime = RemoteVideoFrameProxy::create(protect(connection()), protect(videoFrameObjectHeapProxy()), WTF::move(*result));
+            m_videoFrameForCurrentTime = RemoteVideoFrameProxy::create(protect(connection()), protect(videoFrameObjectHeapProxy()), reference, WTF::move(*result));
         else
             m_videoFrameForCurrentTime = nullptr;
     }
@@ -1229,6 +1217,11 @@ Ref<MediaPlayerPrivateRemote::BitmapImagePromise> MediaPlayerPrivateRemote::bitm
 bool MediaPlayerPrivateRemote::hasAvailableVideoFrame() const
 {
     return m_cachedState.hasAvailableVideoFrame;
+}
+
+bool MediaPlayerPrivateRemote::videoFrameHasAlpha() const
+{
+    return m_cachedState.videoFrameHasAlpha;
 }
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -1436,8 +1429,7 @@ void MediaPlayerPrivateRemote::setShouldContinueAfterKeyNeeded(bool should)
 void MediaPlayerPrivateRemote::setTextTrackRepresentation(WebCore::TextTrackRepresentation* representation)
 {
 #if PLATFORM(COCOA)
-    auto* representationLayer = representation ? representation->platformLayer() : nil;
-    m_videoLayerManager->setTextTrackRepresentationLayer(representationLayer);
+    SUPPRESS_FORWARD_DECL_ARG m_videoLayerManager->setTextTrackRepresentationLayer(representation ? representation->platformLayer() : nil);
 #endif
 }
 

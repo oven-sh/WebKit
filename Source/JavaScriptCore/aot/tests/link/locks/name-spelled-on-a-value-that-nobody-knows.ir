@@ -1,0 +1,44 @@
+# code of the program spells the name of a member on a value that nobody knows. It counts on an object that such a value may be: the flow has brought Date to unseen code. Nobody has carried Map anywhere
+# under a key that nobody can read such a store is followed nowhere: Date.parse keeps its lock, and the store is refused when it runs
+# seed(new Date().constructor); seed.now = f; seed.groupBy = f; seed[name] = f; Date.now(); Date.parse("0"); Map.groupBy("0", f);
+# RUN: locks open
+# CHECK: locked DateParse constant
+# CHECK: locked MapGroupBy constant
+# CHECK: open DateNow spelled-through-unseen
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = PropGet v1 key="parse"
+    v5 = String string="0"
+    v6 = Call v4, v1, v5
+    v7 = PropGet v0 key="Map" [isFreeName]
+    v8 = PropGet v7 key="groupBy"
+    v9 = NewClosure function=f2
+    v10 = Call v8, v7, v5, v9
+    v11 = Construct v1, -
+    v12 = PropGet v11 key="constructor"
+    v13 = Construct v7, -
+    v14 = PropGet v13 key="constructor"
+    v15 = PropGet v0 key="seed" [isFreeName]
+    v16 = Call v15, -, v12
+    PropSet v15, v9 key="now"
+    PropSet v15, v9 key="groupBy"
+    v19 = PropGet v0 key="name" [isFreeName]
+    ElemSet v15, v19, v9
+    Return v3
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

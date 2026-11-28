@@ -40,7 +40,6 @@
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "RenderWidget.h"
-#include "SVGImage.h"
 #include "Settings.h"
 #include "SystemFontDatabase.h"
 #include <wtf/StdLibExtras.h>
@@ -48,6 +47,10 @@
 
 #if ENABLE(MEDIA_STREAM)
 #include "MockRealtimeMediaSourceCenter.h"
+#endif
+
+#if PLATFORM(APPLETV)
+#include <pal/system/ios/Device.h>
 #endif
 
 #if __has_include(<WebKitAdditions/SettingsBaseAdditions.cpp>)
@@ -68,6 +71,13 @@ static void invalidateAfterGenericFamilyChange(Page* page)
     if (page)
         page->setNeedsRecalcStyleInAllFrames();
 }
+
+#if PLATFORM(APPLETV)
+bool defaultTextAutosizingEnabledAtLargeInitialScale()
+{
+    return !PAL::deviceClassIsHomeView();
+}
+#endif
 
 SettingsBase::SettingsBase(Page* page)
     : m_page(page)
@@ -195,6 +205,14 @@ void SettingsBase::setMathFontFamily(const String& family, UScriptCode script)
     bool changes = fontGenericFamilies().setMathFontFamily(family, script);
     if (changes)
         invalidateAfterGenericFamilyChange(protect(m_page).get());
+}
+
+void SettingsBase::setFontGenericFamilies(const FontGenericFamilies& families)
+{
+    if (fontGenericFamilies() == families)
+        return;
+    fontGenericFamilies() = families;
+    invalidateAfterGenericFamilyChange(protect(m_page).get());
 }
 
 void SettingsBase::setMinimumDOMTimerInterval(Seconds interval)

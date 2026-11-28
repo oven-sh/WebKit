@@ -32,8 +32,6 @@ list(APPEND WebKit_SOURCES
     Shared/win/NativeWebWheelEventWin.cpp
     Shared/win/WebEventFactory.cpp
 
-    UIProcess/API/C/WKViewportAttributes.cpp
-
     UIProcess/API/C/win/WKView.cpp
 
     UIProcess/Automation/win/WebAutomationSessionWin.cpp
@@ -42,7 +40,6 @@ list(APPEND WebKit_SOURCES
     UIProcess/LegacySessionStateCodingNone.cpp
     UIProcess/WebGrammarDetail.cpp
     UIProcess/WebMemoryPressureHandler.cpp
-    UIProcess/WebViewportAttributes.cpp
 
     UIProcess/CoordinatedGraphics/DrawingAreaProxyCoordinatedGraphics.cpp
 
@@ -169,7 +166,7 @@ if (SWIFT_REQUIRED)
     if (_swift_sdkroot AND _vc_tools_dir AND EXISTS "${_sdk_vcruntime_mm}")
         # CONFIGURE_DEPENDS ensures this is rerun if VC changes its header set
         # (subject to some known limitations of that cmake feature)
-        file(GLOB _msvc_internal_headers CONFIGURE_DEPENDS
+        file(GLOB _msvc_internal_headers CONFIGURE_DEPENDS # NOLINT
             RELATIVE "${_vc_tools_dir}/include"
             "${_vc_tools_dir}/include/__msvc_*.hpp")
         execute_process(

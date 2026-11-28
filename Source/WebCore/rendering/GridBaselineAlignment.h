@@ -68,10 +68,10 @@ private:
     LayoutUnit logicalAscentForGridItem(const RenderBox&, Style::GridTrackSizingDirection alignmentContextType, ItemPosition) const;
     LayoutUnit ascentForGridItem(const RenderBox&, Style::GridTrackSizingDirection alignmentContextType, ItemPosition) const;
     LayoutUnit descentForGridItem(const RenderBox&, LayoutUnit, Style::GridTrackSizingDirection alignmentContextType, ExtraMarginsFromSubgrids) const;
-    bool LEGACY_NODELETE isDescentBaselineForGridItem(const RenderBox&, Style::GridTrackSizingDirection alignmentContextType) const;
-    bool LEGACY_NODELETE isVerticalAlignmentContext(Style::GridTrackSizingDirection alignmentContextType) const;
-    bool LEGACY_NODELETE isOrthogonalGridItemForBaseline(const RenderBox&) const;
-    bool LEGACY_NODELETE isParallelToAlignmentAxisForGridItem(const RenderBox&, Style::GridTrackSizingDirection alignmentContextType) const;
+    NODELETE bool isDescentBaselineForGridItem(const RenderBox&, Style::GridTrackSizingDirection alignmentContextType) const;
+    NODELETE bool isVerticalAlignmentContext(Style::GridTrackSizingDirection alignmentContextType) const;
+    NODELETE bool isOrthogonalGridItemForBaseline(const RenderBox&) const;
+    NODELETE bool isParallelToAlignmentAxisForGridItem(const RenderBox&, Style::GridTrackSizingDirection alignmentContextType) const;
 
     // Per baseline alignment-context: the baseline-sharing groups plus this context's max ascent per group,
     // indexed by the group index returned from BaselineAlignmentState::sharedGroupIndex.
@@ -83,7 +83,7 @@ private:
         std::unique_ptr<BaselineAlignmentState> sharedGroups;
         Vector<SharedGroupAlignment> alignments;
     };
-    using AlignmentContextMap = HashMap<unsigned, AlignmentContext, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+    using AlignmentContextMap = HashMap<unsigned, AlignmentContext>;
 
     // Grid Container's writing mode, used to determine grid item's orthogonality.
     WritingMode m_writingMode;

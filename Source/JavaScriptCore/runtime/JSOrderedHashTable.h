@@ -53,6 +53,9 @@ public:
     }
 
     static ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_storage); }
+#if ENABLE(AOT)
+    static ptrdiff_t offsetOfDeletedPrefix() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_deletedPrefix); }
+#endif
 
     void finishCreation(VM& vm) { Base::finishCreation(vm); }
     void finishCreation(JSGlobalObject* globalObject, VM& vm, HashTable* base)
@@ -108,7 +111,7 @@ public:
 
 #if ENABLE(AOT)
         if (!m_storage && vm.hasCompiledCode()) [[unlikely]] {
-            JSCell* storage = AOT::CompactStorage::tryCreateForFirstEntry(globalObject, Traits::hasValueData, key, value);
+            JSCell* storage = AOT::CompactStorage::tryCreateForFirstEntry(globalObject, this, Traits::hasValueData, key, value);
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
         }
@@ -190,6 +193,7 @@ public:
             JSCell* storage = AOT::CompactStorage::tryCreate(globalObject, Traits::hasValueData);
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
+            m_deletedPrefix = 0;
             return;
         }
 #endif
@@ -223,6 +227,9 @@ public:
     }
 
     WriteBarrier<JSCell> m_storage;
+#if ENABLE(AOT)
+    uint32_t m_deletedPrefix { 0 };
+#endif
 };
 
 class JSOrderedHashMap : public JSOrderedHashTable<MapTraits> {

@@ -1,0 +1,29 @@
+# Uint8Array.prototype has no `set` of its own: a lookup passes it and finds the member above. Where a test can replace that member it can hide it, so the name is opened on the object that the flow brings to the store
+# putSet(Uint8Array.prototype, () => 7)   with   putSet = (o, v) => { o.set = v }
+# whoever has FOUND the member above is told again as whoever found nothing is: TestRunsInLink::nodeOfNameAdded()
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: adds Uint8ArrayPrototype "set"
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Uint8Array" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v2, v4
+    Return v5
+}
+function f1 name="putSet" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="set"
+    Return v1
+}
+function f2 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

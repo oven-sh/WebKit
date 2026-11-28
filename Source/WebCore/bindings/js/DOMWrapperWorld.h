@@ -21,8 +21,14 @@
 
 #pragma once
 
+#include <JavaScriptCore/ArrayBufferView.h>
 #include <WebCore/JSDOMGlobalObject.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
+
+namespace JSC {
+class JSArrayBufferView;
+}
 
 namespace WebCore {
 
@@ -94,13 +100,25 @@ public:
     void addEventListener(JSEventListener&);
     void removeEventListener(JSEventListener&);
 
+    JSC::JSArrayBufferView* arrayBufferViewWrapper(JSC::ArrayBufferView&) const;
+    void cacheArrayBufferViewWrapper(JSC::ArrayBufferView&, JSC::JSArrayBufferView&);
+
 protected:
     DOMWrapperWorld(JSC::VM&, Type, const String& name);
 
 private:
+    struct ArrayBufferViewWrapper;
+    class ArrayBufferViewWrapperOwner;
+
+    // Delete out of line so code that sees only the forward declaration, such as Swift's C++ importer, can destroy the map.
+    struct ArrayBufferViewWrapperDeleter {
+        void operator()(ArrayBufferViewWrapper*) const;
+    };
+
     JSC::VM& m_vm;
     HashSet<WindowProxy*> m_jsWindowProxies;
     DOMObjectWrapperMap m_wrappers;
+    HashMap<void*, std::unique_ptr<ArrayBufferViewWrapper, ArrayBufferViewWrapperDeleter>> m_arrayBufferViewWrappers;
 
     WeakHashSet<JSEventListener> m_eventListeners;
 
@@ -118,7 +136,23 @@ private:
     bool m_isMediaControls : 1 { false };
 };
 
-DOMWrapperWorld& LEGACY_NODELETE normalWorld(JSC::VM&);
+// The wrapper is not what keeps the view alive, so the view's address, which is its key, could be reused
+// for another view while the wrapper is alive. Keeping a reference to the view prevents that.
+struct DOMWrapperWorld::ArrayBufferViewWrapper {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ArrayBufferViewWrapper);
+
+    ArrayBufferViewWrapper(DOMWrapperWorld& world, JSC::ArrayBufferView& view)
+        : world(world)
+        , view(view)
+    {
+    }
+
+    SingleThreadWeakPtr<DOMWrapperWorld> world;
+    const Ref<JSC::ArrayBufferView> view;
+    JSC::Weak<JSC::JSArrayBufferView> wrapper;
+};
+
+NODELETE DOMWrapperWorld& normalWorld(JSC::VM&);
 WEBCORE_EXPORT DOMWrapperWorld& mainThreadNormalWorldSingleton();
 
 inline DOMWrapperWorld& debuggerWorldSingleton() { return mainThreadNormalWorldSingleton(); }

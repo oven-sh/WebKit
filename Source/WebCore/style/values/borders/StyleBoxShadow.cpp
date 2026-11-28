@@ -38,8 +38,7 @@
 #include <ranges>
 #include <wtf/NeverDestroyed.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Conversion
 
@@ -114,7 +113,7 @@ void Serialize<BoxShadowList>::operator()(StringBuilder& builder, const CSS::Ser
 
 // MARK: - Blending
 
-static inline std::optional<CSS::Keyword::Inset> LEGACY_NODELETE blendInset(std::optional<CSS::Keyword::Inset> a, std::optional<CSS::Keyword::Inset> b, const BlendingContext& context)
+NODELETE static inline std::optional<CSS::Keyword::Inset> blendInset(std::optional<CSS::Keyword::Inset> a, std::optional<CSS::Keyword::Inset> b, const BlendingContext& context)
 {
     if (a == b)
         return b;
@@ -202,5 +201,4 @@ auto Blending<BoxShadows>::blend(const BoxShadows& from, const BoxShadows& to, c
     return ShadowInterpolation<BoxShadows, MatchingBoxShadows>::interpolate(from, to, fromStyle, toStyle, context);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

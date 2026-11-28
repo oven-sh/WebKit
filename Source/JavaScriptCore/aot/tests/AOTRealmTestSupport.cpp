@@ -66,6 +66,11 @@ static JSObject* captureNativeModuleExports(JSGlobalObject* realm, uint32_t regi
     return nullptr;
 }
 
+static bool givesOriginalToPackages(JSGlobalObject*, const String&, const String& importer, bool)
+{
+    return importer.contains("/node_modules/"_s);
+}
+
 static constexpr ModuleHost testModuleHost {
     .createModuleObject = failOnModuleHostCall,
     .createRequirer = failOnModuleHostCall,
@@ -77,8 +82,9 @@ static constexpr ModuleHost testModuleHost {
     .requireCache = nullptr,
     .requireExtensions = nullptr,
     .createAsyncModuleRequiredError = failOnModuleHostCall,
-    .createEmptyJSONBodyError = nullptr,
     .createLoadError = nullptr,
+    .mockOperations = mockOperations,
+    .shouldBypassMock = givesOriginalToPackages,
 };
 
 static JSGlobalObject* createPlainRealm(VM& vm)
@@ -100,20 +106,18 @@ static JSGlobalObject* createRealmWithImmutableBuiltins(VM& vm)
 {
     JSGlobalObject* realm = createPlainRealm(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    lockBuiltinsOfTable(realm);
+    lockTableBuiltins(realm);
     markOriginalStructuresPristine(vm, realm);
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(!Instance::of(realm));
     return realm;
 }
 
-Realms::Realms(RuntimeValidation validation)
+Realms::Realms()
     : m_vm(VM::create())
 {
     VM& vm = *m_vm;
     m_lock.emplace(vm);
-    if (validation == RuntimeValidation::On)
-        vm.aotState().validatesRuntime = true;
     m_plain.set(vm, createPlainRealm(vm));
     AOT_TEST_CHECK(!Instance::of(m_plain.get()));
     m_locked.set(vm, vm.hasCompiledCode() ? createRealmOfProgram(vm, *m_plain->globalObjectMethodTable()) : createRealmWithImmutableBuiltins(vm));
@@ -121,7 +125,6 @@ Realms::Realms(RuntimeValidation validation)
 
 Realms::~Realms()
 {
-    m_vm->aotState().validatesRuntime = false;
     m_locked.clear();
     m_plain.clear();
     m_vm = nullptr;

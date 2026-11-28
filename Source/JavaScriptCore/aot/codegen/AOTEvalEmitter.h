@@ -15,6 +15,8 @@ class EvalEmitter final : public OperationEmitter {
 public:
     explicit EvalEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
+    void generateCheckEvaluation(const ValueContext&);
+    void generateDeclareGlobal(const ValueContext&);
     void generateDirectEval(const ValueContext&);
 };
 

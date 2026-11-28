@@ -37,10 +37,9 @@ namespace WTF {
 class BumpPointerAllocator;
 }
 
-namespace JSC {
-namespace Yarr {
+namespace JSC::Yarr {
 struct BytecodePattern;
-} }
+}
 
 namespace WebCore {
 
@@ -63,7 +62,7 @@ public:
     bool matchSpecialSchemeProtocol() const;
     std::optional<Vector<unsigned>> componentExec(StringView) const;
     URLPatternComponentResult createComponentMatchResult(String&& input, const Vector<unsigned>& offsets) const;
-    URLPatternComponent();
+    NODELETE URLPatternComponent();
     ~URLPatternComponent();
     URLPatternComponent(URLPatternComponent&&);
     URLPatternComponent& operator=(URLPatternComponent&&);

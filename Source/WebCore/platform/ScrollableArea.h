@@ -107,11 +107,11 @@ public:
     WEBCORE_EXPORT virtual bool handleWheelEventForScrolling(const PlatformWheelEvent&, std::optional<WheelScrollGestureState>);
 
     virtual void updateSnapOffsets() { };
-    WEBCORE_EXPORT const LayoutScrollSnapOffsetsInfo* LEGACY_NODELETE snapOffsetsInfo() const;
+    NODELETE WEBCORE_EXPORT const LayoutScrollSnapOffsetsInfo* snapOffsetsInfo() const;
     WEBCORE_EXPORT void setScrollSnapOffsetInfo(const LayoutScrollSnapOffsetsInfo&);
     WEBCORE_EXPORT void clearSnapOffsets();
-    WEBCORE_EXPORT std::optional<unsigned> LEGACY_NODELETE currentHorizontalSnapPointIndex() const;
-    WEBCORE_EXPORT std::optional<unsigned> LEGACY_NODELETE currentVerticalSnapPointIndex() const;
+    NODELETE WEBCORE_EXPORT std::optional<unsigned> currentHorizontalSnapPointIndex() const;
+    NODELETE WEBCORE_EXPORT std::optional<unsigned> currentVerticalSnapPointIndex() const;
     WEBCORE_EXPORT void setCurrentHorizontalSnapPointIndex(std::optional<unsigned>);
     WEBCORE_EXPORT void setCurrentVerticalSnapPointIndex(std::optional<unsigned>);
 
@@ -160,6 +160,10 @@ public:
     WEBCORE_EXPORT virtual Style::ScrollbarGutter scrollbarGutterStyle() const;
     virtual ScrollbarWidth scrollbarWidthStyle() const { return ScrollbarWidth::Auto; }
     virtual std::optional<ScrollbarColor> scrollbarColorStyle() const { return { }; }
+
+    WEBCORE_EXPORT ScrollbarStyle scrollbarStyle() const;
+    bool usesOverlayScrollbars() const { return scrollbarStyle() == ScrollbarStyle::Overlay; }
+    virtual std::optional<ScrollbarStyle> scrollbarStyleOverride() const { return std::nullopt; }
 
     WEBCORE_EXPORT bool allowsHorizontalScrolling() const;
     WEBCORE_EXPORT bool allowsVerticalScrolling() const;
@@ -291,8 +295,8 @@ public:
     ScrollOffset minimumScrollOffset() const { return { }; }
     ScrollOffset maximumScrollOffset() const;
 
-    WEBCORE_EXPORT ScrollPosition LEGACY_NODELETE scrollPositionFromOffset(ScrollOffset) const;
-    WEBCORE_EXPORT ScrollOffset LEGACY_NODELETE scrollOffsetFromPosition(ScrollPosition) const;
+    NODELETE WEBCORE_EXPORT ScrollPosition scrollPositionFromOffset(ScrollOffset) const;
+    NODELETE WEBCORE_EXPORT ScrollOffset scrollOffsetFromPosition(ScrollPosition) const;
 
     template<typename PositionType, typename SizeType>
     static PositionType scrollPositionFromOffset(PositionType offset, SizeType scrollOrigin)
@@ -313,6 +317,10 @@ public:
 
     ScrollType currentScrollType() const { return m_currentScrollType; }
     void setCurrentScrollType(ScrollType scrollType) { m_currentScrollType = scrollType; }
+
+    // https://drafts.csswg.org/css-conditional-5/#scrolled
+    void setCurrentScrollRelativity(ScrollRelativity scrollRelativity) { m_currentScrollRelativity = scrollRelativity; }
+    RectEdges<bool> scrolledDirections() const { return m_scrolledDirections; }
 
     // This reflects animated scrolls triggered by CSS OM View "smooth" scrolls.
     ScrollAnimationStatus scrollAnimationStatus() { return m_scrollAnimationStatus; }
@@ -391,14 +399,14 @@ public:
     // NOTE: Only called from Internals for testing.
     WEBCORE_EXPORT void setScrollOffsetFromInternals(const ScrollOffset&);
 
-    WEBCORE_EXPORT static LayoutPoint LEGACY_NODELETE constrainScrollPositionForOverhang(const LayoutRect& visibleContentRect, const LayoutSize& totalContentsSize, const LayoutPoint& scrollPosition, const LayoutPoint& scrollOrigin, int headerHeight, int footetHeight);
+    NODELETE WEBCORE_EXPORT static LayoutPoint constrainScrollPositionForOverhang(const LayoutRect& visibleContentRect, const LayoutSize& totalContentsSize, const LayoutPoint& scrollPosition, const LayoutPoint& scrollOrigin, int headerHeight, int footetHeight);
     LayoutPoint constrainScrollPositionForOverhang(const LayoutPoint& scrollPosition);
 
     // Computes the double value for the scrollbar's current position and the current overhang amount.
     // This function is static so that it can be called from the main thread or the scrolling thread.
-    WEBCORE_EXPORT static void LEGACY_NODELETE computeScrollbarValueAndOverhang(float currentPosition, float totalSize, float visibleSize, float& scrollbarValue, float& overhangAmount);
+    NODELETE WEBCORE_EXPORT static void computeScrollbarValueAndOverhang(float currentPosition, float totalSize, float visibleSize, float& scrollbarValue, float& overhangAmount);
 
-    WEBCORE_EXPORT static std::optional<BoxSide> LEGACY_NODELETE targetSideForScrollDelta(FloatSize, ScrollEventAxis);
+    NODELETE WEBCORE_EXPORT static std::optional<BoxSide> targetSideForScrollDelta(FloatSize, ScrollEventAxis);
 
     // "Pinned" means scrolled at or beyond the edge.
     WEBCORE_EXPORT bool isPinnedOnSide(BoxSide) const;
@@ -493,9 +501,12 @@ protected:
 
     bool hasLayerForScrollCorner() const;
 
-    WEBCORE_EXPORT LayoutRect LEGACY_NODELETE getRectToExposeForScrollIntoView(const LayoutRect& visibleBounds, const LayoutRect& exposeRect, const ScrollAlignment& alignX, const ScrollAlignment& alignY, const std::optional<LayoutRect> = std::nullopt) const;
+    NODELETE WEBCORE_EXPORT LayoutRect getRectToExposeForScrollIntoView(const LayoutRect& visibleBounds, const LayoutRect& exposeRect, const ScrollAlignment& alignX, const ScrollAlignment& alignY, const std::optional<LayoutRect> = std::nullopt) const;
     bool isAwaitingScrollend() const { return m_isAwaitingScrollend; }
     void setIsAwaitingScrollend(bool isAwaitingScrollend) { m_isAwaitingScrollend = isAwaitingScrollend; }
+
+    bool shouldTrackScrolledDirections() const { return m_currentScrollRelativity == ScrollRelativity::Delta; }
+    void updateScrolledDirections(const ScrollPosition& oldPosition, const ScrollPosition& newPosition);
 
 private:
     WEBCORE_EXPORT virtual IntRect visibleContentRectInternal(VisibleContentRectIncludesScrollbars, VisibleContentRectBehavior) const;
@@ -537,6 +548,11 @@ private:
     ScrollType m_currentScrollType { ScrollType::User };
     ScrollAnimationStatus m_scrollAnimationStatus { ScrollAnimationStatus::NotAnimating };
 
+    // Edges the most recent delta scroll moved toward, per axis.
+    // It persists until the next delta scroll that actually moves the container along the same axis.
+    RectEdges<bool> m_scrolledDirections;
+    ScrollRelativity m_currentScrollRelativity { ScrollRelativity::Absolute };
+
     bool m_inLiveResize { false };
     bool m_scrollOriginChanged { false };
     bool m_scrollShouldClearLatchedState { false };
@@ -568,9 +584,9 @@ private:
 class ScrollTypeScope {
 public:
     WEBCORE_EXPORT ScrollTypeScope(ScrollableArea&, ScrollType);
-    WEBCORE_EXPORT ~ScrollTypeScope();
+    NODELETE WEBCORE_EXPORT ~ScrollTypeScope();
 
-    void LEGACY_NODELETE restore();
+    NODELETE void restore();
 
 private:
     WeakRef<ScrollableArea> m_scrollableArea;

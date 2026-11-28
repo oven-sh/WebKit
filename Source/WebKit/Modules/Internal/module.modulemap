@@ -95,6 +95,12 @@ module WebKit_Internal [system] {
         export *
     }
 
+    module WKRevealItemPresenter {
+        requires objc
+        header "../../UIProcess/mac/WKRevealItemPresenter.h"
+        export *
+    }
+
     module WKTextSelectionController {
         requires cplusplus20,objc
         header "../../UIProcess/mac/WKTextSelectionController.h"
@@ -327,6 +333,12 @@ module WebKit_Internal [system] {
         export *
     }
 
+    module SwiftCoding {
+        requires cplusplus20
+        header "../../Platform/IPC/SwiftCoding.h"
+        export *
+    }
+
     module TransferString {
         requires cplusplus23
         header "../../Platform/IPC/TransferString.h"
@@ -435,6 +447,12 @@ module WebKit_Internal [system] {
         requires objc
     }
 
+    module _WKViewportFitEdgesInternal {
+        header "../../UIProcess/API/Cocoa/_WKViewportFitEdgesInternal.h"
+        export *
+        requires objc
+    }
+
     module WKAppKitGestureController {
         requires cplusplus20,objc
         header "../../UIProcess/mac/AppKitGestures/WKAppKitGestureController.h"
@@ -462,6 +480,12 @@ module WebKit_Internal [system] {
     module WKUserContentControllerInternal {
         requires cplusplus20,objc
         header "../../UIProcess/API/Cocoa/WKUserContentControllerInternal.h"
+        export *
+    }
+
+    module SecurityFlags {
+        requires cplusplus20
+        header "SecurityFlagsForSwift.h"
         export *
     }
 

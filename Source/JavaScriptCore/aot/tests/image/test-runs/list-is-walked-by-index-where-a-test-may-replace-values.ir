@@ -1,0 +1,57 @@
+# a.test.ts names Array.prototype.values, so a test of this run may replace it: print(total(list)); replace(); print(total(list)); print(total(odd))
+# with   function total(things: number[]) { let sum = 0; for (const thing of things) sum += thing; return sum; }
+# The method under Symbol.iterator above lists is ANOTHER PLACE that holds the same function as `values`. The table locks that place in every build: no test can write it. It was taken for open together with `values`,
+# and then no list of the whole build was walked by index: one test file that names Array.prototype was enough.
+# The shell's code really replaces `values`: the loop goes on by index. (By the protocol it would call a built-in written in JavaScript, which this shell does not have: the run would stop.)
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all const above = Array.prototype; const once = value => function () { let given = false; return { next() { const done = given; given = true; return { done, value: done ? undefined : value }; }, [Symbol.iterator]() { return this; } }; }; globalThis.list = [1, 2, 3]; globalThis.odd = [1, 2, 3]; globalThis.odd[Symbol.iterator] = once(40); globalThis.replace = () => { above.values = once(50); };
+# CHECK: 6
+# CHECK-NEXT: 6
+# CHECK-NEXT: 40
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names, CellAlone]
+# WALK: = GetArrayElement
+
+replaceablebuiltin member=ArrayPrototypeValues
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="list" [isFreeName]
+    v3 = PropGet v0 key="odd" [isFreeName]
+    v4 = PropGet v0 key="print" [isFreeName]
+    v5 = Call v1, -, v2
+    v6 = Call v4, -, v5
+    v7 = PropGet v0 key="replace" [isFreeName]
+    v8 = Call v7, -
+    v9 = Call v1, -, v2
+    v10 = Call v4, -, v9
+    v11 = Call v1, -, v3
+    v12 = Call v4, -, v11
+    Return v12
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer integer=0
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3() handler=b4():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b4() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}

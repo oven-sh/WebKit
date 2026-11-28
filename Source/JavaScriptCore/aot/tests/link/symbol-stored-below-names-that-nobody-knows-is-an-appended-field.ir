@@ -1,0 +1,50 @@
+# function P() { this.x = 1; }  Object.defineProperty(P.prototype, name, { set(v) { } });  const kMark = Symbol("mark");  const p = new P();  p[kMark] = 1;  p.f = 1;
+# Nobody knows `name`, so `f` may be the name of that setter: with a slot each `p.f = 1` would find it empty and go upward, and no table would remember the answer. So `f` gets none.
+# Whoever lays names that nobody knows goes through the names of another object, and a symbol that the program makes is hardly among them: `socket[kRequest] = request` below Readable.prototype, six stores a request of node:http.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "x"
+# CHECK: field L0.1 symbol("mark")@m0:0 appended
+# CHECK-NOT: field L0.2
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 module=m0 fields=[{key="set" declared={type=anything}}]
+layout L2 module=m0 fields=[{key=symbol("mark")@m0:0 declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kMark" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = PropGet v0 key="prototype"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="name" [isFreeName]
+    v6 = NewClosure function=f2
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = Call v2, v1, v3, v5, v7 calleeName="Object.defineProperty"
+    v9 = Builtin builtin=Symbol
+    v10 = String string="mark"
+    v11 = Call v9, -, v10 calleeName="Symbol" callNumber=0
+    PutModuleVariable v11 variable=g0
+    v13 = Integer integer=1
+    v14 = Construct v0
+    v15 = GetModuleVariable variable=g0
+    v16 = CheckInitialized v15 name="kMark"
+    ElemSet v14, v16, v13
+    PropSet v14, v13 key="f"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}

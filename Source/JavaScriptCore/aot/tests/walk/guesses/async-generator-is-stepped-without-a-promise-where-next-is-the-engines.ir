@@ -1,0 +1,53 @@
+# `for await`: the call of `next` makes a promise, the generator makes an object for what its body hands out and settles the promise with it, and the loop awaits the promise and reads the object.
+# Where `next` is the engine's own and the iterator is an async generator or the engine's wrapper of a sync iterator, one operation stands for the call and the await: the frame waits for the step itself. It gives the value and says whether the body has yielded or has ended.
+# Where the run time has gone the whole way after all, it gives what the await gave, which is read as ever.
+# async function each(things) { for await (const thing of things) keep(thing); }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = TypeTest [[next]] testedType=builtin(AsyncFromSyncIteratorPrototypeNext)|builtin(AsyncGeneratorPrototypeNext)
+# CHECK: [[isGenerator]]: boolean {{*}} = TypeTest [[iterator]] testedType=AsyncFromSyncIterator|AsyncGenerator
+# CHECK: [[generator]]: AsyncFromSyncIterator|AsyncGenerator{{*}} = Narrowed [[iterator]], [[isGenerator]]
+# CHECK: [[cell]]: AsyncFromSyncIterator|AsyncGenerator{{*}} = Unbox [[generator]]
+# CHECK: [[step]]: {{*}} = StepAsyncGenerator [[cell]],
+# CHECK: [[value]]: {{*}} = ResultAt [[step]]
+# CHECK: [[status]]: {{*}} = ResultAt [[step]] index=1
+# CHECK: = StrictEq [[status]], {{*}}form=Integers
+# CHECK: = RequireObject [[value]]
+# RUN(ARM): walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# ARM: = TypeTest [[next]] testedType=builtin(AsyncFromSyncIteratorPrototypeNext)|builtin(AsyncGeneratorPrototypeNext)
+# ARM: [[promise]]: {{*}} = Call [[next]], [[iterator]]
+# ARM: = AwaitBySavingFrame [[promise]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 iteratorKind=Async completion=Throw
+    Rethrow v10
+}

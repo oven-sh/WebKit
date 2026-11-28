@@ -30,8 +30,7 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 #include <WebCore/StyleShadow.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct TextShadow {
     Color color;
@@ -78,7 +77,7 @@ template<> struct Blending<TextShadow> {
 };
 
 template<> struct Blending<TextShadows> {
-    bool LEGACY_NODELETE canBlend(const TextShadows&, const TextShadows&, CompositeOperation);
+    NODELETE bool canBlend(const TextShadows&, const TextShadows&, CompositeOperation);
     constexpr auto requiresInterpolationForAccumulativeIteration(const TextShadows&, const TextShadows&) -> bool { return true; }
     auto blend(const TextShadows&, const TextShadows&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> TextShadows;
 };
@@ -100,8 +99,7 @@ constexpr LayoutUnit paintingSpread(const TextShadow&, const Style::ZoomFactor&)
     return LayoutUnit();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::Style::TextShadow, 3)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::TextShadows)

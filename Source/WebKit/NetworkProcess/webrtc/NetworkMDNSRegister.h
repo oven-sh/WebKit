@@ -37,7 +37,6 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 
 #if PLATFORM(COCOA) && defined __has_include && __has_include(<dns_sd.h>)
 #define ENABLE_MDNS 1
@@ -76,7 +75,7 @@ public:
     NetworkMDNSRegister(NetworkConnectionToWebProcess&);
     ~NetworkMDNSRegister();
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
@@ -85,9 +84,9 @@ public:
     void closeAndForgetService(DNSServiceRef);
 #endif
 
-    bool hasRegisteredName(const String&) const;
+    String registeredAddress(const String& name) const;
 
-    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess() const;
+    NODELETE std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     struct PendingRegistrationRequestIdentifierType { };
     using PendingRegistrationRequestIdentifier = ObjectIdentifier<PendingRegistrationRequestIdentifierType>;
@@ -110,10 +109,10 @@ private:
     void unregisterMDNSNames(WebCore::ScriptExecutionContextIdentifier);
     void registerMDNSName(WebCore::ScriptExecutionContextIdentifier, const String& ipAddress, CompletionHandler<void(const String&, std::optional<WebCore::MDNSRegisterError>)>&&);
 
-    PAL::SessionID LEGACY_NODELETE sessionID() const;
+    NODELETE PAL::SessionID sessionID() const;
 
     WeakRef<NetworkConnectionToWebProcess> m_connection;
-    HashSet<String> m_registeredNames;
+    HashMap<String, String> m_registeredNames;
 
     HashMap<WebCore::ScriptExecutionContextIdentifier, Vector<String>> m_perDocumentRegisteredNames;
 

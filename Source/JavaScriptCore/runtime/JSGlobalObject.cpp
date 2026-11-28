@@ -215,6 +215,7 @@
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyRuntimeError.h"
 #include "JSWebAssemblyStruct.h"
+#include "JSWebAssemblySuspendingWrapper.h"
 #include "JSWebAssemblyTable.h"
 #include "JSWebAssemblyTag.h"
 #include "JSWithScope.h"
@@ -557,7 +558,7 @@ JSC_DEFINE_HOST_FUNCTION(dumpAndClearSamplingProfilerSamples, (JSGlobalObject* g
             return JSValue::encode(jsUndefined());
         }
 
-        auto utf8String = jsonData.utf8();
+        auto utf8String = makeUTF8CString(jsonData);
 
         fileHandle.write(byteCast<uint8_t>(utf8String.span()));
         dataLogLn("Dumped sampling profiler samples to ", tempFilePath);
@@ -661,7 +662,7 @@ void JSGlobalObject::startSignpost(String&& message)
         return JSCJSGlobalObjectSignpostIdentifier::generate();
     }).iterator->value.toUInt64()));
     UNUSED_VARIABLE(identifier);
-    auto string = message.utf8();
+    auto string = makeUTF8CString(message);
     WTFBeginSignpostAlways(identifier, JSCJSGlobalObject, "%" PUBLIC_LOG_STRING, string);
     ProfilerSupport::markStart(identifier, ProfilerSupport::Category::JSGlobalObjectSignpost, WTF::move(string));
 }
@@ -672,7 +673,7 @@ void JSGlobalObject::stopSignpost(String&& message)
     if (auto stored = m_signposts.takeOptional(message))
         identifier = std::bit_cast<void*>(static_cast<uintptr_t>(stored->toUInt64()));
     UNUSED_VARIABLE(identifier);
-    auto string = message.utf8();
+    auto string = makeUTF8CString(message);
     WTFEndSignpostAlways(identifier, JSCJSGlobalObject, "%" PUBLIC_LOG_STRING, string);
     ProfilerSupport::markEnd(identifier, ProfilerSupport::Category::JSGlobalObjectSignpost, WTF::move(string));
     --activeJSGlobalObjectSignpostIntervalCount;
@@ -1133,7 +1134,7 @@ void JSGlobalObject::init(VM& vm)
 
 #if ENABLE(REMOTE_INSPECTOR)
     m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*this);
-    m_inspectorDebuggable = JSGlobalObjectDebuggable::create(*this);
+    lazyInitialize(m_inspectorDebuggable, JSGlobalObjectDebuggable::create(*this));
     m_inspectorDebuggable->init();
     m_consoleClient = protect(inspectorController())->consoleClient().get();
 #endif
@@ -1154,7 +1155,7 @@ void JSGlobalObject::init(VM& vm)
 
     m_hostFunctionStructure.set(vm, this, JSFunction::createStructure(vm, this, m_functionPrototype.get()));
 #if ENABLE(AOT)
-    m_hostFunctionStructure.set(vm, this, AOT::RuntimeHooks::structureOfHostFunctions(this, m_hostFunctionStructure.get()));
+    m_hostFunctionStructure.set(vm, this, AOT::RuntimeHooks::structureForHostFunctions(this, m_hostFunctionStructure.get()));
 #endif
 
     auto initFunctionStructures = [&] (FunctionStructures& structures) {
@@ -1171,7 +1172,7 @@ void JSGlobalObject::init(VM& vm)
     m_customGetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
 #if ENABLE(AOT)
-            init.set(AOT::RuntimeHooks::structureOfHostFunctions(init.owner, JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
+            init.set(AOT::RuntimeHooks::structureForHostFunctions(init.owner, JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
 #else
             init.set(JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
 #endif
@@ -1179,7 +1180,7 @@ void JSGlobalObject::init(VM& vm)
     m_customSetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
 #if ENABLE(AOT)
-            init.set(AOT::RuntimeHooks::structureOfHostFunctions(init.owner, JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
+            init.set(AOT::RuntimeHooks::structureForHostFunctions(init.owner, JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
 #else
             init.set(JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
 #endif
@@ -1650,7 +1651,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_iteratorConstructor.set(vm, this, iteratorConstructor);
     putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    if (Options::useSharedArrayBuffer())
+    if (Options::alwaysUseSharedArrayBuffer())
         putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useExplicitResourceManagement()) {
@@ -2667,7 +2668,7 @@ void JSGlobalObject::notifyArrayBufferDetachingSlow()
     m_arrayBufferDetachWatchpointSet->fireAll(vm(), "ArrayBuffer detached");
 }
 
-static inline JSObject* LEGACY_NODELETE lastInPrototypeChain(JSObject* object)
+NODELETE static inline JSObject* lastInPrototypeChain(JSObject* object)
 {
     JSObject* o = object;
     while (o->getPrototypeDirect().isObject())
@@ -2685,21 +2686,21 @@ public:
     IterationStatus operator()(HeapCell*, HeapCell::Kind) const;
 
     void addDependency(JSGlobalObject* key, JSGlobalObject* dependent);
-    UncheckedKeyHashSet<JSGlobalObject*>* dependentsFor(JSGlobalObject* key);
+    HashSet<JSGlobalObject*>* dependentsFor(JSGlobalObject* key);
 
 private:
     void visit(JSObject*);
 
-    UncheckedKeyHashMap<JSGlobalObject*, UncheckedKeyHashSet<JSGlobalObject*>> m_dependencies;
+    HashMap<JSGlobalObject*, HashSet<JSGlobalObject*>> m_dependencies;
 };
 
 inline void GlobalObjectDependencyFinder::addDependency(JSGlobalObject* key, JSGlobalObject* dependent)
 {
-    auto keyResult = m_dependencies.add(key, UncheckedKeyHashSet<JSGlobalObject*>());
+    auto keyResult = m_dependencies.add(key, HashSet<JSGlobalObject*>());
     keyResult.iterator->value.add(dependent);
 }
 
-inline UncheckedKeyHashSet<JSGlobalObject*>* GlobalObjectDependencyFinder::dependentsFor(JSGlobalObject* key)
+inline HashSet<JSGlobalObject*>* GlobalObjectDependencyFinder::dependentsFor(JSGlobalObject* key)
 {
     auto iterator = m_dependencies.find(key);
     if (iterator == m_dependencies.end())
@@ -2750,9 +2751,9 @@ template<BadTimeFinderMode mode>
 class ObjectsWithBrokenIndexingFinder : public MarkedBlock::VoidFunctor {
 public:
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, JSGlobalObject*);
-    ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, UncheckedKeyHashSet<JSGlobalObject*>&);
+    ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, HashSet<JSGlobalObject*>&);
 
-    bool LEGACY_NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
+    NODELETE bool needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
     IterationStatus operator()(HeapCell*, HeapCell::Kind) const;
 
 private:
@@ -2760,7 +2761,7 @@ private:
 
     Vector<JSObject*>& m_foundObjects;
     JSGlobalObject* const m_globalObject { nullptr }; // Only used for SingleBadTimeGlobal mode.
-    UncheckedKeyHashSet<JSGlobalObject*>* m_globalObjects { nullptr }; // Only used for BadTimeGlobalGraph mode;
+    HashSet<JSGlobalObject*>* m_globalObjects { nullptr }; // Only used for BadTimeGlobalGraph mode;
     bool m_needsMultiGlobalsScan { false };
 };
 
@@ -2772,18 +2773,18 @@ ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::SingleGlobal>::ObjectsWithBro
 }
 
 template<>
-ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::MultipleGlobals>::ObjectsWithBrokenIndexingFinder(Vector<JSObject*>& foundObjects, UncheckedKeyHashSet<JSGlobalObject*>& globalObjects)
+ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::MultipleGlobals>::ObjectsWithBrokenIndexingFinder(Vector<JSObject*>& foundObjects, HashSet<JSGlobalObject*>& globalObjects)
     : m_foundObjects(foundObjects)
     , m_globalObjects(&globalObjects)
 {
 }
 
-inline bool LEGACY_NODELETE hasBrokenIndexing(IndexingType type)
+NODELETE inline bool hasBrokenIndexing(IndexingType type)
 {
     return type && !hasSlowPutArrayStorage(type);
 }
 
-inline bool LEGACY_NODELETE hasBrokenIndexing(JSObject* object)
+NODELETE inline bool hasBrokenIndexing(JSObject* object)
 {
     IndexingType type = object->indexingType();
     return hasBrokenIndexing(type);
@@ -3023,7 +3024,7 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
 
 #if ENABLE(AOT)
     if (aotInstance()) [[unlikely]]
-        AOT::RuntimeHooks::stopBecauseRealmHasABadTime();
+        AOT::RuntimeHooks::crashOnHavingABadTime();
 #endif
 
     // This must happen first, because the compiler thread may race with haveABadTime.
@@ -3157,7 +3158,7 @@ void JSGlobalObject::haveABadTime(VM& vm)
             vm.heap.objectSpace().forEachLiveCell(iterationScope, dependencies);
         }
 
-        UncheckedKeyHashSet<JSGlobalObject*> globalsHavingABadTime;
+        HashSet<JSGlobalObject*> globalsHavingABadTime;
         Deque<JSGlobalObject*> globals;
 
         globals.append(this);
@@ -3166,7 +3167,7 @@ void JSGlobalObject::haveABadTime(VM& vm)
             global->fireWatchpointAndMakeAllArrayStructuresSlowPut(vm); // Step 1 above.
             auto result = globalsHavingABadTime.add(global);
             if (result.isNewEntry) {
-                if (UncheckedKeyHashSet<JSGlobalObject*>* dependents = dependencies.dependentsFor(global)) {
+                if (HashSet<JSGlobalObject*>* dependents = dependencies.dependentsFor(global)) {
                     for (JSGlobalObject* dependentGlobal : *dependents) {
                         if (!prototypesOfOrdinaryArraysAreLocked(dependentGlobal))
                             globals.append(dependentGlobal);
@@ -4025,7 +4026,7 @@ void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpoint()
         installObjectAdaptiveStructureWatchpoint(condition, m_propertyDescriptorFastPathWatchpointSet);
 }
 
-void LEGACY_NODELETE slowValidateCell(JSGlobalObject* globalObject)
+NODELETE void slowValidateCell(JSGlobalObject* globalObject)
 {
     RELEASE_ASSERT(globalObject->isGlobalObject());
     ASSERT_GC_OBJECT_INHERITS(globalObject, JSGlobalObject::info());
@@ -4141,12 +4142,24 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
     microtaskQueue().enqueue(WTF::move(task));
 }
 
+NEVER_INLINE void JSGlobalObject::queueMicrotaskSlow(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2)
+{
+    queueMicrotaskSlow(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+NEVER_INLINE void JSGlobalObject::queueMicrotaskSlow(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+{
+    queueMicrotaskSlow(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
+}
+#endif
+
 #if ENABLE(FFI)
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
     if (!m_ffiContext) [[unlikely]] {
         ASSERT(!isCompilationThread());
-        auto context = makeUnique<FFI::FFIContext>(vm());
+        auto context = makeUnique<FFI::FFIContext>(vm(), *this);
         WTF::storeStoreFence();
         m_ffiContext = WTF::move(context);
     }
@@ -4281,8 +4294,10 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
 
 void JSGlobalObject::exposeSharedArrayBuffer()
 {
-    if (!Options::allowSharedArrayBuffer() || Options::useSharedArrayBuffer())
+    if (!Options::allowSharedArrayBuffer())
         return;
+    if (Options::alwaysUseSharedArrayBuffer())
+        return; // Nothing to do because JSGlobalObject::init() already exposed it.
     VM& vm = this->vm();
     putDirect(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }

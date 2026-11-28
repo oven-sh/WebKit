@@ -52,13 +52,13 @@ using namespace MathMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLOperator);
 
-RenderMathMLOperator::RenderMathMLOperator(Type type, MathMLOperatorElement& element, Style::ComputedStyle&& style)
+RenderMathMLOperator::RenderMathMLOperator(Type type, MathMLOperatorElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLToken(type, element, WTF::move(style))
 {
     updateTokenContent();
 }
 
-RenderMathMLOperator::RenderMathMLOperator(Type type, Document& document, Style::ComputedStyle&& style)
+RenderMathMLOperator::RenderMathMLOperator(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLToken(type, document, WTF::move(style))
 {
 }
@@ -206,33 +206,39 @@ void RenderMathMLOperator::resetStretchSize()
         m_stretchWidth = 0;
 }
 
-void RenderMathMLOperator::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMathMLOperator::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
     LayoutUnit preferredWidth;
 
     if (!useMathOperator()) {
-        // No need to include padding/border/margin here, RenderMathMLToken::computeIntrinsicLogicalWidthContributions takes care of them.
-        RenderMathMLToken::computeIntrinsicLogicalWidthContributions();
-        preferredWidth = m_maxContentLogicalWidthContribution;
+        preferredWidth = RenderMathMLToken::computeIntrinsicLogicalWidthContributions().second;
         if (isInvisibleOperator()) {
             // In some fonts, glyphs for invisible operators have nonzero width. Consequently, we subtract that width here to avoid wide gaps.
+            // The glyph may eat into border and padding too, which computeIntrinsicLogicalWidthContributionsIfNeeded() adds afterwards.
             GlyphData data = protect(style().fontCascade())->glyphDataForCharacter(singleCharCodePoint(), false);
             float glyphWidth = data.font ? protect(data.font)->widthForGlyph(data.glyph) : 0;
-            preferredWidth -= std::min(LayoutUnit(glyphWidth), preferredWidth);
+            preferredWidth -= std::min(LayoutUnit(glyphWidth), preferredWidth + borderAndPaddingLogicalWidth());
         }
     } else
-        preferredWidth = m_mathOperator.maxPreferredWidth() + borderAndPaddingLogicalWidth();
+        preferredWidth = m_mathOperator.maxPreferredWidth();
 
     // FIXME: The spacing should be added to the whole embellished operator (https://webkit.org/b/124831).
     // FIXME: The spacing should only be added inside (perhaps inferred) mrow (http://www.w3.org/TR/MathML/chapter3.html#presm.opspacing).
     preferredWidth = leadingSpace() + preferredWidth + trailingSpace();
+    return { preferredWidth, preferredWidth };
+}
 
-    m_minContentLogicalWidthContribution = preferredWidth;
-    m_maxContentLogicalWidthContribution = preferredWidth;
-
-    clearContentLogicalWidthsInvalidation();
+void RenderMathMLOperator::constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const
+{
+    // The operator spacing goes around the operator's box, so min-width and max-width don't apply to it.
+    auto spacing = leadingSpace() + trailingSpace();
+    minContentLogicalWidthContribution -= spacing;
+    maxContentLogicalWidthContribution -= spacing;
+    RenderMathMLToken::constrainIntrinsicLogicalWidthContributionsByMinMax(minContentLogicalWidthContribution, maxContentLogicalWidthContribution);
+    minContentLogicalWidthContribution += spacing;
+    maxContentLogicalWidthContribution += spacing;
 }
 
 void RenderMathMLOperator::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit pageLogicalHeight)
@@ -359,14 +365,6 @@ void RenderMathMLOperator::paint(PaintInfo& info, const LayoutPoint& paintOffset
     operatorTopLeft.move((writingMode().isBidiLTR() ? leadingSpace() : trailingSpace()) + borderLeft() + paddingLeft(), borderAndPaddingBefore());
 
     m_mathOperator.paint(usedStyle(), info, operatorTopLeft, document().deviceScaleFactor());
-}
-
-void RenderMathMLOperator::paintChildren(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForChild, bool usePrintRect)
-{
-    // We skip painting for invisible operators too to avoid some "missing character" glyph to appear if appropriate math fonts are not available.
-    if (useMathOperator() || isInvisibleOperator())
-        return;
-    RenderMathMLToken::paintChildren(paintInfo, paintOffset, paintInfoForChild, usePrintRect);
 }
 
 }

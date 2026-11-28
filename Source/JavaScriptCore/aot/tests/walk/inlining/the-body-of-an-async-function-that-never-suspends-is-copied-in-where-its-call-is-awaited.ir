@@ -1,0 +1,86 @@
+# An async function that holds no await never suspends: its body is a plain body, and what it returns is what its promise would be settled with.
+# Where the caller awaits the call at once nobody sees the promise, so the body is copied in by the rules for any callee, and the await takes what the copy returns.
+# What the copy throws is what the promise would be rejected with: a handler that the walk makes stands over every block of the copy that has no handler of its own, and awaits a rejected promise.
+# async function one(x) { return x + 1; }  async function risky(x) { return refuse(x); }
+# async function run(n) { let total = 0; for (let i = 0; i < n; i++) total += await one(i); return total; }
+# async function tries(n) { let total = 0; for (let i = 0; i < n; i++) total += await risky(i); return total; }
+# RUN: walk f3:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+Inlining
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: frame 1 callee=f1
+# CHECK: = Add
+# CHECK: = AwaitMayContinue
+# RUN(NOCALL): walk f3:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+Inlining
+# NOCALL-NOT: function=f1
+# RUN(WITHHELD): walk f3:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
+# WITHHELD: = CallDirect {{*}}function=f1 role=CoroutineBody
+# RUN(THROWS): walk f4:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+Inlining
+# THROWS-LABEL: code f4:CoroutineBody
+# THROWS: frame 1 callee=f2
+# THROWS: role=CatchHandler
+# THROWS: [[caught]]: {{*}} = CatchValue
+# THROWS: = RejectPromise {{*}}, [[caught]]
+# THROWS: handler=
+# THROWS: = Call {{*}}calleeName="refuse"
+
+variable g0 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="risky" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="one" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="risky" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="refuse" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="refuse"
+    Return v3
+}
+function f3 name="run" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -, v3 calleeName="one"
+    v8 = Await v7, v0
+    v9 = Add v2, v8
+    v10 = Increment v3
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v2
+}
+function f4 name="tries" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v3 calleeName="risky"
+    v8 = Await v7, v0
+    v9 = Add v2, v8
+    v10 = Increment v3
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v2
+}

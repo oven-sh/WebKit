@@ -29,6 +29,7 @@
 #include <wtf/ContinuousApproximateTime.h>
 #include <wtf/HashMap.h>
 #include <wtf/PriorityQueue.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
@@ -46,7 +47,7 @@ public:
     bool tryAccess(const String& host, ContinuousApproximateTime);
     void clearAllData();
 
-    void LEGACY_NODELETE setCountPerDuration(size_t count, Seconds duration);
+    NODELETE void setCountPerDuration(size_t count, Seconds duration);
 
     static constexpr size_t defaultThrottleAccessCount = 5;
     static constexpr Seconds defaultThrottleDuration = 24_h;
@@ -65,8 +66,8 @@ private:
         AccessThrottler() = default;
 
         bool tryAccessAndUpdateHistory(ContinuousApproximateTime, const Config&);
-        bool LEGACY_NODELETE tryExpire(ContinuousApproximateTime, const Config&);
-        ContinuousApproximateTime LEGACY_NODELETE oldestAccessTime() const;
+        NODELETE bool tryExpire(ContinuousApproximateTime, const Config&);
+        NODELETE ContinuousApproximateTime oldestAccessTime() const;
         ContinuousApproximateTime newestAccessTime() const { return m_newestAccessTime; }
 
     private:
@@ -81,6 +82,7 @@ private:
     Config m_config;
     HashMap<String, AccessThrottler> m_throttlersByHost;
     std::unique_ptr<ResourceMonitorPersistence> m_persistence;
+    NO_UNIQUE_ADDRESS ThreadLikeAssertion m_ownerQueue;
 };
 
 }

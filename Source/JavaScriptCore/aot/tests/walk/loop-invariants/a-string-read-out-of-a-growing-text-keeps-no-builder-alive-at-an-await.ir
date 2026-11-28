@@ -1,0 +1,74 @@
+# a string that is read out of a text while the text grows in its loop is a cell of its own: it points into no builder. So where it is read behind an await, the builder, a record in the frame, is not live at the await
+# function same(value: string) { return value; }   async function gather(limit: number) { const turns = limit | 0; let text = "", kept = "", at = 0; do { text += at + ","; if (at & 1) kept = same(text); at = (at + 1) | 0; } while (at < turns); await null; return kept.length + ":" + text.length; }
+# RUN: walk f2:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: ([[text]]: opaque(StringBuilder) @Cell
+# CHECK: = StackStringBuilderToString [[text]]
+# CHECK: = AwaitBySavingFrame
+# RUN(EMIT): emit f2:CoroutineBody mechanisms=all
+# EMIT-NOT: FramePointerAcrossSuspension
+# layout L886 kind=Closure
+variable g0 name="same" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="/$bunfs/root/q.ts" displayPath="q.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 39, 55, 57, 113, 140, 176, 183, 205, 228, 251, 275, 289, 331, 333, 367] quotedSources=[{position=216 start=30 end=40}, {position=298 start=40 end=51}, {position=318 start=60 end=71}, {position=334 end=15}, {position=353 end=23}] quotedSourceText="globalThis.sink(gather)kept = same(text)kept.length + \x22:\x22 + text.length"} functionSource="function same(value) {\x0a  return value;\x0a}\x0aasync function gather(limit) {\x0a  const turns = limit | 0;\x0a  let text = \x22\x22, kept = \x22\x22, at = 0;\x0a  do {\x0a    text += at + \x22,\x22;\x0a    kept = same(text);\x0a    at = (at + 1) | 0;\x0a  } while (at < turns);\x0a  await null;\x0a  return kept.length + \x22:\x22 + text.length;\x0a}\x0a(globalThis).sink(gather);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @334
+    v3 = PropGet v2 key="globalThis" [isFreeName] @334
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @334
+    v5 = PropGet v4 key="sink" @334
+    v6 = Call v5, v4, v1 calleeKey="sink" calleeName="globalThis.sink" @353
+    v7 = Undefined @333
+    Return v7 @333
+}
+function f1 name="same" module=m0 sourceRange={end=40} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @48
+    Return v1 @48
+}
+function f2 name="gather" module=m0 position=57 sourceRange={start=41 end=291} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = Integer @137
+    v3 = BitOr v1, v2 @137
+    v4 = String string="" @153
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @153
+    v6 = String string="" @164
+    v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @164
+    v8 = Integer @173
+    v9 = Convert v8 declared={type=number} @173
+    Jump -> next b1(v5, v7, v9) @178
+  b1(v10: undefined|null|string, v11: undefined|null|string, v12: number):
+    LoopHint @178
+    v14 = String string="," @200
+    v15 = Add v12, v14 @200
+    v16 = Add v10, v15 @200
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @187
+    v18 = Integer integer=1 @216
+    v19 = BitAnd v12, v18 @216
+    Branch v19 -> taken b2(), notTaken b3(v11) @216
+  b2():
+    v20 = GetModuleVariable variable=g0 @216
+    v21 = Call v20, -, v17 calleeName="same" @216
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @209
+    Jump -> next b3(v22) @216
+  b3(v23: undefined|null|string):
+    v24 = Integer integer=1 @243
+    v25 = Add v12, v24 @243
+    v26 = Integer @248
+    v27 = BitOr v25, v26 @248
+    v28 = Convert v27 declared={type=number} @232
+    v29 = Less v28, v3 @267
+    Branch v29 -> taken b1(v17, v23, v28), notTaken b4() @267
+  b4():
+    v30 = Null @283
+    v31 = Await v30, v1, v0 @283
+    v32 = PropGet v23 key="length" @298
+    v33 = String string=":" @312
+    v34 = Add v32, v33 @312
+    v35 = PropGet v17 key="length" @318
+    v36 = Add v34, v35 @318
+    v37 = Convert v36 declared={type=undefined|null|string|object} @318
+    Return v37 @318
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

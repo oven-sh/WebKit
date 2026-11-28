@@ -1,0 +1,88 @@
+# function readPart(o) { return o.part; }  function readWhole(o) { return o.whole; }   publish(readPart, readWhole);   const point = { part: 1.5, whole: 7 };   for (..) readPart(point) ..
+# Every writer of the two fields is in sight and stores numbers, so their slots hold raw numbers. The two readers are handed out, so nothing is known of what they are handed: they read by name, at a place.
+# The place remembers the shape and that the slot holds a raw number, and the stub boxes what it finds. A mark in the slot is no number.
+# A read at a place calls one stub whatever the slots of the program hold: what the place remembers says the form.
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# PLAN: layout L0 CompiledObject
+# PLAN-NEXT: slot 0 "part" OptionalDouble Inline
+# PLAN-NEXT: slot 1 "whole" OptionalInt64 Inline
+# RUN(CODE): bytes f1:Body f2:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# RUN: run-in-shell globalThis.publish = () => { }; globalThis.show = (a, b) => print(Object.is(a, -0) ? "-0" : a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CHECK: 1.5 7
+# CHECK-NEXT: -0 -2147483648
+# CHECK-NEXT: NaN 5000000000
+# CHECK-NEXT: 3 3
+# CHECK-NEXT: undefined 3
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="part" declared={type=anything} flags=[IsRequired]}, {key="whole" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    v5 = PropGet v0 key="show" [isFreeName]
+    v6 = Double number=1.5
+    v7 = Integer integer=7
+    v8 = NewObject layout=L0
+    PropDefine v8, v6 key="part"
+    PropDefine v8, v7 key="whole"
+    v11 = FinishObject v8
+    v12 = Integer
+    Jump -> next b1(v12)
+  b1(v13):
+    LoopHint
+    v15 = Integer integer=400
+    v16 = Less v13, v15
+    Branch v16 -> taken b2(), notTaken b3()
+  b2():
+    v17 = Call v2, -, v11
+    v18 = Call v3, -, v11
+    v19 = Increment v13
+    Jump -> next b1(v19)
+  b3():
+    v20 = Call v2, -, v11
+    v21 = Call v3, -, v11
+    v22 = Call v5, -, v20, v21
+    v23 = Double number=-0
+    v24 = Integer integer=-2147483648
+    PropSet v11, v23 key="part"
+    PropSet v11, v24 key="whole"
+    v27 = Call v2, -, v11
+    v28 = Call v3, -, v11
+    v29 = Call v5, -, v27, v28
+    v30 = Double number=NaN
+    v31 = Integer integer=5000000000
+    PropSet v11, v30 key="part"
+    PropSet v11, v31 key="whole"
+    v34 = Call v2, -, v11
+    v35 = Call v3, -, v11
+    v36 = Call v5, -, v34, v35
+    v37 = Integer integer=3
+    PropSet v11, v37 key="part"
+    PropSet v11, v37 key="whole"
+    v40 = Call v2, -, v11
+    v41 = Call v3, -, v11
+    v42 = Call v5, -, v40, v41
+    v43 = PropDelete v11 key="part"
+    v44 = Call v2, -, v11
+    v45 = Call v3, -, v11
+    v46 = Call v5, -, v44, v45
+    Return v46
+}
+function f1 name="readPart" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="part" @10
+    Return v1
+}
+function f2 name="readWhole" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="whole" @30
+    Return v1
+}

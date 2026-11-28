@@ -237,7 +237,7 @@ void Editor::writeImageToPasteboard(Pasteboard& pasteboard, Element& imageElemen
         return;
 
     PasteboardImage pasteboardImage;
-    if (RetainPtr tiffData = image->adapter().tiffRepresentation(renderImage->concreteObjectSizeForPasteboard()))
+    if (RetainPtr tiffData = image->adapter().tiffRepresentation(ImageDrawDescriptor { renderImage->concreteObjectSizeForPasteboard() }))
         pasteboardImage.dataInTIFFFormat = SharedBuffer::create(tiffData.get());
 
     if (!pasteboard.isStatic())
@@ -252,6 +252,7 @@ void Editor::writeImageToPasteboard(Pasteboard& pasteboard, Element& imageElemen
     if (RefPtr buffer = cachedImage->resourceBuffer())
         pasteboardImage.resourceData = buffer->makeContiguous();
     pasteboardImage.resourceMIMEType = cachedImage->response().mimeType();
+    pasteboardImage.resourceUTI = image->uti();
 
     pasteboard.write(WTF::move(pasteboardImage));
 }

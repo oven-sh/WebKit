@@ -53,7 +53,7 @@ class ScrollerMac final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr
     WTF_MAKE_TZONE_ALLOCATED(ScrollerMac);
     friend class ScrollerPairMac;
 public:
-    static Ref<ScrollerMac> LEGACY_NODELETE create(ScrollerPairMac&, ScrollbarOrientation);
+    NODELETE static Ref<ScrollerMac> create(ScrollerPairMac&, ScrollbarOrientation);
 
     ~ScrollerMac();
 
@@ -101,6 +101,8 @@ public:
 
 private:
     ScrollerMac(ScrollerPairMac&, ScrollbarOrientation);
+
+    void removeScrollerImpFromHostLayer();
 
     int m_minimumKnobLength { 0 };
 

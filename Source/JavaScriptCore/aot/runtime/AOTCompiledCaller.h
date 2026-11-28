@@ -19,11 +19,10 @@ namespace AOT {
 #if ENABLE(AOT)
 JS_EXPORT_PRIVATE bool isOperationFrameRecord(VM&, const CallFrame* frameRecord);
 JS_EXPORT_PRIVATE bool isTopFrameCompiled(VM&);
-// Compiled code calls a frame itself, or calls an operation that enters the VM.
 JS_EXPORT_PRIVATE bool isCallerCompiled(VM&, const CallFrame* calleeFrame, EntryFrame*);
 JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
-// Empty for a VM that runs no compiled program.
 JS_EXPORT_PRIVATE std::span<const uint8_t> compiledCodeOf(VM&);
+bool isCallStubReturnSite(VM&, const void* returnPC);
 #else
 inline bool isOperationFrameRecord(VM&, const CallFrame*) { return false; }
 inline bool isTopFrameCompiled(VM&) { return false; }

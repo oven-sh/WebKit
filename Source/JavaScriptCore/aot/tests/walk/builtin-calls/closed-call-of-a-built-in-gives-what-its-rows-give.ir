@@ -1,0 +1,104 @@
+# the callee is one function object of the engine, whatever it is handed and in whatever form the call is built. So the row of a call by value gives what the rows of the built-in give that the operands can reach
+# function numberOf(x) { return [Number(x)]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: : number @JSValue = Call v
+# function made(n) { return [new Uint8Array(n)]; }
+# RUN(MADE): walk f2 mechanisms=none+TypedOperations+DirectCalls
+# MADE-LABEL: code f2:Body
+# MADE: : Uint8Array @JSValue = Construct v
+# function least(x, n) { let m = 0; for (let i = 0; i < n; i++) m = Math.min(m, x); return m; }
+# A look at a loop types the call by the same row, so what comes round is a number.
+# RUN(LOOP): walk f3 mechanisms=none+TypedOperations+DirectCalls
+# LOOP-LABEL: code f3:Body
+# LOOP: ([[least]]: number {{*}}isLoopHead=true
+# LOOP: : number @JSValue = Call v
+# function ofList(list) { return [Math.max(...list)]; }
+# Of arguments that come in a list nobody knows how many there are: every row of the call may be reached.
+# RUN(LIST): walk f4 mechanisms=none+TypedOperations+DirectCalls
+# LIST-LABEL: code f4:Body
+# LIST: : number @JSValue = CallList v
+# function called(Number, x) { return [Number(x)]; }
+# Nothing is decided by the text of a name.
+# RUN(NAME): walk f5 mechanisms=none+TypedOperations+DirectCalls
+# NAME-LABEL: code f5:Body
+# NAME: : anything{{*}} @JSValue = Call v
+# function otherTarget(n, target) { return [Reflect.construct(Uint8Array, [n], target)]; } as a construction with another new.target: the rows of a construction have the callee as new.target
+# RUN(TARGET): walk f6 mechanisms=none+TypedOperations+DirectCalls
+# TARGET-LABEL: code f6:Body
+# TARGET: : anything{{*}} @JSValue = Construct v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="numberOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Number
+    v2 = Call v1, -, v0 calleeName="Number"
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f2 name="made" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Uint8Array
+    v2 = Construct v1, -, v0 calleeName="Uint8Array"
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f3 name="least" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Builtin builtin=Math
+    v9 = Builtin builtin=MathMin
+    v10 = Call v9, v8, v4, v0 calleeName="Math.min"
+    v11 = Increment v5
+    Jump -> next b1(v10, v11)
+  b3():
+    Return v4
+}
+function f4 name="ofList" module=m0 length=1 thisType={type=anything} parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = TypeTest v0 testedType=Array<anything>
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Math
+    v4 = Builtin builtin=MathMax
+    v5 = CallList v4, v3, v2 calleeName="Math.max"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f5 name="called" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="Number"
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f6 name="otherTarget" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Uint8Array
+    v3 = Construct v2, v1, v0 calleeName="Uint8Array"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}

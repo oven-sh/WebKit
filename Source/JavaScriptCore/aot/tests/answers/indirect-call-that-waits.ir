@@ -1,0 +1,86 @@
+# A for-of over `list.values()` in a `try`. What arrives is no list, whatever is written, and its `values` is a function of the program: function values() { return [] }
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(SHELL): run-in-shell globalThis.note = () => { }; globalThis.start = (walked, values) => { walked({ values }, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1).then(print); };
+# SHELL: 12
+# SHELL: exited with 0
+
+layout L0 module=m0 fields=[{key="path" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="walked" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v0 key="start" [isFreeName]
+    v3 = NewClosure function=f2
+    v4 = Call v2, -, v1, v3 calleeName="start"
+    Return v4
+}
+function f1 name="walked" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=13 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number, v8: number, v9: number, v10: number, v11: number, v12: number) handler=b10():
+    v13 = Null
+    v14 = Await v13, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="note" [isFreeName]
+    v17 = PropGet v0 key="values"
+    v18 = Call v17, v0 calleeKey="values" calleeName="list.values"
+    v19 = Convert v18 declared={type=anything flags=[IsExpected]}
+    v20 = IteratorOpen v19
+    Jump -> next b1()
+  b1() handler=b10():
+    LoopHint
+    v22 = IteratorResume v20
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    Branch v23 -> taken b2(), notTaken b3()
+  b2() handler=b10():
+    v25 = Add v1, v2
+    v26 = Add v25, v3
+    v27 = Add v26, v4
+    v28 = Add v27, v5
+    v29 = Add v28, v6
+    v30 = Add v29, v7
+    v31 = Add v30, v8
+    v32 = Add v31, v9
+    v33 = Add v32, v10
+    v34 = Add v33, v11
+    v35 = Add v34, v12
+    Return v35
+  b3() handler=b9():
+    v36 = Convert v24 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v37 = PropGet v36 key="path"
+    v38 = String string="q"
+    v39 = StrictEq v37, v38
+    Branch v39 -> taken b4(), notTaken b5()
+  b4() handler=b9():
+    v40 = Null
+    Jump -> next b6(v40)
+  b5() handler=b9():
+    v41 = PropGet v36 key="path"
+    Jump -> next b6(v41)
+  b6(v42) handler=b9():
+    v43 = Convert v42 declared={type=undefined|null|string flags=[OmitsUndefined]}
+    v44 = String string="look"
+    v45 = Call v16, -, v44 calleeName="note"
+    v46 = TypeTest v43 testedType=null
+    Branch v46 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v47) handler=b9():
+    Jump -> next b1()
+  b8(v48) handler=b9():
+    v49 = Call v16, -, v43 calleeName="note"
+    Jump -> next b1()
+  b9() role=IterationCleanup subject=v20 handler=b10():
+    v50 = CatchException
+    IteratorClose v20 completion=Throw
+    Rethrow v50
+  b10() role=CatchHandler:
+    v52 = CatchValue
+    Throw v52
+}
+function f2 name="values" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray
+    Return v0
+}

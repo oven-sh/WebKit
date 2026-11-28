@@ -1,0 +1,30 @@
+# the front end has moved a private state out of a WeakMap into a field: it has folded by WeakMap.prototype.get and says so on the wire. The flow follows a store under "get" to an object that nobody knows.
+# The member stays locked and the image does not open it: the store is refused when it runs. `has`, which the wire does not list, is opened as before
+# a.test.js: const holder = globalThis[given].prototype; holder.get = fake; holder.has = fake
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open
+# CHECK-NOT: open WeakMapPrototypeGet spelled-through-unseen
+# CHECK: open WeakMapPrototypeHas
+# RUN(RUNS): test-run
+# RUNS-NOT: replaces WeakMapPrototypeGet
+# RUNS: replaces WeakMapPrototypeHas
+
+replaceablebuiltin member=WeakMapPrototypeGet staysLocked=true
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="prototype"
+    v4 = NewClosure function=f1
+    PropSet v3, v4 key="get"
+    PropSet v3, v4 key="has"
+    Return v4
+}
+function f1 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

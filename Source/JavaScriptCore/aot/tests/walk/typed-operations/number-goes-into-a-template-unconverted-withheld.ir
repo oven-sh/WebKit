@@ -1,0 +1,9 @@
+# the same functions with typed operations withheld: the conversion and the join are copied as they are written
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = ToString
+# CHECK: = Strcat
+# RUN(BOOLEAN): walk f2 mechanisms=none
+# BOOLEAN-LABEL: code f2:Body
+# BOOLEAN: = ToString
+# PROGRAM-OF: number-goes-into-a-template-unconverted.ir

@@ -33,14 +33,13 @@
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TinyLRUCache.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Path Caching
 
 struct PolygonPathPolicy : TinyLRUCachePolicy<Vector<FloatPoint>, WebCore::Path> {
 public:
-    static bool LEGACY_NODELETE isKeyNull(const Vector<FloatPoint>& points)
+    NODELETE static bool isKeyNull(const Vector<FloatPoint>& points)
     {
         return !points.size();
     }
@@ -108,5 +107,4 @@ AcceleratedEffectPolygonFunction Evaluation<PolygonFunction, AcceleratedEffectPo
 
 #endif
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

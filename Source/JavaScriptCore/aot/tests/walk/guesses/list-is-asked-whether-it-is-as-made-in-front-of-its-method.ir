@@ -1,0 +1,50 @@
+# the source declares a list. That it is one is a guess, and so is that it finds the methods of its class: an own property may hide one, and the list may stand below something else.
+# One test of the class and one look at the bit of the cell stand in front of the read and the call, which both lean on them. Where either fails both are made as they are written.
+# Loop invariants are withheld: with them the test of the class stands in front of the loop, which is built twice
+# function fill(list: number[], n) { for (let i = 0; i < n; i++) list.push(i); }
+# The guard at the entry is withheld: with it the class is proven in the whole body.
+# RUN: walk f1 mechanisms=all-ParameterGuards-LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: [[isList]]: boolean @Boolean = TypeTest {{*}}testedType=Array
+# CHECK-NEXT: Branch [[isList]] -> taken {{*}}, notTaken [[closed]]()
+# CHECK: [[isAsMade]]: boolean @Boolean = IsPristine {{*}}builtinClass=Array
+# CHECK-NEXT: Branch [[isAsMade]] -> taken {{*}}, notTaken [[closed]]()
+# CHECK: [[closed]]() frequency=Rare
+# CHECK: = PropGet {{*}}key="push"
+# CHECK: = Call v
+# CHECK: inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# With guesses withheld nothing is tested, and both stay closed.
+# RUN(CLOSED): walk f1 mechanisms=all-Guesses-ParameterGuards
+# CLOSED-LABEL: code f1:Body
+# CLOSED-NOT: IsPristine
+# CLOSED: = PropGet {{*}}key="push"
+# CLOSED-NOT: overload=ArrayPrototypePush
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="fill" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = PropGet v0 key="push"
+    v7 = Call v6, v0, v3 calleeKey="push" calleeName="list.push"
+    v8 = Increment v3
+    Jump -> next b1(v8)
+  b3():
+    v9 = Undefined
+    Return v9
+}

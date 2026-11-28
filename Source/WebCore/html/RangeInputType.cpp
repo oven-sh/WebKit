@@ -81,7 +81,7 @@ static const int rangeDefaultStepBase = 0;
 static const int rangeStepScaleFactor = 1;
 static const StepRange::StepDescription rangeStepDescription { rangeDefaultStep, rangeDefaultStepBase, rangeStepScaleFactor };
 
-static Decimal LEGACY_NODELETE ensureMaximum(const Decimal& proposedValue, const Decimal& minimum)
+NODELETE static Decimal ensureMaximum(const Decimal& proposedValue, const Decimal& minimum)
 {
     return proposedValue >= minimum ? proposedValue : minimum;
 }
@@ -308,7 +308,7 @@ HTMLElement* RangeInputType::sliderThumbElement() const
     return &typedSliderThumbElement();
 }
 
-RenderPtr<RenderElement> RangeInputType::createInputRenderer(Style::ComputedStyle&& style)
+RenderPtr<RenderElement> RangeInputType::createInputRenderer(UniqueRef<Style::ComputedStyle>&& style)
 {
     ASSERT(element());
     return createRenderer<RenderSlider>(*protect(element()), WTF::move(style));

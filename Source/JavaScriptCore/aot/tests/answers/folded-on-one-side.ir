@@ -1,0 +1,51 @@
+# type Box = { n: number };
+# function both(p: Box, q: Box, flag: boolean): boolean { if (typeof q === "number") return false; if (typeof p === "object") return flag; return flag; }
+# function caller(x: any) { return both({ n: 1 }, x, true); }
+# RUN(ANSWERS): run-in-shell globalThis.a = { n: 2 }; globalThis.b = 5; globalThis.show = (...answers) => print(...answers);
+# ANSWERS: false false true true
+# ANSWERS-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="a" [isFreeName]
+    v2 = PropGet v0 key="b" [isFreeName]
+    v3 = NewClosure function=f2
+    v4 = Boolean
+    v5 = Call v3, -, v1, v2, v4 calleeName="both" [isNeverInlined]
+    v6 = NewClosure v3 function=f1
+    v7 = Call v6, -, v2 calleeName="caller" [isNeverInlined]
+    v8 = Call v6, -, v1 calleeName="caller" [isNeverInlined]
+    v9 = Data data=d0
+    v10 = Call v6, -, v9 calleeName="caller" [isNeverInlined]
+    v11 = PropGet v0 key="show" [isFreeName]
+    v12 = Call v11, -, v5, v7, v8, v10 calleeName="show"
+    Return v12
+}
+function f1 name="caller" module=m0 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=f2 flags=[IsFromCompiler] variableName="both"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: f2, v1: anything):
+    v2 = Data data=d0
+    v3 = Boolean boolean=true
+    v4 = Call v0, -, v2, v1, v3 calleeName="both" [isNeverInlined]
+    v5 = Convert v4 declared={type=boolean}
+    Return v5
+}
+function f2 name="both" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: boolean):
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Boolean
+    Return v4
+  b2():
+    v5 = TypeTest v0 testedType=object
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Return v2
+  b4():
+    Return v2
+}
+data d0 root=Object{layout=L0 members=[{key="n" value=Number{value=1}}]} module=m0

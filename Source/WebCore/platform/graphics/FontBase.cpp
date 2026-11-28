@@ -38,9 +38,9 @@
 
 namespace WebCore {
 
-FontBase::FontBase(const FontPlatformData& platformData, Origin origin, IsInterstitial interstitial, Visibility visibility, IsOrientationFallback orientationFallback, std::optional<RenderingResourceIdentifier> renderingResourceIdentifier)
+FontBase::FontBase(const FontPlatformData& platformData, Origin origin, IsInterstitial interstitial, Visibility visibility, IsOrientationFallback orientationFallback, IsSmallCapsFace smallCapsFace, std::optional<RenderingResourceIdentifier> renderingResourceIdentifier)
     : m_platformData(platformData)
-    , m_attributes({ renderingResourceIdentifier, origin, interstitial, visibility, orientationFallback })
+    , m_attributes({ renderingResourceIdentifier, origin, interstitial, visibility, orientationFallback, smallCapsFace })
 {
 }
 
@@ -85,7 +85,7 @@ const OpenTypeMathData* FontBase::mathData() const
     if (!m_mathData) {
         Ref mathData = OpenTypeMathData::create(m_platformData);
         if (mathData->hasMathData())
-            m_mathData = WTF::move(mathData);
+            lazyInitialize(m_mathData, WTF::move(mathData));
     }
     return m_mathData.get();
 }

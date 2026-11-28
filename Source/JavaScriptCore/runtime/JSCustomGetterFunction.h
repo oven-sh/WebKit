@@ -51,6 +51,9 @@ public:
 
     DECLARE_EXPORT_INFO;
 
+    static constexpr ptrdiff_t offsetOfPropertyName() { return OBJECT_OFFSETOF(JSCustomGetterFunction, m_propertyName); }
+    static constexpr ptrdiff_t offsetOfGetter() { return OBJECT_OFFSETOF(JSCustomGetterFunction, m_getter); }
+
     const Identifier& propertyName() const { return m_propertyName; }
     CustomFunctionPointer getter() const { return m_getter; };
     CustomFunctionPointer customFunctionPointer() const { return m_getter; };

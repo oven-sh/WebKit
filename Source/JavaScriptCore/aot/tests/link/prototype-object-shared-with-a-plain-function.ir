@@ -1,0 +1,96 @@
+# function D() { this.a = 1; }  function make() { return new D(); }  make.prototype = D.prototype;
+# Nobody reads the property of a plain function but a read, a construction and a subclass, and each lets the function go: a class whose prototype object is shared so stays as it is.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known
+# CHECK: layout L0 {{*}}changes=[]
+# new construct(), read.prototype, and a function that is handed to unknown code.
+# CHECK: layout L1 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L2 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L3 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="D" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="E" module=m0 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="G" module=m0 constructor=f5 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L3 kind=Instance name="H" module=m0 constructor=f7 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v2, v1 key="prototype"
+    v4 = Construct v0
+    v5 = PropGet v4 key="a"
+    v6 = NewClosure function=f3
+    v7 = PropGet v6 key="prototype"
+    v8 = NewClosure function=f4
+    PropSet v8, v7 key="prototype"
+    v10 = Construct v6
+    v11 = PropGet v10 key="a"
+    v12 = Construct v8
+    v13 = NewClosure function=f5
+    v14 = PropGet v13 key="prototype"
+    v15 = NewClosure function=f6
+    PropSet v15, v14 key="prototype"
+    v17 = Construct v13
+    v18 = PropGet v17 key="a"
+    v19 = PropGet v15 key="prototype"
+    v20 = NewClosure function=f7
+    v21 = PropGet v20 key="prototype"
+    v22 = NewClosure function=f8
+    PropSet v22, v21 key="prototype"
+    v24 = Construct v20
+    v25 = PropGet v24 key="a"
+    v26 = Builtin builtin=GlobalThis
+    PropSet v26, v22 key="shown"
+    Return v5
+}
+function f1 name="D" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="E" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="construct" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f5 name="G" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f6 name="read" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="H" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] constructedClass=L3 {
+  b0(v0: L3):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f8 name="shown" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

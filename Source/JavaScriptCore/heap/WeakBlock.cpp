@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2021, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -58,7 +58,8 @@ WeakBlock* WeakBlock::create(JSC::Heap& heap, CellContainer container)
 void WeakBlock::destroy(JSC::Heap& heap, WeakBlock* block)
 {
     RELEASE_ASSERT(!block->next() && !block->prev());
-    ASSERT(!block->m_isIterationTarget);
+    ASSERT(!block->isIterationTarget());
+    RELEASE_ASSERT(!heap.m_objectSpace.isMarking());
     block->~WeakBlock();
     WeakBlockMalloc::free(block);
     --heap.m_weakBlockCount;
@@ -67,84 +68,157 @@ void WeakBlock::destroy(JSC::Heap& heap, WeakBlock* block)
 
 WeakBlock::WeakBlock(JSC::Heap& heap, CellContainer container)
     : DoublyLinkedListNode<WeakBlock>()
+    , m_freeList(allWeakAtomsMask())
     , m_container(container)
     , m_heap(heap)
 {
-    for (size_t i = 0; i < weakImplCount(); ++i) {
-        WeakImpl* weakImpl = &weakImpls()[i];
-        new (NotNull, weakImpl) WeakImpl;
-        pushFreeCell(weakImpl);
-    }
+    for (size_t i = 0; i < weakImplCount(); ++i)
+        new (NotNull, &weakImpls()[i]) WeakImpl;
 
     ASSERT(isEmpty());
-    assertFreeListIsConsistent();
+    // A newborn block is not yet reachable by any other thread.
+    [&]() WTF_IGNORES_THREAD_SAFETY_ANALYSIS {
+        ASSERT(ownership() == Ownership::Attached);
+        constexpr bool blockIsVisibleToOtherThreads = false;
+        assertAtomStatesAreConsistent(blockIsVisibleToOtherThreads);
+    }();
 }
+
+#if ASSERT_ENABLED
+void WeakBlock::assertAtomStatesAreConsistent(bool blockIsVisibleToOtherThreads)
+{
+    if (blockIsVisibleToOtherThreads)
+        m_heap.assertIsExclusiveAccessHolderOrConductorWithWorldStopped();
+
+    uint64_t freeList = m_freeList.load();
+    uint64_t reapedAtoms = m_reapedAtoms.load();
+    ASSERT(!(freeList & ~allWeakAtomsMask()));
+    ASSERT(!(reapedAtoms & ~allWeakAtomsMask() & ~ownershipMask));
+    bool hasDeadAtom = false;
+    for (size_t weakAtom = firstPayloadRegionWeakAtom(); weakAtom < weakAtomsPerBlock; ++weakAtom) {
+        WeakImpl::State state = weakAtoms()[weakAtom].state();
+        ASSERT(!!(freeList & bitFor(weakAtom)) == (state == WeakImpl::Deallocated));
+        ASSERT(!!(reapedAtoms & bitFor(weakAtom)) == (state == WeakImpl::Dead || state == WeakImpl::Finalized));
+        hasDeadAtom |= state == WeakImpl::Dead;
+    }
+
+    uint64_t liveAtoms = ~freeList & ~reapedAtoms & allWeakAtomsMask();
+    switch (ownership()) {
+    case Ownership::Attached:
+        ASSERT(m_container);
+        break;
+    case Ownership::Detached:
+        // Nothing reaps or sweeps a detached block, so every handle left in it must be finalized.
+        ASSERT(!m_container);
+        ASSERT(!liveAtoms);
+        ASSERT(!hasDeadAtom);
+        break;
+    case Ownership::Pooled:
+        ASSERT(!m_container);
+        ASSERT(freeList == allWeakAtomsMask());
+        break;
+    }
+}
+#endif
 
 void WeakBlock::didBecomeEmpty()
 {
-    ASSERT(isEmpty());
+    Locker locker { weakBlockLock() };
+    didBecomeEmpty(locker, IsConcurrent::No);
+}
 
-    switch (m_ownership) {
-    case Ownership::Attached:
-        // A walk that runs finalizers is holding this block; WeakSet::sweep collects it afterwards.
-        if (m_isIterationTarget)
-            return;
-        m_container.weakSet().didBecomeEmpty(this);
+void WeakBlock::didBecomeEmpty(Locker<Lock>& locker, IsConcurrent isConcurrent)
+{
+    locker.assertIsHolding(weakBlockLock());
+    switch (ownership()) {
+    case Ownership::Attached: {
+        // May have been allocated from since it became empty; WeakSet rechecks.
+        WeakSet& weakSet = m_container.weakSet();
+        weakSet.assertIsHoldingWeakBlockLock();
+        weakSet.tryReleaseBlock(locker, this, isConcurrent);
         break;
+    }
     case Ownership::Detached:
         // A detached block is on no WeakSet and is never swept, reaped or visited, and every slot in
         // it is already finalized, so only this call can change it. That makes returning it to the
         // Heap safe at any reentrancy depth, including from within a finalizer.
+        ASSERT(isEmpty());
         ASSERT(!m_container);
-        m_heap.releaseDetachedWeakBlock(this);
+        locker.assertIsHolding(m_heap.weakBlockLock());
+        m_heap.releaseDetachedWeakBlock(locker, this, isConcurrent);
         break;
     case Ownership::Pooled:
         RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
-void WeakBlock::lastChanceToFinalize()
+void WeakImpl::clearConcurrently()
 {
-    for (size_t i = 0; i < weakImplCount(); ++i) {
-        WeakImpl* weakImpl = &weakImpls()[i];
-        WeakImpl::State state = weakImpl->state();
-        if (state >= WeakImpl::Finalized)
-            continue;
-        if (state == WeakImpl::Live) {
-            weakImpl->setState(WeakImpl::Dead);
-            --m_liveCount;
-            ++m_deadCount;
-        }
-        finalize(weakImpl);
-    }
+    WeakBlock* block = WeakBlock::blockFor(this);
+    ASSERT(!block->heap().worldIsStopped());
+    // Held across the free so that the mutator cannot release the block once this empties it.
+    Locker locker { block->weakBlockLock() };
+    if (block->addFreeCell(this, setDeallocated()))
+        block->didBecomeEmpty(locker, IsConcurrent::Yes);
+}
+
+void WeakBlock::reapAllLiveHandles(Locker<Lock>& locker)
+{
+    locker.assertIsHolding(weakBlockLock());
+    ASSERT(!isIterationTarget());
+    uint64_t newlyDeadAtoms = 0;
+    forEachAtom(liveAtoms(), [&](size_t weakAtom) {
+        WeakImpl* weakImpl = &weakAtoms()[weakAtom];
+        if (weakImpl->state() != WeakImpl::Live)
+            return;
+        weakImpl->setDead();
+        newlyDeadAtoms |= bitFor(weakAtom);
+    });
+    if (newlyDeadAtoms)
+        m_reapedAtoms.exchangeOr<MemoryOrder::Relaxed>(newlyDeadAtoms);
 }
 
 #if ASAN_ENABLED
 void WeakBlock::unpoisonCellsAwaitingFinalizers()
 {
-    for (size_t i = 0, found = 0; found < m_deadCount && i < weakImplCount(); ++i) {
-        WeakImpl* weakImpl = &weakImpls()[i];
+    // Under the lock every Dead handle has its reaped bit: reap() sets the state first and the bit after.
+    assertIsHeld(weakBlockLock());
+    forEachAtom(reapedAtoms(), [&](size_t weakAtom) {
+        WeakImpl* weakImpl = &weakAtoms()[weakAtom];
         if (weakImpl->state() != WeakImpl::Dead)
-            continue;
-        ++found;
+            return;
         if (JSCell* cell = weakImpl->jsValue().asCell(); !cell->isPreciseAllocation())
             __asan_unpoison_memory_region(cell, cell->cellSize());
-    }
+    });
 }
 #endif
 
 void WeakBlock::sweep()
 {
-    for (size_t i = 0; m_deadCount && i < weakImplCount(); ++i) {
-        WeakImpl* weakImpl = &weakImpls()[i];
-        // finalize() calls out to a WeakHandleOwner, which may clear handles in this block or any
-        // other. Clearing only pushes onto a free list, so the rest of this scan stays valid.
-        if (weakImpl->state() == WeakImpl::Dead)
-            finalize(weakImpl);
-    }
+    ASSERT(isIterationTarget());
+    forEachAtom(reapedAtoms(), [&](size_t weakAtom) {
+        WeakImpl* weakImpl = &weakAtoms()[weakAtom];
+        uintptr_t stateWord = weakImpl->stateWord();
+        // We can be racing with the mutator or a finalizer so the atom bits can be stale. The state is the source of truth.
+        if (WeakImpl::stateOf(stateWord) != WeakImpl::Dead)
+            return;
 
-    ASSERT(!m_deadCount);
-    assertFreeListIsConsistent();
+        auto snapshot = weakImpl->trySetFinalized(stateWord);
+        if (!snapshot)
+            return;
+
+        if (!snapshot.weakHandleOwner)
+            return;
+
+#if ASAN_ENABLED
+        if (JSCell* cell = snapshot.jsValue.asCell(); Options::runsCompiledImage() && !cell->isPreciseAllocation())
+            __asan_unpoison_memory_region(cell, cell->cellSize());
+#endif
+        if (snapshot.weakHandleOwner->finalize(Handle<Unknown>::wrapSlot(&snapshot.jsValue), snapshot.context) == WeakHandleOwner::FinalizeResult::DeallocateImpl) {
+            ASSERT(weakImpl->state() == WeakImpl::Finalized);
+            weakImpl->clear();
+        }
+    });
 }
 
 template<typename ContainerType, typename Visitor>
@@ -187,8 +261,9 @@ void WeakBlock::specializedVisit(ContainerType& container, Visitor& visitor)
 template<typename Visitor>
 ALWAYS_INLINE void WeakBlock::visitImpl(Visitor& visitor)
 {
+    assertIsMarkerWithWorldStopped();
     // specializedVisit only ever acts on a live handle.
-    if (!m_liveCount)
+    if (!hasLiveHandles())
         return;
 
     // If this WeakBlock doesn't belong to a CellContainer, we won't even be here.
@@ -203,9 +278,13 @@ ALWAYS_INLINE void WeakBlock::visitImpl(Visitor& visitor)
 void WeakBlock::visit(AbstractSlotVisitor& visitor) { visitImpl(visitor); }
 void WeakBlock::visit(SlotVisitor& visitor) { visitImpl(visitor); }
 
-void WeakBlock::reap()
+void WeakBlock::reap(Locker<Lock>& locker)
 {
-    if (!m_liveCount)
+    locker.assertIsHolding(weakBlockLock());
+    ASSERT(!isIterationTarget());
+    assertAtomStatesAreConsistent();
+    uint64_t liveAtoms = this->liveAtoms();
+    if (!liveAtoms)
         return;
 
     // If this WeakBlock doesn't belong to a CellContainer, we won't even be here.
@@ -213,18 +292,20 @@ void WeakBlock::reap()
 
     HeapVersion markingVersion = m_heap.objectSpace().markingVersion();
 
-    for (size_t i = 0; i < weakImplCount(); ++i) {
-        WeakImpl* weakImpl = &weakImpls()[i];
+    uint64_t newlyDeadAtoms = 0;
+    forEachAtom(liveAtoms, [&](size_t weakAtom) {
+        WeakImpl* weakImpl = &weakAtoms()[weakAtom];
         if (weakImpl->state() != WeakImpl::Live)
-            continue;
-
+            return;
         if (m_container.isMarked(markingVersion, weakImpl->jsValue().asCell()))
-            continue;
+            return;
 
-        weakImpl->setState(WeakImpl::Dead);
-        --m_liveCount;
-        ++m_deadCount;
-    }
+        weakImpl->setDead();
+        newlyDeadAtoms |= bitFor(weakAtom);
+    });
+    if (newlyDeadAtoms)
+        m_reapedAtoms.exchangeOr<MemoryOrder::Relaxed>(newlyDeadAtoms);
+    assertAtomStatesAreConsistent();
 }
 
 } // namespace JSC

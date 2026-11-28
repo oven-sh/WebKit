@@ -30,6 +30,7 @@
 #include <WebCore/Element.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationHistoryBehavior.h>
+#include <WebCore/NavigationIdentifier.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceRequest.h>
@@ -139,8 +140,8 @@ public:
 
     bool isEmpty() const { return m_resourceRequest.isEmpty(); }
 
-    WEBCORE_EXPORT Document& LEGACY_NODELETE requester() const;
-    const SecurityOrigin& LEGACY_NODELETE requesterSecurityOrigin() const;
+    NODELETE WEBCORE_EXPORT Document& requester() const;
+    NODELETE const SecurityOrigin& requesterSecurityOrigin() const;
 
     ResourceRequest& resourceRequest() LIFETIME_BOUND { return m_resourceRequest; }
     const ResourceRequest& resourceRequest() const LIFETIME_BOUND { return m_resourceRequest; }
@@ -196,6 +197,9 @@ public:
     MonotonicTime originalNavigationStartTime() const { return m_originalNavigationStartTime; }
     void setOriginalNavigationStartTime(MonotonicTime time) { m_originalNavigationStartTime = time; }
 
+    std::optional<NavigationIdentifier> navigationID() const { return m_navigationID.asOptional(); }
+    void setNavigationID(NavigationIdentifier navigationID) { m_navigationID = navigationID; }
+
 private:
     Ref<Document> m_requester;
     Ref<SecurityOrigin> m_requesterSecurityOrigin;
@@ -212,6 +216,7 @@ private:
     std::optional<OptionSet<AdvancedPrivacyProtections>> m_advancedPrivacyProtections;
     NavigationHistoryBehavior m_navigationHistoryBehavior { NavigationHistoryBehavior::Auto };
     MonotonicTime m_originalNavigationStartTime;
+    Markable<NavigationIdentifier> m_navigationID;
     bool m_isHandledByAboutSchemeHandler { false };
     bool m_skipNavigateEvent { false };
 };

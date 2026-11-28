@@ -1,5 +1,5 @@
 import type { Schema } from "../../ir/generator/load.ts";
-import { buildAttachments, createTextForms } from "./build-attachments.ts";
+import { buildAttachments } from "./build-attachments.ts";
 import { buildClasses, buildEntries, buildFunctions, buildLayouts, ModelBuilder } from "./build-entries.ts";
 import { buildOverloads } from "./build-overloads.ts";
 import { buildSyntax, type SyntaxUses } from "./build-syntax.ts";
@@ -7,7 +7,6 @@ import { TypeInterner } from "./build-types.ts";
 import { checkModel } from "./check.ts";
 import type { SourcedDeclaration } from "./declarations.ts";
 import { buildDispatches } from "./dispatch.ts";
-import { declareFormsInRanges, linkFormsInRanges } from "./forms-in-ranges.ts";
 import type { ModelEngineFile, TableFeature, TableModel } from "./model.ts";
 import { numberModel } from "./number.ts";
 
@@ -19,7 +18,6 @@ export interface ModelInput {
   syntaxUses: SyntaxUses | null;
 }
 
-// An operand that may hold an object and has no `uses` counts as used in every way.
 function reportOperandsWithoutUses({ operandsWithoutUses }: ModelBuilder): void {
   const groups = new Map<string, { operands: number; entries: Set<unknown> }>();
   for (const { builtin, source } of operandsWithoutUses) {
@@ -38,8 +36,7 @@ function reportOperandsWithoutUses({ operandsWithoutUses }: ModelBuilder): void 
 }
 
 export function buildModel(input: ModelInput): TableModel {
-  const { schema, features, syntaxUses } = input;
-  const declarations = [...input.declarations, ...declareFormsInRanges(input.declarations)];
+  const { schema, features, syntaxUses, declarations } = input;
   const builder = new ModelBuilder(input);
   const types = new TypeInterner(builder);
   const { problems } = builder;
@@ -49,7 +46,6 @@ export function buildModel(input: ModelInput): TableModel {
     () => buildClasses(builder, declarations, types),
     () => buildLayouts(builder, declarations, types),
     () => buildFunctions(builder, declarations),
-    () => createTextForms(builder),
     () => buildOverloads(builder, types),
     () => buildDispatches(builder, types),
     () => buildAttachments(builder, features, types),
@@ -61,7 +57,6 @@ export function buildModel(input: ModelInput): TableModel {
   }
 
   const model = numberModel(builder, types);
-  linkFormsInRanges(model);
   problems.throwIfAny();
   reportOperandsWithoutUses(builder);
 

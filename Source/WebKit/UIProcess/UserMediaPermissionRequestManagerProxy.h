@@ -20,6 +20,7 @@
 #pragma once
 
 #include "UserMediaPermissionRequestProxy.h"
+#include "WebPageProxyIdentifier.h"
 #include <WebCore/MediaProducer.h>
 #include <WebCore/PermissionDescriptor.h>
 #include <WebCore/PermissionState.h>
@@ -61,10 +62,14 @@ OBJC_CLASS WKRotationCoordinatorObserver;
 
 namespace WebKit {
 
+#if HAVE(WINDOW_CAPTURE)
+class TabCaptureWindow;
+#endif
 class WebFrameProxy;
 class WebPageProxy;
 
 enum class MediaDevicePermissionRequestIdentifierType { };
+enum class RotationMonitoringReason : uint8_t;
 using MediaDevicePermissionRequestIdentifier = ObjectIdentifier<MediaDevicePermissionRequestIdentifierType>;
 
 class UserMediaPermissionRequestManagerProxy final
@@ -78,7 +83,7 @@ public:
     static Ref<UserMediaPermissionRequestManagerProxy> create(WebPageProxy&);
     ~UserMediaPermissionRequestManagerProxy();
 
-    WebPageProxy* LEGACY_NODELETE page() const;
+    NODELETE WebPageProxy* page() const;
 
     void disconnectFromPage();
 
@@ -86,8 +91,9 @@ public:
     static void forEach(NOESCAPE const WTF::Function<void(UserMediaPermissionRequestManagerProxy&)>&);
 #if HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
     bool isMonitoringCaptureDeviceRotation(const String&);
-    void startMonitoringCaptureDeviceRotation(const String&);
-    void stopMonitoringCaptureDeviceRotation(const String&);
+    void startMonitoringCaptureDeviceRotation(const String&, RotationMonitoringReason);
+    void stopMonitoringCaptureDeviceRotation(const String&, RotationMonitoringReason);
+    void stopMonitoringCaptureDeviceRotationForCapturePreview();
     void rotationAngleForCaptureDeviceChanged(const String&, WebCore::VideoFrameRotation);
 #endif // HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
 #endif
@@ -115,6 +121,7 @@ public:
     void captureDevicesChanged();
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+    void gpuProcessExited();
     void showMediaCapturePermissionPrompt(MediaPermissionPromptCustomization&&, UserMediaPermissionRequestProxy::PromptResultHandler&&);
 #endif
 
@@ -174,21 +181,23 @@ private:
     bool hasGrantedRequest(std::optional<WebCore::FrameIdentifier>, const WebCore::SecurityOrigin& userMediaDocumentOrigin, const WebCore::SecurityOrigin& topLevelDocumentOrigin, bool needsAudio, bool needsVideo, bool isUserGesturePriviledged) const;
     bool wasRequestDenied(const UserMediaPermissionRequestProxy&, bool needsAudio, bool needsVideo, bool needsScreenCapture);
 
+    UserMediaPermissionRequestProxy::DeviceUIDs previouslySelectedDeviceUIDs(const WebCore::SecurityOrigin& userMediaDocumentOrigin, const WebCore::SecurityOrigin& topLevelDocumentOrigin, WebCore::FrameIdentifier) const;
+
     void getUserMediaPermissionInfo(WebCore::FrameIdentifier, Ref<WebCore::SecurityOrigin>&& userMediaDocumentOrigin, Ref<WebCore::SecurityOrigin>&& topLevelDocumentOrigin, CompletionHandler<void(WebCore::PermissionState, WebCore::PermissionState)>&&);
     void captureDevicesChanged(bool hasCameraPersistentAccess, bool hasMicrophonePersistentAccess);
 
     RequestAction getRequestAction(const UserMediaPermissionRequestProxy&);
 
-    bool LEGACY_NODELETE wasGrantedVideoOrAudioAccess(WebCore::FrameIdentifier);
-    bool LEGACY_NODELETE wasGrantedAudioAccess(WebCore::FrameIdentifier);
-    bool LEGACY_NODELETE wasGrantedVideoAccess(WebCore::FrameIdentifier);
+    NODELETE bool wasGrantedVideoOrAudioAccess(WebCore::FrameIdentifier);
+    NODELETE bool wasGrantedAudioAccess(WebCore::FrameIdentifier);
+    NODELETE bool wasGrantedVideoAccess(WebCore::FrameIdentifier);
 
-    void computeFilteredDeviceList(WebCore::FrameIdentifier, WebCore::PermissionState, WebCore::PermissionState, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
+    void computeFilteredDeviceList(WebCore::FrameIdentifier, UserMediaPermissionRequestProxy::DeviceUIDs&& previouslySelectedDeviceUIDs, WebCore::PermissionState, WebCore::PermissionState, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
     void platformGetMediaStreamDevices(bool revealIdsAndLabels, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
 
     void processUserMediaPermissionRequest();
     void processUserMediaPermissionInvalidRequest(WebCore::MediaConstraintType invalidConstraint);
-    void processUserMediaPermissionValidRequest(Vector<WebCore::CaptureDevice>&& audioDevices, Vector<WebCore::CaptureDevice>&& videoDevices, WebCore::MediaDeviceHashSalts&&);
+    void processUserMediaPermissionValidRequest(WebCore::RealtimeMediaSourceCenter::ValidDevices&&, WebCore::MediaDeviceHashSalts&&);
     void startProcessingUserMediaPermissionRequest(Ref<UserMediaPermissionRequestProxy>&&);
 
     static void requestSystemValidation(const WebPageProxy&, UserMediaPermissionRequestProxy&, CompletionHandler<void(bool)>&&);
@@ -222,6 +231,9 @@ private:
 
     Vector<Ref<UserMediaPermissionRequestProxy>> m_pregrantedRequests;
     Vector<Ref<UserMediaPermissionRequestProxy>> m_grantedRequests;
+#if HAVE(WINDOW_CAPTURE)
+    HashMap<WebPageProxyIdentifier, Ref<TabCaptureWindow>> m_tabCaptureWindows;
+#endif
     HashMap<WebCore::FrameIdentifier, String> m_frameEphemeralHashSalts;
 
     Vector<DeniedRequest> m_deniedRequests;

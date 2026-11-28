@@ -1,0 +1,11 @@
+# a body whose callers cover it sets a small frame up and compares nothing with the limit of the stack
+# f2 = a, which calls leaf and reads a property of what comes back, so it has a frame
+# RUN: bytes f2:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f2:Body
+# CHECK: prologueChecks=0 {{*}}enteredWithoutStackCheck
+# RUN(WITHHELD): bytes f2:Body mechanisms=none
+# WITHHELD-LABEL: unit f2:Body
+# WITHHELD: prologueChecks=1
+# RUN(NEVER): bytes f2:Body mechanisms=none
+# NEVER-NOT: enteredWithoutStackCheck
+# PROGRAM-OF: ../plan/stack-tests/small-bodies-below-a-caller-make-no-stack-test.ir

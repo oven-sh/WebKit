@@ -128,6 +128,8 @@ struct Inst {
 
     ~Inst() { destroyArgs(); }
 
+    bool isMoveBetweenRegisters() const { return (kind.opcode == Move || kind.opcode == Move32) && m_size == 2 && args()[0].isReg() && args()[1].isReg(); }
+
     std::span<Arg> args() LIFETIME_BOUND { return unsafeMakeSpan(argsData(), m_size); }
     std::span<const Arg> args() const LIFETIME_BOUND { return unsafeMakeSpan(argsData(), m_size); }
 

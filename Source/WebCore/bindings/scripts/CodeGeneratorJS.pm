@@ -59,7 +59,10 @@ my %auxImplIncludes = ();
 # Used while emitting the split-out getter definitions so their header
 # dependencies travel with the moved code rather than polluting the main file.
 my $auxImplActive = 0;
-my @depsContent = ();
+# Names of the IDL files, without .idl, whose definitions the generated code depends on.
+my %dependencies = ();
+# Names of the child interfaces the generated code depends on, or undef if it doesn't depend on its child interfaces.
+my $childInterfaceNames;
 my $hasNonTrivialFinishCreation = 0;
 my $hasNonDefaultFinishCreation = 0;
 
@@ -620,6 +623,7 @@ sub AddToIncludesForIDLType
     }
 
     if ($codeGenerator->IsCallbackFunction($type) || $codeGenerator->IsCallbackInterface($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertCallbacks.h", $includesRef, $conditional);
         return;
@@ -631,12 +635,14 @@ sub AddToIncludesForIDLType
     }
 
     if ($codeGenerator->IsExternalDictionaryType($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertDictionary.h", $includesRef, $conditional);
         return;
     }
 
     if ($codeGenerator->IsExternalEnumType($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertEnumeration.h", $includesRef, $conditional);
         return;
@@ -655,6 +661,7 @@ sub AddToIncludesForIDLType
     }
 
     if ($codeGenerator->IsInterfaceType($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertInterface.h", $includesRef, $conditional);
         return;
@@ -3433,7 +3440,7 @@ sub GenerateHeader
     }
     
     if ($interface->extendedAttributes->{CustomPreventExtensions}) {
-        push(@headerContent, "    static bool LEGACY_NODELETE preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*);\n");
+        push(@headerContent, "    NODELETE static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*);\n");
     }
 
     if (InstanceNeedsEstimatedSize($interface)) {
@@ -3692,7 +3699,7 @@ sub GenerateHeader
         push(@headerContent, "public:\n");
         push(@headerContent, "    JS${interfaceName}Owner() = default;\n");
         push(@headerContent, "    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) ${overrideDecl};\n");
-        push(@headerContent, "    void finalize(JSC::Handle<JSC::Unknown>, void* context) ${overrideDecl};\n");
+        push(@headerContent, "    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) ${overrideDecl};\n");
         push(@headerContent, "\n");
         push(@headerContent, "private:\n");
         # When -fpch-debuginfo is enabled, clang sometimes fails to emit the
@@ -3788,22 +3795,19 @@ sub GenerateHeader
 
     # - Generate dependencies.
     if ($writeDependencies) {
-        my @ancestors;
         $codeGenerator->ForAllParents($interface, sub {
             my $currentInterface = shift;
-            push(@ancestors, $currentInterface->type->name);
+            $dependencies{$currentInterface->type->name} = 1;
         }, 0);
         for my $dictionary (@$dictionaries) {
             my $parentType = $dictionary->parentType;
             while (defined($parentType)) {
-                push(@ancestors, $parentType->name) if $codeGenerator->IsExternalDictionaryType($parentType);
+                $dependencies{$parentType->name} = 1 if $codeGenerator->IsExternalDictionaryType($parentType);
                 my $parentDictionary = $codeGenerator->GetDictionaryByType($parentType);
                 assert("Unable to find definition for dictionary named '" . $parentType->name . "'!") unless defined($parentDictionary);
                 $parentType = $parentDictionary->parentType;
             }
         }
-        push(@depsContent, "$className.h : ", join(" ", map { "$_.idl" } @ancestors), "\n");
-        push(@depsContent, map { "$_.idl :\n" } @ancestors);
     }
 }
 
@@ -4308,7 +4312,7 @@ sub GetGnuVTableRefForInterface
     }
     my $typename = $interface->type->name;
     my $offset = GetGnuVTableOffsetForType($typename);
-    return "&" . $vtableName . "[" . $offset . "]";
+    return "itaniumVTableAddressPoint<" . $offset . ">(" . $vtableName . ")";
 }
 
 sub GetGnuVTableNameForInterface
@@ -5796,11 +5800,12 @@ sub GenerateImplementation
     }
 
     if (ShouldGenerateWrapperOwnerCode($hasParent, $interface) && !$interface->extendedAttributes->{JSCustomFinalize}) {
-        push(@implContent, "void JS${interfaceName}Owner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)\n");
+        push(@implContent, "JSC::WeakHandleOwner::FinalizeResult JS${interfaceName}Owner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)\n");
         push(@implContent, "{\n");
         push(@implContent, "    SUPPRESS_MEMORY_UNSAFE_CAST auto* js${interfaceName} = static_cast<JS${interfaceName}*>(handle.slot()->asCell());\n");
         push(@implContent, "    auto& world = *static_cast<DOMWrapperWorld*>(context);\n");
         push(@implContent, "    SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &js${interfaceName}->wrapped(), js${interfaceName});\n");
+        push(@implContent, "    return FinalizeResult::KeepImpl;\n");
         push(@implContent, "}\n\n");
     }
 
@@ -5811,7 +5816,11 @@ sub GenerateImplementation
 
         my $hasChildInterfaces = 0;
         unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
-            $codeGenerator->ForEachChildInterface($interface, sub { $hasChildInterfaces = 1; });
+            $childInterfaceNames = [];
+            $codeGenerator->ForEachChildInterface($interface, sub {
+                $hasChildInterfaces = 1;
+                push(@$childInterfaceNames, shift->type->name);
+            });
         }
 
         # We use a templated verifyVTable function here to force the type
@@ -5819,7 +5828,6 @@ sub GenerateImplementation
         # not causing errors when evaluated. It is only called when there are
         # no child interfaces, so only emit it in that case.
         push(@implContent, <<END) if $vtableNameGnu and not $hasChildInterfaces;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -5835,7 +5843,7 @@ static inline void verifyVTable(${implType}* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = ${vtableRefWin};
 #else
-        void* expectedVTablePointer = ${vtableRefGnu};
+        const void* expectedVTablePointer = ${vtableRefGnu};
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -5846,7 +5854,6 @@ static inline void verifyVTable(${implType}* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 END
 
@@ -7223,16 +7230,13 @@ sub GenerateDictionaryHeader
     
     # - Generate dependencies.
     if ($writeDependencies) {
-        my @ancestors;
         my $parentType = $dictionary->parentType;
         while (defined($parentType)) {
-            push(@ancestors, $parentType->name) if $codeGenerator->IsExternalDictionaryType($parentType);
+            $dependencies{$parentType->name} = 1 if $codeGenerator->IsExternalDictionaryType($parentType);
             my $parentDictionary = $codeGenerator->GetDictionaryByType($parentType);
             assert("Unable to find definition for dictionary named '" . $parentType->name . "'!") unless $parentDictionary;
             $parentType = $parentDictionary->parentType;
         }
-        push(@depsContent, "$className.h : ", join(" ", map { "$_.idl" } @ancestors), "\n");
-        push(@depsContent, map { "$_.idl :\n" } @ancestors);
     }
 }
 
@@ -8872,13 +8876,15 @@ sub WriteData
     %headerIncludes = ();
     %headerTrailingIncludes = ();
 
-    if (@depsContent) {
-        # Update a .dep file if the contents are changed.
-        $contents = join "", @depsContent;
+    if ($writeDependencies) {
+        delete $dependencies{$name};
+        my @dependencies = map { "$_.idl" } sort keys %dependencies;
+        my $contents = "JS$name.h : @dependencies\n" . join("", map { "$_ :\n" } @dependencies);
+        $contents .= join(" ", "# Child interfaces:", @$childInterfaceNames) . "\n" if $childInterfaceNames;
         $codeGenerator->UpdateFile($depsFileName, $contents);
-
-        @depsContent = ();
     }
+    %dependencies = ();
+    $childInterfaceNames = undef;
 }
 
 sub GeneratePrototypeDeclaration

@@ -62,6 +62,8 @@ DASHBOARD_QUERY.forEach(query => {
     ));
 });
 
+const PLACE_SETTLE_DELAY = 300;
+
 class SearchView {
     constructor() {    
         this.currentParams = queryToParams(document.URL.split('?')[1]);
@@ -87,6 +89,7 @@ class SearchView {
 
         delete this.currentParams.suite;
         delete this.currentParams.test;
+        delete this.currentParams.condensed;
 
         const self = this;
         this.ref = REF.createRef({
@@ -137,7 +140,8 @@ class SearchView {
                                 window.history.pushState(queryString, '', splitURL[0] + '?' + queryString);
 
                                 const section = element.parentElement.parentElement.parentElement.parentElement;
-                                section.parentElement.removeChild(section);
+                                DOM.remove(section);
+                                child.timeline.teardown();
                             };
                         },
                     });
@@ -205,8 +209,7 @@ class SearchView {
                         didFind = true;
                         this.ref.state.children.splice(search, 1);
                         break;
-                    } else
-                        this.ref.state.children[search].timeline.teardown();
+                    }
                     needReRender = true;
                 }
                 if (!didFind) {
@@ -224,6 +227,8 @@ class SearchView {
                 }
             }
 
+            this.ref.state.children.forEach(child => child.timeline.teardown());
+
             if (needReRender)
                 this.ref.setState({children: newChildren});
             else
@@ -233,6 +238,7 @@ class SearchView {
         delete params.limit;
         delete params.suite;
         delete params.test;
+        delete params.condensed;
 
         if (deepCompare(params, this.currentParams)) {
             if (limit === this.currentLimit)
@@ -260,6 +266,40 @@ class SearchView {
             child.timeline.notifyRerender();
         });
     }
+    updateTimelinesKeepingPlace() {
+        const headerBottom = document.querySelector('.header.fixed')?.getBoundingClientRect().bottom ?? 0;
+        const sections = [...this.ref.element.children];
+        const topOf = element => element.getBoundingClientRect().top;
+        const isTopOnScreen = element => topOf(element) >= headerBottom && topOf(element) < window.innerHeight;
+        const isTopAboveScreen = section => topOf(section) < headerBottom;
+        const selections = this.ref.state.children.map(child => child.timeline.selectionToGoTo()).filter(Boolean);
+        const newestSelection = selections.reduce((newest, selection) => selection.order > newest.order ? selection : newest, selections[0]);
+        const selectedRun = newestSelection?.element ? newestSelection : null;
+        const anchor = selectedRun ? selectedRun.element : sections.find(isTopOnScreen) || sections.filter(isTopAboveScreen).pop();
+        const anchorBoxBefore = anchor ? anchor.getBoundingClientRect() : null;
+        const anchorWasOnScreen = Boolean(anchor) && isTopOnScreen(anchor);
+        const keepAnchorInPlace = () => {
+            const anchorNow = selectedRun ? selectedRun.counterpart() : anchor;
+            if (!anchorNow || !anchorNow.getClientRects().length)
+                return;
+            const anchorBox = anchorNow.getBoundingClientRect();
+            const anchorHeightChanged = anchorBox.height !== anchorBoxBefore.height;
+            let targetTop = anchorHeightChanged ? Math.max(anchorBoxBefore.top, headerBottom) : anchorBoxBefore.top;
+            if (selectedRun)
+                targetTop = anchorWasOnScreen ? anchorBoxBefore.top : (headerBottom + window.innerHeight - anchorBox.height) / 2;
+            window.scrollBy(0, anchorBox.top - targetTop);
+        };
+        const sectionResizeObserver = new ResizeObserver(keepAnchorInPlace);
+        sections.forEach(section => sectionResizeObserver.observe(section));
+
+        this.ref.state.children.forEach(child => {
+            child.timeline.update();
+        });
+        setTimeout(() => setTimeout(() => {
+            keepAnchorInPlace();
+            setTimeout(() => sectionResizeObserver.disconnect(), PLACE_SETTLE_DELAY);
+        }));
+    }
 }
 
 let view = new SearchView();
@@ -278,10 +318,8 @@ DOM.inject(
     ${Drawer([
         CommitSearchBar((searchValue) => onCommitSearch.add(searchValue)),
         Legend(() => {
-            view.ref.state.children.forEach((child) => {
-                child.timeline.update();
-            });
-        }, false, false, true, false),
+            view.updateTimelinesKeepingPlace();
+        }, false, false, true, false, true),
         LimitSlider(() => {view.reload()}, TESTS_LIMITS.max, TESTS_LIMITS.default),
         BranchSelector(() => {
             CommitBank.reload();

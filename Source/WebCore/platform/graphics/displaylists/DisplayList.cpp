@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DisplayList.h"
 
+#include "DisplayListResourceCache.h"
 #include "Filter.h"
 #include "Font.h"
 #include "ImageBuffer.h"
@@ -34,14 +35,25 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace DisplayList {
+namespace WebCore::DisplayList {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DisplayList);
 
 DisplayList::DisplayList(Vector<Item>&& items)
     : m_items(WTF::move(items))
 {
+    ASSERT(std::ranges::all_of(m_items, [](auto& item) {
+        return isResolved(item);
+    }));
+}
+
+RefPtr<const DisplayList> DisplayList::createResolved(Vector<Item>&& items, const ResourceCache& resourceCache)
+{
+    for (auto& item : items) {
+        if (!resourceCache.resolveItem(item) || !isResolved(item))
+            return nullptr;
+    }
+    return create(WTF::move(items));
 }
 
 DisplayList::~DisplayList()
@@ -83,5 +95,4 @@ TextStream& operator<<(TextStream& ts, const DisplayList& displayList)
     return ts;
 }
 
-} // namespace DisplayList
-} // namespace WebCore
+} // namespace WebCore::DisplayList

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  *           (C) 2007 Graham Dennis (graham.dennis@gmail.com)
  *
  * Redistribution and use in source and binary forms, with or without
@@ -284,6 +284,7 @@ static int printTestCount;
 static int checkForWorldLeaks;
 static BOOL printSeparators;
 static std::set<std::string> allowedHosts;
+static std::set<std::string> disabledKeys;
 static std::set<std::string> localhostAliases;
 static std::string webCoreLogging;
 
@@ -1010,7 +1011,8 @@ static void initializeGlobalsFromCommandLineOptions(int argc, const char *argv[]
         {"print-test-count", no_argument, &printTestCount, YES},
         {"world-leaks", no_argument, &checkForWorldLeaks, NO},
         {"webcore-logging", required_argument, nullptr, 'w'},
-        {"localhost-alias", required_argument, nullptr, 'l'},
+        { "disabled-keys", required_argument, nullptr, 'k' },
+        { "localhost-alias", required_argument, nullptr, 'l' },
         { "ip-address-space-overrides", required_argument, nullptr, 'i' },
         {nullptr, 0, nullptr, 0}
     };
@@ -1028,6 +1030,9 @@ static void initializeGlobalsFromCommandLineOptions(int argc, const char *argv[]
             break;
         case 'a': // "allowed-host"
             allowedHosts.insert(optarg);
+            break;
+        case 'k': // "disabled-keys"
+            disabledKeys.merge(WTR::parseDisabledKeys(optarg));
             break;
         case 'l': // "localhost-alias"
             localhostAliases.insert(optarg);
@@ -1062,7 +1067,7 @@ static bool handleControlCommand(std::span<const char> command)
         unsigned resultLength = result.length();
         printf("Content-Type: text/plain\n");
         printf("Content-Length: %u\n", resultLength);
-        fwrite(result.utf8().legacyCStringPointer(), 1, resultLength, stdout);
+        fwrite(makeUTF8CString(result).legacyCStringPointer(), 1, resultLength, stdout);
         printf("#EOF\n");
         fprintf(stderr, "#EOF\n");
         fflush(stdout);
@@ -1423,7 +1428,7 @@ static RetainPtr<NSString> dumpFramesAsText(WebFrame *frame)
     // conversion methods cannot. After the conversion to a buffer, we turn that buffer into
     // a CFString via fromUTF8WithLatin1Fallback().createCFString() which can be appended to
     // the result without any conversion.
-    if (auto utf8Result = WTF::String(innerText).tryGetUTF8()) {
+    if (auto utf8Result = tryMakeUTF8CString(WTF::String(innerText))) {
         auto string = WTF::move(utf8Result.value());
         [result appendFormat:@"%@\n", String::fromUTF8WithLatin1Fallback(string.span()).createCFString().get()];
     } else
@@ -1687,9 +1692,14 @@ void dump()
             puts("#EOF");       // terminate the content block
     }
 
-    if (dumpPixelsForCurrentTest && gTestRunner->generatePixelResults())
+    if (dumpPixelsForCurrentTest && gTestRunner->generatePixelResults()) {
         // FIXME: when isPrinting is set, dump the image with page separators.
-        dumpWebViewAsPixelsAndCompareWithExpected(gTestRunner->expectedPixelHash());
+        // FIXME: Support print reftests (rdar://191464040). Comparing them as screenshots could pass for the wrong reason.
+        if (mainFrameTestOptions && mainFrameTestOptions->dumpCSSPageBoxes())
+            fputs("DumpRenderTree doesn't support print reftests.\n", stderr);
+        else
+            dumpWebViewAsPixelsAndCompareWithExpected(gTestRunner->expectedPixelHash());
+    }
 
     puts("#EOF");   // terminate the (possibly empty) pixels block
     fflush(stdout);
@@ -1817,8 +1827,9 @@ static void resetWebViewToConsistentState(const WTR::TestOptions& options, Reset
     [WebView _setUsesTestModeFocusRingColor:YES];
 #endif
     [WebView _resetOriginAccessAllowLists];
+    [NSObject setAllowsScriptsFullAccess:NO];
 
-    [[MockGeolocationProvider shared] stopTimer];
+    [[MockGeolocationProvider shared] reset];
     [[MockWebNotificationProvider shared] reset];
 
 #if !PLATFORM(IOS_FAMILY)
@@ -1889,7 +1900,7 @@ static NSURL *computeTestURL(NSString *pathOrURLString, NSString **relativeTestP
     return [NSURL fileURLWithPath:absolutePath];
 }
 
-static WTR::TestOptions testOptionsForTest(const WTR::TestCommand& command)
+static WTR::TestOptions testOptionsForTest(const WTR::TestCommand& command, WTR::TestFeatures testHeaderFeatures)
 {
     // hack for cases when useDollarVM will be reset before injectInternalsObject is called in DRT
     {
@@ -1898,7 +1909,7 @@ static WTR::TestOptions testOptionsForTest(const WTR::TestCommand& command)
     }
     WTR::TestFeatures features = WTR::TestOptions::defaults();
     WTR::merge(features, WTR::hardcodedFeaturesBasedOnPathForTest(command));
-    WTR::merge(features, WTR::featureDefaultsFromTestHeaderForTest(command, WTR::TestOptions::keyTypeMapping()));
+    WTR::merge(features, WTF::move(testHeaderFeatures));
 
     return WTR::TestOptions { WTF::move(features) };
 }
@@ -1908,6 +1919,12 @@ static void runTest(const std::string& inputLine)
     ASSERT(!inputLine.empty());
 
     auto command = WTR::parseInputLine(inputLine);
+    WTF::setCrashLogMessage(makeUTF8CString(makeString("CRASHING TEST: "_s, String::fromUTF8(command.pathOrURL.c_str()))));
+    auto testHeader = WTR::testHeaderForTest(command, WTR::TestOptions::keyTypeMapping());
+    if (auto disabledKey = WTR::firstDisabledKeyForTest(command, testHeader, disabledKeys)) {
+        WTR::dumpSkippedTestReply(*disabledKey);
+        return;
+    }
     auto pathOrURL = command.pathOrURL;
     dumpPixelsForCurrentTest = command.shouldDumpPixels || dumpPixelsForAllTests;
 
@@ -1940,9 +1957,9 @@ static void runTest(const std::string& inputLine)
         testPath = [url.get() absoluteString];
 
     auto message = makeString("CRASHING TEST: "_s, testPath);
-    WTF::setCrashLogMessage(message.utf8());
+    WTF::setCrashLogMessage(makeUTF8CString(message));
 
-    auto options = testOptionsForTest(command);
+    auto options = testOptionsForTest(command, WTF::move(testHeader.features));
 
     if (!mainFrameTestOptions || !options.webViewIsCompatibleWithOptions(mainFrameTestOptions.value()))
         createGlobalWebViewAndOffscreenWindow();
@@ -2017,9 +2034,7 @@ static void runTest(const std::string& inputLine)
     if ([WebHistory optionalSharedHistory])
         [WebHistory setOptionalSharedHistory:nil];
 
-    lastMousePosition = NSZeroPoint;
-    lastClickPosition = NSZeroPoint;
-    lastButtonDown = 0;
+    [EventSendingController resetMouseState];
 
     prevTestBFItem() = [[[mainFrame webView] backForwardList] currentItem];
 

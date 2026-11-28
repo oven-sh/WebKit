@@ -196,7 +196,7 @@ void SWServer::originImportComplete(const SecurityOriginData& topOrigin, Monoton
     auto callbacks = m_pendingOriginImportCallbacks.take(topOrigin);
 #if !RELEASE_LOG_DISABLED
     auto elapsed = MonotonicTime::now() - startTime;
-    RELEASE_LOG(ServiceWorker, "SWServer::originImportComplete: Completed import for origin %" SENSITIVE_LOG_STRING " in %.0f ms (%zu pending callbacks)", topOrigin.toString().utf8(), elapsed.milliseconds(), callbacks.size());
+    RELEASE_LOG(ServiceWorker, "SWServer::originImportComplete: Completed import for origin %" SENSITIVE_LOG_STRING " in %.0f ms (%zu pending callbacks)", makeUTF8CString(topOrigin.toString()), elapsed.milliseconds(), callbacks.size());
 #else
     UNUSED_PARAM(startTime);
 #endif
@@ -237,7 +237,7 @@ void SWServer::importRegistrationsForOrigin(const SecurityOriginData& topOrigin,
     if (!result.isNewEntry)
         return;
 
-    RELEASE_LOG(ServiceWorker, "SWServer::importRegistrationsForOrigin: Starting import for origin %" SENSITIVE_LOG_STRING, topOrigin.toString().utf8());
+    RELEASE_LOG(ServiceWorker, "SWServer::importRegistrationsForOrigin: Starting import for origin %" SENSITIVE_LOG_STRING, makeUTF8CString(topOrigin.toString()));
 
     RefPtr store = m_registrationStore;
     if (!store) {
@@ -251,7 +251,7 @@ void SWServer::importRegistrationsForOrigin(const SecurityOriginData& topOrigin,
         if (!protectedThis)
             return;
 
-        RELEASE_LOG(ServiceWorker, "SWServer::importRegistrationsForOrigin: Loaded %zu registrations for origin %" SENSITIVE_LOG_STRING " in %.0f ms", result ? result->size() : 0, topOrigin.toString().utf8(), (MonotonicTime::now() - startTime).milliseconds());
+        RELEASE_LOG(ServiceWorker, "SWServer::importRegistrationsForOrigin: Loaded %zu registrations for origin %" SENSITIVE_LOG_STRING " in %.0f ms", result ? result->size() : 0, makeUTF8CString(topOrigin.toString()), (MonotonicTime::now() - startTime).milliseconds());
 
         // Discard stale results if clearAll() was called after this import was initiated.
         if (clearAllCounter != protectedThis->m_clearAllCounter) {
@@ -276,7 +276,7 @@ void SWServer::importRegistrationsForOrigin(const SecurityOriginData& topOrigin,
 
 void SWServer::addRegistrationFromStore(ServiceWorkerContextData&& data, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     ASSERT(!m_scopeToRegistrationMap.contains(data.registration.key));
 
@@ -285,7 +285,7 @@ void SWServer::addRegistrationFromStore(ServiceWorkerContextData&& data, Complet
     auto registrationKey = data.registration.key;
     auto registrableDomain = WebCore::RegistrableDomain(registrationKey.topOrigin());
     validateRegistrationDomain(registrableDomain, ServiceWorkerJobType::Register, m_scopeToRegistrationMap.contains(registrationKey), [weakThis = WeakPtr { *this }, data = WTF::move(data), completionHandler = WTF::move(completionHandler)] (bool isValid) mutable {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return completionHandler();
@@ -906,7 +906,7 @@ void SWServer::scriptContextFailedToStart(const std::optional<ServiceWorkerJobDa
     if (!jobDataIdentifier)
         return;
 
-    RELEASE_LOG_ERROR(ServiceWorker, "%p - SWServer::scriptContextFailedToStart: Failed to start SW for job %s, error: %s", this, jobDataIdentifier->loggingString().utf8(), message.utf8());
+    RELEASE_LOG_ERROR(ServiceWorker, "%p - SWServer::scriptContextFailedToStart: Failed to start SW for job %s, error: %s", this, makeUTF8CString(jobDataIdentifier->loggingString()), makeUTF8CString(message));
 
     CheckedPtr jobQueue = m_jobQueues.get(worker.registrationKey());
     if (!jobQueue || !jobQueue->isCurrentlyProcessingJob(*jobDataIdentifier)) {
@@ -1012,7 +1012,7 @@ void forEachClientForOriginImpl(const Vector<ScriptExecutionContextIdentifier>& 
         if (auto clientIterator = clientsById.find(clientIdentifier); clientIterator != clientsById.end())
             apply(clientIterator->value);
         else
-            RELEASE_LOG_ERROR(ServiceWorker, "SWServer::forEachClientForOriginImpl: Unable to find identifier=%" PUBLIC_LOG_STRING " in map", clientIdentifier.toString().utf8());
+            RELEASE_LOG_ERROR(ServiceWorker, "SWServer::forEachClientForOriginImpl: Unable to find identifier=%" PUBLIC_LOG_STRING " in map", makeUTF8CString(clientIdentifier.toString()));
     }
 }
 
@@ -1124,7 +1124,7 @@ LastNavigationWasAppInitiated SWServer::clientIsAppInitiatedForRegistrableDomain
 void SWServer::tryInstallContextData(const std::optional<ProcessIdentifier>& requestingProcessIdentifier, ServiceWorkerContextData&& data)
 {
     Site site(data.registration.key.topOrigin());
-    auto workerCOEP = data.crossOriginEmbedderPolicy.value;
+    auto workerCOEP = contextConnectionCrossOriginEmbedderPolicyValue(data.crossOriginEmbedderPolicy.value);
     RefPtr connection = contextConnectionForRegistrableDomain(site.domain(), workerCOEP);
     if (!connection) {
         auto firstPartyForCookies = data.registration.key.firstPartyForCookies();
@@ -1310,7 +1310,7 @@ void SWServer::runServiceWorkerIfNecessary(SWServerWorker& worker, RunServiceWor
     }
 
     if (!contextConnection) {
-        auto& serviceWorkerRunRequestsForOrigin = m_serviceWorkerRunRequests.ensure(ContextConnectionKey { worker.topRegistrableDomain(), worker.crossOriginEmbedderPolicy().value }, [] {
+        auto& serviceWorkerRunRequestsForOrigin = m_serviceWorkerRunRequests.ensure(ContextConnectionKey { worker.topRegistrableDomain(), contextConnectionCrossOriginEmbedderPolicyValue(worker.crossOriginEmbedderPolicy().value) }, [] {
             return HashMap<ServiceWorkerIdentifier, Vector<RunServiceWorkerCallback>> { };
         }).iterator->value;
         serviceWorkerRunRequestsForOrigin.ensure(worker.identifier(), [&] {
@@ -1789,7 +1789,7 @@ void SWServer::getOriginsWithRegistrations(CompletionHandler<void(const HashSet<
 
 void SWServer::performGetOriginsWithRegistrationsCallbacks()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     ASSERT(m_originListImportComplete);
 
     if (m_getOriginsWithRegistrationsCallbacks.isEmpty() && m_getAllOriginsCallbacks.isEmpty())
@@ -1861,7 +1861,7 @@ void SWServer::removeContextConnection(SWServerToContextConnection& connection, 
     m_contextConnections.remove({ site.domain(), coep });
     Vector<Ref<SWServerWorker>> terminatedWorkers;
     for (auto& worker : m_runningOrTerminatingWorkers.values()) {
-        if (worker->topRegistrableDomain() == site.domain() && worker->crossOriginEmbedderPolicy().value == coep)
+        if (worker->topRegistrableDomain() == site.domain() && contextConnectionCrossOriginEmbedderPolicyValue(worker->crossOriginEmbedderPolicy().value) == coep)
             terminatedWorkers.append(worker);
     }
     for (auto& worker : terminatedWorkers)
@@ -1879,7 +1879,7 @@ void SWServer::terminateIdleServiceWorkers(SWServerToContextConnection& connecti
 
     Vector<Ref<SWServerWorker>> idleWorkers;
     for (Ref worker : m_runningOrTerminatingWorkers.values()) {
-        if (worker->topRegistrableDomain() == domain && worker->crossOriginEmbedderPolicy().value == coep && worker->isIdle(m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration))
+        if (worker->topRegistrableDomain() == domain && contextConnectionCrossOriginEmbedderPolicyValue(worker->crossOriginEmbedderPolicy().value) == coep && worker->isIdle(m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration))
             idleWorkers.append(worker);
     }
     for (auto& worker : idleWorkers) {
@@ -1890,7 +1890,7 @@ void SWServer::terminateIdleServiceWorkers(SWServerToContextConnection& connecti
 
 SWServerToContextConnection* SWServer::contextConnectionForRegistrableDomain(const RegistrableDomain& domain, CrossOriginEmbedderPolicyValue coep)
 {
-    return m_contextConnections.get({ domain, coep });
+    return m_contextConnections.get({ domain, contextConnectionCrossOriginEmbedderPolicyValue(coep) });
 }
 
 // Safe to mutate m_contextConnections during callback — iteration uses individual lookups, not iterators.
@@ -1904,6 +1904,7 @@ void SWServer::forEachContextConnectionForRegistrableDomain(const RegistrableDom
 
 void SWServer::createContextConnection(const Site& site, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, CrossOriginEmbedderPolicyValue workerCrossOriginEmbedderPolicy)
 {
+    workerCrossOriginEmbedderPolicy = contextConnectionCrossOriginEmbedderPolicyValue(workerCrossOriginEmbedderPolicy);
     ContextConnectionKey key { site.domain(), workerCrossOriginEmbedderPolicy };
     ASSERT(!m_contextConnections.contains(key));
     if (m_pendingConnectionDomains.contains(key))
@@ -1981,14 +1982,14 @@ void SWServer::processPushMessage(std::optional<Vector<uint8_t>>&& data, std::op
         ServiceWorkerRegistrationKey registrationKey { WTF::move(origin), WTF::move(registrationURL) };
         RefPtr registration = protectedThis->m_scopeToRegistrationMap.get(registrationKey);
         if (!registration) {
-            RELEASE_LOG_ERROR(Push, "Cannot process push message: Failed to find SW registration for scope %" SENSITIVE_LOG_STRING, registrationKey.scope().string().utf8());
+            RELEASE_LOG_ERROR(Push, "Cannot process push message: Failed to find SW registration for scope %" SENSITIVE_LOG_STRING, makeUTF8CString(registrationKey.scope().string()));
             callback(true, WTF::move(notificationPayload));
             return;
         }
 
         RefPtr worker = registration->activeWorker();
         if (!worker) {
-            RELEASE_LOG_ERROR(Push, "Cannot process push message: No active worker for scope %" SENSITIVE_LOG_STRING, registrationKey.scope().string().utf8());
+            RELEASE_LOG_ERROR(Push, "Cannot process push message: No active worker for scope %" SENSITIVE_LOG_STRING, makeUTF8CString(registrationKey.scope().string()));
             callback(true, WTF::move(notificationPayload));
             return;
         }
@@ -2036,14 +2037,14 @@ void SWServer::processNotificationEvent(NotificationData&& data, NotificationEve
         ServiceWorkerRegistrationKey registrationKey { WTF::move(origin), URL { data.serviceWorkerRegistrationURL } };
         RefPtr registration = protectedThis->m_scopeToRegistrationMap.get(registrationKey);
         if (!registration) {
-            RELEASE_LOG_ERROR(Push, "Cannot process notification event: Failed to find SW registration for scope %" SENSITIVE_LOG_STRING, registrationKey.scope().string().utf8());
+            RELEASE_LOG_ERROR(Push, "Cannot process notification event: Failed to find SW registration for scope %" SENSITIVE_LOG_STRING, makeUTF8CString(registrationKey.scope().string()));
             callback(true);
             return;
         }
 
         RefPtr worker = registration->activeWorker();
         if (!worker) {
-            RELEASE_LOG_ERROR(Push, "Cannot process notification event: No active worker for scope %" SENSITIVE_LOG_STRING, registrationKey.scope().string().utf8());
+            RELEASE_LOG_ERROR(Push, "Cannot process notification event: No active worker for scope %" SENSITIVE_LOG_STRING, makeUTF8CString(registrationKey.scope().string()));
             callback(true);
             return;
         }
@@ -2081,7 +2082,7 @@ void SWServer::fireBackgroundFetchEvent(SWServerRegistration& registration, Back
 {
     RefPtr worker = registration.activeWorker();
     if (!worker) {
-        RELEASE_LOG_ERROR(ServiceWorker, "Cannot process background fetch update message: no active worker for scope %" PRIVATE_LOG_STRING, registration.key().scope().string().utf8());
+        RELEASE_LOG_ERROR(ServiceWorker, "Cannot process background fetch update message: no active worker for scope %" PRIVATE_LOG_STRING, makeUTF8CString(registration.key().scope().string()));
         callback();
         return;
     }
@@ -2115,7 +2116,7 @@ void SWServer::fireBackgroundFetchClickEvent(SWServerRegistration& registration,
 {
     RefPtr worker = registration.activeWorker();
     if (!worker) {
-        RELEASE_LOG_ERROR(ServiceWorker, "Cannot process background fetch click message: no active worker for scope %" PRIVATE_LOG_STRING, registration.key().scope().string().utf8());
+        RELEASE_LOG_ERROR(ServiceWorker, "Cannot process background fetch click message: no active worker for scope %" PRIVATE_LOG_STRING, makeUTF8CString(registration.key().scope().string()));
         return;
     }
 

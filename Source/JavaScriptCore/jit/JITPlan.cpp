@@ -166,12 +166,12 @@ bool JITPlan::checkLivenessAndVisitChildren(AbstractSlotVisitor& visitor)
 
 bool JITPlan::isInSafepoint() const
 {
-    return m_thread && m_thread->safepoint();
+    return m_workerSlot && m_workerSlot->safepoint();
 }
 
 bool JITPlan::safepointKeepsDependenciesLive() const
 {
-    return m_thread && m_thread->safepoint() && m_thread->safepoint()->keepDependenciesLive();
+    return m_workerSlot && m_workerSlot->safepoint() && m_workerSlot->safepoint()->keepDependenciesLive();
 }
 
 bool JITPlan::computeCompileTimes() const
@@ -189,7 +189,7 @@ bool JITPlan::reportCompileTimes() const
         || (Options::reportFTLCompileTimes() && isFTL());
 }
 
-static inline void* LEGACY_NODELETE signpostId(JITPlan& plan)
+NODELETE static inline void* signpostId(JITPlan& plan)
 {
     uintptr_t id = std::bit_cast<uintptr_t>(&plan);
     unsigned stage = static_cast<unsigned>(plan.stage());
@@ -230,7 +230,7 @@ void JITPlan::beginSignpostImpl()
     case JITPlanStage::Canceled:
         RELEASE_ASSERT_NOT_REACHED();
     };
-    ProfilerSupport::markStart(id, ProfilerSupport::Category::JSGlobalObjectSignpost, detalString.utf8());
+    ProfilerSupport::markStart(id, ProfilerSupport::Category::JSGlobalObjectSignpost, makeUTF8CString(detalString));
 }
 
 void JITPlan::endSignpostImpl(JITPlan::SignpostDetail detail)
@@ -259,12 +259,12 @@ void JITPlan::endSignpostImpl(JITPlan::SignpostDetail detail)
     case JITPlanStage::Canceled:
         RELEASE_ASSERT_NOT_REACHED();
     };
-    ProfilerSupport::markEnd(id, ProfilerSupport::Category::JSGlobalObjectSignpost, detalString.utf8());
+    ProfilerSupport::markEnd(id, ProfilerSupport::Category::JSGlobalObjectSignpost, makeUTF8CString(detalString));
 }
 
-void JITPlan::compileInThread(JITWorklistThread* thread)
+void JITPlan::compileInThread(JITWorkerSlot* workerSlot)
 {
-    SetForScope threadScope(m_thread, thread);
+    SetForScope workerSlotScope(m_workerSlot, workerSlot);
 
     MonotonicTime before;
     UTF8CString codeBlockName;

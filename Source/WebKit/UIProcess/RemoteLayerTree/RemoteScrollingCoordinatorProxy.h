@@ -105,23 +105,24 @@ public:
     bool isPointInScrollbar(WebCore::FloatPoint);
 
     // Called externally when native views move around.
-    void viewportChangedViaDelegatedScrolling(const WebCore::FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale);
+    virtual void viewportChangedViaDelegatedScrolling(const WebCore::FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale, WebCore::DeferViewportConstrainedLayerRepositioning = WebCore::DeferViewportConstrainedLayerRepositioning::No);
 
     virtual void applyScrollingTreeLayerPositionsAfterCommit();
+    virtual void flushMainThreadTransactionIfNeeded() { }
 
     void currentSnapPointIndicesDidChange(WebCore::ScrollingNodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical);
 
     virtual void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&) { }
     virtual void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
     void continueWheelEventHandling(Ref<WebWheelEvent>&&, WebCore::WheelEventHandlingResult);
-    virtual void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool /* wasHandled */) { }
+    virtual void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::FrameIdentifier> /* defaultHandlingFrameID */, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool /* wasHandled */) { }
 
     virtual WebCore::PlatformWheelEvent filteredWheelEvent(const WebCore::PlatformWheelEvent& wheelEvent) { return wheelEvent; }
 
     std::optional<WebCore::ScrollingNodeID> rootScrollingNodeID() const;
 
-    const RemoteLayerTreeHost* LEGACY_NODELETE layerTreeHost() const;
-    WebPageProxy& LEGACY_NODELETE webPageProxy() const;
+    NODELETE const RemoteLayerTreeHost* layerTreeHost() const;
+    NODELETE WebPageProxy& webPageProxy() const;
 
     virtual void stickyScrollingTreeNodeBeganSticking(WebCore::ScrollingNodeID);
 #if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
@@ -176,6 +177,9 @@ public:
     virtual HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID) const { return { }; }
     virtual HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const { return { }; }
     virtual bool hasHighImpactMonotonicAnimations() const { return false; }
+    virtual bool hasVisibleMonotonicAnimations() const { return false; }
+    virtual void setAnimatedContentVisibilityNeedsUpdate() { }
+    virtual void updateAnimatedContentVisibilityIfNeeded() { }
 #endif
 
     String scrollingTreeAsText() const;
@@ -185,10 +189,10 @@ public:
     void resetStateAfterProcessExited();
 
     virtual void displayDidRefresh(WebCore::PlatformDisplayID);
-    void LEGACY_NODELETE reportExposedUnfilledArea(MonotonicTime, unsigned unfilledArea);
+    NODELETE void reportExposedUnfilledArea(MonotonicTime, unsigned unfilledArea);
     void reportSynchronousScrollingReasonsChanged(MonotonicTime, OptionSet<WebCore::SynchronousScrollingReason>);
     void reportFilledVisibleFreshTile(MonotonicTime, unsigned);
-    bool LEGACY_NODELETE scrollingPerformanceTestingEnabled() const;
+    NODELETE bool scrollingPerformanceTestingEnabled() const;
     
     void receivedWheelEventWithPhases(WebCore::PlatformWheelEventPhase phase, WebCore::PlatformWheelEventPhase momentumPhase);
     void deferWheelEventTestCompletionForReason(std::optional<WebCore::ScrollingNodeID>, WebCore::WheelEventTestMonitor::DeferReason);
@@ -228,7 +232,7 @@ public:
     void scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID, WebCore::ScrollbarOrientation, int);
     void requestFullScrollingTreeCommitForFrame(WebCore::FrameIdentifier);
     void receivedLastScrollingTreeNodeUpdateReply();
-    bool LEGACY_NODELETE isMonitoringWheelEvents();
+    NODELETE bool isMonitoringWheelEvents();
 
     void establishLayerTreeScrollingRelations(IPC::Connection&);
 
@@ -244,8 +248,11 @@ protected:
     void sendUIStateChangedIfNecessary();
 
 private:
+    void respondToScrollRequestsInDiscardedCommit(const WebCore::ScrollingStateTree&, WebCore::FrameIdentifier);
+
     WeakRef<WebPageProxy> m_webPageProxy;
     const Ref<RemoteScrollingTree> m_scrollingTree;
+    HashSet<WebCore::FrameIdentifier> m_framesAwaitingFullScrollingTreeCommit;
 
 protected:
     WebCore::ScrollRequestData m_scrollRequestData;

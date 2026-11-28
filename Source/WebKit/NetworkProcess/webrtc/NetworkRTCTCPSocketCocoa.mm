@@ -117,7 +117,7 @@ NetworkRTCTCPSocketCocoa::NetworkRTCTCPSocketCocoa(LibWebRTCSocketIdentifier ide
     if (hostName.empty())
         hostName = remoteAddress.ipaddr().ToString();
     bool isTLS = options & webrtc::PacketSocketFactory::OPT_TLS;
-    lazyInitialize(m_nwConnection, createNWConnection(rtcProvider, UTF8CStringView::unsafeFromUTF8(hostName.c_str()), String::number(remoteAddress.port()).utf8(), isTLS, attributedBundleIdentifier, flags, domain));
+    lazyInitialize(m_nwConnection, createNWConnection(rtcProvider, UTF8CStringView::unsafeFromUTF8(hostName.c_str()), makeUTF8CString(String::number(remoteAddress.port())), isTLS, attributedBundleIdentifier, flags, domain));
 
     nw_connection_set_queue(m_nwConnection.get(), tcpSocketQueueSingleton());
     nw_connection_set_state_changed_handler(m_nwConnection.get(), makeBlockPtr([weakNWConnection = WeakObjCPtr { m_nwConnection.get() }, identifier = m_identifier, rtcProvider = Ref { rtcProvider }, connection = m_connection.copyRef()](nw_connection_state_t state, _Nullable nw_error_t error) {
@@ -202,8 +202,7 @@ Vector<uint8_t> NetworkRTCTCPSocketCocoa::createMessageBuffer(std::span<const ui
         if (messageLengths->messageLengthWithPadding < data.size())
             return { };
 
-        Vector<uint8_t> buffer;
-        buffer.reserveInitialCapacity(messageLengths->messageLengthWithPadding);
+        Vector<uint8_t> buffer(ReserveCapacityTag { }, messageLengths->messageLengthWithPadding);
         buffer.append(data);
         for (size_t cptr = 0 ; cptr < messageLengths->messageLengthWithPadding - data.size(); ++cptr)
             buffer.append(0);
@@ -211,8 +210,7 @@ Vector<uint8_t> NetworkRTCTCPSocketCocoa::createMessageBuffer(std::span<const ui
     }
 
     // Prepend length.
-    Vector<uint8_t> buffer;
-    buffer.reserveInitialCapacity(data.size() + 2);
+    Vector<uint8_t> buffer(ReserveCapacityTag { }, data.size() + 2);
     buffer.appendList({ (data.size() >> 8) & 0xFF, data.size() & 0xFF });
     buffer.append(data);
     return buffer;
@@ -235,7 +233,7 @@ auto NetworkRTCTCPSocketCocoa::getInterfaceName(NetworkRTCProvider& rtcProvider,
 
     bool isHTTPS = url.protocolIs("https"_s);
     auto port = url.port().value_or(isHTTPS ? 443 : 80);
-    auto nwConnection = createNWConnection(rtcProvider, url.host().toString().utf8(), String::number(port).utf8(), isHTTPS, attributedBundleIdentifier, flags, domain);
+    auto nwConnection = createNWConnection(rtcProvider, makeUTF8CString(url.host().toString()), makeUTF8CString(String::number(port)), isHTTPS, attributedBundleIdentifier, flags, domain);
 
     NamePromise::AutoRejectProducer promiseProducer;
     Ref promise = promiseProducer.promise();

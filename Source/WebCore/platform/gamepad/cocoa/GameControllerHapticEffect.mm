@@ -44,7 +44,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GameControllerHapticEffect);
 
-static double LEGACY_NODELETE magnitudeToIntensity(double magnitude)
+NODELETE static double magnitudeToIntensity(double magnitude)
 {
     return std::clamp<double>(magnitude, 0, 1);
 }
@@ -124,7 +124,7 @@ GameControllerHapticEffect::~GameControllerHapticEffect()
 
 void GameControllerHapticEffect::start(CompletionHandler<void(bool)>&& completionHandler)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     ASSERT(!m_completionHandler);
 
     m_completionHandler = WTF::move(completionHandler);

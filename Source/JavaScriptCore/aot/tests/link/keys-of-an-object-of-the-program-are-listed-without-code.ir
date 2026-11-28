@@ -1,0 +1,37 @@
+# If every list of keys counted as code that nobody knows, one `for (const k in options)` in a function would end whatever its callers know of the heap, though only the ownKeys trap of a proxy runs code there
+# class P { }  function open(p) { for (const k in p) { } }  open(new P());
+# The scan says whose keys are listed and whose chain is walked. Behind the flow an object of L0 lies there, which is no proxy and stands below none.
+# RUN: summary f2 mechanisms=all
+# CHECK: inspection v1 ListsKeys Parameter 0
+# CHECK: inspection v1 WalksChain Parameter 0
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2
+# LINK-NOT: mayCallUnknownCode
+# LINK: parameter 0
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3 calleeName="open"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="open" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    v2 = Undefined
+    Return v2
+}

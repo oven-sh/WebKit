@@ -68,7 +68,7 @@ public:
 
     ~ProcessThrottlerActivity()
     {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
         if (isValid())
             invalidate(ForceEnableActivityLogging::No);
     }
@@ -120,7 +120,7 @@ public:
 
     using Activity = ProcessThrottlerActivity;
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
 
     using ForegroundActivity = Activity;
@@ -130,14 +130,14 @@ public:
     Ref<Activity> backgroundActivity(ASCIILiteral name);
     Ref<Activity> quietBackgroundActivity(ASCIILiteral name);
 
-    static bool LEGACY_NODELETE isValidBackgroundActivity(const Activity*);
-    static bool LEGACY_NODELETE isValidForegroundActivity(const Activity*);
+    NODELETE static bool isValidBackgroundActivity(const Activity*);
+    NODELETE static bool isValidForegroundActivity(const Activity*);
 
     using TimedActivity = ProcessThrottlerTimedActivity;
 
     void didConnectToProcess(AuxiliaryProcessProxy&);
     void didDisconnectFromProcess();
-    bool shouldBeRunnable() const { return !m_foregroundActivities.isEmptyIgnoringNullReferences() || !m_backgroundActivities.isEmptyIgnoringNullReferences(); }
+    bool shouldBeRunnable() const { return !m_foregroundActivities.computeIsEmpty() || !m_backgroundActivities.computeIsEmpty(); }
     void setAllowsActivities(bool);
     void setShouldDropNearSuspendedAssertionAfterDelay(bool);
     void setShouldTakeNearSuspendedAssertion(bool);
@@ -154,7 +154,7 @@ private:
     friend class ProcessThrottlerActivity;
     friend WTF::TextStream& operator<<(WTF::TextStream&, const ProcessThrottler&);
 
-    ProcessThrottleState LEGACY_NODELETE expectedThrottleState();
+    NODELETE ProcessThrottleState expectedThrottleState();
     void updateThrottleStateIfNeeded(ASCIILiteral);
     void updateThrottleStateNow();
     void setThrottleState(ProcessThrottleState);
@@ -169,7 +169,7 @@ private:
     void removeActivity(Activity&);
     void invalidateAllActivities();
     String assertionName(ProcessAssertionType) const;
-    ProcessAssertionType LEGACY_NODELETE assertionTypeForState(ProcessThrottleState);
+    NODELETE ProcessAssertionType assertionTypeForState(ProcessThrottleState);
 
     void uiAssertionWillExpireImminently();
     void assertionWasInvalidated();

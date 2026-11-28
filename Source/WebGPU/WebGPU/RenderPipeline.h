@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "Pipeline.h"
 #import "PipelineLayout.h"
 
@@ -53,7 +57,7 @@ public:
         uint64_t lastStride { 0 };
         WebGPU::VertexStepMode stepMode { WebGPU::VertexStepMode::Vertex };
     };
-    using RequiredBufferIndicesContainer = HashMap<uint32_t, BufferData, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using RequiredBufferIndicesContainer = HashMap<uint32_t, BufferData>;
 
     static Ref<RenderPipeline> create(MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, MTLDepthClipMode depthClipMode, MTLDepthStencilDescriptor *depthStencilDescriptor, Ref<PipelineLayout>&& pipelineLayout, float depthBias, float depthBiasSlopeScale, float depthBiasClamp, uint32_t sampleMask, MTLRenderPipelineDescriptor* renderPipelineDescriptor, uint32_t colorAttachmentCount, WebGPU::PrimitiveTopology primitiveTopology, std::optional<WebGPU::IndexFormat> stripIndexFormat, uint32_t sampleCount, bool hasFragment, Vector<std::optional<WebGPU::TextureFormat>>&& colorTargetFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat, bool writesStencil, RequiredBufferIndicesContainer&& requiredBufferIndices, BufferBindingSizesForPipeline&& minimumBufferSizes, uint64_t uniqueId, uint32_t vertexShaderBindingCount, Device& device)
     {
@@ -68,7 +72,7 @@ public:
     ~RenderPipeline();
 
     Ref<WebGPU::BindGroupLayout> getBindGroupLayout(uint32_t groupIndex) final;
-    void LEGACY_NODELETE setLabel(String&&) final;
+    NODELETE void setLabel(String&&) final;
 
     bool isValid() const final { return m_renderPipelineDescriptor && m_pipelineLayout->isValid(); }
 
@@ -78,7 +82,7 @@ public:
 
     void setPrecompiledRenderPipelineState(id<MTLRenderPipelineState>);
 
-    id<MTLDepthStencilState> LEGACY_NODELETE depthStencilState() const;
+    NODELETE id<MTLDepthStencilState> depthStencilState() const;
     bool validateDepthStencilState(bool depthReadOnly, bool stencilReadOnly) const;
     MTLPrimitiveType primitiveType() const { return m_primitiveType; }
     MTLWinding frontFace() const { return m_frontFace; }
@@ -95,7 +99,7 @@ public:
     NSString* errorValidatingColorDepthStencilTargets(const Vector<TextureOrTextureView>&, const std::optional<TextureOrTextureView>&) const;
     bool validateRenderBundle(bool depthReadOnly, bool stencilReadOnly, uint32_t sampleCount, std::span<const std::optional<WebGPU::TextureFormat>> colorFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat) const;
     bool writesDepth() const;
-    bool LEGACY_NODELETE writesStencil() const;
+    NODELETE bool writesStencil() const;
 
     const RequiredBufferIndicesContainer& requiredBufferIndices() const LIFETIME_BOUND { return m_requiredBufferIndices; }
     WebGPU::PrimitiveTopology primitiveTopology() const { return m_primitiveTopology; }
@@ -104,7 +108,7 @@ public:
     // can ever match.
     std::optional<MTLIndexType> stripIndexFormat() const { return m_indexType; }
 
-    const BufferBindingSizesForBindGroup* LEGACY_NODELETE minimumBufferSizes(uint32_t) const;
+    NODELETE const BufferBindingSizesForBindGroup* minimumBufferSizes(uint32_t) const;
     RefPtr<RenderPipeline> recomputeLastStrideAsStride() const;
     uint64_t uniqueId() const { return m_uniqueId; }
     uint32_t vertexShaderBindingCount() const { return m_vertexShaderBindingCount; }

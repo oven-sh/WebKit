@@ -28,6 +28,7 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "Protected.h"
+#include "WebExtensionMessage.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/JSCJSValuePropertyInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
@@ -73,7 +74,7 @@ public:
     ~WebExtensionCallbackHandler();
 
     JSGlobalContextRef globalContext() const { return m_globalContext.get(); }
-    JSValueRef LEGACY_NODELETE callbackFunction() const;
+    NODELETE JSValueRef callbackFunction() const;
 
     void reportError(const String&);
 
@@ -199,6 +200,10 @@ JSObjectRef toJSError(JSContextRef, const String&);
 JSValueRef deserializeJSONString(JSContextRef, const String& jsonString);
 String serializeJSObject(JSContextRef, JSValueRef, JSValueRef* exception);
 
+// Serializes with structured clone when requested, otherwise as JSON. Returns nothing when the value
+// cannot be serialized, and structured clone also sets the exception.
+std::optional<WebExtensionMessage> serializeMessage(JSContextRef, JSValueRef, bool useStructuredClone, JSValueRef* exception);
+
 String toJSONString(JSContextRef, JSValueRef);
 String toSortedJSONString(JSContextRef, JSValueRef);
 bool isFunction(JSContextRef, JSValueRef);
@@ -211,7 +216,9 @@ JSValueRef fromArray(JSContextRef, Vector<size_t>&&);
 JSValueRef fromArray(JSContextRef, Vector<String>&&);
 
 JSValueRef fromJSON(JSContextRef, RefPtr<JSON::Value>);
+JSValueRef fromMessageJSON(JSContextRef, JSStringRef messageJSON);
 JSValueRef fromObject(JSContextRef, HashMap<String, Protected<JSValueRef>>&&);
+JSValueRef makeEnumObject(JSContextRef, std::initializer_list<std::pair<ASCIILiteral, ASCIILiteral>> entries);
 
 JSValueRef toJSValueRef(JSContextRef, const String&, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);
 JSValueRef toJSValueRef(JSContextRef, URL, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);

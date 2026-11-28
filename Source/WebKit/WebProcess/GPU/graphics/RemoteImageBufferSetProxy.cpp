@@ -42,7 +42,7 @@ class RemoteImageBufferSetProxyFlushFence : public ThreadSafeRefCounted<RemoteIm
     WTF_MAKE_NONCOPYABLE(RemoteImageBufferSetProxyFlushFence);
     WTF_MAKE_TZONE_ALLOCATED_INLINE(RemoteImageBufferSetProxyFlushFence);
 public:
-    static Ref<RemoteImageBufferSetProxyFlushFence> LEGACY_NODELETE create(RenderingUpdateID renderingUpdateID, Seconds timeoutDuration)
+    NODELETE static Ref<RemoteImageBufferSetProxyFlushFence> create(RenderingUpdateID renderingUpdateID, Seconds timeoutDuration)
     {
         return adoptRef(*new RemoteImageBufferSetProxyFlushFence { renderingUpdateID, timeoutDuration });
     }
@@ -69,7 +69,7 @@ public:
         return std::exchange(m_handles, std::nullopt);
     }
 
-    RenderingUpdateID LEGACY_NODELETE renderingUpdateID() const { return m_renderingUpdateID; }
+    NODELETE RenderingUpdateID renderingUpdateID() const { return m_renderingUpdateID; }
 
 private:
     RemoteImageBufferSetProxyFlushFence(RenderingUpdateID renderingUpdateID, Seconds timeoutDuration)
@@ -319,7 +319,10 @@ void RemoteImageBufferSetProxy::disconnect()
 {
     Locker locker { m_lock };
     m_prepareForDisplayIsPending = false;
-    m_remoteFrontBufferIsMissing = false;
+    // The remote buffers went away with the connection. Mark the front buffer missing so that the first
+    // prepare on the new connection repaints the whole layer, even if the dirty region from
+    // gpuProcessConnectionWasDestroyed() was already consumed by a rendering update on the old connection.
+    m_remoteFrontBufferIsMissing = true;
     m_generation++;
     m_remoteNeedsConfigurationUpdate = true;
     m_context = std::nullopt;
@@ -346,6 +349,23 @@ std::optional<WebCore::DynamicContentScalingDisplayList> RemoteImageBufferSetPro
 }
 #endif
 
+#if ENABLE(MODEL_PROCESS) && ENABLE(SPATIAL_PORTAL)
+void RemoteImageBufferSetProxy::frontBufferForExternalRead(CompletionHandler<void(std::optional<MachSendRight>&&)>&& completionHandler)
+{
+    RefPtr connection = this->connection();
+    if (!connection) [[unlikely]] {
+        completionHandler(std::nullopt);
+        return;
+    }
+
+    // Unlike sendWithAsyncReply(), this replies on the connection's dispatcher, the main run loop.
+    auto replyID = connection->sendWithAsyncReply(Messages::RemoteImageBufferSet::FrontBufferForExternalRead(), WTF::move(completionHandler), identifier());
+
+    // A send that fails early leaves the completion handler with the caller.
+    if (!replyID && completionHandler)
+        completionHandler(std::nullopt);
+}
+#endif
 
 } // namespace WebKit
 

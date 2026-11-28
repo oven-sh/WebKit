@@ -66,6 +66,7 @@ static GRefPtr<GdkTexture> dragIconTexture(RefPtr<ShareableBitmap>&& iconImage)
 void DragSource::begin(SelectionData&& selectionData, OptionSet<DragOperation> operationMask, RefPtr<ShareableBitmap>&& image, IntPoint&& imageHotspot)
 {
     if (m_drag) {
+        g_signal_handlers_disconnect_by_data(m_drag.get(), this);
         gdk_drag_drop_done(m_drag.get(), FALSE);
         m_drag = nullptr;
     }
@@ -74,20 +75,20 @@ void DragSource::begin(SelectionData&& selectionData, OptionSet<DragOperation> o
 
     Vector<GdkContentProvider*> providers;
     if (m_selectionData->hasMarkup()) {
-        auto markup = m_selectionData->markup().utf8();
+        auto markup = makeUTF8CString(m_selectionData->markup());
         GRefPtr bytes = gBytesNew(markup.span());
         providers.append(gdk_content_provider_new_for_bytes("text/html", bytes.get()));
     }
 
     if (m_selectionData->hasURIList()) {
-        auto uriList = m_selectionData->uriList().utf8();
+        auto uriList = makeUTF8CString(m_selectionData->uriList());
         GRefPtr bytes = gBytesNew(uriList.span());
         providers.append(gdk_content_provider_new_for_bytes("text/uri-list", bytes.get()));
     }
 
     if (m_selectionData->hasURL()) {
         const auto& urlString = m_selectionData->url().string();
-        auto url = makeString(urlString, '\n', m_selectionData->hasText() ? m_selectionData->text() : urlString).utf8();
+        auto url = makeUTF8CString(makeString(urlString, '\n', m_selectionData->hasText() ? m_selectionData->text() : urlString));
         GRefPtr bytes = gBytesNew(url.span());
         providers.append(gdk_content_provider_new_for_bytes("_NETSCAPE_URL", bytes.get()));
     }
@@ -98,7 +99,7 @@ void DragSource::begin(SelectionData&& selectionData, OptionSet<DragOperation> o
     }
 
     if (m_selectionData->hasText())
-        providers.append(gdk_content_provider_new_typed(G_TYPE_STRING, m_selectionData->text().utf8().legacyCStringPointer()));
+        providers.append(gdk_content_provider_new_typed(G_TYPE_STRING, makeUTF8CString(m_selectionData->text()).legacyCStringPointer()));
 
     if (m_selectionData->canSmartReplace()) {
         GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(nullptr, 0));
@@ -119,6 +120,7 @@ void DragSource::begin(SelectionData&& selectionData, OptionSet<DragOperation> o
         if (drag.m_drag.get() != gtkDrag)
             return;
 
+        g_signal_handlers_disconnect_by_data(gtkDrag, userData);
         drag.m_selectionData = std::nullopt;
         drag.m_drag = nullptr;
 
@@ -139,6 +141,7 @@ void DragSource::begin(SelectionData&& selectionData, OptionSet<DragOperation> o
         if (drag.m_drag.get() != gtkDrag)
             return;
 
+        g_signal_handlers_disconnect_by_data(gtkDrag, userData);
         drag.m_selectionData = std::nullopt;
         drag.m_drag = nullptr;
     }), this);

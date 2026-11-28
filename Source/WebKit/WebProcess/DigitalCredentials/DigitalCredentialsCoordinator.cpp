@@ -28,9 +28,15 @@
 
 #if ENABLE(WEB_AUTHN)
 #include "DigitalCredentialsCoordinatorMessages.h"
+#if PLATFORM(COCOA)
 #include "DigitalCredentialsRequestValidatorBridge.h"
+#endif
 #include "Logging.h"
+#include "MessageSenderInlines.h"
+#include "NetworkConnectionToWebProcessMessages.h"
+#include "NetworkProcessConnection.h"
 #include "WebPage.h"
+#include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include <WebCore/DigitalCredentialsProtocols.h>
 #include <WebCore/DigitalCredentialsRequestData.h>
@@ -61,11 +67,42 @@ Ref<DigitalCredentialsCoordinator> DigitalCredentialsCoordinator::create(WebPage
     return adoptRef(*new DigitalCredentialsCoordinator(webPage));
 }
 
+#if PLATFORM(COCOA)
+static bool uiProcessMayPresentDigitalCredentials()
+{
+    static bool mayPresent = WebProcess::singleton().parentProcessHasEntitlement("com.apple.developer.web-browser"_s)
+        || WebProcess::singleton().parentProcessHasEntitlement("com.apple.developer.identity-document-services.web-presentment-controller"_s);
+    return mayPresent;
+}
+#endif
+
 void DigitalCredentialsCoordinator::showDigitalCredentialsChooser(std::optional<WebCore::FrameIdentifier> frameID, WebCore::DigitalCredentialsRawRequests&& rawRequests, const WebCore::DigitalCredentialsRequestData& request, WTF::CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& completionHandler)
 {
-    WTF::switchOn(m_rawRequests, [](auto& cachedRawRequests) {
-        ASSERT(cachedRawRequests.isEmpty());
-    });
+    ASSERT(m_rawRequests.isEmpty());
+
+#if PLATFORM(COCOA)
+    if (!uiProcessMayPresentDigitalCredentials()) {
+        RefPtr page = m_page;
+        if (!page)
+            return completionHandler(makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::InvalidStateError, "The page is not available."_s }));
+        page->sendWithAsyncReply(Messages::WebPageProxy::HasVirtualWalletForDigitalCredentials(frameID), [weakThis = WeakPtr { *this }, frameID, rawRequests = WTF::move(rawRequests), request = WebCore::DigitalCredentialsRequestData { request }, completionHandler = WTF::move(completionHandler)](bool hasVirtualWallet) mutable {
+            RefPtr protectedThis = weakThis;
+            RefPtr page = protectedThis ? protectedThis->m_page.get() : nullptr;
+            if (!page)
+                return completionHandler(makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::AbortError, "The coordinator is no longer available."_s }));
+            if (hasVirtualWallet)
+                return protectedThis->showChooserInUIProcess(frameID, WTF::move(rawRequests), request, WTF::move(completionHandler));
+            protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::PresentDigitalCredentialRequest(page->webPageProxyIdentifier(), request, WTF::move(rawRequests)), WTF::move(completionHandler));
+        });
+        return;
+    }
+#endif
+
+    showChooserInUIProcess(frameID, WTF::move(rawRequests), request, WTF::move(completionHandler));
+}
+
+void DigitalCredentialsCoordinator::showChooserInUIProcess(std::optional<WebCore::FrameIdentifier> frameID, WebCore::DigitalCredentialsRawRequests&& rawRequests, const WebCore::DigitalCredentialsRequestData& request, CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& completionHandler)
+{
     m_rawRequests = WTF::move(rawRequests);
 
     if (RefPtr page = m_page.get()) {
@@ -74,30 +111,32 @@ void DigitalCredentialsCoordinator::showDigitalCredentialsChooser(std::optional<
             if (!protectedThis)
                 return completionHandler(makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::AbortError, "The coordinator is no longer available."_s }));
 
-            WTF::switchOn(protectedThis->m_rawRequests, [](auto& cachedRawRequests) {
-                cachedRawRequests.clear();
-            });
+            protectedThis->m_rawRequests.clear();
             completionHandler(WTF::move(responseOrException));
         });
     } else {
-        WTF::switchOn(m_rawRequests, [](auto& cachedRawRequests) {
-            cachedRawRequests.clear();
-        });
+        m_rawRequests.clear();
         completionHandler(makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::InvalidStateError, "The page is not available."_s }));
     }
 }
 
 ExceptionOr<Vector<std::optional<WebCore::ValidatedDigitalCredentialRequest>>> DigitalCredentialsCoordinator::validateAndParseDigitalCredentialRequests(const SecurityOrigin& topOrigin, const Document& document, const Vector<UnvalidatedDigitalCredentialRequest>& unvalidatedRequests)
 {
-    auto results = DigitalCredentials::validateRequests(topOrigin, document, unvalidatedRequests);
-    return WTF::move(results);
+#if PLATFORM(COCOA)
+    return DigitalCredentials::validateRequests(topOrigin.data(), unvalidatedRequests, [&](const String& message) {
+        const_cast<Document&>(document).addConsoleMessage(MessageSource::JS, MessageLevel::Warning, message);
+    });
+#else
+    UNUSED_PARAM(topOrigin);
+    UNUSED_PARAM(document);
+    UNUSED_PARAM(unvalidatedRequests);
+    return Exception { WebCore::ExceptionCode::NotSupportedError, "Digital credentials are not supported."_s };
+#endif
 }
 
 void DigitalCredentialsCoordinator::dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&& completionHandler)
 {
-    WTF::switchOn(m_rawRequests, [](auto& rawRequests) {
-        rawRequests.clear();
-    });
+    m_rawRequests.clear();
     if (RefPtr page = m_page.get())
         page->dismissDigitalCredentialsChooser(WTF::move(completionHandler));
     else
@@ -106,9 +145,7 @@ void DigitalCredentialsCoordinator::dismissDigitalCredentialsChooser(CompletionH
 
 void DigitalCredentialsCoordinator::provideRawDigitalCredentialRequests(CompletionHandler<void(WebCore::DigitalCredentialsRawRequests&&)>&& completionHandler)
 {
-    WTF::switchOn(m_rawRequests, [](auto& rawRequests) {
-        ASSERT(!rawRequests.isEmpty());
-    });
+    ASSERT(!m_rawRequests.isEmpty());
     completionHandler(std::exchange(m_rawRequests, { }));
 }
 

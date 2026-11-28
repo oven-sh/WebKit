@@ -1,5 +1,4 @@
 # in a program as read: every cycle contains a LoopHint, also an inner cycle and a cycle through a handler edge
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: CycleWithoutLoopMark 3
 

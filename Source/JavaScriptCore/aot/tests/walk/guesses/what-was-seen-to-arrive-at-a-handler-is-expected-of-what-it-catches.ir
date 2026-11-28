@@ -1,0 +1,57 @@
+# Link has seen one record arrive at the handler, beside whatever the engine throws. That is expected of what the handler catches: one test of the shape, the reads by slot behind it, and the reads as written on the other arm
+# function walk(n) { throw { node: n, depth: 1 }; }  function find(n) { try { walk(n); } catch (e) { return e.node + e.depth; } }  sink(find);
+# another record has the same two names, so the names alone tell nobody which layout is meant
+# RUN: walk f2 mechanisms=none+TypedOperations+Guesses+Handlers
+# CHECK: mechanisms TypedOperations,Guesses,Handlers
+# CHECK-LABEL: code f2:Body
+# CHECK: = CatchValue
+# CHECK: = ShapeTest
+# CHECK: = GetSlot {{*}}key="node"
+# CHECK: = GetSlot {{*}}key="depth"
+# RUN(CLOSED): walk f2 mechanisms=none+TypedOperations+Guesses+Handlers
+# CLOSED: = PropGet {{*}}key="node"
+# RUN(LINK): link held functions mechanisms=none+TypedOperations+Guesses+Handlers
+# LINK: catch f2 b2 caught={{*}}L0
+# RUN(ALL): walk f2 mechanisms=all
+# ALL-LABEL: code f2:Body
+# ALL: = GetSlot {{*}}key="node"
+
+layout L0 module=m0 fields=[{key="node" declared={type=anything} flags=[IsRequired]}, {key="depth" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="node" declared={type=anything} flags=[IsRequired]}, {key="depth" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="walk" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=2
+    v3 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f2
+    v7 = Call v1, -, v6
+    Return v7
+}
+function f1 name="walk" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Throw v3
+}
+function f2 name="find" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="walk"
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = PropGet v3 key="node"
+    v5 = PropGet v3 key="depth"
+    v6 = Add v4, v5
+    Return v6
+}

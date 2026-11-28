@@ -31,6 +31,7 @@
 #include "ContextDestructionObserverInlines.h"
 #include "DOMException.h"
 #include "ExceptionOr.h"
+#include "HEVCUtilities.h"
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsVideoEncoderSupport.h"
@@ -49,6 +50,7 @@
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <wtf/Borrow.h>
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -97,6 +99,23 @@ static bool isSupportedVP9EncoderCodec(const String& codec, const SettingsValues
     }
 }
 
+static bool isSupportedHEVCEncoderCodec(const String& codec, const SettingsValues& settings)
+{
+    if (!settings.webCodecsHEVCEnabled)
+        return false;
+#if PLATFORM(COCOA)
+    auto parameters = parseHEVCCodecParameters(codec);
+    if (!parameters)
+        return false;
+    // Main 4:2:2 10 is the only range extensions profile VideoToolbox encodes.
+    constexpr uint8_t rangeExtensionsProfileIDC = 4;
+    return parameters->generalProfileIDC != rangeExtensionsProfileIDC || isHEVCMain42210Profile(*parameters);
+#else
+    UNUSED_PARAM(codec);
+    return true;
+#endif
+}
+
 static bool isSupportedEncoderCodec(const WebCodecsVideoEncoderConfig& config, const SettingsValues& settings)
 {
     constexpr size_t maxFrameDimension = 32767;
@@ -105,8 +124,7 @@ static bool isSupportedEncoderCodec(const WebCodecsVideoEncoderConfig& config, c
 
     return config.codec.startsWith("vp8"_s) || config.codec.startsWith("avc1."_s)
         || (config.codec.startsWith("vp09."_s) && isSupportedVP9EncoderCodec(config.codec, settings))
-        || (config.codec.startsWith("hev1."_s) && settings.webCodecsHEVCEnabled)
-        || (config.codec.startsWith("hvc1."_s) && settings.webCodecsHEVCEnabled)
+        || ((config.codec.startsWith("hev1."_s) || config.codec.startsWith("hvc1."_s)) && isSupportedHEVCEncoderCodec(config.codec, settings))
         || (config.codec.startsWith("av01.0"_s) && settings.webCodecsAV1Enabled);
 }
 
@@ -180,28 +198,30 @@ ExceptionOr<void> WebCodecsVideoEncoder::configure(ScriptExecutionContext& conte
 
     setState(WebCodecsCodecState::Configured);
     m_isKeyChunkRequired = true;
+    m_activeOrientation = std::nullopt;
 
-    if (m_internalEncoder) {
-        queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, config]() mutable {
-            if (isSameConfigurationExceptBitrateAndFramerate(m_baseConfiguration, config)) {
-                updateRates(config);
-                return WebCodecsControlMessageOutcome::Processed;
-            }
-
-            blockControlMessageQueue();
-            protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalEncoder)->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, config = WTF::move(config), pendingActivity = makePendingActivity(*this)] (auto&&) mutable {
-                RefPtr protectedThis = weakThis.get();
-                if (!protectedThis)
-                    return;
-
-                if (protectedThis->state() == WebCodecsCodecState::Closed || !protectedThis->scriptExecutionContext())
-                    return;
-
-                protectedThis->unblockControlMessageQueue();
-            });
+    queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, config] mutable {
+        if (!m_internalEncoder)
             return WebCodecsControlMessageOutcome::Processed;
-        } });
-    }
+
+        if (isSameConfigurationExceptBitrateAndFramerate(m_baseConfiguration, config)) {
+            updateRates(config);
+            return WebCodecsControlMessageOutcome::Processed;
+        }
+
+        blockControlMessageQueue();
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalEncoder)->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, config = WTF::move(config), pendingActivity = makePendingActivity(*this)](auto&&) mutable {
+            RefPtr protectedThis = weakThis;
+            if (!protectedThis)
+                return;
+
+            if (protectedThis->state() == WebCodecsCodecState::Closed || !protectedThis->scriptExecutionContext())
+                return;
+
+            protectedThis->unblockControlMessageQueue();
+        });
+        return WebCodecsControlMessageOutcome::Processed;
+    } });
 
     bool isSupportedCodec = isSupportedEncoderCodec(config, context.settingsValues());
     queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, config = WTF::move(config), isSupportedCodec]() mutable {
@@ -248,7 +268,7 @@ ExceptionOr<void> WebCodecsVideoEncoder::configure(ScriptExecutionContext& conte
                     result.timestamp,
                     result.duration,
                     SharedBuffer::create(WTF::move(result.data)));
-                encoder.m_output->invoke(WTF::move(chunk), encoder.createEncodedChunkMetadata(result.temporalIndex));
+                encoder.m_output->invoke(WTF::move(chunk), encoder.createEncodedChunkMetadata(result.temporalIndex, { static_cast<double>(result.rotation), result.isMirrored }));
             });
         });
 
@@ -272,15 +292,16 @@ ExceptionOr<void> WebCodecsVideoEncoder::configure(ScriptExecutionContext& conte
     return { };
 }
 
-WebCodecsEncodedVideoChunkMetadata WebCodecsVideoEncoder::createEncodedChunkMetadata(std::optional<unsigned> temporalIndex)
+WebCodecsEncodedVideoChunkMetadata WebCodecsVideoEncoder::createEncodedChunkMetadata(std::optional<unsigned> temporalIndex, Orientation orientation)
 {
     WebCodecsEncodedVideoChunkMetadata metadata;
 
-    if (m_hasNewActiveConfiguration) {
+    if (m_hasNewActiveConfiguration || m_activeOutputOrientation != orientation) {
         m_hasNewActiveConfiguration = false;
+        m_activeOutputOrientation = orientation;
         // FIXME: Provide more accurate decoder configuration
         metadata.decoderConfig = WebCodecsVideoDecoderConfig {
-            !m_activeConfiguration.codec.isEmpty() ? WTF::move(m_activeConfiguration.codec) : String { m_baseConfiguration.codec },
+            !m_activeConfiguration.codec.isEmpty() ? String { m_activeConfiguration.codec } : String { m_baseConfiguration.codec },
             { },
             m_activeConfiguration.visibleWidth ? m_activeConfiguration.visibleWidth : m_baseConfiguration.width,
             m_activeConfiguration.visibleHeight ? m_activeConfiguration.visibleHeight : m_baseConfiguration.height,
@@ -290,6 +311,9 @@ WebCodecsEncodedVideoChunkMetadata WebCodecsVideoEncoder::createEncodedChunkMeta
             HardwareAcceleration::NoPreference,
             { }
         };
+
+        metadata.decoderConfig->rotation = orientation.rotation;
+        metadata.decoderConfig->flip = orientation.flip;
 
         if (m_activeConfiguration.description && m_activeConfiguration.description->size()) {
             auto arrayBuffer = ArrayBuffer::tryCreateUninitialized(m_activeConfiguration.description->size(), 1);
@@ -320,6 +344,13 @@ ExceptionOr<void> WebCodecsVideoEncoder::encode(Ref<WebCodecsVideoFrame>&& frame
     if (state() != WebCodecsCodecState::Configured)
         return Exception { ExceptionCode::InvalidStateError, "VideoEncoder is not configured"_s };
 
+    Orientation orientation { frame->rotation(), frame->flip() };
+    if (m_activeOrientation) {
+        if (*m_activeOrientation != orientation)
+            return Exception { ExceptionCode::DataError, "VideoFrame rotation or flip does not match the previous frames"_s };
+    } else
+        m_activeOrientation = orientation;
+
     queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, internalFrame = internalFrame.releaseNonNull(), timestamp = frame->timestamp(), duration = frame->duration(), options = WTF::move(options)]() mutable {
         incrementCodecOperationCount();
         protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalEncoder)->encode({ WTF::move(internalFrame), timestamp, duration }, options.keyFrame), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
@@ -329,7 +360,7 @@ ExceptionOr<void> WebCodecsVideoEncoder::encode(Ref<WebCodecsVideoFrame>&& frame
 
             if (!result) {
                 if (RefPtr context = protectedThis->scriptExecutionContext())
-                    context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("VideoEncoder encode failed: "_s, result.error()));
+                    context->addConsoleMessage(MessageSource::Media, MessageLevel::Error, makeString("VideoEncoder encode failed: "_s, result.error()));
                 protectedThis->closeEncoder(Exception { ExceptionCode::EncodingError, WTF::move(result.error()) });
                 return;
             }
@@ -411,12 +442,13 @@ ExceptionOr<void> WebCodecsVideoEncoder::resetEncoder(const Exception& exception
         return Exception { ExceptionCode::InvalidStateError, "VideoEncoder is closed"_s };
 
     setState(WebCodecsCodecState::Unconfigured);
+    m_activeOutputOrientation = std::nullopt;
     if (RefPtr internalEncoder = std::exchange(m_internalEncoder, { }))
         internalEncoder->reset();
     clearControlMessageQueueAndMaybeScheduleDequeueEvent();
 
     auto promises = std::exchange(m_pendingFlushPromises, { });
-    for (auto& promise : promises)
+    for (auto& promise : borrow(promises))
         promise->reject(exception);
 
     return { };

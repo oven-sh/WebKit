@@ -32,8 +32,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct TextOnlyLineBreakResult {
     InlineContentBreaker::IsEndOfLine isEndOfLine { InlineContentBreaker::IsEndOfLine::Yes };
@@ -44,7 +43,7 @@ struct TextOnlyLineBreakResult {
 };
 
 struct CandidateTextContent {
-    void LEGACY_NODELETE append(InlineLayoutUnit contentWidth)
+    NODELETE void append(InlineLayoutUnit contentWidth)
     {
         logicalWidth += contentWidth;
         ++endIndex;
@@ -59,11 +58,11 @@ InlineLayoutUnit TextOnlySimpleLineBuilder::measuredInlineTextItem(const InlineT
 {
     ASSERT(!inlineTextItem.width());
     if (!inlineTextItem.isWhitespace() || InlineTextItem::shouldPreserveSpacesAndTabs(inlineTextItem))
-        return TextUtil::width(inlineTextItem, style.fontCascade(), contentLogicalLeft);
-    return TextUtil::width(inlineTextItem, style.fontCascade(), inlineTextItem.start(), inlineTextItem.start() + 1, contentLogicalLeft);
+        return TextUtil::width(inlineTextItem, protect(style.fontCascade()), contentLogicalLeft);
+    return TextUtil::width(inlineTextItem, protect(style.fontCascade()), inlineTextItem.start(), inlineTextItem.start() + 1, contentLogicalLeft);
 }
 
-static inline InlineItemPosition LEGACY_NODELETE placedInlineItemEnd(size_t layoutRangeStartIndex, size_t placedInlineItemCount, size_t overflowingContentLength, std::span<const InlineItem> inlineItemList)
+NODELETE static inline InlineItemPosition placedInlineItemEnd(size_t layoutRangeStartIndex, size_t placedInlineItemCount, size_t overflowingContentLength, std::span<const InlineItem> inlineItemList)
 {
     if (!overflowingContentLength)
         return { layoutRangeStartIndex + placedInlineItemCount };
@@ -73,7 +72,7 @@ static inline InlineItemPosition LEGACY_NODELETE placedInlineItemEnd(size_t layo
     return { trailingInlineItemIndex, overflowingInlineTextItemLength - overflowingContentLength };
 }
 
-static inline bool LEGACY_NODELETE isLastLineWithInlineContent(InlineItemPosition placedContentEnd, size_t layoutRangeEndIndex)
+NODELETE static inline bool isLastLineWithInlineContent(InlineItemPosition placedContentEnd, size_t layoutRangeEndIndex)
 {
     return placedContentEnd.index == layoutRangeEndIndex && !placedContentEnd.offset;
 }
@@ -90,7 +89,7 @@ static inline bool consumeTrailingLineBreakIfApplicable(const TextOnlyLineBreakR
         return false;
     auto& trailingLineBreak = inlineItemList[trailingInlineItemIndex];
     ASSERT(trailingLineBreak.isLineBreak());
-    line.appendLineBreak(trailingLineBreak, trailingLineBreak.style());
+    line.appendLineBreak(trailingLineBreak, protect(trailingLineBreak.style()));
     return true;
 }
 
@@ -172,11 +171,16 @@ std::optional<LineLayoutResult> TextOnlySimpleLineBuilder::placeSingleCharacterC
     ASSERT(lineInput.needsLayoutRange.start.index + 1 == lineInput.needsLayoutRange.end.index && !lineInput.needsLayoutRange.start.offset && !lineInput.needsLayoutRange.end.offset);
 
     auto lineRect = lineInput.initialLogicalRect;
-    auto contentWidth = inlineTextItem->width().value_or(0.f);
+    CheckedRef style = isFirstFormattedLineCandidate ? inlineTextItem->firstLineStyle() : inlineTextItem->style();
+    auto contentWidth = [&] {
+        if (auto width = inlineTextItem->width())
+            return *width;
+        return TextUtil::width(*inlineTextItem, protect(style->fontCascade()), { });
+    }();
     Line::RunList singleRun;
-    singleRun.append({ Line::Run(*inlineTextItem, inlineTextItem->style(), { }, contentWidth) });
+    singleRun.append({ Line::Run(*inlineTextItem, style, { }, contentWidth) });
 
-    auto contentLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), contentWidth, lineRect.width(), { }, true);
+    auto contentLeft = InlineFormattingUtils::horizontalAlignmentOffset(protect(rootStyle()), contentWidth, lineRect.width(), { }, true);
     auto contentRight = contentLeft + contentWidth;
 
     return LineLayoutResult { lineInput.needsLayoutRange
@@ -297,7 +301,7 @@ InlineItemPosition TextOnlySimpleLineBuilder::placeNonWrappingInlineTextContent(
     }
 
     if (trailingLineBreakIndex && candidateContent.startIndex == candidateContent.endIndex) {
-        m_line.appendLineBreak(m_inlineItemList[*trailingLineBreakIndex], m_inlineItemList[*trailingLineBreakIndex].style());
+        m_line.appendLineBreak(m_inlineItemList[*trailingLineBreakIndex], protect(m_inlineItemList[*trailingLineBreakIndex].style()));
         return { *trailingLineBreakIndex + 1, { } };
     }
 
@@ -497,6 +501,9 @@ bool TextOnlySimpleLineBuilder::isEligibleForSimplifiedTextOnlyInlineLayoutByCon
         return false;
     if (!inlineItems.hasTextAndLineBreakOnlyContent() || inlineItems.hasInlineBoxes() || inlineItems.requiresVisualReordering() || inlineItems.hasTextAutospace())
         return false;
+    // Text only layout takes the text style from the root.
+    if (inlineItems.hasTextWithStyleOfItsOwn())
+        return false;
     if (!inlineLayoutState.placedFloats().isEmpty())
         return false;
     if (auto lineClamp = inlineLayoutState.parentBlockLayoutState().lineClamp(); lineClamp && !lineClamp->isLegacy)
@@ -561,5 +568,3 @@ bool TextOnlySimpleLineBuilder::isEligibleForSimplifiedDisplayBuild(const Elemen
 }
 
 }
-}
-

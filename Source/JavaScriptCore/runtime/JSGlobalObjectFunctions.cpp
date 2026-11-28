@@ -25,6 +25,7 @@
 #include "config.h"
 #include "JSGlobalObjectFunctions.h"
 
+#include "AOTRuntimeHooks.h"
 #include "CallFrame.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImportMap.h"
@@ -135,7 +136,7 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
 
     if (builder.hasOverflowed()) [[unlikely]]
         return throwOutOfMemoryError(globalObject, scope);
-    return jsString(vm, builder.toString());
+    return jsString(vm, WTF::move(builder).toString());
 }
 
 static JSValue encode(JSGlobalObject* globalObject, JSValue argument, const WTF::BitSet<256>& doNotEscape)
@@ -219,7 +220,7 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
     }
     if (builder.hasOverflowed()) [[unlikely]]
         return throwOutOfMemoryError(globalObject, scope);
-    RELEASE_AND_RETURN(scope, jsString(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(builder).toString()));
 }
 
 static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF::BitSet<256>& doNotUnescape, bool strict)
@@ -234,7 +235,7 @@ static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF:
 static const int SizeOfInfinity = 8;
 
 template <typename CharType>
-static bool LEGACY_NODELETE isInfinity(std::span<const CharType> data)
+NODELETE static bool isInfinity(std::span<const CharType> data)
 {
     return data.size() >= SizeOfInfinity
         && data[0] == 'I'
@@ -249,7 +250,7 @@ static bool LEGACY_NODELETE isInfinity(std::span<const CharType> data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double LEGACY_NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
+NODELETE static double jsBinaryIntegerLiteral(std::span<const CharType>& data)
 {
     // Binary number.
     skip(data, 2);
@@ -270,7 +271,7 @@ static double LEGACY_NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& 
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double LEGACY_NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
+NODELETE static double jsOctalIntegerLiteral(std::span<const CharType>& data)
 {
     // Octal number.
     skip(data, 2);
@@ -291,7 +292,7 @@ static double LEGACY_NODELETE jsOctalIntegerLiteral(std::span<const CharType>& d
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double LEGACY_NODELETE jsHexIntegerLiteral(std::span<const CharType>& data)
+NODELETE static double jsHexIntegerLiteral(std::span<const CharType>& data)
 {
     // Hex number.
     skip(data, 2);
@@ -642,7 +643,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEscape, (JSGlobalObject* globalObject, CallFr
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
-        return jsString(vm, builder.toString());
+        return jsString(vm, WTF::move(builder).toString());
     }));
 }
 
@@ -705,7 +706,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
-        return jsString(vm, builder.toString());
+        return jsString(vm, WTF::move(builder).toString());
     }));
 }
 
@@ -845,7 +846,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
 #endif
 }
 
-static bool LEGACY_NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(VM& vm, JSObject* source)
+NODELETE static bool canPerformFastPropertyEnumerationForCopyDataProperties(VM& vm, JSObject* source)
 {
     Structure* structure = source->structure();
     if (auto* function = dynamicDowncast<JSFunction>(source)) {
@@ -872,7 +873,7 @@ static CodeBlock* getCallerCodeBlock(CallFrame* callFrame)
 }
 
 #if ENABLE(AOT)
-// False, with nothing copied, where listing the own properties of the compiled object may run code, or one of them is named __proto__.
+// Returns false without copying anything if listing the compiled object's own properties may run code, or if one of them is named __proto__.
 static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSObject* source, const Invocable<bool(PropertyName)> auto& isExcluded)
 {
     Vector<UniquedStringImpl*, 8> properties;
@@ -1057,6 +1058,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
             return JSValue::encode(cloned);
     }
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && sourceStructure->isCompiledStructure()) {
+        if (JSObject* copy = AOT::RuntimeHooks::tryCopyObject(globalObject, source))
+            return JSValue::encode(copy);
+    }
+#endif
 
     JSObject* target = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });

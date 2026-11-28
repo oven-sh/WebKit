@@ -297,6 +297,9 @@ public:
 
     WTF::AdaptiveStringSearcherTables& adaptiveStringSearcherTables() { return m_stringSearcherTables.get(*this); }
 
+    uint64_t& recentLatin1JSONStringifyLengths() { return m_recentLatin1JSONStringifyLengths; }
+    uint64_t& recentUTF16JSONStringifyLengths() { return m_recentUTF16JSONStringifyLengths; }
+
     bool isAnalyzingHeap() const { return m_activeHeapAnalyzer; }
     HeapAnalyzer* activeHeapAnalyzer() const { return m_activeHeapAnalyzer; }
     void setActiveHeapAnalyzer(HeapAnalyzer* analyzer) { m_activeHeapAnalyzer = analyzer; }
@@ -320,7 +323,7 @@ public:
     JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
-    JS_EXPORT_PRIVATE JSGlobalObject* LEGACY_NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
+    NODELETE JS_EXPORT_PRIVATE JSGlobalObject* deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
 
     WeakRandom& random() LIFETIME_BOUND { return m_random; }
     WeakRandom& heapRandom() LIFETIME_BOUND { return m_heapRandom; }
@@ -339,7 +342,7 @@ public:
             traps().didClearTerminationRequest();
 #endif
     }
-    void LEGACY_NODELETE setHasTerminationRequest();
+    NODELETE void setHasTerminationRequest();
 
     bool executionForbidden() const { return m_executionForbidden; }
     void setExecutionForbidden() { m_executionForbidden = true; }
@@ -514,11 +517,13 @@ public:
     using AOTState = AOT::VMState;
     AOTState& aotState() LIFETIME_BOUND { return m_aotState; }
     bool hasCompiledCode() const { return m_aotState.hasCompiledCode; }
-    bool runsOnlyStaticCode() const { return Options::disallowNonStaticCode() && (hasCompiledCode() || !Options::disallowNonStaticCodeOnlyBesideCompiledCode()); }
+    bool mayLockBuiltins() const { return m_aotState.mayLockBuiltins; }
+    bool runsOnlyStaticCode() const { return Options::disallowNonStaticCode() && (hasCompiledCode() || !Options::disallowNonStaticCodeOnlyWithCompiledCode()); }
     static constexpr ptrdiff_t offsetOfAOTState() { return OBJECT_OFFSETOF(VM, m_aotState); }
     AOTState m_aotState;
 #else
     static constexpr bool hasCompiledCode() { return false; }
+    static constexpr bool mayLockBuiltins() { return false; }
     static bool runsOnlyStaticCode() { return Options::disallowNonStaticCode(); }
 #endif
     ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }
@@ -703,7 +708,7 @@ public:
     AtomStringImpl** ensureCachedBytecodeThreeCharacterAtoms();
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;
-    UncheckedKeyHashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
+    HashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
 
     bool mightBeExecutingTaintedCode() const { return m_mightBeExecutingTaintedCode; }
 #if USE(BUN_JSC_ADDITIONS)
@@ -836,7 +841,7 @@ public:
     SourceProviderCache* addSourceProviderCache(SourceProvider*);
     void pruneUnusedSourceProviderCaches();
 
-    typedef UncheckedKeyHashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
+    typedef HashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
     SourceProviderCacheMap sourceProviderCacheMap;
 #if ENABLE(JIT)
     std::unique_ptr<JITThunks> jitStubs;
@@ -960,7 +965,7 @@ public:
     }
 
     void* lastStackTop() { return m_lastStackTop; }
-    void LEGACY_NODELETE setLastStackTop(const Thread&);
+    NODELETE void setLastStackTop(const Thread&);
     
 #if ENABLE(C_LOOP)
     ALWAYS_INLINE CLoopStack& cloopStack() { return traps().cloopStack(); }
@@ -1000,7 +1005,7 @@ public:
         return m_exceptionFuzzBuffer.get();
     }
 
-    void gatherScratchBufferRoots(ConservativeRoots&);
+    void gatherScratchBufferRoots(ConservativeRoots&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
     void forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* end)>&);
 #if USE(BUN_JSC_ADDITIONS)
     void forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin, void* end)>&);
@@ -1011,14 +1016,14 @@ public:
     std::unique_ptr<CheckpointOSRExitSideState> popCheckpointOSRSideState(CallFrame* expectedFrame);
     void popAllCheckpointOSRSideStateUntil(CallFrame* targetFrame);
     bool hasCheckpointOSRSideState() const { return m_checkpointSideState.size(); }
-    void scanSideState(ConservativeRoots&) const;
+    void scanSideState(ConservativeRoots&) const WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
 
     Interpreter interpreter;
     VMEntryScope* entryScope { nullptr };
 
 #if USE(BUN_JSC_ADDITIONS)
     JSObject* stringRecursionCheckFirstObject { nullptr };
-    UncheckedKeyHashSet<JSObject*> stringRecursionCheckVisitedObjects;
+    HashSet<JSObject*> stringRecursionCheckVisitedObjects;
 #endif // USE(BUN_JSC_ADDITIONS)
 
     DateCache dateCache;
@@ -1203,7 +1208,7 @@ public:
         DrainMicrotaskDelayScope& operator=(const DrainMicrotaskDelayScope&);
 
     private:
-        void LEGACY_NODELETE increment();
+        NODELETE void increment();
         void decrement();
 
         RefPtr<VM> m_vm;
@@ -1217,21 +1222,25 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
 #endif
-    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func)
+    void setMicrotaskTickCallback(WTF::Function<void(VM&)>&& func)
     {
-        m_onEachMicrotaskTick = WTF::move(func);
+        m_microtaskTickCallback = WTF::move(func);
 #if USE(BUN_JSC_ADDITIONS)
         updateHostObservesMicrotaskBoundaries();
 #endif
     }
+    CONCURRENT_SAFE void requestMicrotaskTickCallback() { m_isMicrotaskTickCallbackRequested.store(true, std::memory_order_release); }
+    bool isMicrotaskTickCallbackRequested() const { return m_isMicrotaskTickCallbackRequested.load(std::memory_order_relaxed); }
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE void updateHostObservesMicrotaskBoundaries();
     bool hostObservesMicrotaskBoundaries() const { return m_hostObservesMicrotaskBoundaries; }
 #endif
-    void callOnEachMicrotaskTick()
+    void callMicrotaskTickCallback()
     {
-        if (m_onEachMicrotaskTick)
-            m_onEachMicrotaskTick(*this);
+        if (!m_isMicrotaskTickCallbackRequested.exchange(false, std::memory_order_acquire))
+            return;
+        if (m_microtaskTickCallback)
+            m_microtaskTickCallback(*this);
     }
     void finalizeSynchronousJSExecution()
     {
@@ -1334,7 +1343,7 @@ public:
 
     WTF::RunLoop& runLoop() const { return m_runLoop; }
 
-    static void LEGACY_NODELETE setCrashOnVMCreation(bool);
+    NODELETE static void setCrashOnVMCreation(bool);
 
     void addLoopHintExecutionCounter(const JSInstruction*);
     uintptr_t* getLoopHintExecutionCounter(const JSInstruction*);
@@ -1363,8 +1372,8 @@ public:
     void reconcileWeakReferencesAtGCEnd();
     DECLARE_VISIT_AGGREGATE;
 
-    void LEGACY_NODELETE addDebugger(Debugger&);
-    void LEGACY_NODELETE removeDebugger(Debugger&);
+    NODELETE void addDebugger(Debugger&);
+    NODELETE void removeDebugger(Debugger&);
     template<typename Func>
     void forEachDebugger(NOESCAPE const Func&);
 
@@ -1375,7 +1384,7 @@ public:
 
     int64_t numberOfActiveJITPlans() const { return m_numberOfActiveJITPlans.load(std::memory_order_relaxed); }
 
-    Ref<Waiter> LEGACY_NODELETE syncWaiter();
+    NODELETE Ref<Waiter> syncWaiter();
 
     void notifyDebuggerHookInjected() { m_isDebuggerHookInjected = true; }
     bool isDebuggerHookInjected() const { return m_isDebuggerHookInjected; }
@@ -1383,7 +1392,7 @@ public:
 
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
     Wasm::DebugState* debugStateIfExists() { return m_debugState.get(); }
-    JS_EXPORT_PRIVATE Wasm::DebugState* LEGACY_NODELETE debugState();
+    NODELETE JS_EXPORT_PRIVATE Wasm::DebugState* debugState();
 #endif
 
 private:
@@ -1496,7 +1505,7 @@ private:
     std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
-    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
+    HashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
     std::unique_ptr<TypeProfiler> m_typeProfiler;
     std::unique_ptr<TypeProfilerLog> m_typeProfilerLog;
     unsigned m_typeProfilerEnabledCount { 0 };
@@ -1521,11 +1530,14 @@ private:
     void createBytecodeIntrinsicRegistry();
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
+    uint64_t m_recentLatin1JSONStringifyLengths { 0 };
+    uint64_t m_recentUTF16JSONStringifyLengths { 0 };
 
     // FIXME: We should remove handled promises from this list at GC flip. <https://webkit.org/b/201005>
     Vector<Strong<JSPromise>> m_aboutToBeNotifiedRejectedPromises;
 
-    WTF::Function<void(VM&)> m_onEachMicrotaskTick;
+    WTF::Function<void(VM&)> m_microtaskTickCallback;
+    std::atomic<bool> m_isMicrotaskTickCallbackRequested { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_hostObservesMicrotaskBoundaries { false };
     ErrorInfoFunction m_onComputeErrorInfo;
@@ -1564,8 +1576,8 @@ public:
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
 #if ENABLE(AOT)
-    // While the innermost queue is this one, reactions go to the microtask queue. It stays in the chain, where the collector finds it.
-    SynchronousModuleQueue* m_synchronousModuleQueueSetAside { nullptr };
+    // While the innermost queue is this one, reactions go to the normal microtask queue. It stays in the chain so that the collector still visits it.
+    SynchronousModuleQueue* m_suspendedSynchronousModuleQueue { nullptr };
 #endif
     // The queue that reactions are diverted to.
     SynchronousModuleQueue* synchronousModuleQueue() const
@@ -1573,7 +1585,7 @@ public:
         if (!m_synchronousModuleQueue) [[likely]]
             return nullptr;
 #if ENABLE(AOT)
-        if (m_synchronousModuleQueue == m_synchronousModuleQueueSetAside) [[unlikely]]
+        if (m_synchronousModuleQueue == m_suspendedSynchronousModuleQueue) [[unlikely]]
             return nullptr;
 #endif
         return m_synchronousModuleQueue;
@@ -1605,7 +1617,7 @@ private:
 #endif
 
     Lock m_loopHintExecutionCountLock;
-    UncheckedKeyHashMap<const JSInstruction*, std::pair<unsigned, std::unique_ptr<uintptr_t>>> m_loopHintExecutionCounts;
+    HashMap<const JSInstruction*, std::pair<unsigned, std::unique_ptr<uintptr_t>>> m_loopHintExecutionCounts;
 
     const Ref<MicrotaskQueue> m_defaultMicrotaskQueue;
     const Ref<Waiter> m_syncWaiter;

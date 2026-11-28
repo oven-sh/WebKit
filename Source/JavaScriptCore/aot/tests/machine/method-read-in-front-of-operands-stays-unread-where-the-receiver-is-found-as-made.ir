@@ -1,0 +1,97 @@
+# function adds(list: number[], operand: () => number) { said = list.push(operand()); }
+# function cuts(text: string, operand: () => number) { said = text.substring(operand(), 4); }
+# function sets(table: Map<number, number>, operand: () => number) { said = table.set(1, operand()); }      sink(adds, cuts, sets);
+# The method is read BEFORE the operand runs, and the operand may be seen: so the call cannot go by name. The key names a built-in's method, the receiver's class is declared and not proven.
+# The read is a look of one short stub: is the receiver of that class and as made? Then nothing can be seen of the read: the method stays unread (the empty value),
+# and the stub of the call, which finds no method, does the built-in's work, or fetches the built-in's function where the operand has changed the receiver. Any other receiver is read as before.
+# It was: the whole read by name at the site in front of every such call (TypeScript 6: about 1.9 M calls).
+# RUN(ADDS): bytes f1:Body mechanisms=all
+# ADDS-LABEL: unit f1:Body
+# ADDS: Call Stub ReadMethodAtSiteUnlessReceiverFindsIt.ArrayPush
+# ADDS: Call Stub CallMethodOfAnyReceiverThatMayBeUnread.ArrayPush count 1
+# RUN(CUTS): bytes f2:Body mechanisms=all
+# CUTS-LABEL: unit f2:Body
+# CUTS: Call Stub ReadMethodAtSiteUnlessReceiverFindsIt.StringSubstring
+# CUTS: Call Stub CallMethodOfAnyReceiverThatMayBeUnread.StringSubstring count 2
+# RUN(SETS): bytes f3:Body mechanisms=all
+# SETS-LABEL: unit f3:Body
+# SETS: Call Stub ReadMethodAtSiteUnlessReceiverFindsIt.MapSet
+# SETS: Call Stub CallMethodOfAnyReceiverThatMayBeUnread.MapSet count 2
+# RUN(SHELL): run-in-shell const says = f => { try { f(); print(String(globalThis.said)); } catch (e) { print(e.name); } }; globalThis.sink = (adds, cuts, sets) => { for (let turn = 0; turn < 2; turn++) { const list = [1]; says(() => adds(list, () => 2)); says(() => adds(list, () => { list.push = () => "mine"; return 3; })); says(() => adds(list, () => 4)); const frozen = [1]; says(() => adds(frozen, () => { Object.freeze(frozen); return 2; })); says(() => adds(null, () => { print("ran"); return 1; })); says(() => adds({ get push() { print("getter"); return x => x + 1; } }, () => { print("operand"); return 1; })); says(() => cuts("alphabet", () => 1)); says(() => cuts(new String("alphabet"), () => 2)); says(() => cuts({ substring: (a, b) => a + b }, () => 1)); says(() => cuts(12, () => 1)); const table = new Map(); says(() => { sets(table, () => 5); globalThis.said = table.get(1); }); says(() => { sets(table, () => { table.set = () => "mine"; return 6; }); globalThis.said = table.get(1) + " " + String(globalThis.said === table); }); says(() => sets(table, () => 7)); says(() => sets(new WeakMap(), () => 1)); } };
+# SHELL: 2
+# SHELL: 3
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: 2
+# SHELL: lph
+# SHELL: ph
+# SHELL: 5
+# SHELL: TypeError
+# SHELL: 5
+# SHELL: 6 true
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: 2
+# SHELL: 3
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: 2
+# SHELL: lph
+# SHELL: ph
+# SHELL: 5
+# SHELL: TypeError
+# SHELL: 5
+# SHELL: 6 true
+# SHELL: mine
+# SHELL: TypeError
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="adds" module=m0 length=2 thisType={type=anything} parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = PropGet v0 key="push" @110
+    v3 = Call v1, - @120
+    v4 = Call v2, v0, v3 calleeKey="push" calleeName="list.push" @130
+    v5 = Builtin builtin=GlobalThis
+    PropSet v5, v4 key="said"
+    v7 = Undefined
+    Return v7
+}
+function f2 name="cuts" module=m0 length=2 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = PropGet v0 key="substring" @140
+    v3 = Call v1, - @150
+    v4 = Integer integer=4
+    v5 = Call v2, v0, v3, v4 calleeKey="substring" calleeName="text.substring" @160
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v5 key="said"
+    v8 = Undefined
+    Return v8
+}
+function f3 name="sets" module=m0 length=2 thisType={type=anything} parameters=[{type=Map flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map, v1: anything):
+    v2 = PropGet v0 key="set" @170
+    v3 = Integer integer=1
+    v4 = Call v1, - @180
+    v5 = Call v2, v0, v3, v4 calleeKey="set" calleeName="table.set" @190
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v5 key="said"
+    v8 = Undefined
+    Return v8
+}

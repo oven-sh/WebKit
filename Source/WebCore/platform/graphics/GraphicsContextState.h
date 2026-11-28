@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
+#include <WebCore/FloatRect.h>
 #include <WebCore/GraphicsStyle.h>
 #include <WebCore/GraphicsTypes.h>
 #include <WebCore/SourceBrush.h>
@@ -66,10 +68,14 @@ public:
     enum class Purpose : uint8_t {
         Initial,
         SaveRestore,
-        TransparencyLayer
+        TransparencyLayer,
+        // Restoring restores only the CTM.
+        Transform
     };
 
     WEBCORE_EXPORT GraphicsContextState(const ChangeFlags& = { }, InterpolationQuality = InterpolationQuality::Default);
+
+    WEBCORE_EXPORT GraphicsContextState(ChangeFlags, SourceBrush&& fillBrush, WindRule, SourceBrush&& strokeBrush, float strokeThickness, StrokeStyle, const CompositeMode&, std::optional<GraphicsDropShadow>&&, std::optional<GraphicsStyle>&&, float alpha, InterpolationQuality, TextDrawingModeFlags, bool shouldAntialias, bool shouldSmoothFonts, bool shouldSubpixelQuantizeFonts, bool shadowsIgnoreTransforms);
 
     // The initial state for a context that knows nothing about the state of the context its output
     // will be applied to. Every property is indeterminate, so every setter is observed.
@@ -97,8 +103,8 @@ public:
     const SourceBrush& fillBrush() const LIFETIME_BOUND { return m_fillBrush; }
     void setFillBrush(const SourceBrush& brush) { setProperty(Change::FillBrush, &GraphicsContextState::m_fillBrush, brush); }
     void setFillColor(const Color& color) { setProperty(Change::FillBrush, &GraphicsContextState::m_fillBrush, { color }); }
-    void setFillGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform) { m_fillBrush.setGradient(WTF::move(gradient), spaceTransform); m_changeFlags.add(Change::FillBrush); }
-    void setFillPattern(Ref<Pattern>&& pattern) { m_fillBrush.setPattern(WTF::move(pattern)); m_changeFlags.add(Change::FillBrush); }
+    void setFillGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform) { m_fillBrush.setGradient(WTF::move(gradient), spaceTransform); m_changeFlags.add(Change::FillBrush); }
+    void setFillPattern(Ref<const Pattern>&& pattern) { m_fillBrush.setPattern(WTF::move(pattern)); m_changeFlags.add(Change::FillBrush); }
 
     WindRule fillRule() const { return m_fillRule; }
     void setFillRule(WindRule fillRule) { setProperty(Change::FillRule, &GraphicsContextState::m_fillRule, fillRule); }
@@ -107,8 +113,8 @@ public:
     const SourceBrush& strokeBrush() const LIFETIME_BOUND { return m_strokeBrush; }
     void setStrokeBrush(const SourceBrush& brush) { setProperty(Change::StrokeBrush, &GraphicsContextState::m_strokeBrush, brush); }
     void setStrokeColor(const Color& color) { setProperty(Change::StrokeBrush, &GraphicsContextState::m_strokeBrush, { color }); }
-    void setStrokeGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform) { m_strokeBrush.setGradient(WTF::move(gradient), spaceTransform); m_changeFlags.add(Change::StrokeBrush); }
-    void setStrokePattern(Ref<Pattern>&& pattern) { m_strokeBrush.setPattern(WTF::move(pattern)); m_changeFlags.add(Change::StrokeBrush); }
+    void setStrokeGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform) { m_strokeBrush.setGradient(WTF::move(gradient), spaceTransform); m_changeFlags.add(Change::StrokeBrush); }
+    void setStrokePattern(Ref<const Pattern>&& pattern) { m_strokeBrush.setPattern(WTF::move(pattern)); m_changeFlags.add(Change::StrokeBrush); }
 
     float strokeThickness() const { return m_strokeThickness; }
     void setStrokeThickness(float strokeThickness) { setProperty(Change::StrokeThickness, &GraphicsContextState::m_strokeThickness, strokeThickness); }
@@ -161,6 +167,30 @@ public:
 
     Purpose purpose() const { return m_purpose; }
 
+    const AffineTransform& ctm() const LIFETIME_BOUND { return m_ctm; }
+    AffineTransform& ctm() LIFETIME_BOUND { return m_ctm; }
+    void setCTM(const AffineTransform& ctm) { m_ctm = ctm; }
+
+    // The bounds of the clip in device space, for the contexts that track them, such as DisplayList::Recorder.
+    const FloatRect& deviceClipBounds() const LIFETIME_BOUND { return m_deviceClipBounds; }
+    void setDeviceClipBounds(const FloatRect& bounds) { m_deviceClipBounds = bounds; }
+    void intersectDeviceClipBounds(const FloatRect& bounds) { m_deviceClipBounds.intersect(bounds); }
+
+    // For DisplayList::Recorder: the properties committed to the recording since this state was saved, which
+    // are synchronized when the state is restored.
+    ChangeFlags committedChanges() const { return m_committedChanges; }
+    void setCommittedChanges(ChangeFlags changes) { m_committedChanges = changes; }
+    void addCommittedChanges(ChangeFlags changes) { m_committedChanges.add(changes); }
+
+    // Restores from the state saved for Purpose::Transform: the CTM and the purpose are restored, the
+    // properties keep their current values.
+    void restoreTransform(const GraphicsContextState& saved)
+    {
+        ASSERT(m_purpose == Purpose::Transform);
+        m_ctm = saved.m_ctm;
+        m_purpose = saved.m_purpose;
+    }
+
     WTF::TextStream& dump(WTF::TextStream&) const;
 
 private:
@@ -190,6 +220,15 @@ private:
         m_changeFlags.add(change);
     }
 
+    // The CTM. DisplayList::Recorder keeps its CTM here. The platform contexts keep the CTM in the platform
+    // context: for them this is set only in the state saved by GraphicsContext::saveTransform(), for
+    // GraphicsContext::restoreTransform(), and does not follow the CTM otherwise. Not one of the properties
+    // copied, compared or serialized with the state.
+    AffineTransform m_ctm;
+    // The clip bounds and the committed changes are not properties either: they are not copied, compared or
+    // serialized with the properties. They are saved and restored with the state.
+    FloatRect m_deviceClipBounds;
+    ChangeFlags m_committedChanges;
     SourceBrush m_fillBrush { Color::black };
     SourceBrush m_strokeBrush { Color::black };
     // Changes not appiled to the underlying platform context.

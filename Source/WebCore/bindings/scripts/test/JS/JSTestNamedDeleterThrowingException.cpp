@@ -367,14 +367,14 @@ bool JSTestNamedDeleterThrowingExceptionOwner::isReachableFromOpaqueRoots(JSC::H
     return false;
 }
 
-void JSTestNamedDeleterThrowingExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestNamedDeleterThrowingExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestNamedDeleterThrowingException = static_cast<JSTestNamedDeleterThrowingException*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestNamedDeleterThrowingException->wrapped(), jsTestNamedDeleterThrowingException);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -390,7 +390,7 @@ static inline void verifyVTable(TestNamedDeleterThrowingException* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestNamedDeleterThrowingException@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore33TestNamedDeleterThrowingExceptionE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore33TestNamedDeleterThrowingExceptionE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -401,7 +401,6 @@ static inline void verifyVTable(TestNamedDeleterThrowingException* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestNamedDeleterThrowingException>&& impl)
 {

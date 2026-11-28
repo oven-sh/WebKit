@@ -29,15 +29,14 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MaskBorderData);
 class MaskBorderData : public RefCounted<MaskBorderData> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(MaskBorderData, MaskBorderData);
 public:
     static Ref<MaskBorderData> create() { return adoptRef(*new MaskBorderData); }
-    Ref<MaskBorderData> LEGACY_NODELETE copy() const;
+    NODELETE Ref<MaskBorderData> copy() const;
 
     bool operator==(const MaskBorderData&) const;
 
@@ -55,5 +54,4 @@ private:
 
 TextStream& operator<<(TextStream&, const MaskBorderData&);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

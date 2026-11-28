@@ -142,6 +142,36 @@ public:
         };
     }
 
+    // A WebSocket's requestId. WebSocket channel identifiers are minted from a counter separate from
+    // ResourceLoaderIdentifier, so they take their own prefix to stay distinct from load requestIds
+    // reported by the same process.
+    static inline String protocolWebSocketRequestId(WebCore::ProcessIdentifier pid, uint64_t channelID)
+    {
+        return makeString("websocket-"_s, pid.toUInt64(), '.', channelID);
+    }
+
+    // Reverse-parse a WebSocket requestId ("websocket-processID.channelID") into its components.
+    static inline std::optional<std::pair<WebCore::ProcessIdentifier, uint64_t>> parseProtocolWebSocketRequestId(const String& requestId)
+    {
+        if (!requestId.startsWith("websocket-"_s))
+            return std::nullopt;
+
+        auto rest = StringView(requestId).substring(10); // skip "websocket-"
+        auto dotIndex = rest.find('.');
+        if (dotIndex == notFound)
+            return std::nullopt;
+
+        auto pidValue = parseInteger<uint64_t>(rest.left(dotIndex));
+        if (!pidValue || !WebCore::ProcessIdentifier::isValidIdentifier(*pidValue))
+            return std::nullopt;
+
+        auto channelValue = parseInteger<uint64_t>(rest.substring(dotIndex + 1));
+        if (!channelValue || !*channelValue)
+            return std::nullopt;
+
+        return std::pair { ObjectIdentifier<WebCore::ProcessIdentifierType>(*pidValue), *channelValue };
+    }
+
     // Reverse-parse a protocol frameId string back into its components (hosting process, frame).
     // Returns nullopt if the string doesn't match the expected "frame-processID.frameID" format,
     // if either segment isn't a valid uint64, or -- crucially -- if the frame segment isn't a
@@ -184,8 +214,7 @@ private:
     HashMap<WebCore::DocumentLoader*, String> m_loaderToIdentifier;
 };
 
-// Default implementation using IdentifiersFactory sequential counters.
-// This is the pre-Site-Isolation behavior where IDs are opaque strings
+// Default implementation. IDs are opaque process-qualified strings
 // with no relationship to FrameIdentifier values.
 class LegacyIdentifierRegistry final : public IdentifierRegistry {
     WTF_MAKE_TZONE_ALLOCATED(LegacyIdentifierRegistry);

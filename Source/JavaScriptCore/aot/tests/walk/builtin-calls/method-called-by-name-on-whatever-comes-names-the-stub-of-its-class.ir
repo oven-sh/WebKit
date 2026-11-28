@@ -1,0 +1,55 @@
+# `stack.pop()`, `types.splice(at, 0, type)`, `seen.clear()`: nothing is proven of the receiver, and the call stays closed. It names the method that a class with a stub gives its instances under the key:
+# the stub looks at the receiver, and for one that is as its class makes it the operation behind the stub gives the whole answer. No function of the host is entered, and the place of the call grows by nothing.
+# RUN: walk f1 mechanisms=all-Inlining-Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call {{*}}calleeKey="pop" {{*}}methodOfReceiverAsMade=ArrayPrototypePop
+# CHECK: = Call {{*}}calleeKey="shift" {{*}}methodOfReceiverAsMade=ArrayPrototypeShift
+# CHECK: = Call {{*}}calleeKey="unshift" {{*}}methodOfReceiverAsMade=ArrayPrototypeUnshift
+# CHECK: = Call {{*}}calleeKey="splice" {{*}}methodOfReceiverAsMade=ArrayPrototypeSplice
+# CHECK: = Call {{*}}calleeKey="splice" {{*}}methodOfReceiverAsMade=ArrayPrototypeSplice
+# CHECK: = Call {{*}}calleeKey="clear" {{*}}methodOfReceiverAsMade=MapPrototypeClear
+# A call with more operands than the stub takes names nothing: list.splice(0, 0, 1, 2)
+# RUN(MORE): walk f2 mechanisms=all-Inlining-Guesses
+# MORE-LABEL: code f2:Body
+# MORE-NOT: methodOfReceiverAsMade
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="used" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="pop"
+    v3 = Call v2, v0 calleeKey="pop" calleeName="list.pop"
+    v4 = PropGet v0 key="shift"
+    v5 = Call v4, v0 calleeKey="shift" calleeName="list.shift"
+    v6 = PropGet v0 key="unshift"
+    v7 = Call v6, v0, v3 calleeKey="unshift" calleeName="list.unshift"
+    v8 = Integer
+    v9 = Integer integer=1
+    v10 = PropGet v0 key="splice"
+    v11 = Call v10, v0, v8, v9 calleeKey="splice" calleeName="list.splice"
+    v12 = PropGet v0 key="splice"
+    v13 = Call v12, v0, v8, v8, v5 calleeKey="splice" calleeName="list.splice"
+    v14 = PropGet v1 key="clear"
+    v15 = Call v14, v1 calleeKey="clear" calleeName="seen.clear"
+    v16 = TypeOf v15
+    Return v16
+}
+function f2 name="more" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    v4 = PropGet v0 key="splice"
+    v5 = Call v4, v0, v1, v1, v2, v3 calleeKey="splice" calleeName="list.splice"
+    v6 = TypeOf v5
+    Return v6
+}

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012, 2013, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2012, 2013, 2016, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -445,28 +445,32 @@ public:
     FastBitReference& operator|=(bool value) { return value ? *this = value : *this; }
     FastBitReference& operator&=(bool value) { return value ? *this : *this = value; }
 
-    bool concurrentGet(std::memory_order order = std::memory_order_seq_cst) const
+    template<MemoryOrder order = MemoryOrder::SeqCst>
+    bool concurrentGet() const
     {
-        return !!(atomicLoad(m_word, order) & m_mask);
+        return !!(atomicLoad<order>(m_word) & m_mask);
     }
 
-    void concurrentSet(bool value, std::memory_order order = std::memory_order_seq_cst)
+    template<MemoryOrder order = MemoryOrder::SeqCst>
+    void concurrentSet(bool value)
     {
         if (value)
-            atomicExchangeOr(m_word, m_mask, order);
+            atomicExchangeOr<order>(m_word, m_mask);
         else
-            atomicExchangeAnd(m_word, ~m_mask, order);
+            atomicExchangeAnd<order>(m_word, ~m_mask);
     }
 
     // These return the previous value of the bit.
-    bool concurrentTestAndSet(std::memory_order order = std::memory_order_seq_cst)
+    template<MemoryOrder order = MemoryOrder::SeqCst>
+    bool concurrentTestAndSet()
     {
-        return !!(atomicExchangeOr(m_word, m_mask, order) & m_mask);
+        return !!(atomicExchangeOr<order>(m_word, m_mask) & m_mask);
     }
 
-    bool concurrentTestAndClear(std::memory_order order = std::memory_order_seq_cst)
+    template<MemoryOrder order = MemoryOrder::SeqCst>
+    bool concurrentTestAndClear()
     {
-        return !!(atomicExchangeAnd(m_word, ~m_mask, order) & m_mask);
+        return !!(atomicExchangeAnd<order>(m_word, ~m_mask) & m_mask);
     }
 
 private:
@@ -529,7 +533,7 @@ public:
     void fill(bool value) { value ? setAll() : clearAll(); }
     void grow(size_t newSize) { resize(newSize); }
 
-    WTF_EXPORT_PRIVATE void LEGACY_NODELETE clearRange(size_t begin, size_t end);
+    NODELETE WTF_EXPORT_PRIVATE void clearRange(size_t begin, size_t end);
 
     // Returns true if the contents of this bitvector changed.
     template<typename OtherWords>

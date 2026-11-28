@@ -45,8 +45,7 @@ class CryptoKeyEC;
 class CryptoKeyHMAC;
 }
 
-namespace fido {
-namespace pin {
+namespace fido::pin {
 
 // Subcommand enumerates the subcommands to the main |authenticatorClientPIN|
 // command. See
@@ -112,7 +111,7 @@ struct RetriesResponse {
     uint64_t retries;
 
 private:
-    RetriesResponse();
+    NODELETE RetriesResponse();
 };
 
 // KeyAgreementRequest asks an authenticator for an ephemeral ECDH key for
@@ -140,7 +139,7 @@ struct SetPinRequest {
 public:
     const WebCore::CryptoKeyAES& sharedKey() const { return m_sharedKey.get(); }
     WEBCORE_EXPORT static std::optional<SetPinRequest> tryCreate(PINUVAuthProtocol, const String& newPin, const WebCore::CryptoKeyEC&);
-    WEBCORE_EXPORT const Vector<uint8_t>& LEGACY_NODELETE pinAuth() const;
+    NODELETE WEBCORE_EXPORT const Vector<uint8_t>& pinAuth() const;
 
     friend Vector<uint8_t> encodeAsCBOR(const SetPinRequest&);
 
@@ -190,7 +189,7 @@ public:
     // client-data hash.
     WEBCORE_EXPORT Vector<uint8_t> pinAuth(PINUVAuthProtocol, const Vector<uint8_t>& clientDataHash) const;
 
-    WEBCORE_EXPORT const Vector<uint8_t>& LEGACY_NODELETE token() const;
+    NODELETE WEBCORE_EXPORT const Vector<uint8_t>& token() const;
 
 private:
     explicit TokenResponse(Ref<WebCore::CryptoKeyHMAC>&&);
@@ -231,7 +230,7 @@ class HmacSecretResponse {
 public:
     WEBCORE_EXPORT static std::optional<HmacSecretResponse> parse(PINUVAuthProtocol, const WebCore::CryptoKeyAES& sharedKey, const Vector<uint8_t>& encryptedOutput);
 
-    WEBCORE_EXPORT const Vector<uint8_t>& LEGACY_NODELETE output() const;
+    NODELETE WEBCORE_EXPORT const Vector<uint8_t>& output() const;
 
 private:
     explicit HmacSecretResponse(Vector<uint8_t>&& decryptedOutput);
@@ -244,7 +243,6 @@ WEBCORE_EXPORT Vector<uint8_t> encodeAsCBOR(const KeyAgreementRequest&);
 WEBCORE_EXPORT Vector<uint8_t> encodeAsCBOR(const TokenRequest&);
 WEBCORE_EXPORT Vector<uint8_t> encodeAsCBOR(const SetPinRequest&);
 
-} // namespace pin
-} // namespace fido
+} // namespace fido::pin
 
 #endif // ENABLE(WEB_AUTHN)

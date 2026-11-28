@@ -1,0 +1,103 @@
+# a call of a function of Math or Number on known numbers, or on a type that leaves one answer, is that answer, wherever IEEE 754 and ECMAScript decide it to the last bit
+# function known() { return [Math.max(1, 2), Math.abs(-3), Math.imul(2, 5), Math.round(2.5)]; }
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# NEVER-NOT: = Call
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: = Call
+# function isWhole(v) { if (!isInt32(v)) return v; return [Number.isInteger(v), Number.isNaN(v), isFinite(v)]; }
+# RUN(WHOLE): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# WHOLE-NOT: = Call
+# function mayBeWhole(x) { if (typeof x !== "number") return x; return Number.isInteger(x); } 1.5 is none
+# RUN(NUMBER): walk f3 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# NUMBER-LABEL: code f3:Body
+# NUMBER: = Call
+# function sine() { return Math.sin(1); } the last bit of a sine differs between machines
+# RUN(SINE): walk f4 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# SINE-LABEL: code f4:Body
+# SINE: = Call
+# function root() { return Math.sqrt(-1); } the sign of a NaN that the processor makes differs between processors
+# RUN(ROOT): walk f5 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# ROOT-LABEL: code f5:Body
+# ROOT: = Call
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="known" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = Builtin builtin=MathMax
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    v4 = Call v1, v0, v2, v3 calleeKey="max" calleeName="Math.max"
+    v5 = Builtin builtin=MathAbs
+    v6 = Integer integer=-3
+    v7 = Call v5, v0, v6 calleeKey="abs" calleeName="Math.abs"
+    v8 = Builtin builtin=MathImul
+    v9 = Integer integer=5
+    v10 = Call v8, v0, v3, v9 calleeKey="imul" calleeName="Math.imul"
+    v11 = Builtin builtin=MathRound
+    v12 = Double number=2.5
+    v13 = Call v11, v0, v12 calleeKey="round" calleeName="Math.round"
+    v14 = NewArray v4, v7, v10, v13 contents=anything
+    Return v14
+}
+function f2 name="isWhole" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Number
+    v4 = Builtin builtin=NumberIsInteger
+    v5 = Call v4, v3, v2 calleeKey="isInteger" calleeName="Number.isInteger"
+    v6 = Builtin builtin=NumberIsNaN
+    v7 = Call v6, v3, v2 calleeKey="isNaN" calleeName="Number.isNaN"
+    v8 = Builtin builtin=IsFinite
+    v9 = Call v8, -, v2 calleeName="isFinite"
+    v10 = NewArray v5, v7, v9 contents=anything
+    Return v10
+  b2(v11):
+    Return v11
+}
+function f3 name="mayBeWhole" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Number
+    v4 = Builtin builtin=NumberIsInteger
+    v5 = Call v4, v3, v2 calleeKey="isInteger" calleeName="Number.isInteger"
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f4 name="sine" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = Builtin builtin=MathSin
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="sin" calleeName="Math.sin"
+    Return v3
+}
+function f5 name="root" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = Builtin builtin=MathSqrt
+    v2 = Integer integer=-1
+    v3 = Call v1, v0, v2 calleeKey="sqrt" calleeName="Math.sqrt"
+    Return v3
+}

@@ -1,0 +1,65 @@
+# outside the loops of a unit a store that tests its own guess and names no kind of storage has code in line for one kind, and a list of any other kind takes the store by key
+# const list: any[] = takeList(); show(list[1]); list.length; list[1] = 7; const at = list[1]; list.length; show(at); show(list[2]);     five times, in a function that may be called again: what runs once opens no guess
+# Outside a loop such a store opens no guess by itself. The two reads of the length do, and it stands between them.
+# The store is one operation at the level Expected. Nothing is written of the elements, and an integer may lie in any of the three kinds.
+# RUN(CODE): walk f1 mechanisms=none+TypedOperations+Guesses
+# CODE-LABEL: code f1:Body
+# CODE: PutArrayElement [[list]], [[at]], [[value]] level=Expected
+# RUN: emit f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Store({{*}}indexedContiguousProperties
+# RUN(OTHERS): emit f1 mechanisms=none+TypedOperations+Guesses
+# OTHERS-LABEL: unit f1:Body
+# OTHERS-NOT: = Store({{*}}indexedDoubleProperties
+# A list of each kind, then two that share their elements with one literal: whoever wrote into those in place would change what the last list holds.
+# RUN(ANSWER): run-in-shell globalThis.own = (a, b, c) => [a, b, c]; globalThis.fresh = () => ["a", "b", "c"]; globalThis.lists = [own(1, 2, 3), own(1.5, 2.5, 3.5), own("a", "b", "c"), fresh(), fresh()]; globalThis.next = 0; globalThis.takeList = () => globalThis.lists[globalThis.next++]; globalThis.show = (x) => print(x);
+# ANSWER: 2
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: 2.5
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: 3.5
+# ANSWER-NEXT: b
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: c
+# ANSWER-NEXT: b
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: c
+# ANSWER-NEXT: b
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: c
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="kept"
+    v3 = Call v1, -
+    Return v3
+}
+function f1 name="stores" module=m0 flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Integer integer=7
+    v4 = PropGet v0 key="takeList" [isFreeName]
+    v5 = PropGet v0 key="show" [isFreeName]
+# REPEAT: i = 0..4
+    v%(i*11+6) = Call v4, - calleeName="takeList"
+    v%(i*11+7) = Convert v%(i*11+6) declared={type=undefined|null|Array<anything> flags=[OmitsNull, OmitsUndefined]}
+    v%(i*11+8) = ElemGet v%(i*11+7), v1
+    v%(i*11+9) = Call v5, -, v%(i*11+8) calleeName="show"
+    v%(i*11+10) = PropGet v%(i*11+7) key="length"
+    ElemSet v%(i*11+7), v1, v3
+    v%(i*11+12) = ElemGet v%(i*11+7), v1
+    v%(i*11+13) = PropGet v%(i*11+7) key="length"
+    v%(i*11+14) = Call v5, -, v%(i*11+12) calleeName="show"
+    v%(i*11+15) = ElemGet v%(i*11+7), v2
+    v%(i*11+16) = Call v5, -, v%(i*11+15) calleeName="show"
+# END REPEAT
+    Return v60
+}

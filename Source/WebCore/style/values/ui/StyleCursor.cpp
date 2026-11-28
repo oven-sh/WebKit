@@ -46,8 +46,7 @@
 #include <WebKitAdditions/AXCustomColorModeController.h>
 #endif
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 std::optional<WebCore::Cursor> Cursor::selectImageCursor(const RenderObject* renderer, const LocalFrame& frame, float deviceScaleFactor, IntPoint pointInMainFrame) const
 {
@@ -73,7 +72,7 @@ std::optional<WebCore::Cursor> Cursor::selectImageCursor(const RenderObject* ren
         if (styleImage->errorOccurred() || !styleImage->canDraw(*renderElement))
             continue;
 
-        auto concreteCursorSize = styleImage->negotiate(*renderElement, CursorSizing { styleImage->imageScaleFactor() });
+        auto concreteCursorSize = styleImage->negotiate(*renderElement, CursorSizing { narrowPrecisionToFloat(styleImage->imageResolution().value) });
         auto cursorSize = concreteCursorSize.size();
         if (cursorSize.isEmpty())
             continue;
@@ -89,13 +88,14 @@ std::optional<WebCore::Cursor> Cursor::selectImageCursor(const RenderObject* ren
         if (!visibleContentRect.contains(cursorRect))
             continue;
 
-        ImageDrawingOptions options {
+        ImageDrawDescriptor descriptor {
+            concreteCursorSize,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
             AXCustomColorModeController::shouldInvertSVGImage(*renderElement, styleImage.get()) ? InvertContent::Yes : InvertContent::No,
 #endif
         };
 
-        RefPtr nativeImage = styleImage->nativeImage(*renderElement, concreteCursorSize, deviceScaleFactor, options);
+        RefPtr nativeImage = styleImage->nativeImage(*renderElement, descriptor, deviceScaleFactor);
         if (!nativeImage || nativeImage->size().isEmpty())
             continue;
 
@@ -175,5 +175,4 @@ TextStream& operator<<(TextStream& ts, const CursorImageAndHotSpot& value)
     return ts << "cursor image with hotspot " << value.hotSpot;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

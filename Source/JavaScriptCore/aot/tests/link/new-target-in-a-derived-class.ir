@@ -1,0 +1,74 @@
+# If the object that the base constructor makes counted as an object of the base class whatever the new target is, `new B().m()` would go straight to the method of A, the override would be left out of the executable, and the field that A's constructor stores would be unknown in B. If handing the new target on let it escape, as in the first version, the constructor of every derived class would escape
+# class A { constructor() { this.x = "a"; }  m() { return "A"; } }  class B extends A { m() { return true; } }  function ask(x) { return x.m(); }  ask(new B());
+# Whether the tables prove the new target of A at all is Link's choice. It is never the class A alone: the walk would fold the prototype of the new object to that of A.
+# RUN: summary f3
+# CHECK: call c0 v3 {{*}}new-target=Parameter 1 () constructs
+# RUN(KEPT): summary f3
+# KEPT-NOT: Parameter 1 -> Unknown
+# RUN(CALLS): link calls mechanisms=all
+# CALLS-NOT: call f5 v2 -> f2
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known
+# LINK-NEXT: parameter 0
+# LINK-NOT: proven=f1
+# LINK: function f3 callers-known one-callee
+# LINK: function f4
+# LINK-NOT: unreached
+# LINK: function f5
+# LINK-NOT: result=string
+# LINK: field L1.{{*}} "x" proven=string writers-known written-at-construction-alone
+# LINK: layout L1 family=[[family]] changes=[]
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="m"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = NewClosure function=f5
+    v13 = Call v12, -, v11 calleeName="ask"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = String string="a"
+    PropSet v2, v3 key="x"
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="A"
+    Return v0
+}
+function f3 name="B" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f4 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f5 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}

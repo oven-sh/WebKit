@@ -81,10 +81,8 @@ CoreIPCNSURLProtectionSpace::CoreIPCNSURLProtectionSpace(NSURLProtectionSpace *p
     NSArray *distnames = dict[@"distnames"];
     if ([distnames isKindOfClass:NSArray.class]) {
         bool allElementsValid = true;
-        Vector<WebKit::CoreIPCData> data;
-        data.reserveInitialCapacity(distnames.count);
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSData *d in distnames) {
+        Vector<WebKit::CoreIPCData> data(ReserveCapacityTag { }, distnames.count);
+        for (NSData *d in distnames) {
             if (![d isKindOfClass:NSData.class]) {
                 allElementsValid = false;
                 break;

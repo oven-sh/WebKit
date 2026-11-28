@@ -1,0 +1,133 @@
+# A binding that closures share lies in a field of an environment. The environment is made with the field empty, each turn of a loop makes its own, and nothing empties a field again.
+# So what a store has filled, or a check has let through, is filled for the rest of the body, whatever is called in between: the read is built again, the check is not.
+# function owner(make) { const read = () => held; sink(read); let held = make(); sink(read); return held; }
+# const step = () => { const first = held; sink(); return first + held; }
+# RUN: walk f1 f2 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: PutEnvironmentField
+# CHECK: = Call
+# CHECK: = GetEnvironmentField {{*}}isKnownInitialized
+# CHECK-NOT: = CheckInitialized
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-1: = CheckInitialized
+# CHECK: = Call
+# CHECK: = GetEnvironmentField {{*}}isKnownInitialized
+# CHECK-NOT: = CheckInitialized
+
+# Only one arm has stored, so behind the arms the check stands. What holds of one environment says nothing of another of the same layout, nor of another field.
+# RUN(OTHERS): walk f3 f4 f5 mechanisms=none+Folding
+# OTHERS-LABEL: code f3:Body
+# OTHERS-COUNT-1: = CheckInitialized
+# OTHERS-LABEL: code f4:Body
+# OTHERS-COUNT-2: = CheckInitialized
+# OTHERS-LABEL: code f5:Body
+# OTHERS-COUNT-2: = CheckInitialized
+
+# In a loop: what was filled in front of the loop is filled in every turn. What a turn fills is not known at the head of the next.
+# RUN(LOOP): walk f6 mechanisms=none+Folding
+# LOOP-LABEL: code f6:Body
+# LOOP-COUNT-1: = CheckInitialized
+# LOOP: isLoopHead=true
+# LOOP: = GetEnvironmentField {{*}}field=1
+# LOOP: = CheckInitialized
+# LOOP: = GetEnvironmentField {{*}}isKnownInitialized
+# LOOP-NOT: = CheckInitialized
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} variableName="held"}, {key=@"1" declared={type=anything|absent} variableName="other"}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = NewObject layout=L0
+    v5 = NewClosure v4 function=f2
+    v6 = NewClosure v4, v4 function=f4
+    v7 = NewClosure v4 function=f5
+    v8 = NewClosure v4 function=f6
+    v9 = Call v1, -, v2, v3, v5, v6, v7, v8 calleeName="sink"
+    Return v9
+}
+function f1 name="owner" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1 function=f2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="sink"
+    v6 = Call v0 calleeName="make"
+    PutEnvironmentField v1, v6 layout=L0
+    v8 = Call v4, -, v2 calleeName="sink"
+    v9 = GetEnvironmentField v1 layout=L0
+    v10 = CheckInitialized v9 name="held"
+    Return v10
+}
+function f2 name="step" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="held"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4 calleeName="sink"
+    v6 = GetEnvironmentField v0 layout=L0
+    v7 = CheckInitialized v6 name="held"
+    v8 = Add v2, v7
+    Return v8
+}
+function f3 name="inOneArm" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1 function=f2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="sink"
+    v6 = ToBoolean v0
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    PutEnvironmentField v1, v0 layout=L0
+    Jump -> next b2()
+  b2():
+    v8 = Call v4, -, v2 calleeName="sink"
+    v9 = GetEnvironmentField v1 layout=L0
+    v10 = CheckInitialized v9 name="held"
+    Return v10
+}
+function f4 name="twoEnvironments" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}, {type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0, v1: env L0):
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = CheckInitialized v2 name="held"
+    v4 = GetEnvironmentField v1 layout=L0
+    v5 = CheckInitialized v4 name="held"
+    v6 = Add v3, v5
+    Return v6
+}
+function f5 name="twoFields" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="held"
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = CheckInitialized v3 name="other"
+    v5 = Add v2, v4
+    Return v5
+}
+function f6 name="inLoop" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="held"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = GetEnvironmentField v0 layout=L0 field=1
+    v7 = CheckInitialized v6 name="other"
+    v8 = Call v4, -, v7 calleeName="sink"
+    v9 = GetEnvironmentField v0 layout=L0
+    v10 = CheckInitialized v9 name="held"
+    v11 = ToBoolean v10
+    Branch v11 -> taken b1(), notTaken b2()
+  b2():
+    Return v2
+}

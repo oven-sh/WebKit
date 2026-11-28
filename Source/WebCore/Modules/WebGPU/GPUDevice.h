@@ -94,8 +94,8 @@ class GPUDevice : public RefCounted<GPUDevice>, public ActiveDOMObject, public E
 public:
     static Ref<GPUDevice> create(ScriptExecutionContext*, Ref<::WebGPU::Device>&&, Ref<WebGPUIntegration>&&, String&& label, String&& queueLabel, GPUAdapterInfo&);
 
-    static HashSet<GPUDevice*>& LEGACY_NODELETE instances() WTF_REQUIRES_LOCK(instancesLock());
-    static Lock& LEGACY_NODELETE instancesLock() WTF_RETURNS_LOCK(s_instancesLock);
+    NODELETE static HashSet<GPUDevice*>& instances() WTF_REQUIRES_LOCK(instancesLock());
+    NODELETE static Lock& instancesLock() WTF_RETURNS_LOCK(s_instancesLock);
 
     virtual ~GPUDevice();
 
@@ -107,13 +107,13 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    String LEGACY_NODELETE label() const;
+    NODELETE String label() const;
     void setLabel(String&&);
 
-    Ref<GPUSupportedFeatures> LEGACY_NODELETE features() const;
-    Ref<GPUSupportedLimits> LEGACY_NODELETE limits() const;
+    NODELETE Ref<GPUSupportedFeatures> features() const;
+    NODELETE Ref<GPUSupportedLimits> limits() const;
 
-    Ref<GPUQueue> LEGACY_NODELETE queue() const;
+    NODELETE Ref<GPUQueue> queue() const;
 
     void destroy(ScriptExecutionContext&);
 
@@ -145,17 +145,15 @@ public:
     using ErrorScopePromise = DOMPromiseDeferred<IDLNullable<IDLInterface<GPUError>>>;
     void popErrorScope(ErrorScopePromise&&);
 
-    bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
-    using EventTarget::addEventListener;
-    void listenForUncapturedErrors();
-
     using LostPromise = DOMPromiseProxy<IDLInterface<GPUDeviceLostInfo>>;
     LostPromise& lost() LIFETIME_BOUND;
 
-    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
+    NODELETE ScriptExecutionContext* scriptExecutionContext() const final;
 
     ::WebGPU::Device& backing() { return m_backing; }
     const ::WebGPU::Device& backing() const { return m_backing; }
+    // The integration that created the device, which the canvas presenting it has to use too.
+    WebGPUIntegration& integration() const { return m_gpu; }
     // Stand-ins for the objects that cannot be created, or are no longer valid, made invalid on
     // purpose. The empty bind group layout stands in for a missing pipeline layout slot.
     Ref<::WebGPU::CommandEncoder> invalidCommandEncoder() const { return *m_invalidCommandEncoder; }
@@ -165,11 +163,11 @@ public:
     Ref<::WebGPU::BindGroupLayout> emptyBindGroupLayout() const { return *m_emptyBindGroupLayout; }
     void removeBufferToUnmap(GPUBuffer&);
     void addBufferToUnmap(GPUBuffer&);
-    Ref<GPUAdapterInfo> LEGACY_NODELETE adapterInfo() const;
-    size_t LEGACY_NODELETE memoryCost() const;
+    NODELETE Ref<GPUAdapterInfo> adapterInfo() const;
+    NODELETE size_t memoryCost() const;
 
 #if ENABLE(VIDEO)
-    WeakPtr<GPUExternalTexture> takeExternalTextureForVideoElement(const HTMLVideoElement&);
+    bool removeExternalTextureForVideoElement(const HTMLVideoElement&, const GPUExternalTexture&);
 #endif
 
     bool hasActiveInspectorCanvasCallTracer() const { return m_hasActiveInspectorCanvasCallTracer; }
@@ -186,9 +184,13 @@ private:
     void willDestroyBuffer(GPUBuffer&);
     void willDestroyTexture(GPUTexture&);
     void notifyMemoryCostChanged();
+    void listenForUncapturedErrors();
+    void stopListeningForUncapturedErrorsIfUnused();
+    void dispatchUncapturedError(::WebGPU::Error&&);
 
     // FIXME: We probably need to override more methods to make this work properly.
     RefPtr<GPUPipelineLayout> createAutoPipelineLayout();
+    ExceptionOr<Ref<GPUExternalTexture>> importOrUpdateExternalTexture(const GPUExternalTextureDescriptor&);
 
     // ActiveDOMObject.
     bool virtualHasPendingActivity() const final;
@@ -198,6 +200,7 @@ private:
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::GPUDevice; }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
+    void eventListenersDidChange() final;
 
     static Lock s_instancesLock;
 
@@ -231,6 +234,7 @@ private:
 
     bool m_waitingForDeviceLostPromise { false };
     bool m_listeningForUncapturedErrors { false };
+    bool m_willStopListeningForUncapturedErrors { false };
     bool m_hasActiveInspectorCanvasCallTracer { false };
     bool m_isDestroyed { false };
 };

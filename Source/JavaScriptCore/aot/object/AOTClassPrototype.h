@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTThreshold.h"
 #include "JSObject.h"
 #include <optional>
 #include <wtf/OptionSet.h>
@@ -25,7 +24,6 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
-    // memberRow: where the row of the class begins in the field table, or ClassRowEntry::noRow.
     static ClassPrototype* create(VM&, Structure*, uint32_t classNumber, uint32_t memberRow);
 
     DECLARE_INFO;
@@ -49,9 +47,7 @@ public:
     void convertToOrdinaryObject(VM&, Structure* ordinary);
 
     static bool hasMember(JSObject* classPrototype, PropertyName);
-    // The layout index of the class behind Image::layoutIndicesBelow() of the image that has it. ClassTable::classOf() finds the class.
     uint32_t classNumber() const { return m_classNumber; }
-    static constexpr ptrdiff_t offsetOfClassNumber() { return OBJECT_OFFSETOF(ClassPrototype, m_classNumber); }
     JSObject* classObject() const;
     static constexpr ptrdiff_t offsetOfMemberRow() { return OBJECT_OFFSETOF(ClassPrototype, m_memberRow); }
     std::optional<bool> tryGetDeclaredMember(VM&, PropertyName, PropertySlot&);
@@ -61,7 +57,7 @@ private:
         HasCheckedThen = 1,
         DeclaresThen = 2,
     };
-    AOT_CLASS_THRESHOLD(unsigned, minEarlyAnswers, 4);
+    static constexpr unsigned minEarlyAnswers = 4;
     static constexpr unsigned numberOfNameBits = 32;
 
     ClassPrototype(VM& vm, Structure* structure, uint32_t classNumber, uint32_t memberRow)

@@ -28,6 +28,7 @@
 #if ENABLE(WEBXR)
 
 #include "DOMHighResTimeStamp.h"
+#include "JSDOMPromiseDeferredForward.h"
 #include "PlatformXR.h"
 #include "TransformationMatrix.h"
 #include <JavaScriptCore/Float32Array.h>
@@ -43,16 +44,25 @@ class WebXRJointPose;
 class WebXRJointSpace;
 class WebXRPose;
 class WebXRReferenceSpace;
+class WebXRRigidTransform;
 class WebXRSession;
 class WebXRSpace;
 class WebXRViewerPose;
 template<typename> class ExceptionOr;
 
+#if ENABLE(WEBXR_ANCHORS)
+class WebXRAnchor;
+class WebXRAnchorSet;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
 class WebXRHitTestResult;
 class WebXRHitTestSource;
 class WebXRTransientInputHitTestResult;
 class WebXRTransientInputHitTestSource;
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+class WebXRPlaneSet;
 #endif
 
 class WebXRFrame : public RefCounted<WebXRFrame> {
@@ -73,9 +83,18 @@ public:
     ExceptionOr<bool> fillPoses(const Document&, const Vector<Ref<WebXRSpace>>&, const WebXRSpace&, Float32Array&);
 #endif
 
+#if ENABLE(WEBXR_ANCHORS)
+    using CreateAnchorPromise = DOMPromiseDeferred<IDLInterface<WebXRAnchor>>;
+    ExceptionOr<void> createAnchor(Document&, const WebXRRigidTransform&, WebXRSpace&, CreateAnchorPromise&&);
+    ExceptionOr<Ref<WebXRAnchorSet>> trackedAnchors();
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     ExceptionOr<Vector<Ref<WebXRHitTestResult>>> getHitTestResults(const WebXRHitTestSource&);
     ExceptionOr<Vector<Ref<WebXRTransientInputHitTestResult>>> getHitTestResultsForTransientInput(const WebXRTransientInputHitTestSource&);
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    ExceptionOr<Ref<WebXRPlaneSet>> detectedPlanes();
 #endif
 
     void setTime(DOMHighResTimeStamp time) { m_time = time; }
@@ -84,7 +103,10 @@ public:
     bool isActive() const { return m_active; }
     bool isAnimationFrame() const { return m_isAnimationFrame; }
 
-    static TransformationMatrix matrixFromPose(const PlatformXR::FrameData::Pose&);
+    static TransformationMatrix matrixFromPose(const PlatformXR::Pose&);
+#if ENABLE(WEBXR_ANCHORS)
+    static std::optional<PlatformXR::Pose> poseFromTransform(const TransformationMatrix&);
+#endif
 
     struct PopulatedPose {
         TransformationMatrix transform;
@@ -104,6 +126,12 @@ private:
     bool m_isAnimationFrame { false };
     DOMHighResTimeStamp m_time { 0 };
     const Ref<WebXRSession> m_session;
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    const RefPtr<WebXRPlaneSet> m_detectedPlanes;
+#endif
+#if ENABLE(WEBXR_ANCHORS)
+    const RefPtr<WebXRAnchorSet> m_trackedAnchors;
+#endif
 };
 
 } // namespace WebCore

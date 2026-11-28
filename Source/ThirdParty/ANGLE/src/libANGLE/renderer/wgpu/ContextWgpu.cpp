@@ -655,6 +655,7 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 // framebuffer size.
                 invalidateDriverUniforms();
                 updatePipelineColorMasks();
+                updateFrontFace(glState);
                 ANGLE_TRY(endRenderPass(webgpu::RenderPassClosureReason::FramebufferBindingChange));
             }
             break;
@@ -853,8 +854,7 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 invalidateCurrentRenderPipeline();
                 break;
             case gl::state::DIRTY_BIT_FRONT_FACE:
-                mRenderPipelineDesc.setFrontFace(glState.getRasterizerState().frontFace);
-                invalidateCurrentRenderPipeline();
+                updateFrontFace(glState);
                 break;
             case gl::state::DIRTY_BIT_POLYGON_OFFSET_FILL_ENABLED:
                 break;
@@ -893,6 +893,7 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 break;
             case gl::state::DIRTY_BIT_PROGRAM_BINDING:
             case gl::state::DIRTY_BIT_PROGRAM_EXECUTABLE:
+                updatePipelineColorMasks();
                 invalidateCurrentRenderPipeline();
                 iter.setLaterBit(gl::state::DIRTY_BIT_TEXTURE_BINDINGS);
                 break;
@@ -930,6 +931,7 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
             case gl::state::DIRTY_BIT_CLIP_CONTROL:
                 // Driver uniforms are calculated using the clip control state.
                 invalidateDriverUniforms();
+                updateFrontFace(glState);
                 break;
             case gl::state::DIRTY_BIT_EXTENDED:
             {
@@ -965,6 +967,9 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                             break;
                         case gl::state::EXTENDED_DIRTY_BIT_FETCH_PER_SAMPLE_ENABLED:
                             break;
+                        case gl::state::EXTENDED_DIRTY_BIT_VARIABLE_RASTERIZATION_RATE:
+                            // ANGLE_variable_rasterization_rate_metal is only supported by the Metal backend.
+                            break;
                         default:
                             UNREACHABLE();
                     }
@@ -983,27 +988,25 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
 
 void ContextWgpu::updatePipelineColorMasks()
 {
-
     FramebufferWgpu *framebufferWgpu      = webgpu::GetImpl(mState.getDrawFramebuffer());
     gl::DrawBufferMask enabledDrawBuffers = framebufferWgpu->getState().getEnabledDrawBuffers();
+
+    const gl::ProgramExecutable *executable = mState.getProgramExecutable();
+    if (executable)
+    {
+        enabledDrawBuffers &= executable->getActiveOutputVariablesMask();
+    }
 
     bool changed = false;
 
     const gl::BlendStateExt &blendStateExt = mState.getBlendStateExt();
     for (size_t i = 0; i < blendStateExt.getDrawBufferCount(); i++)
     {
-        bool r, g, b, a;
+        // Disabled/inactive draw buffers have their color mask set to 0.
+        bool r = 0, g = 0, b = 0, a = 0;
         if (enabledDrawBuffers.test(i))
         {
             blendStateExt.getColorMaskIndexed(i, &r, &g, &b, &a);
-        }
-        else
-        {
-            // Disabled draw buffers just have their color mask set to 0.
-            r = 0;
-            g = 0;
-            b = 0;
-            a = 0;
         }
         changed = mRenderPipelineDesc.setColorWriteMask(i, r, g, b, a) || changed;
     }
@@ -1012,6 +1015,21 @@ void ContextWgpu::updatePipelineColorMasks()
     {
         invalidateCurrentRenderPipeline();
     }
+}
+
+void ContextWgpu::updateFrontFace(const gl::State &glState)
+{
+    // Inverts when the vertex shader negates gl_Position.y, which reverses the triangle winding.
+    FramebufferWgpu *framebufferWgpu = webgpu::GetImpl(glState.getDrawFramebuffer());
+    const bool upperLeftOrigin       = glState.getClipOrigin() == gl::ClipOrigin::UpperLeft;
+    const bool invert                = framebufferWgpu->flipY() == upperLeftOrigin;
+    GLenum frontFace                 = glState.getRasterizerState().frontFace;
+    if (invert)
+    {
+        frontFace = frontFace == GL_CCW ? GL_CW : GL_CCW;
+    }
+    mRenderPipelineDesc.setFrontFace(frontFace);
+    invalidateCurrentRenderPipeline();
 }
 
 GLint ContextWgpu::getGPUDisjoint()

@@ -23,6 +23,7 @@
 
 namespace JSC {
 
+class BlockDirectory;
 class HeapCell;
 class JSCell;
 class ReservedRangeHeap;
@@ -143,6 +144,12 @@ public:
     JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
     // The same for the heap's list of array buffers. No collection runs here: the caller's cell is not finished.
     void willAddArrayBuffer(VM&);
+    // Called on the VM's thread before each block is made. With limited address space, grows the heap's set of blocks early, and the directory's list of blocks
+    // when it is full, with requests for memory that may fail. A growth that fails owes nothing: it is tried again before the next block.
+    // Returns false when the set or the list has no room for the block. The block is not made then, as where the cage has none.
+    bool willAddBlock(VM&, BlockDirectory&);
+    // The same before a directory takes a block from another directory. The set holds that block already.
+    static bool willStealBlock(BlockDirectory&);
     // The same for the blocks that weak handles lie in. A handle cannot fail, so with limited address space its block comes out of a few spare ones, which are filled up again each time.
     // Where they cannot be, the program is owed an error while some are left.
     static bool keepsSpareWeakBlocks();
@@ -182,6 +189,9 @@ private:
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
     OptionSet<ExhaustedHeap> m_exhaustedHeaps;
     unsigned m_numberOfBarrenCollections { 0 };
+    // Room resets it, and so does an error at a live heap smaller than at each error since there was room. No other error does, so a program that catches every error cannot run barren collections forever.
+    unsigned m_numberOfBarrenCollectionsSinceRoom { 0 };
+    size_t m_smallestLiveSizeAtError { std::numeric_limits<size_t>::max() };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
     Vector<void*, numberOfSpareWeakBlocks> m_spareWeakBlocks;

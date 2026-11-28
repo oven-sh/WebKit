@@ -1,0 +1,77 @@
+# A hole of the literal and a step behind its end give undefined. What collects the rest reads the list by index from behind the steps on: the position comes round in a parameter of the head.
+# function take(x) { const [a, b, c, ...rest] = [x, , x, x, x]; const [d, e] = [x]; keep(a, b, c, rest, d, e); }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: [[undefined]]: undefined {{*}} = Undefined
+# CHECK: [[length]]: 5 {{*}} = Integer integer=5
+# CHECK: [[list]]: {{*}} = NewArray {{*}}holes=[1]
+# CHECK: ([[position]]: int[0, 34359738368] {{*}}isLoopHead=true
+# CHECK: [[inside]]: boolean {{*}} = Less [[position]], [[length]] form=Integers
+# CHECK: Branch [[inside]]
+# CHECK: [[index]]: int[0, 4] {{*}} = Narrowed [[position]], [[inside]]
+# CHECK: = GetArrayElement [[list]], {{*}} level=Proven
+# CHECK: = Increment {{*}} form=Integers
+# CHECK: = Call {{*}}, -, [[x]], [[undefined]], [[x]], {{*}}, [[x]], [[undefined]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: @@iterator
+# NEVER-NOT: NewHeapWords
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0, v0, v0, v0 contents=anything holes=[1]
+    v2 = IteratorOpen v1 elementCount=3 [isDestructuring, hasRest]
+    Jump -> next b1()
+  b1() handler=b7():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    v5 = IteratorResume v2 stepIndex=1
+    v6 = ResultAt v5 index=1
+    v7 = IteratorResume v2 stepIndex=2
+    v8 = ResultAt v7 index=1
+    v9 = NewArray contents=anything
+    Jump -> next b2()
+  b2() handler=b7():
+    LoopHint
+    v11 = IteratorResume v2 stepIndex=3
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Branch v12 -> taken b4(), notTaken b3()
+  b3() handler=b7():
+    AppendElement v9, v13
+    Jump -> next b2()
+  b4():
+    IteratorClose v2
+    v16 = NewArray v0 contents=anything
+    v17 = IteratorOpen v16 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b8():
+    v18 = IteratorResume v17 stepIndex=0
+    v19 = ResultAt v18 index=1
+    v20 = IteratorResume v17 stepIndex=1
+    v21 = ResultAt v20 index=1
+    Jump -> next b6()
+  b6():
+    IteratorClose v17
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="keep" [isFreeName]
+    v25 = Call v24, -, v4, v6, v8, v9, v19, v21
+    Return v25
+  b7() role=IterationCleanup subject=v2:
+    v26 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v26
+  b8() role=IterationCleanup subject=v17:
+    v28 = CatchException
+    IteratorClose v17 completion=Throw
+    Rethrow v28
+}

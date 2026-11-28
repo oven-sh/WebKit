@@ -121,17 +121,32 @@ function visitStatements(fields: readonly Field[], first: number): string[] {
 const visitSignature =
   "pub fn visit_words<W: Words + ?Sized>(words: &W, at: usize, visit: &mut dyn FnMut(FieldWord, usize)) -> Option<usize>";
 
-function wordsImpl(name: string, count: number, appends: Lines, reads: Lines, visits: Lines): string[] {
+export const mostWordsOfShortRecord = 5;
+
+interface WordsImpl {
+  readonly name: string;
+  readonly count: number;
+  readonly isShort: boolean;
+  readonly appends: Lines;
+  readonly reads: Lines;
+  readonly visits: Lines;
+}
+
+function wordsImpl({ name, count, isShort, appends, reads, visits }: WordsImpl): string[] {
+  const attributes = isShort ? ["#[inline]"] : [];
   return [
     `impl ${name} {`,
     ...indent([
       `pub const WORDS: usize = ${count};`,
+      ...attributes,
       "pub fn append_to(&self, words: &mut impl Extend<u32>) {",
       ...indent(appends),
       "}",
+      ...attributes,
       `pub fn from_words(words: &[u32]) -> Option<${name}> {`,
       ...indent([`let words = words.get(..${count})?;`, ...reads]),
       "}",
+      ...attributes,
       `${visitSignature} {`,
       ...indent([`words.get(at + ${count - 1})?;`, ...visits, `Some(at + ${count})`]),
       "}",
@@ -159,13 +174,14 @@ function fieldInitializer(field: Field, word: number): string[] {
 function recordWordsImpl(record: SchemaRecord): string[] {
   const name = rustTypeName(record.name);
   const initializers = flatFieldWords(record.wireFields).flatMap(([field, word]) => fieldInitializer(field, word));
-  return wordsImpl(
+  return wordsImpl({
     name,
-    record.wireWords,
-    appendExpressions(record.wireFields, "self."),
-    [`Some(${name} {`, ...indent(initializers), "})"],
-    visitStatements(record.wireFields, 0),
-  );
+    count: record.wireWords,
+    isShort: record.wireWords <= mostWordsOfShortRecord,
+    appends: appendExpressions(record.wireFields, "self."),
+    reads: [`Some(${name} {`, ...indent(initializers), "})"],
+    visits: visitStatements(record.wireFields, 0),
+  });
 }
 
 export function casePattern(
@@ -199,16 +215,18 @@ function variantWordsImpl(variant: Variant): string[] {
     const visited = visitStatements(fields, 1);
     visits.push(visited.length > 0 ? `${number} => { ${visited.join(" ")} }` : `${number} => {}`);
   }
-  return wordsImpl(
+  return wordsImpl({
     name,
-    variant.wireWords,
-    ["match *self {", ...indent(appends), "}"],
-    ["Some(match words[0] {", ...indent([...reads, "_ => return None,"]), "})"],
-    ["match words.get(at)? {", ...indent([...visits, "_ => return None,"]), "}"],
-  );
+    count: variant.wireWords,
+    isShort: false,
+    appends: ["match *self {", ...indent(appends), "}"],
+    reads: ["Some(match words[0] {", ...indent([...reads, "_ => return None,"]), "})"],
+    visits: ["match words.get(at)? {", ...indent([...visits, "_ => return None,"]), "}"],
+  });
 }
 
-const wordHelpers = `pub(super) fn bool_from_word(word: u32) -> Option<bool> {
+const wordHelpers = `#[inline]
+pub(super) fn bool_from_word(word: u32) -> Option<bool> {
     match word {
         0 => Some(false),
         1 => Some(true),
@@ -216,6 +234,7 @@ const wordHelpers = `pub(super) fn bool_from_word(word: u32) -> Option<bool> {
     }
 }
 
+#[inline]
 pub(super) fn optional_from_word<T>(word: u32, from_wire: impl FnOnce(u32) -> Option<T>) -> Option<Option<T>> {
     if word == ABSENT_WORD { Some(None) } else { from_wire(word).map(Some) }
 }`.split("\n");

@@ -62,7 +62,7 @@ public:
     using KeyType = Key;
     using ValueType = Value;
 
-    struct AddResult {
+    struct WTF_VIEW_TYPE AddResult {
         using IteratorType = OrderedHashTableIterator<OrderedHashTable, ValueType>;
         IteratorType iterator;
         bool isNewEntry;
@@ -359,14 +359,14 @@ public:
     void remove(iterator it)
     {
         ASSERT(it.m_table == this);
-        ASSERT(it.m_index < m_entriesLength);
+        ASSERT_WITH_SECURITY_IMPLICATION(it.m_index < m_entriesLength);
         removeEntryAtIndex(it.m_index);
     }
 
     void remove(const_iterator it)
     {
         ASSERT(it.m_table == this);
-        ASSERT(it.m_index < m_entriesLength);
+        ASSERT_WITH_SECURITY_IMPLICATION(it.m_index < m_entriesLength);
         removeEntryAtIndex(it.m_index);
     }
 
@@ -548,8 +548,8 @@ private:
 
     void removeEntryAtIndex(uint32_t index)
     {
-        ASSERT(index < m_entriesLength);
-        ASSERT(!isDeletedEntry(m_entries[index]));
+        ASSERT_WITH_SECURITY_IMPLICATION(index < m_entriesLength);
+        ASSERT_WITH_SECURITY_IMPLICATION(!isDeletedEntry(m_entries[index]));
 
         // The bucket slot keeps pointing at this entry; probes skip it via
         // isDeletedEntry, so no second probe is needed here.
@@ -635,7 +635,7 @@ private:
 };
 
 template<typename TableType, typename ValueType>
-class OrderedHashTableIterator {
+class WTF_VIEW_TYPE OrderedHashTableIterator {
 public:
     using iterator_category = std::bidirectional_iterator_tag;
     using value_type = ValueType;
@@ -648,7 +648,7 @@ public:
     ValueType* get() const
     {
         ASSERT(m_table);
-        ASSERT(m_index < m_table->entriesLength());
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index < m_table->entriesLength());
         return &m_table->entries()[m_index];
     }
 
@@ -674,7 +674,7 @@ public:
     OrderedHashTableIterator& operator--()
     {
         ASSERT(m_table);
-        ASSERT(m_index > 0);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index > 0);
         --m_index;
         while (m_index > 0 && m_table->isDeletedEntry(m_table->entries()[m_index]))
             --m_index;
@@ -718,7 +718,7 @@ private:
 };
 
 template<typename TableType, typename ValueType>
-class OrderedHashTableConstIterator {
+class WTF_VIEW_TYPE OrderedHashTableConstIterator {
 public:
     using iterator_category = std::bidirectional_iterator_tag;
     using value_type = ValueType;
@@ -737,7 +737,7 @@ public:
     const ValueType* get() const
     {
         ASSERT(m_table);
-        ASSERT(m_index < m_table->entriesLength());
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index < m_table->entriesLength());
         return &m_table->entries()[m_index];
     }
 
@@ -763,7 +763,7 @@ public:
     OrderedHashTableConstIterator& operator--()
     {
         ASSERT(m_table);
-        ASSERT(m_index > 0);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index > 0);
         --m_index;
         while (m_index > 0 && m_table->isDeletedEntry(m_table->entries()[m_index]))
             --m_index;
@@ -805,7 +805,7 @@ private:
 };
 
 template<typename TableType, typename ValueType>
-class OrderedHashTableReverseIterator {
+class WTF_VIEW_TYPE OrderedHashTableReverseIterator {
 public:
     using iterator_category = std::forward_iterator_tag;
     using value_type = ValueType;
@@ -818,8 +818,8 @@ public:
     ValueType* get() const
     {
         ASSERT(m_table);
-        ASSERT(m_index > 0);
-        ASSERT(m_index <= m_table->entriesLength());
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index > 0);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index <= m_table->entriesLength());
         return &m_table->entries()[m_index - 1];
     }
 
@@ -829,7 +829,7 @@ public:
     OrderedHashTableReverseIterator& operator++()
     {
         ASSERT(m_table);
-        ASSERT(m_index > 0);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index > 0);
         --m_index;
         skipDeleted();
         return *this;
@@ -869,7 +869,7 @@ private:
 };
 
 template<typename TableType, typename ValueType>
-class OrderedHashTableConstReverseIterator {
+class WTF_VIEW_TYPE OrderedHashTableConstReverseIterator {
 public:
     using iterator_category = std::forward_iterator_tag;
     using value_type = ValueType;
@@ -888,8 +888,8 @@ public:
     const ValueType* get() const
     {
         ASSERT(m_table);
-        ASSERT(m_index > 0);
-        ASSERT(m_index <= m_table->entriesLength());
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index > 0);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index <= m_table->entriesLength());
         return &m_table->entries()[m_index - 1];
     }
 
@@ -899,7 +899,7 @@ public:
     OrderedHashTableConstReverseIterator& operator++()
     {
         ASSERT(m_table);
-        ASSERT(m_index > 0);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_index > 0);
         --m_index;
         skipDeleted();
         return *this;

@@ -1,0 +1,17 @@
+# No test tells a plain object: a class prototype takes the type of its cell in place. What has a cell of another type is still no plain object, so the class meets none that is told by its cells, and what is written of the contents beside it stays
+# RUN: intersect
+# CHECK: t0 & t1 = never
+# CHECK: t0 & t2 = never
+# CHECK: t0 & t3 = Object
+# CHECK: t0 & t4 = Iterator|Object
+# CHECK: t1 & t0 = never
+# CHECK: t1 & t3 = Array<number>
+# CHECK: t2 & t0 = never
+# CHECK: t3 & t0 = Object
+# CHECK: t3 & t1 = Array<number>
+# CHECK: t4 & t0 = Iterator|Object
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=Object}, {type=Array}, {type=BoundFunction|Map}, {type=Array<number>|Object}, {type=Iterator}] results=[{type=undefined}]
+entry module=m0

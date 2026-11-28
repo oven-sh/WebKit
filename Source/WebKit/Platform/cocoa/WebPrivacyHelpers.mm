@@ -99,7 +99,7 @@ namespace WebKit {
 
 Ref<ListDataObserver> ListDataControllerBase::observeUpdates(Function<void()>&& callback)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (!m_notificationListener) {
         lazyInitialize(m_notificationListener, adoptNS([[WKWebPrivacyNotificationListener alloc] initWithType:static_cast<WPResourceType>(resourceTypeValue()) callback:^{
             updateList([weakThis = WeakPtr { *this }] {
@@ -142,7 +142,7 @@ unsigned LinkDecorationFilteringController::resourceTypeValue() const
 
 void LinkDecorationFilteringController::updateList(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (!PAL::isWebPrivacyFrameworkAvailable()) {
         completionHandler();
         return;
@@ -162,8 +162,7 @@ void LinkDecorationFilteringController::updateList(CompletionHandler<void()>&& c
             RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request query parameters from WebPrivacy.");
         else {
             RetainPtr rules = [data rules];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL WPLinkFilteringRule *rule : rules.get()) {
+            for (WPLinkFilteringRule *rule : rules.get()) {
                 auto domain = WebCore::RegistrableDomain { URL { makeString("http://"_s, String { rule.domain }) } };
                 result.append(WebCore::LinkDecorationFilteringData { WTF::move(domain), [rule respondsToSelector:@selector(path)] ? rule.path : @"", rule.queryParameter });
             }
@@ -207,8 +206,7 @@ void requestLinkDecorationFilteringData(LinkFilteringRulesCallback&& callback)
             RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request allowed query parameters from WebPrivacy.");
         else {
             RetainPtr rules = [data rules];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL WPLinkFilteringRule *rule : rules.get()) {
+            for (WPLinkFilteringRule *rule : rules.get()) {
                 auto domain = WebCore::RegistrableDomain { URL { makeString("http://"_s, String { rule.domain }) } };
                 result.append(WebCore::LinkDecorationFilteringData { WTF::move(domain), { }, rule.queryParameter });
             }
@@ -241,11 +239,9 @@ static HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> q
 {
     HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> map;
     RetainPtr<NSArray<NSString *>> topDomains = quirkDomains.allKeys;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *topDomain : topDomains.get()) {
+    for (NSString *topDomain : topDomains.get()) {
         Vector<WebCore::RegistrableDomain> subFrameDomains;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *subFrameDomain : [quirkDomains objectForKey:topDomain])
+        for (NSString *subFrameDomain : [quirkDomains objectForKey:topDomain])
             subFrameDomains.append(WebCore::RegistrableDomain::fromRawString(subFrameDomain));
         map.add(WebCore::RegistrableDomain::fromRawString(String { topDomain }), WTF::move(subFrameDomains));
     }
@@ -255,8 +251,7 @@ static HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> q
 static Vector<URL> quirkPagesArrayToVector(NSArray<NSString *> *triggerPages)
 {
     Vector<URL> triggers;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *page : triggerPages) {
+    for (NSString *page : triggerPages) {
         if (![page isEqualToString:@"*"])
             triggers.append(URL { page });
     }
@@ -265,7 +260,7 @@ static Vector<URL> quirkPagesArrayToVector(NSArray<NSString *> *triggerPages)
 
 void StorageAccessPromptQuirkController::updateList(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestStorageAccessPromptQuirksData:completionHandler:)]) {
         RunLoop::mainSingleton().dispatch(WTF::move(completionHandler));
         return;
@@ -286,8 +281,7 @@ void StorageAccessPromptQuirkController::updateList(CompletionHandler<void()>&& 
         else {
             RetainPtr quirks = [data quirks];
             auto hasQuirkDomainsAndTriggerPages = [PAL::getWPStorageAccessPromptQuirkClassSingleton() instancesRespondToSelector:@selector(quirkDomains)] && [PAL::getWPStorageAccessPromptQuirkClassSingleton() instancesRespondToSelector:@selector(triggerPages)];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL WPStorageAccessPromptQuirk *quirk : quirks.get()) {
+            for (WPStorageAccessPromptQuirk *quirk : quirks.get()) {
                 if (hasQuirkDomainsAndTriggerPages)
                     result.append(WebCore::OrganizationStorageAccessPromptQuirk { quirk.name, quirkDomainsDictToMap(retainPtr(quirk.quirkDomains).get()), quirkPagesArrayToVector(retainPtr(quirk.triggerPages).get()) });
                 else
@@ -308,7 +302,7 @@ unsigned StorageAccessUserAgentStringQuirkController::resourceTypeValue() const
 
 void StorageAccessUserAgentStringQuirkController::updateList(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestStorageAccessUserAgentStringQuirksData:completionHandler:)]) {
         RunLoop::mainSingleton().dispatch(WTF::move(completionHandler));
         return;
@@ -328,8 +322,7 @@ void StorageAccessUserAgentStringQuirkController::updateList(CompletionHandler<v
             RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request storage access user agent string quirks from WebPrivacy.");
         else {
             RetainPtr quirks = [data quirks];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL WPStorageAccessUserAgentStringQuirk *quirk : quirks.get())
+            for (WPStorageAccessUserAgentStringQuirk *quirk : quirks.get())
                 result.add(WebCore::RegistrableDomain::fromRawString(quirk.domain), quirk.userAgentString);
             setCachedListData(WTF::move(result));
         }
@@ -345,7 +338,12 @@ HighValueFraudTargetDomainsController& HighValueFraudTargetDomainsController::si
     return sharedInstance.get();
 }
 
+static constexpr Seconds highValueFraudTargetDomainsInitialRetryDelay = 1_min;
+static constexpr Seconds highValueFraudTargetDomainsMaximumRetryDelay = 30_min;
+
 HighValueFraudTargetDomainsController::HighValueFraudTargetDomainsController()
+    : m_retryTimer(RunLoop::mainSingleton(), "HighValueFraudTargetDomainsController::RetryTimer"_s, [this] { update(); })
+    , m_nextRetryDelay(highValueFraudTargetDomainsInitialRetryDelay)
 {
     scheduleNextUpdate(ContinuousApproximateTime::now());
     update();
@@ -353,6 +351,17 @@ HighValueFraudTargetDomainsController::HighValueFraudTargetDomainsController()
     lazyInitialize(m_notificationListener, adoptNS([[WKWebPrivacyNotificationListener alloc] initWithType:static_cast<WPResourceType>(WPResourceTypeHighValueFraudTargetDomains) callback:^{
         update();
     }]));
+}
+
+void HighValueFraudTargetDomainsController::scheduleRetryAfterFailure(NSError *error)
+{
+    ASSERT(RunLoop::isMain());
+    if (m_retryTimer.isActive())
+        return;
+
+    RELEASE_LOG_ERROR(SiteIsolation, "HighValueFraudTargetDomainsController::scheduleRetryAfterFailure: Request failed (domain: %{public}@, code: %ld), retrying in %.0f seconds.", error.domain, static_cast<long>(error.code), m_nextRetryDelay.seconds());
+    m_retryTimer.startOneShot(m_nextRetryDelay);
+    m_nextRetryDelay = std::min(m_nextRetryDelay * 2, highValueFraudTargetDomainsMaximumRetryDelay);
 }
 
 void HighValueFraudTargetDomainsController::scheduleNextUpdate(ContinuousApproximateTime now)
@@ -375,21 +384,29 @@ void HighValueFraudTargetDomainsController::update()
     [options setAfterUpdates:NO];
 
     auto requestStartTime = MonotonicTime::now();
+    if (!m_didReceiveInitialData) {
+        if (!m_initialRequestStartTime)
+            m_initialRequestStartTime = requestStartTime;
+        ++m_initialRequestCount;
+    }
     [[PAL::getWPResourcesClassSingleton() sharedInstance] requestHighValueFraudTargetDomains:options.get() completionHandler:^(NSArray<WPHighValueFraudTargetDomain *> *domains, NSError *error) {
         if (m_hasInjectedDomainsForTesting)
             return;
 
         auto elapsed = MonotonicTime::now() - requestStartTime;
         if (error) {
-            RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request high-value fraud target domains from WebPrivacy after %.1f ms: %@", elapsed.milliseconds(), error);
+            RELEASE_LOG_ERROR(SiteIsolation, "Failed to request high-value fraud target domains from WebPrivacy after %.1f ms: %@", elapsed.milliseconds(), error);
+            scheduleRetryAfterFailure(error);
             return;
         }
+
+        m_retryTimer.stop();
+        m_nextRetryDelay = highValueFraudTargetDomainsInitialRetryDelay;
 
         HashSet<WebCore::RegistrableDomain> highValueDomains;
         highValueDomains.reserveInitialCapacity(domains.count);
 
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL WPHighValueFraudTargetDomain *domainInfo in domains) {
+        for (WPHighValueFraudTargetDomain *domainInfo in domains) {
             auto registrableDomain = WebCore::RegistrableDomain::fromRawString(domainInfo.domain);
             if (registrableDomain.isEmpty())
                 continue;
@@ -399,9 +416,9 @@ void HighValueFraudTargetDomainsController::update()
         m_domains = WTF::move(highValueDomains);
 
         if (std::exchange(m_didReceiveInitialData, true))
-            RELEASE_LOG(ResourceLoadStatistics, "HighValueFraudTargetDomainsController::update: Reloaded %u high-value fraud target domain(s) from WebPrivacy in %.1f ms.", m_domains.size(), elapsed.milliseconds());
+            RELEASE_LOG(SiteIsolation, "HighValueFraudTargetDomainsController::update: Reloaded %u high-value fraud target domain(s) from WebPrivacy in %.1f ms.", m_domains.size(), elapsed.milliseconds());
         else
-            RELEASE_LOG(ResourceLoadStatistics, "HighValueFraudTargetDomainsController::update: Loaded initial %u high-value fraud target domain(s) from WebPrivacy in %.1f ms.", m_domains.size(), elapsed.milliseconds());
+            RELEASE_LOG(SiteIsolation, "HighValueFraudTargetDomainsController::update: Loaded initial %u high-value fraud target domain(s) from WebPrivacy in %.1f ms (%.1f ms and %u request(s) since the first request).", m_domains.size(), elapsed.milliseconds(), (MonotonicTime::now() - m_initialRequestStartTime.value_or(requestStartTime)).milliseconds(), m_initialRequestCount);
     }];
 }
 
@@ -419,11 +436,12 @@ bool HighValueFraudTargetDomainsController::contains(const WebCore::RegistrableD
 
 void HighValueFraudTargetDomainsController::setDomainsForTesting(HashSet<WebCore::RegistrableDomain>&& domains)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     m_domains = WTF::move(domains);
     m_didReceiveInitialData = true;
     // Keep update() from replacing the injected list with real data from WebPrivacy.
     m_hasInjectedDomainsForTesting = true;
+    m_retryTimer.stop();
 }
 
 ResourceMonitorURLsController& ResourceMonitorURLsController::singleton()
@@ -456,7 +474,7 @@ void ResourceMonitorURLsController::requestContentRuleList(PrepareCompletionHand
 
 void ResourceMonitorURLsController::getSource(CompletionHandler<void(String&&)>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestResourceMonitorRulesSource:completionHandler:)]) {
         completionHandler({ });
         return;
@@ -549,8 +567,8 @@ public:
     TrackerAddressLookupInfo(WebCore::IPAddress&& network, unsigned netMaskLength, String&& owner, String&& host, CanBlock canBlock)
         : m_network { WTF::move(network) }
         , m_netMaskLength { netMaskLength }
-        , m_owner { owner.utf8() }
-        , m_host { host.utf8() }
+        , m_owner { makeUTF8CString(owner) }
+        , m_host { makeUTF8CString(host) }
         , m_canBlock { canBlock }
     {
     }
@@ -566,10 +584,10 @@ public:
 
     TrackerAddressLookupInfo() = default;
 
-    const UTF8CString& LEGACY_NODELETE owner() const { return m_owner; }
-    const UTF8CString& LEGACY_NODELETE host() const { return m_host; }
+    NODELETE const UTF8CString& owner() const { return m_owner; }
+    NODELETE const UTF8CString& host() const { return m_host; }
 
-    CanBlock LEGACY_NODELETE canBlock() const { return m_canBlock; }
+    NODELETE CanBlock canBlock() const { return m_canBlock; }
 
     static void populateIfNeeded()
     {
@@ -591,8 +609,7 @@ public:
                 version4List().clear();
                 version6List().clear();
 
-                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                for (SUPPRESS_UNRETAINED_LOCAL WPNetworkAddressRange *range in ranges) {
+                for (WPNetworkAddressRange *range in ranges) {
                     switch (range.version) {
                     case WPNetworkAddressVersion4:
                         version4List().append({ range });
@@ -712,9 +729,9 @@ public:
 
     TrackerDomainLookupInfo() = default;
 
-    const UTF8CString& LEGACY_NODELETE owner() const { return m_owner; }
+    NODELETE const UTF8CString& owner() const { return m_owner; }
 
-    CanBlock LEGACY_NODELETE canBlock() const { return m_canBlock; }
+    NODELETE CanBlock canBlock() const { return m_canBlock; }
 
     static void populateIfNeeded()
     {
@@ -743,8 +760,7 @@ public:
                 // writer must hold it too — otherwise it races the map structure and frees CString
                 // buffers out from under a concurrent reader.
                 Locker locker { TrackerAddressLookupInfo::trackerLookupLock() };
-                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                for (SUPPRESS_UNRETAINED_LOCAL WPTrackingDomain *domain in domains)
+                for (WPTrackingDomain *domain in domains)
                     list().set(String::fromLatin1([domain.host UTF8String]), TrackerDomainLookupInfo { domain });
             }];
         });
@@ -780,7 +796,7 @@ private:
         return it != list().end() ? &it->value : nullptr;
     }
 
-    static MemoryCompactRobinHoodHashMap<String, TrackerDomainLookupInfo>& LEGACY_NODELETE list() WTF_REQUIRES_LOCK(TrackerAddressLookupInfo::trackerLookupLock())
+    NODELETE static MemoryCompactRobinHoodHashMap<String, TrackerDomainLookupInfo>& list() WTF_REQUIRES_LOCK(TrackerAddressLookupInfo::trackerLookupLock())
     {
         static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, TrackerDomainLookupInfo>> map;
         return map.get();
@@ -901,7 +917,7 @@ static WebCore::ScriptTrackingPrivacyFlags allowedScriptTrackingCategories(WPScr
 
 void ScriptTrackingPrivacyController::updateList(CompletionHandler<void()>&& completion)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 #if ENABLE(SCRIPT_TRACKING_PRIVACY_PROTECTIONS)
     if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestFingerprintingScripts:completionHandler:)]) {
         RunLoop::mainSingleton().dispatch(WTF::move(completion));
@@ -965,7 +981,7 @@ void ScriptTrackingPrivacyController::didUpdateCachedListData()
 
 void ConsistentPrivacyQuirkController::updateList(CompletionHandler<void()>&& completion)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 #if ENABLE(SCRIPT_TRACKING_PRIVACY_PROTECTIONS)
     if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestFingerprintingScripts:completionHandler:)]) {
         RunLoop::mainSingleton().dispatch(WTF::move(completion));

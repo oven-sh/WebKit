@@ -61,19 +61,17 @@ public:
 
     BrowsingContextGroup* browsingContextGroup() const { return m_browsingContextGroup.get(); }
 
-    const FrameState& LEGACY_NODELETE mainFrameState() const;
+    NODELETE const FrameState& mainFrameState() const;
     Ref<FrameState> copyMainFrameState() const;
     Ref<FrameState> copyMainFrameStateWithChildren() const;
 
-    const String& LEGACY_NODELETE originalURL() const LIFETIME_BOUND;
-    const String& LEGACY_NODELETE url() const LIFETIME_BOUND;
-    const String& LEGACY_NODELETE title() const LIFETIME_BOUND;
-    bool LEGACY_NODELETE wasCreatedByJSWithoutUserInteraction() const;
+    NODELETE const String& originalURL() const LIFETIME_BOUND;
+    NODELETE const String& url() const LIFETIME_BOUND;
+    NODELETE const String& title() const LIFETIME_BOUND;
+    NODELETE bool wasCreatedByJSWithoutUserInteraction() const;
 
     const URL& resourceDirectoryURL() const LIFETIME_BOUND { return m_resourceDirectoryURL; }
     void setResourceDirectoryURL(URL&& url) { m_resourceDirectoryURL = WTF::move(url); }
-    RefPtr<WebsiteDataStore> dataStoreForWebArchive() const { return m_dataStoreForWebArchive; }
-    void setDataStoreForWebArchive(WebsiteDataStore* dataStore) { m_dataStoreForWebArchive = dataStore; }
 
     bool itemIsClone(const WebBackForwardListItem&);
     bool hasSameMainFrameHistoryEntry(const WebBackForwardListItem&) const;
@@ -86,19 +84,19 @@ public:
     void wasRemovedFromBackForwardList();
 
     WebBackForwardCacheEntry* backForwardCacheEntry() const { return m_backForwardCacheEntry.get(); }
-    WebBackForwardCacheEntry* LEGACY_NODELETE backForwardCacheEntryForProcess(WebCore::ProcessIdentifier) const;
+    NODELETE WebBackForwardCacheEntry* backForwardCacheEntryForProcess(WebCore::ProcessIdentifier) const;
 
-    SuspendedPageProxy* LEGACY_NODELETE suspendedPage() const;
+    NODELETE SuspendedPageProxy* suspendedPage() const;
 
     std::optional<WebCore::FrameIdentifier> navigatedFrameID() const { return m_navigatedFrameID; }
 
-    WebBackForwardListFrameItem& LEGACY_NODELETE navigatedFrameItem() const;
+    NODELETE WebBackForwardListFrameItem& navigatedFrameItem() const;
 
     // rdar://168057355
     WebBackForwardListFrameItem* WTF_NONNULL mainFrameItemPtrForSwift() const SWIFT_NAME(mainFrameItem()) { return &mainFrameItem(); }
-    WebBackForwardListFrameItem& LEGACY_NODELETE mainFrameItem() const SWIFT_NAME(__mainFrameItemUnsafe());
+    NODELETE WebBackForwardListFrameItem& mainFrameItem() const SWIFT_NAME(__mainFrameItemUnsafe());
 
-    void LEGACY_NODELETE setWasRestoredFromSession();
+    NODELETE void setWasRestoredFromSession();
 
     String loggingString();
 
@@ -114,8 +112,6 @@ private:
 
     friend class WebBackForwardCache;
     void setBackForwardCacheEntry(RefPtr<WebBackForwardCacheEntry>&&);
-
-    RefPtr<WebsiteDataStore> m_dataStoreForWebArchive;
 
     const WebCore::BackForwardItemIdentifier m_identifier;
     const Ref<WebBackForwardListFrameItem> m_mainFrameItem;

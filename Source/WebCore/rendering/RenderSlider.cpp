@@ -55,7 +55,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSlider);
 
 const int RenderSlider::defaultTrackLength = 129;
 
-RenderSlider::RenderSlider(HTMLInputElement& element, Style::ComputedStyle&& style)
+RenderSlider::RenderSlider(HTMLInputElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderFlexibleBox(Type::Slider, element, WTF::move(style))
 {
     // We assume RenderSlider works only with <input type=range>.
@@ -65,7 +65,7 @@ RenderSlider::RenderSlider(HTMLInputElement& element, Style::ComputedStyle&& sty
 
 RenderSlider::~RenderSlider() = default;
 
-HTMLInputElement& LEGACY_NODELETE RenderSlider::element() const
+NODELETE HTMLInputElement& RenderSlider::element() const
 {
     return downcast<HTMLInputElement>(nodeForNonAnonymous());
 }
@@ -88,25 +88,13 @@ std::pair<LayoutUnit, LayoutUnit> RenderSlider::computeIntrinsicLogicalWidths() 
     return { minLogicalWidth, maxLogicalWidth };
 }
 
-void RenderSlider::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderSlider::computeIntrinsicLogicalWidthContributions()
 {
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
-}
-
-bool RenderSlider::inDragMode() const
-{
-    return protect(element())->sliderThumbElement()->active();
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(style().logicalWidth(), LayoutUnit { fixedLogicalWidth->resolveZoom(style().usedZoomForLength()) }, 0_lu);
+        return { logicalWidth, logicalWidth };
+    }
+    return computeIntrinsicLogicalWidths();
 }
 
 double RenderSlider::valueRatio() const

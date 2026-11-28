@@ -30,8 +30,7 @@
 #include <WebCore/StyleTextBoxEdge.h>
 #include <algorithm>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class BlockFormattingContext;
 
@@ -43,6 +42,7 @@ public:
         bool shouldDiscardOverflow { false };
         bool isLegacy { true };
         bool isStableTextWrap { false };
+        bool shouldTrimEndAtClampPoint { false };
     };
     enum class TextBoxTrimSide : bool {
         Start,
@@ -128,5 +128,4 @@ inline BlockLayoutState::BlockLayoutState(PlacedFloats& placedFloats, MarginStat
 {
 }
 
-}
 }

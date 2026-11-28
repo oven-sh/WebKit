@@ -1,0 +1,14 @@
+# what the promise of a call of an async function is fulfilled with is what the returns of the function hand over, settled. That is an expectation: it stands in the held tables alone, and whoever uses it tests. What the body returns stands in both
+# async function make(o) { return o; }  async function use(o) { const v = await make(o);  return get(v); }  function get(v) { return v.x; }  use({ x: "a", only: 0 });
+# What is returned flows into two places: the value of the promise, which hangs on the site, and a node of the body's own, which no escape of the promise opens
+# RUN: link coroutines mechanisms=all
+# CHECK: coroutine f1 returned=L0
+# CHECK-NEXT: coroutine f2 returned=string
+# RUN(PROVEN): link coroutines mechanisms=all
+# PROVEN-NOT: fulfilled=
+# RUN(HELD): link held coroutines mechanisms=all
+# HELD: coroutine f1 fulfilled=L0 returned=L0
+# HELD-NEXT: coroutine f2 fulfilled=string returned=string
+# RUN(BODY): summary f1
+# BODY: edge Parameter 0 -> Contents returned of ClassInstance Promise
+# PROGRAM-OF: await-of-an-async-function.ir

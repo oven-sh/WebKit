@@ -40,12 +40,41 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RegExpCache);
 
-RegExp* RegExpCache::lookup(VM&, const WTF::String& patternString, OptionSet<Yarr::Flags> flags)
+RegExp* RegExpCache::lookup(VM& vm, const WTF::String& patternString, OptionSet<Yarr::Flags> flags)
+{
+    return lookup(vm, patternString.impl(), flags);
+}
+
+RegExp* RegExpCache::lookup(VM&, StringImpl* patternString, OptionSet<Yarr::Flags> flags)
 {
     Locker locker { m_lock };
-    RegExpKey key(flags, patternString);
+    SUPPRESS_UNCOUNTED_ARG RegExpKey key(flags, patternString);
     return m_weakCache.get(key);
 }
+
+#if ENABLE(AOT)
+namespace {
+
+struct PatternOfRegExp {
+    OptionSet<Yarr::Flags> flags;
+    StringView pattern;
+    unsigned hash { 0 };
+};
+
+struct PatternOfRegExpTranslator {
+    static unsigned hash(const PatternOfRegExp& key) { return key.hash; }
+    static bool equal(const RegExpKey& key, const PatternOfRegExp& wanted) { return key.flagsValue == wanted.flags && key.pattern && StringView { *key.pattern } == wanted.pattern; }
+};
+
+} // anonymous namespace
+
+RegExp* RegExpCache::lookup(StringView pattern, unsigned hashOfPattern, OptionSet<Yarr::Flags> flags)
+{
+    Locker locker { m_lock };
+    auto found = m_weakCache.find<PatternOfRegExpTranslator>(PatternOfRegExp { flags, pattern, hashOfPattern });
+    return found == m_weakCache.end() ? nullptr : found->value.get();
+}
+#endif
 
 template<typename Create>
 RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, const Create& create)
@@ -98,7 +127,7 @@ void RegExpCache::keepParsedPattern(RegExp* regExp)
             m_parsedPatternCharacters -= forgotten->pattern().length();
     };
     forget(m_nextParsedPattern);
-    // The oldest stand behind the slot that is written next.
+    // The oldest entries follow the slot that is written next.
     for (unsigned index = m_nextParsedPattern + 1; m_parsedPatternCharacters + length > maxParsedPatternCharactersKept; ++index)
         forget(index % maxParsedPatternsKept);
     (*m_parsedPatterns)[m_nextParsedPattern] = regExp;
@@ -131,12 +160,13 @@ NEVER_INLINE RegExp* RegExpCache::ensureEmptyRegExpSlow(VM& vm)
     return regExp;
 }
 
-NEVER_INLINE void RegExpCache::finalize(Handle<Unknown> handle, void*)
+NEVER_INLINE WeakHandleOwner::FinalizeResult RegExpCache::finalize(Handle<Unknown> handle, void*)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCache::finalize);
     Locker locker { m_lock };
     RegExp* regExp = static_cast<RegExp*>(handle.get().asCell());
     weakRemove(m_weakCache, regExp->key(), regExp);
+    return FinalizeResult::KeepImpl;
 }
 
 void RegExpCache::addToStrongCache(RegExp* regExp)

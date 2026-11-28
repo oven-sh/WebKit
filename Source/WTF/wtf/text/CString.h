@@ -92,11 +92,11 @@ public:
 
     bool isNull() const { return !m_buffer; }
     bool isEmpty() const { return isNull() || !m_buffer->length(); }
-    bool LEGACY_NODELETE isSafeToSendToAnotherThread() const;
+    NODELETE bool isSafeToSendToAnotherThread() const;
 
     bool isHashTableDeletedValue() const { return m_buffer.isHashTableDeletedValue(); }
 
-    WTF_EXPORT_PRIVATE unsigned LEGACY_NODELETE hash() const;
+    NODELETE WTF_EXPORT_PRIVATE unsigned hash() const;
 
 protected:
     // Any encoding. CString below exposes it typed; the encoding-erased base offers no pointer.
@@ -134,7 +134,7 @@ private:
 
 // An ASCII literal is valid in every encoding. Two CStringBases cannot be compared: both would have been
 // sliced from typed strings, and comparing them would ignore their encodings.
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE operator==(const CStringBase&, ASCIILiteral);
+NODELETE WTF_EXPORT_PRIVATE bool operator==(const CStringBase&, ASCIILiteral);
 
 WTF_EXPORT_PRIVATE UTF8CString convertToASCIILowercase(std::span<const char8_t>);
 WTF_EXPORT_PRIVATE UTF8CString convertToASCIIUppercase(std::span<const char8_t>);
@@ -280,14 +280,14 @@ public:
 
 // Latin-1 is refused for the same reason legacyCStringPointer() withholds a pointer from it: a printf
 // destination reads the bytes back as UTF-8 or ASCII, so a non-ASCII Latin-1 byte would be garbled. Use
-// String::utf8(), or String::ascii() where losing a non-ASCII character to '?' is as acceptable as it is
+// makeUTF8CString(), or String::ascii() where losing a non-ASCII character to '?' is as acceptable as it is
 // for the other unprintables. This is an exact match, so it wins over the CStringBase overload above, which
 // would require a derived-to-base conversion.
 const char* safePrintfType(const Latin1CString&) = delete;
 
 // Strings of different encodings cannot be compared. Convert explicitly.
 template<typename CharacterType>
-bool LEGACY_NODELETE operator==(const CString<CharacterType>& a, const CString<CharacterType>& b)
+NODELETE bool operator==(const CString<CharacterType>& a, const CString<CharacterType>& b)
 {
     if (a.isNull() != b.isNull())
         return false;
@@ -310,7 +310,7 @@ bool operator==(const CString<A>&, const CString<B>&) = delete;
 
 template<typename CharacterType> struct CStringHash {
     static unsigned hash(const CString<CharacterType>& string) { return string.hash(); }
-    static bool LEGACY_NODELETE equal(const CString<CharacterType>& a, const CString<CharacterType>& b)
+    NODELETE static bool equal(const CString<CharacterType>& a, const CString<CharacterType>& b)
     {
         if (a.isHashTableDeletedValue())
             return b.isHashTableDeletedValue();

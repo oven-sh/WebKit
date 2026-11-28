@@ -1,0 +1,93 @@
+# The texts that make a list of a given length store into it by TryPutByValDirect, which stores in one form, and fill it by TryFillNewArray. What they store says what the list is born with, and the store names the same kind.
+# Where that may be a number or not the list is born for integers, the kind that is left at the least price, and the store goes by the kind that it finds: TryPutIndex.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArrayLike {{*}}arrayStorage=Int32
+# CHECK: = TryPutByValDirect {{*}}arrayStorage=Int32
+# RUN(FRACTION): walk f2 mechanisms=all
+# FRACTION-LABEL: code f2:Body
+# FRACTION: = NewArrayLike {{*}}arrayStorage=Double
+# FRACTION: = TryPutByValDirect {{*}}arrayStorage=Double
+# RUN(ANYTHING): walk f3 mechanisms=all
+# ANYTHING-LABEL: code f3:Body
+# ANYTHING: = NewArrayLike
+# ANYTHING: = TryPutIndex
+# RUN(SILENT): walk f3 mechanisms=all
+# SILENT-NOT: arrayStorage=
+# RUN(DIRECT): walk f3 mechanisms=all
+# DIRECT-NOT: TryPutByValDirect
+# RUN(FILL): walk f4 mechanisms=all
+# FILL-LABEL: code f4:Body
+# FILL: = NewArrayLike {{*}}arrayStorage=Double
+# FILL: = TryFillNewArray
+# A list that is made like another keeps to that: the direct store names no kind and stays.
+# RUN(LIKE): walk f5 mechanisms=all
+# LIKE-LABEL: code f5:Body
+# LIKE: = NewArrayLike
+# LIKE: = TryPutByValDirect
+# RUN(LIKENESS): walk f5 mechanisms=all
+# LIKENESS-NOT: arrayStorage=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/aot/written-lists.ts" displayPath="/$bun/aot/written-lists.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="whole" module=m1 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Undefined
+    v4 = NewArrayLike v2, v3
+    v5 = Integer integer=7
+    v6 = TryPutByValDirect v4, v1, v5
+    Return v4
+}
+function f2 name="fraction" module=m1 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Undefined
+    v4 = NewArrayLike v2, v3
+    v5 = Double number=0.5
+    v6 = TryPutByValDirect v4, v1, v5
+    Return v4
+}
+function f3 name="anything" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Undefined
+    v5 = NewArrayLike v3, v4
+    v6 = TryPutByValDirect v5, v2, v1
+    Return v5
+}
+function f4 name="filled" module=m1 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Undefined
+    v4 = NewArrayLike v2, v3
+    v5 = Double number=0.5
+    v6 = TryFillNewArray v4, v5
+    Return v4
+}
+function f5 name="like" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = NewArrayLike v3, v1
+    v5 = Integer integer=7
+    v6 = TryPutByValDirect v4, v2, v5
+    Return v4
+}

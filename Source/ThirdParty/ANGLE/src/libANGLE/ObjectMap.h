@@ -23,9 +23,6 @@ namespace egl
 namespace priv
 {
 
-template <typename ContextMutexType>
-class ContextMapImpl;
-
 template <typename ObjectType, typename MutexType = angle::SimpleMutex>
 class ObjectMap : angle::NonCopyable
 {
@@ -71,41 +68,6 @@ class ObjectMap : angle::NonCopyable
             return true;
         }
         return false;
-    }
-
-    ResourceVector extractAll()
-    {
-        std::lock_guard<MutexType> lock(mMutex);
-        ResourceVector objects;
-        objects.reserve(mObjects.size());
-        for (const auto &pair : mObjects)
-        {
-            objects.push_back(pair.second);
-        }
-        mObjects.clear();
-        return objects;
-    }
-
-    template <typename OtherMutexType>
-    void moveTo(ObjectMap<ObjectType, OtherMutexType> *destination)
-    {
-        if (static_cast<void *>(this) == static_cast<void *>(destination))
-        {
-            return;
-        }
-
-        Map temp;
-        {
-            std::lock_guard<MutexType> lock(mMutex);
-            temp = std::move(mObjects);
-            mObjects.clear();
-        }
-
-        if (!temp.empty())
-        {
-            std::lock_guard<OtherMutexType> destLock(destination->mMutex);
-            destination->mObjects.insert(temp.begin(), temp.end());
-        }
     }
 
     template <typename Callback>
@@ -191,12 +153,6 @@ class ObjectMap : angle::NonCopyable
     }
 
   protected:
-    template <typename OtherObjectType, typename OtherMutexType>
-    friend class ObjectMap;
-
-    template <typename ContextMutexType>
-    friend class ContextMapImpl;
-
     mutable MutexType mMutex;
     Map mObjects;
 };

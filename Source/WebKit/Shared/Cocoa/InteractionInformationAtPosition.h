@@ -77,6 +77,7 @@ struct InteractionInformationAtPosition {
         bool isCustomSlider,
         bool hasDirectionalResizeCursor,
         bool isInResizeControl,
+        bool isHoverActivatedByClick,
         bool isOverVideo,
         bool isNearMarkedText,
 #if PLATFORM(IOS_FAMILY)
@@ -113,7 +114,7 @@ struct InteractionInformationAtPosition {
 #endif
         bool shouldTreatLongClickAsSecondaryClickQuirk,
         WebCore::FloatPoint&& adjustedPointForNodeRespondingToClickEvents,
-        std::optional<WebCore::IntPoint>&& automationAdjustedInteractionLocation,
+        std::optional<WebCore::IntPoint>&& nearbySliderInteractionLocation,
         URL&&,
         URL&& imageURL,
         URL&& modelURL,
@@ -163,6 +164,8 @@ struct InteractionInformationAtPosition {
 
     bool isInResizeControl { false };
 
+    bool isHoverActivatedByClick { false };
+
     bool isOverVideo { false };
 
     bool isNearMarkedText { false };
@@ -201,7 +204,8 @@ struct InteractionInformationAtPosition {
     bool shouldTreatLongClickAsSecondaryClickQuirk { false };
     WebCore::FloatPoint adjustedPointForNodeRespondingToClickEvents;
 
-    std::optional<WebCore::IntPoint> automationAdjustedInteractionLocation;
+    // Where a touch near a slider that is too thin to reliably hit should interact with it instead, in root view coordinates.
+    std::optional<WebCore::IntPoint> nearbySliderInteractionLocation;
 
     URL url;
     URL imageURL;

@@ -57,7 +57,7 @@ struct AuthenticationManager::Challenge {
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(AuthenticationManager::Challenge);
 
-static bool LEGACY_NODELETE canCoalesceChallenge(const WebCore::AuthenticationChallenge& challenge)
+NODELETE static bool canCoalesceChallenge(const WebCore::AuthenticationChallenge& challenge)
 {
     // Do not coalesce server trust evaluation requests because ProtectionSpace comparison does not evaluate server trust (e.g. certificate).
     return challenge.protectionSpace().authenticationScheme() != ProtectionSpace::AuthenticationScheme::ServerTrustEvaluationRequested;
@@ -90,7 +90,7 @@ void AuthenticationManager::deref() const
 
 AuthenticationChallengeIdentifier AuthenticationManager::addChallengeToChallengeMap(UniqueRef<Challenge>&& challenge)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     auto challengeID = AuthenticationChallengeIdentifier::generate();
     m_challenges.set(challengeID, WTF::move(challenge));
@@ -162,7 +162,7 @@ void AuthenticationManager::didReceiveAuthenticationChallenge(IPC::MessageSender
 
 void AuthenticationManager::completeAuthenticationChallenge(AuthenticationChallengeIdentifier challengeID, AuthenticationChallengeDisposition disposition, WebCore::Credential&& credential)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     for (auto& coalescedChallengeID : coalesceChallengesMatching(challengeID)) {
         auto challenge = m_challenges.take(coalescedChallengeID);

@@ -29,8 +29,9 @@ public:
     using ResumeMode = Typed::ResumeMode;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+    static constexpr uint8_t numberOfLowerTierPreciseCells = 0;
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return vm.aotGeneratorSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static Generator* create(VM&, Structure*);
@@ -52,7 +53,24 @@ public:
     State state() const { return m_state; }
     SavedFrame* savedFrame() const { return m_savedFrame; }
     void setSavedFrame(VM&, SavedFrame*);
-    void didThrow() { m_state = State::Completed; }
+    void didEnd()
+    {
+        m_state = State::Completed;
+        m_savedFrame = nullptr;
+    }
+    void didThrow() { didEnd(); }
+    void leaveInPlace(bool leavesAtOnce)
+    {
+        m_state = State::Running;
+        m_savedFrame = nullptr;
+        m_leavesAtOnce = leavesAtOnce;
+    }
+
+    void suspendAtYield(VM& vm, SavedFrame* frame)
+    {
+        m_state = State::SuspendedAtYield;
+        setSavedFrame(vm, frame);
+    }
 
     static constexpr int32_t generatorSlotInStubFrame = -1;
 
@@ -68,8 +86,8 @@ private:
 
     SavedFrame* m_savedFrame { nullptr };
     State m_state { State::SuspendedAtStart };
-    // Set while the prototype stored in the Structure is not an object.
     bool m_hasOtherPrototype { false };
+    bool m_leavesAtOnce { false };
 };
 static_assert(sizeof(Generator) == 32);
 static_assert(Generator::offsetOfSavedFrame() == sizeof(JSObjectWithButterfly) && Generator::offsetOfState() == Generator::offsetOfSavedFrame() + 8);
@@ -84,6 +102,11 @@ void completeGeneratorLeftByThrow(CallFrame* stepStubFrame);
 void installGeneratorMethodsForCompiledGenerators(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
+
+ALWAYS_INLINE bool hidesObjectsAbove(const Structure* structure)
+{
+    return structure->typeInfo().overridesGetPrototype();
+}
 
 } } // namespace JSC::AOT
 

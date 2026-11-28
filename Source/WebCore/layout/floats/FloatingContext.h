@@ -31,8 +31,7 @@
 #include <WebCore/PlacedFloats.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class FloatAvoider;
 class Box;
@@ -44,51 +43,64 @@ class Box;
 class FloatingContext {
     WTF_MAKE_TZONE_ALLOCATED(FloatingContext);
 public:
-    FloatingContext(const ElementBox& formattingContextRoot, const LayoutState&, const PlacedFloats&);
+    // The top-left of the formatting context root's border box, and the inline size of its border box.
+    FloatingContext(const ElementBox& formattingContextRoot, const PlacedFloats&, Point<ParentFormattingContextRoot> rootTopLeft, LayoutUnit rootBorderBoxInlineSize);
 
     const PlacedFloats& placedFloats() const LIFETIME_BOUND { return m_placedFloats; }
 
-    LayoutPoint positionForFloat(const Box&, const BoxGeometry&, const HorizontalConstraints&) const;
-    LayoutPoint positionForNonFloatingFloatAvoider(const Box&, const BoxGeometry&) const;
+    // The containing block of a float, a float avoider or a box with clearance: the top-left of its border box, and its content box in
+    // the inline axis, in its own coordinates, which the box's position is in.
+    struct ContainingBlock {
+        Point<FormattingContextRoot> borderBoxTopLeft;
+        HorizontalConstraints contentBox;
+    };
+    LayoutPoint positionForFloat(const Box&, const BoxGeometry&, const ContainingBlock&) const;
+    LayoutPoint positionForNonFloatingFloatAvoider(const Box&, const BoxGeometry&, const ContainingBlock&) const;
 
     struct BlockAxisPositionWithClearance {
         LayoutUnit position;
         std::optional<LayoutUnit> clearance;
     };
-    std::optional<BlockAxisPositionWithClearance> blockAxisPositionWithClearance(const Box&, const BoxGeometry&) const;
+    std::optional<BlockAxisPositionWithClearance> blockAxisPositionWithClearance(const Box&, const BoxGeometry&, const ContainingBlock&) const;
 
     bool isEmpty() const { return m_placedFloats.list().isEmpty(); }
 
     struct Constraints {
-        std::optional<PointInContextRoot> start;
-        std::optional<PointInContextRoot> end;
+        std::optional<Point<FormattingContextRoot>> start;
+        std::optional<Point<FormattingContextRoot>> end;
     };
     enum class MayBeAboveLastFloat : bool { No, Yes };
-    Constraints constraints(LayoutUnit candidateTop, LayoutUnit candidateBottom, MayBeAboveLastFloat) const;
+    Constraints constraints(AxisPosition<FormattingContextRoot> candidateTop, AxisPosition<FormattingContextRoot> candidateBottom, MayBeAboveLastFloat) const;
 
-    PlacedFloats::Item makeFloatItem(const Box& floatBox, const BoxGeometry&, std::optional<size_t> line = { }) const;
+    PlacedFloats::Item makeFloatItem(const Box& floatBox, const BoxGeometry&, const ContainingBlock&, std::optional<size_t> line = { }) const;
 
-    bool LEGACY_NODELETE isStartPositioned(const Box& floatBox) const;
+    NODELETE bool isStartPositioned(const Box& floatBox) const;
 
 private:
-    bool LEGACY_NODELETE isFloatingCandidateStartPositionedInBlockFormattingContext(const Box&) const;
-    Clear LEGACY_NODELETE clearInBlockFormattingContext(const Box&) const;
+    NODELETE bool isFloatingCandidateStartPositionedInBlockFormattingContext(const Box&) const;
+    NODELETE Clear clearInBlockFormattingContext(const Box&) const;
 
     const ElementBox& root() const { return m_formattingContextRoot; }
-    // FIXME: Turn this into an actual geometry cache.
-    const LayoutState& LEGACY_NODELETE containingBlockGeometries() const LIFETIME_BOUND;
 
-    void findPositionForFormattingContextRoot(FloatAvoider&, BoxGeometry::HorizontalEdges containingBlockContentBoxEdges) const;
+    void findPositionForFormattingContextRoot(FloatAvoider&, AxisRange<ParentFormattingContextRoot> containingBlockContentBoxEdges) const;
+    // Continues from m_lastConstraintsPosition (or starts over when blockAxisPosition is above it), then makes blockAxisPosition the last one.
+    size_t firstFloatToCheckFromLastConstraintsPosition(AxisPosition<ParentFormattingContextRoot> blockAxisPosition) const;
 
     struct AbsoluteCoordinateValuesForFloatAvoider;
-    AbsoluteCoordinateValuesForFloatAvoider absoluteCoordinates(const Box&, LayoutPoint borderBoxTopLeft) const;
-    LayoutPoint mapTopLeftToBlockFormattingContextRoot(const Box&, LayoutPoint borderBoxTopLeft) const;
-    Point mapPointFromFloatingContextRootToBlockFormattingContextRoot(Point) const;
+    AbsoluteCoordinateValuesForFloatAvoider absoluteCoordinates(LayoutPoint borderBoxTopLeft, const ContainingBlock&) const;
+    Point<ParentFormattingContextRoot> mapTopLeftToParentFormattingContextRoot(LayoutPoint borderBoxTopLeft, const ContainingBlock&) const;
 
     CheckedRef<const ElementBox> m_formattingContextRoot;
-    const CheckedRef<const LayoutState> m_layoutState;
     const PlacedFloats& m_placedFloats;
+    Point<ParentFormattingContextRoot> m_rootTopLeft;
+    LayoutUnit m_rootBorderBoxInlineSize;
+    // constraints() is mostly asked about non-decreasing positions (line after line), so each call continues from the last one.
+    struct LastConstraintsPosition {
+        AxisPosition<ParentFormattingContextRoot> blockAxisPosition;
+        // placedFloats().list()[0, firstFloatToCheck) all end above blockAxisPosition, so they can't constrain a line at or below it.
+        size_t firstFloatToCheck { 0 };
+    };
+    mutable std::optional<LastConstraintsPosition> m_lastConstraintsPosition;
 };
 
-}
 }

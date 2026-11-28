@@ -65,7 +65,7 @@ struct InspectorFontMetadata {
     friend bool operator==(const InspectorFontMetadata&, const InspectorFontMetadata&) = default;
 };
 
-using CharacterSet = HashSet<char32_t, DefaultHash<char32_t>, WTF::UnsignedWithZeroKeyHashTraits<char32_t>>;
+using CharacterSet = HashSet<char32_t>;
 
 class RenderedFont final : public RefCounted<RenderedFont> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(RenderedFont);
@@ -151,8 +151,7 @@ static Ref<Inspector::Protocol::CSS::Font> buildObjectForFont(const Font& font)
 
 static RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::CharacterRange>> buildCharacterRanges(const CharacterSet& characters)
 {
-    Vector<char32_t> sortedCharacters;
-    sortedCharacters.reserveInitialCapacity(characters.size());
+    Vector<char32_t> sortedCharacters(ReserveCapacityTag { }, characters.size());
     for (auto character : characters)
         sortedCharacters.append(character);
     std::sort(sortedCharacters.begin(), sortedCharacters.end());
@@ -249,8 +248,7 @@ private:
         if (from >= to)
             return;
 
-        Vector<unsigned> glyphIndexes;
-        glyphIndexes.reserveInitialCapacity(glyphBuffer.size());
+        Vector<unsigned> glyphIndexes(ReserveCapacityTag { }, glyphBuffer.size());
         for (unsigned i = 0; i < glyphBuffer.size(); ++i) {
             if (auto offset = glyphBuffer.checkedStringOffsetAt(i, run.length()); offset && unsignedCast(*offset) < to)
                 glyphIndexes.append(i);
@@ -327,19 +325,19 @@ private:
 
     bool paintingDisabled() const final { return true; }
 
+#if !USE(CG) && !USE(SKIA)
     void didUpdateState(GraphicsContextState&) final { }
+#endif
 
-    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImageDrawingOptions) final { }
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, RasterDrawingOptions) final { }
 
     void drawSystemImage(SystemImage&, const FloatRect&) final { }
 
-    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImageDrawingOptions) final { }
+    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, RasterDrawingOptions) final { }
 
     IntRect clipBounds() const final { return { }; }
 
 #if USE(CG)
-    void applyStrokePattern() final { }
-    void applyFillPattern() final { }
     void drawPath(const Path&) final { }
 #endif
 
@@ -349,7 +347,7 @@ private:
     void fillPath(const Path&) final { }
     void strokePath(const Path&) final { }
     void fillRect(const FloatRect&, RequiresClipToRect) final { }
-    void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect) final { }
+    void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect) final { }
     void fillRect(const FloatRect&, const Color&) final { }
     void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) final { }
     void strokeRect(const FloatRect&, float) final { }
@@ -371,7 +369,7 @@ private:
     void clip(const FloatRect&) final { }
     void clipOut(const FloatRect&) final { }
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final { }
-    void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final { }
+    bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final { return true; }
 
     void drawRaisedEllipse(const FloatRect&, const Color&, const Color&) final { }
 
@@ -387,7 +385,7 @@ private:
     void drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction = FontCascade::CustomFontNotReadyAction::DoNotPaintIfFontNotReady) final
     {
         auto currentPoint = point;
-        for (CheckedRef subrun : visuallyOrderedSubruns(run))
+        for (auto& subrun : visuallyOrderedSubruns(run))
             currentPoint.move(recordFontUsage(font, subrun, currentPoint, 0, std::nullopt, customFontNotReadyAction));
     }
 
@@ -396,20 +394,20 @@ private:
     void drawFocusRing(const Path&, float, const Color&, float) final { }
     void drawFocusRing(const Vector<FloatRect>&, float, const Color&, float) final { }
 
-    void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, ImageDrawingOptions = { }) final { }
+    void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, RasterDrawingOptions = { }) final { }
 
     void clipRoundedRect(const FloatRoundedRect&) final { }
     void clipOutRoundedRect(const FloatRoundedRect&) final { }
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final { }
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final { }
 
-    void fillRect(const FloatRect&, Gradient&) final { }
+    void fillRect(const FloatRect&, const Gradient&) final { }
     void fillRect(const FloatRect&, const Color&, CompositeOperator, BlendMode = BlendMode::Normal) final { }
 
     void fillRoundedRect(const FloatRoundedRect&, const Color&, BlendMode = BlendMode::Normal) final { }
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect&, const Color&) final { }
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, ImageDrawingOptions = { }) final { }
+    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, RasterDrawingOptions = { }) final { }
 #endif
 
     RenderedFonts m_renderedFonts;

@@ -18,14 +18,11 @@ import {
   type ModelDispatch,
   type ModelEngineFile,
   type ModelFunction,
-  type ModelHostMethodCall,
   type ModelHostObject,
   type ModelHostRead,
   type ModelLayout,
   type ModelModule,
   type ModelName,
-  type ModelNamedMemberCall,
-  type ModelNamesReadByNativeCode,
   type ModelOverload,
   type ModelPrototype,
   type ModelRealmStructure,
@@ -142,12 +139,10 @@ function createAttachments(): ModelAttachments {
   return {
     featureUses: [],
     unseenCodeCondition: null,
+    conditionOnInstancesThatAnswerEveryName: null,
     moduleLoads: [],
     calledFunctions: [],
-    appendForm: null,
-    jsonTextForm: null,
     literalPartsForm: null,
-    bodyBytesForm: null,
     boxedCallStub: null,
     nativeFunction: null,
     nativeSymbols: [],
@@ -177,12 +172,9 @@ export class ModelBuilder {
   readonly schema: Schema;
   readonly engineFiles: readonly ModelEngineFile[];
   readonly fixedProperties = new Set<ModelBuiltin>();
-  /** Objects of modules that are functions by observation alone: nothing says what makes them or what they inherit from. */
   readonly functionsOfUnknownClass = new Set<ModelBuiltin>();
-  /** The entry of the function that a native binding makes, and the entry of the binding. */
   readonly bindingsOfFunctions = new Map<ModelBuiltin, ModelBuiltin>();
   readonly openNames = new Map<ModelBuiltin, readonly ModelName[]>();
-  readonly namesReadByNativeCode = new Map<ModelBuiltin, Omit<ModelNamesReadByNativeCode, "holder">>();
   readonly realmStructures: ModelRealmStructure[] = [];
   readonly operandsWithoutUses: { builtin: ModelBuiltin; operand: string; source: Source }[] = [];
   readonly #firstStepOfMemberPath = new Map<string, number>();
@@ -197,14 +189,13 @@ export class ModelBuilder {
   readonly hostClassRoles: { name: ClassName; source: Source }[] = [];
   unfilledHostRoles: { path: BuiltinPath; class: ClassName; source: Source } | null = null;
   hostObjects: ModelHostObject[] = [];
-  namedMemberCalls: ModelNamedMemberCall[] = [];
-  hostMethodCalls: ModelHostMethodCall[] = [];
   checkedNumbers: ModelBound[] = [];
   startup: ModelStartup = {
     modules: [],
     loads: [],
     functionsCalledWithLoads: [],
     namesOfMethodsCallingLoads: [],
+    functionsLayingSuchMethods: [],
     moduleLoaderFunctions: [],
   };
   syntax: ModelSyntax = {
@@ -357,7 +348,6 @@ export class ModelBuilder {
     return components.some((_, index) => this.#leftOut.has(joinPath(components.slice(0, index + 1))));
   }
 
-  /** A declaration names what nothing declares. */
   reportUnknown(source: Source, message: string): null {
     if (!this.#mayNameWhatIsLeftOut && !this.#reported.has(message)) {
       this.#reported.add(message);
@@ -402,6 +392,9 @@ export class ModelBuilder {
       constant: null,
       isAddedAtFirstRead: false,
       isAddedAsEnumerable: false,
+      canBeListed: false,
+      isCreatedInSomeRuns: false,
+      namesFoundAbove: [],
       hostNumber: noHostNumber,
       attachments: createAttachments(),
     };
@@ -423,17 +416,6 @@ export class ModelBuilder {
     const text = textOfPath(components);
     this.problems.add(source, `${text}: its holder ${holder.text} is a ${holder.kind}, not an object`);
     return null;
-  }
-
-  createHiddenFunction(path: BuiltinPath, owner: ModelBuiltin, source: Source): MutableBuiltin | null {
-    const [root] = this.canonicalPathOf(path);
-    if (this.find(root) === undefined) this.create(root, "Namespace", source);
-    const hidden = this.create(path, "Function", source);
-    if (hidden === null) return null;
-    hidden.origin = owner.origin;
-    hidden.platforms = [...owner.platforms];
-    hidden.prototype = linkTo(this.find(functionPrototypePath));
-    return hidden;
   }
 
   addClass(name: ClassName, builtinClass: MutableClass, written: WrittenClass): boolean {

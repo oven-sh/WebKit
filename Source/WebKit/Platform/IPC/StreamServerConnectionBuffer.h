@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,6 +55,8 @@ private:
     size_t clampedLimit(ServerLimit) const;
 
     size_t m_serverOffset { 0 };
+    // The last clientOffset read from the shared header, clamped. Reset with m_serverOffset in releaseAll().
+    size_t m_cachedServerLimit { 0 };
 };
 
 inline std::optional<StreamServerConnectionBuffer> StreamServerConnectionBuffer::map(Handle&& handle)
@@ -67,14 +69,22 @@ inline std::optional<StreamServerConnectionBuffer> StreamServerConnectionBuffer:
 
 inline std::optional<std::span<uint8_t>> StreamServerConnectionBuffer::tryAcquire()
 {
-    ServerLimit serverLimit = sharedServerLimit().load(std::memory_order_acquire);
+    // The client only moves clientOffset forward and never past serverOffset, so the bytes up to a stale
+    // value are still written and unread. This avoids reading the shared offset for every message.
+    auto result = alignedMutableSpan(m_serverOffset, m_cachedServerLimit);
+    if (result.size() >= minimumMessageSize)
+        return result;
+
+    ServerLimit serverLimit = sharedServerLimit().load<MemoryOrder::Acquire>();
     if (serverLimit == ServerLimit::serverIsSleepingTag)
         return std::nullopt;
 
-    auto result = alignedMutableSpan(m_serverOffset, clampedLimit(serverLimit));
+    m_cachedServerLimit = clampedLimit(serverLimit);
+    result = alignedMutableSpan(m_serverOffset, m_cachedServerLimit);
     if (result.size() < minimumMessageSize) {
-        serverLimit = sharedServerLimit().compareExchangeStrong(serverLimit, ServerLimit::serverIsSleepingTag, std::memory_order_acq_rel, std::memory_order_acquire);
-        result = alignedMutableSpan(m_serverOffset, clampedLimit(serverLimit));
+        serverLimit = sharedServerLimit().compareExchangeStrong<MemoryOrder::AcquireRelease, MemoryOrder::Acquire>(serverLimit, ServerLimit::serverIsSleepingTag);
+        m_cachedServerLimit = clampedLimit(serverLimit);
+        result = alignedMutableSpan(m_serverOffset, m_cachedServerLimit);
     }
 
     if (result.size() < minimumMessageSize)
@@ -94,7 +104,7 @@ inline StreamServerConnectionBuffer::WakeUpClient StreamServerConnectionBuffer::
     readSize = std::max(readSize, minimumMessageSize);
     ServerOffset serverOffset = static_cast<ServerOffset>(wrapOffset(alignOffset(m_serverOffset) + readSize));
 
-    ServerOffset oldServerOffset = sharedServerOffset().exchange(serverOffset, std::memory_order_acq_rel);
+    ServerOffset oldServerOffset = sharedServerOffset().exchange<MemoryOrder::AcquireRelease>(serverOffset);
     WakeUpClient wakeUpClient = WakeUpClient::No;
     // If the client wrote over serverOffset, it means the client is waiting.
     if (oldServerOffset == ServerOffset::clientIsWaitingTag)
@@ -108,8 +118,8 @@ inline StreamServerConnectionBuffer::WakeUpClient StreamServerConnectionBuffer::
 
 inline StreamServerConnectionBuffer::WakeUpClient StreamServerConnectionBuffer::releaseAll()
 {
-    sharedServerLimit().store(static_cast<ServerLimit>(0), std::memory_order_release);
-    ServerOffset oldServerOffset = sharedServerOffset().exchange(static_cast<ServerOffset>(0), std::memory_order_acq_rel);
+    sharedServerLimit().store<MemoryOrder::Release>(static_cast<ServerLimit>(0));
+    ServerOffset oldServerOffset = sharedServerOffset().exchange<MemoryOrder::AcquireRelease>(static_cast<ServerOffset>(0));
     WakeUpClient wakeUpClient = WakeUpClient::No;
     // If the client wrote over serverOffset, it means the client is waiting.
     if (oldServerOffset == ServerOffset::clientIsWaitingTag)
@@ -117,6 +127,7 @@ inline StreamServerConnectionBuffer::WakeUpClient StreamServerConnectionBuffer::
     else
         ASSERT(!(oldServerOffset & ServerOffset::clientIsWaitingTag));
     m_serverOffset = 0;
+    m_cachedServerLimit = 0;
     return wakeUpClient;
 }
 

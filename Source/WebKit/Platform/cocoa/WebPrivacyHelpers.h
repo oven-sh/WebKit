@@ -31,6 +31,7 @@
 #import <wtf/ContinuousApproximateTime.h>
 #import <wtf/Function.h>
 #import <wtf/HashSet.h>
+#import <wtf/MonotonicTime.h>
 #import <wtf/Ref.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/RunLoop.h>
@@ -44,6 +45,7 @@
 #import <WebCore/OrganizationStorageAccessPromptQuirk.h>
 #endif
 
+OBJC_CLASS NSError;
 OBJC_CLASS WKWebPrivacyNotificationListener;
 OBJC_CLASS NSURLSession;
 OBJC_CLASS WKContentRuleList;
@@ -173,10 +175,15 @@ private:
     HighValueFraudTargetDomainsController();
     void scheduleNextUpdate(ContinuousApproximateTime);
     void update();
+    void scheduleRetryAfterFailure(NSError *);
 
     const RetainPtr<WKWebPrivacyNotificationListener> m_notificationListener;
     HashSet<WebCore::RegistrableDomain> m_domains;
     ContinuousApproximateTime m_nextScheduledUpdateTime;
+    RunLoop::Timer m_retryTimer;
+    Seconds m_nextRetryDelay;
+    std::optional<MonotonicTime> m_initialRequestStartTime;
+    unsigned m_initialRequestCount { 0 };
     bool m_didReceiveInitialData { false };
     bool m_hasInjectedDomainsForTesting { false };
 };
@@ -190,7 +197,7 @@ public:
 
     void prepare(PrepareCompletionHandler&& completionHandler)
     {
-        ASSERT(RunLoop::isMain());
+        RELEASE_ASSERT(RunLoop::isMain());
         if (!canRequestContentRuleList()) {
             completionHandler(nullptr, Arguments { }...);
             return;
@@ -215,7 +222,7 @@ private:
 
 class ResourceMonitorURLsController : public WebPrivacyContentRuleListController<bool> {
 public:
-    static ResourceMonitorURLsController& LEGACY_NODELETE singleton();
+    NODELETE static ResourceMonitorURLsController& singleton();
 
     void getSource(CompletionHandler<void(String&&)>&&);
 
@@ -236,7 +243,7 @@ private:
 
 class TrackingPreventionContentRuleListController : public ListDataControllerBase, public WebPrivacyContentRuleListController<> {
 public:
-    static TrackingPreventionContentRuleListController& LEGACY_NODELETE singleton();
+    NODELETE static TrackingPreventionContentRuleListController& singleton();
 
 private:
     friend class NeverDestroyed<TrackingPreventionContentRuleListController, MainRunLoopAccessTraits>;

@@ -28,6 +28,7 @@
 
 #include "AlignedMemoryAllocator.h"
 #include "BlockDirectoryInlines.h"
+#include "Collector.h"
 #include "Heap.h"
 #include "HeapInlines.h"
 #include "MarkedBlockCage.h"
@@ -73,15 +74,16 @@ void BlockDirectory::releaseAndNoteIfStealable(unsigned index)
     // Read while the block is still ours; once it is released these bits could be modified by whoever claims it next.
     bool stealable = isStealable(index);
     // Must stay the last bit written for this block; see the comment above m_bits.
-    releaseInUse(index);
-    if (!stealable)
+    if (!stealable) {
+        releaseInUse(index);
         return;
+    }
+    // Pairs with the FullyFenced watch() in findEmptyBlockToSteal(): either the stealer's scan sees our
+    // release, or our minimize() sees their watch and fails their publish.
+    releaseInUse<MemoryOrder::FullyFenced>(index);
     // The cursor normally only moves forward; rewind it so stealers can see this block.
-    // Pairs with the fence in findEmptyBlockToSteal(): either the stealer's scan sees our release, or our
-    // minimize() sees their watch and fails their publish.
-    WTF::storeLoadFence();
     // FIXME: If we move the allocation cursor into the directory we should reset it here too.
-    m_emptyCursor.minimize(index, std::memory_order_relaxed);
+    m_emptyCursor.minimize<MemoryOrder::Relaxed>(index);
     subspace()->alignedMemoryAllocator()->addDirectoryWithEmptyBlocks(this);
 }
 
@@ -91,18 +93,11 @@ MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()
     // A block that becomes stealable behind us while we search rewinds the cursor, and publishing our
     // result over that would hide the block until prepareForAllocation(). Watching the cursor makes the
     // publish fail instead.
-    auto watched = m_emptyCursor.watch(std::memory_order_relaxed);
-    // Pairs with the fence in releaseAndNoteIfStealable(): either our scan sees a block released after the
-    // watch, or that releaser's minimize() sees the watch and fails our publish.
-    // FIXME: We could make this not have a storeLoadFence (on X86_64 and ARM64 with LSE) by having:
-    // 1) watch do a seq_cst load/exchangeOr
-    // 2) releaseAndNoteIfStealable do a seq_cst releaseInUse and minimize (including the transaction's load).
-    // This is probably faster on Apple Silicon.
-    WTF::storeLoadFence();
+    auto watched = m_emptyCursor.watch<MemoryOrder::FullyFenced>();
     for (unsigned cursor = watched.value;; ++cursor) {
         cursor = (stealableBits() & ~inUseBitsView()).findBit(cursor, true);
         if (cursor >= m_blocks.size()) {
-            m_emptyCursor.tryUpdateWatched(watched, cursor, std::memory_order_relaxed);
+            m_emptyCursor.tryUpdateWatched<MemoryOrder::Relaxed>(watched, cursor);
             return nullptr;
         }
         if (!claimInUse(cursor))
@@ -112,7 +107,7 @@ MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()
         // Recheck under the claim; see claimInUse().
         if (isStealable(cursor)) [[likely]] {
             dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", cursor, " in use (findEmptyBlockToSteal) for ", *this);
-            m_emptyCursor.tryUpdateWatched(watched, cursor, std::memory_order_relaxed);
+            m_emptyCursor.tryUpdateWatched<MemoryOrder::Relaxed>(watched, cursor);
             return m_blocks[cursor].first;
         }
         releaseInUse(cursor);
@@ -149,10 +144,18 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
 MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
 {
     bool hasBlocks = m_blocks.size() > m_freeBlockIndices.size();
-    MarkedBlock::Handle* handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator(), hasBlocks ? MarkedBlock::IsFirstInDirectory::No : MarkedBlock::IsFirstInDirectory::Yes);
+    // With limited address space the heap's set of blocks and this list grow in willAddBlock(), where the request for memory may fail, and not in
+    // didAddBlock() and addBlock(), where it may not. A block that they have no room for is not made.
+    bool hasRoomForBlock = !MarkedBlockCage::isRequired() || heap.cage().willAddBlock(heap.vm(), *this);
+    MarkedBlock::Handle* handle = nullptr;
+    if (hasRoomForBlock) [[likely]]
+        handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator(), hasBlocks ? MarkedBlock::IsFirstInDirectory::No : MarkedBlock::IsFirstInDirectory::Yes);
     if (!handle) {
-        if (MarkedBlockCage::isRequired())
-            heap.cage().didFindNoRoom(heap.vm(), subspace()->alignedMemoryAllocator() == heap.structureAllocator.get() ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+        if (MarkedBlockCage::isRequired()) {
+            // Where the set or the list has no room, the heap of Structures is not what is full.
+            bool isForStructures = hasRoomForBlock && subspace()->alignedMemoryAllocator() == heap.structureAllocator.get();
+            heap.cage().didFindNoRoom(heap.vm(), isForStructures ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+        }
         return nullptr;
     }
     
@@ -161,20 +164,31 @@ MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
     return handle;
 }
 
+bool BlockDirectory::tryMakeRoomForBlock()
+{
+    markedSpace().heap().assertIsAccessHolder();
+    size_t capacity = m_blocks.capacity();
+    if (!m_freeBlockIndices.isEmpty() || m_blocks.size() < capacity) [[likely]]
+        return true;
+    // The list grows as the append() of addBlock() grows it. Its bits grow in addBlock().
+    Locker locker { m_bitvectorLock.grow() };
+    return m_blocks.tryReserveCapacity(std::max<size_t>(16, capacity + capacity / 2));
+}
+
 void BlockDirectory::addBlock(MarkedBlock::Handle* block)
 {
     ASSERT(markedSpace().heap().vm().currentThreadIsHoldingAPILock());
+    markedSpace().heap().assertIsAccessHolder();
 
     Locker locker { m_bitvectorLock.grow() };
     unsigned index;
     if (m_freeBlockIndices.isEmpty()) {
         index = m_blocks.size();
 
-        size_t oldCapacity = m_blocks.capacity();
         m_blocks.append({ block, &block->block() });
-        if (m_blocks.capacity() != oldCapacity) {
-            ASSERT(m_bits.numBits() == oldCapacity);
-            ASSERT(m_blocks.capacity() > oldCapacity);
+        // The list grew in this append(), or before it in tryMakeRoomForBlock(). Either way the bits grow here, before one of them is written for the block.
+        if (m_bits.numBits() != m_blocks.capacity()) {
+            ASSERT(m_bits.numBits() < m_blocks.capacity());
             
             subspace()->didResizeBits(m_blocks.capacity());
             m_bits.resize(m_blocks.capacity());
@@ -205,7 +219,7 @@ void BlockDirectory::addBlock(MarkedBlock::Handle* block)
 
 void BlockDirectory::removeBlock(MarkedBlock::Handle* block, WillDeleteBlock willDelete)
 {
-    markedSpace().heap().assertIsMutatorOrMutatorIsStopped();
+    markedSpace().heap().assertIsAccessHolder();
     Locker locker { m_bitvectorLock.grow() };
     ASSERT(block->directory() == this);
     ASSERT(m_blocks[block->index()].first == block);
@@ -243,7 +257,7 @@ void BlockDirectory::stopAllocating()
         });
 
 #if ASSERT_ENABLED
-    assertIsMutatorOrMutatorIsStopped();
+    assertMayAccessBitsUnlocked();
     if (!inUseBitsView().isEmpty()) [[unlikely]] {
         dataLogLn("Not all inUse bits are clear at stopAllocating");
         dataLogLn(*this);
@@ -260,10 +274,11 @@ void BlockDirectory::prepareForAllocation()
             allocator->prepareForAllocation();
         });
 
-    m_unsweptCursor.set(0, std::memory_order_relaxed);
-    m_emptyCursor.set(0, std::memory_order_relaxed);
+    m_unsweptCursor.set<MemoryOrder::Relaxed>(0);
+    m_emptyCursor.set<MemoryOrder::Relaxed>(0);
 
     assertWorldIsStopped();
+    ASSERT(markedSpace().heap().isInPhase(CollectorPhase::End));
     // endMarking recomputes the empty bits wholesale rather than block by block, so none of the blocks
     // that fell empty there announced themselves the way didFinishUsingBlock does. Re-derive
     // membership from the bits here, once m_emptyCursor above has been rewound to match them.
@@ -312,6 +327,7 @@ void BlockDirectory::resumeAllocating()
 void BlockDirectory::beginMarkingForFullCollection()
 {
     assertWorldIsStopped();
+    ASSERT(markedSpace().heap().isInPhase(CollectorPhase::Begin));
 
     // Mark bits are sticky and so is our summary of mark bits. We only clear these during full
     // collections, so if you survived the last collection you will survive the next one so long
@@ -323,6 +339,7 @@ void BlockDirectory::beginMarkingForFullCollection()
 void BlockDirectory::endMarking()
 {
     assertWorldIsStopped();
+    ASSERT(markedSpace().heap().isInPhase(CollectorPhase::End));
 
     allocatedBits().clearAll();
     
@@ -373,12 +390,14 @@ void BlockDirectory::endMarking()
 void BlockDirectory::snapshotUnsweptForEdenCollection()
 {
     assertWorldIsStopped();
+    ASSERT(markedSpace().heap().isInPhase(CollectorPhase::End));
     unsweptBits() |= edenBits();
 }
 
 void BlockDirectory::snapshotUnsweptForFullCollection()
 {
     assertWorldIsStopped();
+    ASSERT(markedSpace().heap().isInPhase(CollectorPhase::End));
     unsweptBits() = liveBits();
 }
 
@@ -500,7 +519,7 @@ RefPtr<SharedTask<MarkedBlock::Handle*()>> BlockDirectory::parallelNotEmptyBlock
             if (m_done)
                 return nullptr;
             Locker locker { m_lock };
-            m_directory.assertIsMutatorOrMutatorIsStopped();
+            m_directory.assertMayAccessBitsUnlocked();
             m_index = m_directory.m_bits.markingNotEmpty().findBit(m_index, true);
             if (m_index >= m_directory.m_blocks.size()) {
                 m_done = true;
@@ -553,14 +572,20 @@ MarkedSpace& BlockDirectory::markedSpace() const
 }
 
 #if ASSERT_ENABLED
-void BlockDirectory::assertIsMutatorOrMutatorIsStopped() const
+void BlockDirectory::assertMayAccessBitsUnlocked() const
 {
-    markedSpace().heap().assertIsMutatorOrMutatorIsStopped();
+    JSC::Heap& heap = markedSpace().heap();
+    if (heap.worldIsStopped())
+        heap.collector().assertIsConductorOrHelper();
+    else
+        heap.assertIsExclusiveAccessHolder();
 }
 
 void BlockDirectory::assertWorldIsStopped() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
+    // Bulk rewrites happen in Begin and End, where the conductor runs alone.
     ASSERT(markedSpace().heap().worldIsStopped());
+    ASSERT(markedSpace().heap().currentThreadIsConductor());
     ASSERT(inUseBitsView().isEmpty());
 }
 #endif

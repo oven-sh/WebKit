@@ -58,36 +58,34 @@
 #include "StyledElement.h"
 #include "UserAgentStyle.h"
 #if ENABLE(VIDEO)
+#include "ElementAncestorIteratorInlines.h"
+#include "TextTrack.h"
+#include "TextTrackCue.h"
 #include "UserAgentParts.h"
 #endif
 #include <ranges>
 #include <wtf/SetForScope.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
-static const StyleProperties& leftToRightDeclaration()
+static const StyleProperties& leftToRightDeclarationSingleton()
 {
-IGNORE_GCC_WARNINGS_BEGIN("dangling-reference")
-    static auto& declaration = [] () -> const StyleProperties& {
+    static NeverDestroyed<Ref<const StyleProperties>> declaration = [] {
         auto properties = MutableStyleProperties::create();
         properties->setProperty(CSSPropertyID::Direction, CSSValueID::Ltr);
-        return properties.leakRef();
+        return properties;
     }();
-IGNORE_GCC_WARNINGS_END
-    return declaration;
+    return declaration.get();
 }
 
-static const StyleProperties& rightToLeftDeclaration()
+static const StyleProperties& rightToLeftDeclarationSingleton()
 {
-IGNORE_GCC_WARNINGS_BEGIN("dangling-reference")
-    static auto& declaration = [] () -> const StyleProperties& {
+    static NeverDestroyed<Ref<const StyleProperties>> declaration = [] {
         auto properties = MutableStyleProperties::create();
         properties->setProperty(CSSPropertyID::Direction, CSSValueID::Rtl);
-        return properties.leakRef();
+        return properties;
     }();
-IGNORE_GCC_WARNINGS_END
-    return declaration;
+    return declaration.get();
 }
 
 struct MatchRequest {
@@ -99,12 +97,14 @@ struct MatchRequest {
     const RuleSet& ruleSet;
     ScopeOrdinal styleScopeOrdinal;
     bool matchingPartPseudoElementRules { false };
+    bool orderAfterUnscopedRules { false };
 };
 
 ElementRuleCollector::ElementRuleCollector(const Element& element, const ScopeRuleSets& ruleSets, SelectorMatchingState* selectorMatchingState, SelectorChecker::Mode mode)
     : m_element(element)
     , m_authorStyle(ruleSets.authorStyle())
     , m_userStyle(ruleSets.userStyle())
+    , m_quirkStyle(ruleSets.quirkStyle())
     , m_userAgentMediaQueryStyle(ruleSets.userAgentMediaQueryStyle())
     , m_dynamicViewTransitionsStyle(ruleSets.dynamicViewTransitionsStyle())
     , m_selectorMatchingState(selectorMatchingState)
@@ -114,9 +114,9 @@ ElementRuleCollector::ElementRuleCollector(const Element& element, const ScopeRu
     ASSERT(!m_selectorMatchingState || m_selectorMatchingState->selectorFilter.parentStackIsConsistent(element.parentNode()));
 }
 
-ElementRuleCollector::ElementRuleCollector(const Element& element, const RuleSet& authorStyle, SelectorMatchingState* selectorMatchingState, SelectorChecker::Mode mode)
+ElementRuleCollector::ElementRuleCollector(const Element& element, Ref<const RuleSet>&& authorStyle, SelectorMatchingState* selectorMatchingState, SelectorChecker::Mode mode)
     : m_element(element)
-    , m_authorStyle(authorStyle)
+    , m_authorStyle(WTF::move(authorStyle))
     , m_selectorMatchingState(selectorMatchingState)
     , m_mode(mode)
     , m_result(MatchResult::create(element.isLink()))
@@ -178,6 +178,11 @@ void ElementRuleCollector::collectMatchingRules(DeclarationOrigin origin)
         collectMatchingRules(matchRequest);
         if (isFirstMatchModeAndHasMatchedAnyRules())
             return;
+#if ENABLE(VIDEO)
+        matchWebVTTEmbeddedStyleRules();
+        if (isFirstMatchModeAndHasMatchedAnyRules())
+            return;
+#endif
         break;
     }
 
@@ -190,13 +195,21 @@ void ElementRuleCollector::collectMatchingRules(DeclarationOrigin origin)
         }
         break;
 
+    case DeclarationOrigin::Quirk:
+        if (m_quirkStyle) {
+            MatchRequest matchRequest(*m_quirkStyle);
+            collectMatchingRules(matchRequest);
+            if (isFirstMatchModeAndHasMatchedAnyRules())
+                return;
+        }
+        break;
+
     case DeclarationOrigin::UserAgent:
         ASSERT_NOT_REACHED();
         return;
     }
 
-    auto* parent = element().parentElement();
-    if (parent && parent->shadowRoot()) {
+    if (element().parentElement() && element().parentElement()->shadowRoot()) {
         matchSlottedPseudoElementRules(origin);
         if (isFirstMatchModeAndHasMatchedAnyRules())
             return;
@@ -224,8 +237,7 @@ void ElementRuleCollector::collectMatchingRules(const MatchRequest& matchRequest
     ASSERT_WITH_MESSAGE(!(m_mode == SelectorChecker::Mode::StyleInvalidation && m_pseudoElementRequest), "When in StyleInvalidation or SharingRules, SelectorChecker does not try to match the pseudo ID. While ElementRuleCollector supports matching a particular pseudoId in this case, this would indicate a error at the call site since matching a particular element should be unnecessary.");
 
     auto& element = this->element();
-    auto* shadowRoot = element.containingShadowRoot();
-    if (shadowRoot && shadowRoot->mode() == ShadowRootMode::UserAgent)
+    if (element.isInUserAgentShadowTree())
         collectMatchingUserAgentPartRules(matchRequest);
 
     bool isHTMLElement = element.isHTMLElement();
@@ -293,6 +305,7 @@ Vector<MatchedProperties>& ElementRuleCollector::declarationsForOrigin(Declarati
     case DeclarationOrigin::UserAgent: return m_result->userAgentDeclarations;
     case DeclarationOrigin::User: return m_result->userDeclarations;
     case DeclarationOrigin::Author: return m_result->authorDeclarations;
+    case DeclarationOrigin::Quirk: return m_result->quirkDeclarations;
     }
     ASSERT_NOT_REACHED();
     return m_result->authorDeclarations;
@@ -321,7 +334,7 @@ void ElementRuleCollector::transferMatchedRules(DeclarationOrigin declarationOri
             break;
 
         if (m_mode == SelectorChecker::Mode::CollectingRules) {
-            m_matchedRuleList.append(matchedRule.ruleData->styleRule());
+            m_matchedRuleList.append(protect(matchedRule.ruleData->styleRule()));
             continue;
         }
 
@@ -374,6 +387,51 @@ void ElementRuleCollector::matchUserAgentPartRules(DeclarationOrigin origin)
     collectMatchingUserAgentPartRules(hostRequest);
 }
 
+#if ENABLE(VIDEO)
+void ElementRuleCollector::matchWebVTTEmbeddedStyleRules()
+{
+    bool mayMatchWebVTTRules = element().isInUserAgentShadowTree()
+        && (element().isWebVTTElement()
+        || element().userAgentPart() == UserAgentParts::cue()
+        || element().userAgentPart() == UserAgentParts::internalCueBackground());
+
+    if (!mayMatchWebVTTRules)
+        return;
+
+    RefPtr embeddedStyle = [&] -> const Style::RuleSet* {
+        RefPtr cueBox = lineageOfType<TextTrackCueBox>(element()).first();
+        if (!cueBox)
+            return nullptr;
+
+        RefPtr cue = cueBox->getCue();
+        if (!cue)
+            return nullptr;
+
+        RefPtr track = cue->track();
+        if (!track)
+            return nullptr;
+
+        return track->embeddedStyleRuleSet();
+    }();
+
+    if (!embeddedStyle)
+        return;
+
+    // WebVTT - <https://w3c.github.io/webvtt/#obtaining-css-boxes>
+    // 7.3. Obtaining CSS Boxes
+    // * For the purpose of determining the cascade of the declarations in STYLE blocks of a WebVTT
+    //   file, the relative order of appearance of the style sheets must be the same order as they
+    //   were added to the collection, and the order of appearance of the collection must be after
+    //   any style sheets that apply to the associated video element’s document.
+    // NOTE: The STYLE blocks of a track only apply to the cues of that track. Match them in the same
+    // scope as the ::cue rules of the page, and order them after the rules of the page when everything
+    // else is equal.
+    MatchRequest embeddedStyleRequest { *embeddedStyle, ScopeOrdinal::ContainingHost };
+    embeddedStyleRequest.orderAfterUnscopedRules = true;
+    collectMatchingUserAgentPartRules(embeddedStyleRequest);
+}
+#endif
+
 void ElementRuleCollector::matchHostPseudoClassRules(DeclarationOrigin origin)
 {
     ASSERT(element().shadowRoot());
@@ -392,7 +450,7 @@ void ElementRuleCollector::matchSlottedPseudoElementRules(DeclarationOrigin orig
     auto* slot = element().assignedSlot();
     auto styleScopeOrdinal = ScopeOrdinal::FirstSlot;
 
-    for (; slot; slot = slot->assignedSlot(), ++styleScopeOrdinal) {
+    for (; slot && styleScopeOrdinal < ScopeOrdinal::SlotLimit; slot = slot->assignedSlot(), ++styleScopeOrdinal) {
         auto& styleScope = Scope::forNode(*slot);
         if (!styleScope.resolver().ruleSets().isAuthorStyleDefined())
             continue;
@@ -403,9 +461,6 @@ void ElementRuleCollector::matchSlottedPseudoElementRules(DeclarationOrigin orig
 
         MatchRequest scopeMatchRequest(*scopeRules, styleScopeOrdinal);
         collectMatchingRulesForList(&scopeRules->slottedPseudoElementRules(), scopeMatchRequest);
-
-        if (styleScopeOrdinal == ScopeOrdinal::SlotLimit)
-            break;
     }
 }
 
@@ -429,7 +484,7 @@ void ElementRuleCollector::matchPartPseudoElementRulesForScope(const Element& pa
     auto* element = &partMatchingElement;
     auto styleScopeOrdinal = ScopeOrdinal::Element;
 
-    for (; element; element = element->shadowHost(), --styleScopeOrdinal) {
+    for (; element && styleScopeOrdinal > ScopeOrdinal::ContainingHostLimit; element = element->shadowHost(), --styleScopeOrdinal) {
         auto& styleScope = Scope::forNode(const_cast<Element&>(*element));
         if (!styleScope.resolver().ruleSets().isAuthorStyleDefined())
             continue;
@@ -446,27 +501,23 @@ void ElementRuleCollector::matchPartPseudoElementRulesForScope(const Element& pa
         // Element may only be exposed to styling from enclosing scopes via exportparts attributes.
         if (element != &partMatchingElement && element->shadowRoot()->partMappings().isEmpty())
             break;
-
-        if (styleScopeOrdinal == ScopeOrdinal::ContainingHostLimit)
-            break;
     }
 }
 
 void ElementRuleCollector::matchSlottedPseudoElementRulesInUserAgentShadowTree(DeclarationOrigin origin)
 {
     ASSERT(element().isInShadowTree());
-    auto* shadowRoot = element().containingShadowRoot();
-    if (!shadowRoot || shadowRoot->mode() != ShadowRootMode::UserAgent)
+    if (!element().isInUserAgentShadowTree())
         return;
 
-    auto* host = shadowRoot->host();
+    auto* host = element().containingShadowRoot()->host();
     if (!host)
         return;
 
     auto* slot = host->assignedSlot();
     auto styleScopeOrdinal = ScopeOrdinal::FirstSlot;
 
-    for (; slot; slot = slot->assignedSlot(), ++styleScopeOrdinal) {
+    for (; slot && styleScopeOrdinal < ScopeOrdinal::SlotLimit; slot = slot->assignedSlot(), ++styleScopeOrdinal) {
         auto& styleScope = Scope::forNode(*slot);
         if (!styleScope.resolver().ruleSets().isAuthorStyleDefined())
             continue;
@@ -477,9 +528,6 @@ void ElementRuleCollector::matchSlottedPseudoElementRulesInUserAgentShadowTree(D
 
         MatchRequest scopeMatchRequest(*scopeRules, styleScopeOrdinal);
         collectMatchingRulesForList(&scopeRules->slottedPseudoElementRules(), scopeMatchRequest);
-
-        if (styleScopeOrdinal == ScopeOrdinal::SlotLimit)
-            break;
     }
 }
 
@@ -505,16 +553,27 @@ void ElementRuleCollector::matchUserRules()
     sortAndTransferMatchedRules(DeclarationOrigin::User);
 }
 
+void ElementRuleCollector::matchQuirkRules()
+{
+    if (!m_quirkStyle)
+        return;
+
+    clearMatchedRules();
+
+    collectMatchingRules(DeclarationOrigin::Quirk);
+
+    sortAndTransferMatchedRules(DeclarationOrigin::Quirk);
+}
+
 void ElementRuleCollector::matchUARules()
 {
     // First we match rules from the user agent sheet.
-    auto* userAgentStyleSheet = m_isPrintStyle
-        ? UserAgentStyle::defaultPrintStyle : UserAgentStyle::defaultStyle;
-    matchUARules(*userAgentStyleSheet);
+    auto& userAgentSheets = UserAgentStyle::sheets();
+    matchUARules(m_isPrintStyle ? *userAgentSheets.defaultPrintStyle : *userAgentSheets.defaultStyle);
 
     // In quirks mode, we match rules from the quirks user agent sheet.
     if (element().document().inQuirksMode())
-        matchUARules(*UserAgentStyle::defaultQuirksStyle);
+        matchUARules(*userAgentSheets.defaultQuirksStyle);
 
     if (m_userAgentMediaQueryStyle)
         matchUARules(*m_userAgentMediaQueryStyle);
@@ -534,7 +593,7 @@ void ElementRuleCollector::matchUARules(const RuleSet& rules)
 
 static Vector<AtomString> classListForNamedViewTransitionPseudoElement(const Document& document, const AtomString& name)
 {
-    auto* activeViewTransition = document.activeViewTransition();
+    RefPtr activeViewTransition = document.activeViewTransition();
     if (!activeViewTransition)
         return { };
 
@@ -606,7 +665,7 @@ inline bool ElementRuleCollector::ruleMatches(const RuleData& ruleData, unsigned
         context.setRequestedPseudoElement(pseudoElementIdentifier);
         context.scrollbarState = m_pseudoElementRequest->scrollbarState();
         if (isNamedViewTransitionPseudoElement(pseudoElementIdentifier))
-            context.classList = classListForNamedViewTransitionPseudoElement(element().document(), pseudoElementIdentifier.nameOrPart);
+            context.classList = classListForNamedViewTransitionPseudoElement(protect(element().document()), pseudoElementIdentifier.nameOrPart);
     }
     context.styleScopeOrdinal = styleScopeOrdinal;
     context.selectorMatchingState = m_selectorMatchingState;
@@ -667,15 +726,23 @@ void ElementRuleCollector::collectMatchingRulesForListSlow(const RuleSet::RuleDa
             scopingRoots = WTF::move(roots);
         }
 
-        auto& rule = ruleData.styleRule();
-
         // If the rule has no properties to apply, then ignore it in the non-debug mode.
-        if (rule.properties().isEmpty() && !m_shouldIncludeEmptyRules)
+        if (ruleData.styleRule().properties().isEmpty() && !m_shouldIncludeEmptyRules)
             continue;
 
         auto addRuleIfMatches = [&] (const ScopingRootWithDistance* scopingRootWithDistance = nullptr) {
             unsigned specificity;
-            auto distance = scopingRootWithDistance ? scopingRootWithDistance->distance : std::numeric_limits<unsigned>::max();
+            auto distance = [&] {
+                // compareRules() orders rules with a smaller scoping root distance after rules with
+                // a larger one, and unscoped rules have the largest distance. Give the rules that
+                // must come after unscoped rules a distance just below it, so that ordering them
+                // doesn't need another comparison in compareRules().
+                if (scopingRootWithDistance)
+                    return scopingRootWithDistance->distance;
+                if (matchRequest.orderAfterUnscopedRules)
+                    return std::numeric_limits<unsigned>::max() - 1;
+                return std::numeric_limits<unsigned>::max();
+            }();
             if (ruleMatches(ruleData, specificity, matchRequest.styleScopeOrdinal, scopingRootWithDistance))
                 addMatchedRule(ruleData, specificity, distance, matchRequest);
         };
@@ -792,7 +859,7 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
             auto match = [&] (const auto* scopingRoot, const auto& selector) {
                 auto subContext = context;
                 subContext.scope = scopingRoot;
-                const auto* ancestor = &element();
+                CheckedPtr ancestor = &element();
                 while (ancestor) {
                     auto match = checker.match(selector, *ancestor, subContext);
                     if (match)
@@ -851,24 +918,24 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
                     scopingRoots.append({ scopingRoot, distance });
                 };
 
-                const auto* owner = client->ownerNode();
+                CheckedPtr owner = client->ownerNode();
                 if (owner) {
                     // Regular stylesheet with owner node (e.g., <style> element).
                     // Find the parent node of the <style>.
-                    const auto* implicitParentNode = owner->parentOrShadowHostElement();
+                    CheckedPtr implicitParentNode = owner->parentOrShadowHostElement();
                     if (!implicitParentNode)
                         return;
-                    addScopingRootWithDistance(implicitParentNode);
+                    addScopingRootWithDistance(implicitParentNode.get());
                 } else {
                     // Constructed stylesheet without owner node.
                     // Use the shadow host as scoping root for adopting shadow roots, and the document itself for adopting documents.
-                    for (const auto& adoptingTreeScope : client->adoptingTreeScopes()) {
-                        if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(adoptingTreeScope)) {
-                            const auto* shadowHost = shadowRoot->host();
+                    for (CheckedRef adoptingTreeScope : client->adoptingTreeScopes()) {
+                        if (CheckedPtr shadowRoot = dynamicDowncast<ShadowRoot>(adoptingTreeScope)) {
+                            CheckedPtr shadowHost = shadowRoot->host();
                             if (shadowHost && &shadowHost->document() == &this->element().document())
-                                addScopingRootWithDistance(shadowHost);
-                        } else if (&adoptingTreeScope == &this->element().document())
-                            addScopingRootWithDistance(&adoptingTreeScope);
+                                addScopingRootWithDistance(shadowHost.get());
+                        } else if (adoptingTreeScope.ptr() == &this->element().document())
+                            addScopingRootWithDistance(adoptingTreeScope.ptr());
                     }
                 }
             };
@@ -898,7 +965,7 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
     return { true, WTF::move(scopingRoots) };
 }
 
-static inline bool LEGACY_NODELETE compareRules(MatchedRule r1, MatchedRule r2)
+NODELETE static inline bool compareRules(MatchedRule r1, MatchedRule r2)
 {
     // For normal properties the earlier scope wins. This may be reversed by !important which is handled when resolving cascade.
     if (r1.styleScopeOrdinal != r2.styleScopeOrdinal)
@@ -947,9 +1014,9 @@ void ElementRuleCollector::matchAllRules(bool matchAuthorAndUserStyles, bool inc
         // after all attributes, since their style depends on the values of multiple attributes.
         addElementStyleProperties(styledElement->additionalPresentationalHintStyle(), RuleSet::cascadeLayerPriorityForPresentationalHints);
 
-        if (auto* htmlElement = dynamicDowncast<HTMLElement>(*styledElement)) {
+        if (auto* htmlElement = dynamicDowncast<HTMLElement>(element())) {
             if (auto textDirection = computeTextDirectionIfDirIsAuto(*htmlElement)) {
-                auto& properties = *textDirection == TextDirection::LTR ? leftToRightDeclaration() : rightToLeftDeclaration();
+                auto& properties = *textDirection == TextDirection::LTR ? leftToRightDeclarationSingleton() : rightToLeftDeclarationSingleton();
                 addMatchedProperties({ properties }, DeclarationOrigin::Author);
             }
         }
@@ -968,6 +1035,8 @@ void ElementRuleCollector::matchAllRules(bool matchAuthorAndUserStyles, bool inc
 
         // Rules from the host scopes override inline style.
         transferMatchedRules(DeclarationOrigin::Author);
+
+        matchQuirkRules();
     }
 }
 
@@ -984,7 +1053,7 @@ void ElementRuleCollector::addElementInlineStyleProperties(bool includeSMILPrope
 
     if (includeSMILProperties) {
         if (auto* svgElement = dynamicDowncast<SVGElement>(element()))
-            addElementStyleProperties(svgElement->animatedSMILStyleProperties(), RuleSet::cascadeLayerPriorityForUnlayered, IsCacheable::No);
+            addElementStyleProperties(protect(svgElement->animatedSMILStyleProperties()), RuleSet::cascadeLayerPriorityForUnlayered, IsCacheable::No);
     }
 }
 
@@ -1017,5 +1086,4 @@ void ElementRuleCollector::addAuthorKeyframeRules(const StyleRuleKeyframe& keyfr
     m_result->authorDeclarations.append({ keyframe.properties(), SelectorChecker::MatchAll, propertyAllowlist });
 }
 
-}
-} // namespace WebCore
+} // namespace WebCore::Style

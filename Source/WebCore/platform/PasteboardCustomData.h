@@ -52,7 +52,7 @@ public:
         Variant<String, Ref<SharedBuffer>> platformData;
     };
 
-    WEBCORE_EXPORT PasteboardCustomData();
+    NODELETE WEBCORE_EXPORT PasteboardCustomData();
     WEBCORE_EXPORT PasteboardCustomData(String&& origin, Vector<Entry>&&);
     WEBCORE_EXPORT PasteboardCustomData(PasteboardCustomData&&);
     WEBCORE_EXPORT PasteboardCustomData(const PasteboardCustomData&);
@@ -68,7 +68,7 @@ public:
 
     String readString(const String& type) const;
     RefPtr<SharedBuffer> readBuffer(const String& type) const;
-    String LEGACY_NODELETE readStringInCustomData(const String& type) const;
+    NODELETE String readStringInCustomData(const String& type) const;
 
     void writeString(const String& type, const String& value);
     void writeData(const String& type, Ref<SharedBuffer>&& data);
@@ -90,7 +90,7 @@ public:
     void forEachPlatformStringOrBuffer(NOESCAPE const Function<void(const String& type, const Variant<String, Ref<SharedBuffer>>& data)>&) const;
     void forEachCustomString(NOESCAPE const Function<void(const String& type, const String& data)>&) const;
 
-    bool LEGACY_NODELETE hasData() const;
+    NODELETE bool hasData() const;
     bool hasSameOriginCustomData() const;
 
     Vector<String> orderedTypes() const;

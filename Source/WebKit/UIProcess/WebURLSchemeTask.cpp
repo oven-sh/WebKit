@@ -201,7 +201,7 @@ auto WebURLSchemeTask::didReceiveData(Ref<SharedBuffer>&& buffer) -> ExceptionTy
 
 auto WebURLSchemeTask::didComplete(const ResourceError& error) -> ExceptionType
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (m_stopped)
         return m_shouldSuppressTaskStoppedExceptions ? ExceptionType::None : ExceptionType::TaskAlreadyStopped;
@@ -245,7 +245,7 @@ void WebURLSchemeTask::stop()
 NSURLRequest *WebURLSchemeTask::nsRequest() const
 {
     Locker locker { m_requestLock };
-    return RetainPtr { m_request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) }.autorelease();
+    SUPPRESS_FORWARD_DECL_ARG return RetainPtr { m_request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) }.autorelease();
 }
 #endif
 

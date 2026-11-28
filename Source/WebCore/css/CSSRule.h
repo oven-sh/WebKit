@@ -24,6 +24,7 @@
 
 #include <WebCore/CSSParserEnum.h>
 #include <WebCore/StyleRuleType.h>
+#include <wtf/Lock.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
@@ -34,6 +35,7 @@ class CSSStyleSheet;
 class StyleRuleBase;
 class StyleRule;
 class StyleRuleWithNesting;
+class WebCoreOpaqueRoot;
 
 struct CSSParserContext;
 
@@ -64,7 +66,16 @@ public:
     virtual RefPtr<StyleRuleWithNesting> prepareChildStyleRuleForNesting(StyleRule&);
     virtual void getChildStyleSheets(HashSet<Ref<CSSStyleSheet>>&) { }
 
-    WEBCORE_EXPORT ExceptionOr<void> LEGACY_NODELETE setCssText(const String&);
+    Lock& opaqueRootLockForGC() const { return m_opaqueRootLockForGC; }
+
+    // Computes the opaque root of this rule for the JS garbage collector. Called from the
+    // parallel GC marker threads as well as from the mutator, so it walks the parent links
+    // under opaqueRootLockForGC() and must never allocate, refcount or otherwise mutate the
+    // CSSOM. In particular it must not go through parentStyleSheet()/item(), which lazily
+    // create CSSOM wrappers and are main-thread only.
+    WEBCORE_EXPORT WebCoreOpaqueRoot opaqueRootForGCThread();
+
+    NODELETE WEBCORE_EXPORT ExceptionOr<void> setCssText(const String&);
 
 protected:
     explicit CSSRule(CSSStyleSheet*);
@@ -77,6 +88,7 @@ protected:
 private:
     mutable unsigned char m_hasCachedSelectorText : 1;
     unsigned char m_parentIsRule : 1;
+    mutable Lock m_opaqueRootLockForGC;
     // FIXME: These are raw back pointers to the parent, selected by m_parentIsRule. Use WeakPtr instead.
     union {
         SUPPRESS_UNCOUNTED_MEMBER CSSRule* m_parentRule;
@@ -93,12 +105,14 @@ inline CSSRule::CSSRule(CSSStyleSheet* parent)
 
 inline void CSSRule::setParentStyleSheet(CSSStyleSheet* styleSheet)
 {
+    Locker locker { m_opaqueRootLockForGC };
     m_parentIsRule = false;
     m_parentStyleSheet = styleSheet;
 }
 
 inline void CSSRule::setParentRule(CSSRule* rule)
 {
+    Locker locker { m_opaqueRootLockForGC };
     m_parentIsRule = true;
     m_parentRule = rule;
 }

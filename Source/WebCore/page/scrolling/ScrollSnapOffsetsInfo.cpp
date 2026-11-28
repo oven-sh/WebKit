@@ -45,7 +45,7 @@
 namespace WebCore {
 
 template <typename UnitType, typename RectType>
-static std::pair<UnitType, UnitType> LEGACY_NODELETE rangeForAxis(RectType rect, ScrollEventAxis axis)
+NODELETE static std::pair<UnitType, UnitType> rangeForAxis(RectType rect, ScrollEventAxis axis)
 {
     return axis == ScrollEventAxis::Horizontal ? std::make_pair(rect.x(), rect.maxX()) : std::make_pair(rect.y(), rect.maxY());
 }
@@ -118,13 +118,13 @@ static PotentialSnapPointSearchResult<UnitType> searchForPotentialSnapPoints(con
 }
 
 template <typename UnitType, typename PointType>
-static UnitType LEGACY_NODELETE componentForAxis(PointType point, ScrollEventAxis axis)
+NODELETE static UnitType componentForAxis(PointType point, ScrollEventAxis axis)
 {
     return axis == ScrollEventAxis::Horizontal ? point.x() : point.y();
 }
 
 template <typename InfoType, typename UnitType, typename SizeType>
-static bool LEGACY_NODELETE offsetHasVisibleSnapArea(const InfoType& info, const SnapOffset<UnitType>& snapOffset, const SnapOffset<UnitType>& snapOffsetOther, ScrollEventAxis axis, const SizeType& viewportSize)
+NODELETE static bool offsetHasVisibleSnapArea(const InfoType& info, const SnapOffset<UnitType>& snapOffset, const SnapOffset<UnitType>& snapOffsetOther, ScrollEventAxis axis, const SizeType& viewportSize)
 {
     auto otherAxis = axis == ScrollEventAxis::Horizontal ? ScrollEventAxis::Vertical : ScrollEventAxis::Horizontal;
     auto viewportLengthInOtherAxis = axis == ScrollEventAxis::Horizontal ? viewportSize.height() : viewportSize.width();
@@ -281,11 +281,12 @@ static std::pair<LayoutType, std::optional<unsigned>> closestSnapOffsetWithInfoA
     // scroll (i.e. one at or behind the original offset), so both remaining candidates are valid
     // targets in the scroll direction. Among them, prefer whichever is closest to the scroll
     // destination, so a snap point between the origin and the destination is preferred over one that
-    // overshoots it. Only fall back to the scroll direction to break an exact tie.
+    // overshoots it. Break an exact tie using the scroll direction, preferring the previous offset when
+    // there is none.
     auto distanceToPrevious = scrollDestinationOffset - (*previous).first;
     auto distanceToNext = (*next).first - scrollDestinationOffset;
     if (distanceToPrevious == distanceToNext)
-        return velocity < 0 ? *previous : *next;
+        return velocity <= 0 ? *previous : *next;
     return distanceToPrevious < distanceToNext ? *previous : *next;
 }
 
@@ -296,14 +297,14 @@ static LayoutRect computeScrollSnapPortRect(const Style::ComputedStyle& style, c
     return result;
 }
 
-static LayoutRect LEGACY_NODELETE computeScrollSnapAreaRect(const Style::ComputedStyle& style, const LayoutRect& rect)
+NODELETE static LayoutRect computeScrollSnapAreaRect(const Style::ComputedStyle& style, const LayoutRect& rect)
 {
     auto result = rect;
     result.expand(Style::extentForRect(style.scrollMarginBox(), rect, style.usedZoomForLength()));
     return result;
 }
 
-static LayoutUnit LEGACY_NODELETE computeScrollSnapAlignOffset(LayoutUnit minLocation, LayoutUnit maxLocation, ScrollSnapAxisAlignType alignment, bool axisIsFlipped)
+NODELETE static LayoutUnit computeScrollSnapAlignOffset(LayoutUnit minLocation, LayoutUnit maxLocation, ScrollSnapAxisAlignType alignment, bool axisIsFlipped)
 {
     switch (alignment) {
     case ScrollSnapAxisAlignType::Start:
@@ -361,7 +362,7 @@ bool mayHaveScrollSnappedBoxes(const RenderBox& scrollingElementBox)
         return false;
 
     auto& boxesWithScrollSnapPositions = scrollingElementBox.view().boxesWithScrollSnapPositions();
-    if (boxesWithScrollSnapPositions.isEmptyIgnoringNullReferences())
+    if (boxesWithScrollSnapPositions.computeIsEmpty())
         return false;
 
     return true;
@@ -371,7 +372,7 @@ void updateSnapOffsetsForScrollableArea(ScrollableArea& scrollableArea, const Re
 {
     auto scrollSnapTypeContainer = scrollingElementStyle.scrollSnapType().tryContainer();
     const auto& boxesWithScrollSnapPositions = scrollingElementBox.view().boxesWithScrollSnapPositions();
-    if (!scrollSnapTypeContainer || boxesWithScrollSnapPositions.isEmptyIgnoringNullReferences()) {
+    if (!scrollSnapTypeContainer || boxesWithScrollSnapPositions.computeIsEmpty()) {
         scrollableArea.clearSnapOffsets();
         return;
     }
@@ -388,9 +389,6 @@ void updateSnapOffsetsForScrollableArea(ScrollableArea& scrollableArea, const Re
     // indices already tied at this exact offset (almost always zero or one of them).
     auto addOrUpdateStopForSnapOffset = [](HashMap<LayoutUnit, SnapOffset<LayoutUnit>>& offsets, LayoutUnit newOffset, ScrollSnapStop stop, bool hasSnapAreaLargerThanViewport, bool isFocused, bool isTarget, NodeIdentifier snapTargetID, size_t snapAreaIndex, const Vector<CheckedRef<const RenderBox>>& snapBoxesByAreaIndex)
     {
-        if (!offsets.isValidKey(newOffset))
-            return;
-
         auto& offset = offsets.ensure(newOffset, [&] {
             return SnapOffset<LayoutUnit> { newOffset, stop, hasSnapAreaLargerThanViewport, isFocused, isTarget, snapTargetID, { } };
         }).iterator->value;
@@ -552,7 +550,7 @@ static float convertOffsetUnit(LayoutUnit input, float deviceScaleFactor)
     return roundToDevicePixel(input, deviceScaleFactor, false);
 }
 
-static LayoutUnit LEGACY_NODELETE convertOffsetUnit(float input, float /* scaleFactor */)
+NODELETE static LayoutUnit convertOffsetUnit(float input, float /* scaleFactor */)
 {
     return LayoutUnit(input);
 }

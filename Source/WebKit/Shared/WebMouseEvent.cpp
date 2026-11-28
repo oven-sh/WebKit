@@ -57,7 +57,7 @@ WebMouseEvent::WebMouseEvent(WebEventData&& eventData, WebMouseEventData&& mouse
     : WebEvent(WTF::move(eventData))
     , m_data(WTF::move(mouseData))
 {
-    ASSERT(isMouseEventType(type()));
+    RELEASE_ASSERT(isMouseEventType(type()));
 }
 
 bool WebMouseEvent::isMouseEventType(WebEventType type)
@@ -65,7 +65,7 @@ bool WebMouseEvent::isMouseEventType(WebEventType type)
     return type == WebEventType::MouseDown || type == WebEventType::MouseUp || type == WebEventType::MouseMove || type == WebEventType::MouseForceUp || type == WebEventType::MouseForceDown || type == WebEventType::MouseForceChanged;
 }
 
-WebMouseEventButton LEGACY_NODELETE mouseButton(const WebCore::NavigationAction& navigationAction)
+NODELETE WebMouseEventButton mouseButton(const WebCore::NavigationAction& navigationAction)
 {
     auto& mouseEventData = navigationAction.mouseEventData();
     if (mouseEventData && mouseEventData->buttonDown && mouseEventData->isTrusted)
@@ -81,7 +81,7 @@ WebMouseEventSyntheticClickType syntheticClickType(const WebCore::NavigationActi
     return WebMouseEventSyntheticClickType::NoTap;
 }
 
-WebCore::SyntheticClickType LEGACY_NODELETE coreSyntheticClickType(WebMouseEventSyntheticClickType type)
+NODELETE WebCore::SyntheticClickType coreSyntheticClickType(WebMouseEventSyntheticClickType type)
 {
     switch (type) {
     case WebMouseEventSyntheticClickType::NoTap: return WebCore::SyntheticClickType::NoTap;

@@ -315,7 +315,7 @@ public:
 
     void checkArgumentTypes();
 
-    void LEGACY_NODELETE clearGenerationInfo();
+    NODELETE void clearGenerationInfo();
 
     // These methods are used when generating 'unexpected'
     // calls out from JIT code to C++ helper routines -
@@ -1319,6 +1319,7 @@ public:
     void compileNewSet(Node*);
     void compileNewWeakMap(Node*);
     void compileNewWeakSet(Node*);
+    void compileNewProxyObject(Node*);
     void compileNewRegExpUntyped(Node*);
 
     void emitNewTypedArrayWithSizeInRegister(Node*, TypedArrayType, RegisteredStructure, GPRReg sizeGPR);
@@ -1474,6 +1475,7 @@ public:
     void compileMakeRope(Node*);
     void compileMakeAtomString(Node*);
     void compileArithAbs(Node*);
+    void compileArithSign(Node*);
     void compileArithClz32(Node*);
     void compileArithSub(Node*);
     void compileIncOrDec(Node*);
@@ -1501,6 +1503,7 @@ public:
     void compileResolveRope(Node*);
     JITCompiler::Jump jumpForTypedArrayOutOfBounds(Node*, GPRReg baseGPR, GPRReg indexGPR, GPRReg scratchGPR, GPRReg scratch2GPR);
     void compileGetTypedArrayByteOffset(Node*);
+    void compileGetTypedArrayBuffer(Node*);
 #if USE(LARGE_TYPED_ARRAYS)
     void compileGetTypedArrayByteOffsetAsInt52(Node*);
 #endif
@@ -1539,8 +1542,14 @@ public:
     void compileNewBoundFunction(Node*);
     void compileNewRegExp(Node*);
     void compileForwardVarargs(Node*);
+    void emitLoadVarargsFromContiguousStorage(LoadVarargsData*, Address sourceStart, GPRReg lengthGPR, GPRReg tempGPR);
+    void emitFillMissingVarargsWithUndefined(LoadVarargsData*, GPRReg lengthGPR, GPRReg tempGPR);
+    void emitCopyVarargs(Address sourceStart, Address targetStart, GPRReg lengthGPR, GPRReg tempGPR);
     void compileVarargsLength(Node*);
     void compileLoadVarargs(Node*);
+    void compileVarargsLengthWithSpread(Node*);
+    void compileLoadVarargsWithSpread(Node*);
+    EncodedJSValue* fillSpreadArgumentsBuffer(Node*, unsigned base, unsigned numArgs);
     void compileCreateActivation(Node*);
     void compileCreateDirectArguments(Node*);
     void compileGetFromArguments(Node*);
@@ -1622,7 +1631,7 @@ public:
     void compileThrow(Node*);
     void compileThrowStaticError(Node*);
 
-    void LEGACY_NODELETE compileExtractFromTuple(Node*);
+    NODELETE void compileExtractFromTuple(Node*);
     void compileStringIteratorNext(Node*);
     void compileEnumeratorNextUpdateIndexAndMode(Node*);
     void compileEnumeratorNextUpdatePropertyName(Node*);
@@ -1908,7 +1917,7 @@ public:
     unsigned appendOSRExit(OSRExit&&, bool isExceptionHandler = false);
     unsigned appendExceptionHandlingOSRExit(ExitKind, unsigned eventStreamIndex, CodeOrigin, HandlerInfo* exceptionHandler, CallSiteIndex, MacroAssembler::JumpList jumpsToFail = MacroAssembler::JumpList());
 
-    void unboxRealNumberDouble(Node*, FPRReg boxedFPR, FPRReg resultFPR, GPRReg scratchGPR);
+    void unboxNumberAsDouble(Node*, FPRReg boxedFPR, FPRReg resultFPR, GPRReg scratchGPR);
     void boxDoubleAsDouble(FPRReg inputFPR, FPRReg resultFPR);
 
     template<bool strict>
@@ -2187,7 +2196,7 @@ public:
         return *this;
     }
 
-    void LEGACY_NODELETE adopt(GPRTemporary&);
+    NODELETE void adopt(GPRTemporary&);
 
     ~GPRTemporary()
     {

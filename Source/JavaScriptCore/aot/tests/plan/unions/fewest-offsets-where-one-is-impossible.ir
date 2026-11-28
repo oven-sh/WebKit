@@ -1,0 +1,62 @@
+# `q` is read through a union of four. In A the first slot is taken by `p`, which is read more often through the smaller union of A and C, and C has that one slot alone. D has one slot alone too, so `q` finds no one offset. It is laid at the offset that most of its declarations can share: E follows D, and two offsets are left where the order of declaration has three
+# A = { p, q }   C = { p }   D = { q }   E = { x, y, q }   function pOf(n: A | C) { .. }   function qOf(n: A | C | D | E) { .. }
+# RUN: plan layouts mechanisms=none+TypedOperations
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "p" {{*}}offset=[[low]]
+# CHECK-NEXT: slot 1 "q" {{*}}offset=[[high]]
+# CHECK: layout L1 CompiledObject
+# CHECK-NEXT: slot 0 "p" {{*}}offset=[[low]]
+# CHECK: layout L2 CompiledObject
+# CHECK-NEXT: slot 0 "q" {{*}}offset=[[low]]
+# CHECK: layout L3 CompiledObject size=48
+# CHECK: slot 2 "q" {{*}}offset=[[low]]
+# RUN(WITHHELD): plan layouts mechanisms=none
+# WITHHELD: layout L2 CompiledObject
+# WITHHELD-NEXT: slot 0 "q" {{*}}offset=[[low]]
+# WITHHELD: layout L3 CompiledObject size=48
+# WITHHELD-NEXT: slot 0 "x" {{*}}offset=[[low]]
+
+layout L0 name="A" module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="C" module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 name="D" module=m0 fields=[{key="q" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 name="E" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0, v0, v0 layout=L3 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v2
+    v11 = Call v9, -, v4
+    v12 = NewClosure function=f2
+    v13 = Call v12, -, v2
+    v14 = Call v12, -, v4
+    v15 = Call v12, -, v6
+    v16 = Call v12, -, v8
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="sink" [isFreeName]
+    v19 = Call v18, -, v10, v11, v13, v14, v15, v16
+    Return v19
+}
+function f1 name="pOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="p"
+    v2 = PropGet v0 key="p"
+    v3 = PropGet v0 key="p"
+    v4 = Add v1, v2
+    v5 = Add v4, v3
+    Return v5
+}
+function f2 name="qOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3):
+    v1 = PropGet v0 key="q"
+    Return v1
+}

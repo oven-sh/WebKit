@@ -1,0 +1,46 @@
+# `add` is entered itself, so the scope of `total` is handed to direct callees alone and no operation of the unit keeps it: nothing is marked, and behind the last read of the scope the cell is proposed for the next call
+# function total() { let sum = 0; function add(x) { sum += x; } add(1); add(2); return sum; }  sink(total);
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK: = CallDirect {{*}}function=f2
+# CHECK: = CallDirect {{*}}function=f2
+# CHECK: ReleaseEnvironment
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# NEVER-NOT: MarkEnvironmentEscaped
+# RUN(CALLEE): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# CALLEE-NOT: MarkEnvironmentEscaped
+# CALLEE-NOT: ReleaseEnvironment
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# PLAN: layout L0 Environment size=16 handed-back link-at=8
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="sum"}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}
+function f1 name="total" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=1
+    v3 = CallDirect v1, v2 function=f2
+    v4 = Integer integer=2
+    v5 = CallDirect v1, v4 function=f2
+    v6 = GetEnvironmentField v1 layout=L0
+    Return v6
+}
+function f2 name="add" module=m0 length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = Undefined
+    Return v5
+}

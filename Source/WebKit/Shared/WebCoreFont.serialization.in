@@ -25,6 +25,7 @@ header: <WebCore/Font.h>
 [Nested] enum class WebCore::FontIsInterstitial : bool;
 [Nested] enum class WebCore::FontVisibility : bool;
 [Nested] enum class WebCore::FontIsOrientationFallback : bool;
+[Nested] enum class WebCore::FontIsSmallCapsFace : bool;
 
 header: <WebCore/Font.h>
 [CustomHeader] struct WebCore::FontInternalAttributes {
@@ -33,6 +34,7 @@ header: <WebCore/Font.h>
     [BitField] WebCore::FontIsInterstitial isInterstitial;
     [BitField] WebCore::FontVisibility visibility;
     [BitField] WebCore::FontIsOrientationFallback isTextOrientationFallback;
+    [BitField] WebCore::FontIsSmallCapsFace isSmallCapsFace;
 };
 
 enum class WebCore::FontOrientation : bool
@@ -98,6 +100,7 @@ header: <WebCore/FontPlatformData.h>
     SkString m_familyName;
     SkFontStyle m_style;
     Vector<hb_feature_t> m_features;
+    Vector<SkFontArguments::VariationPosition::Coordinate> m_variations;
 #endif
 };
 

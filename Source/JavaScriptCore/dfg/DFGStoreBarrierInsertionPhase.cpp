@@ -108,8 +108,8 @@ public:
             // towards believing that all nodes need barriers. "Needing a barrier" is like
             // saying that the node is in a past epoch. "Not needing a barrier" is like saying
             // that the node is in the current epoch.
-            m_stateAtHead = makeUniqueWithoutFastMallocCheck<IndexMap<BasicBlock*, UncheckedKeyHashSet<Node*>>>(m_graph.numBlocks());
-            m_stateAtTail = makeUniqueWithoutFastMallocCheck<IndexMap<BasicBlock*, UncheckedKeyHashSet<Node*>>>(m_graph.numBlocks());
+            m_stateAtHead = makeUniqueWithoutFastMallocCheck<IndexMap<BasicBlock*, HashSet<Node*>>>(m_graph.numBlocks());
+            m_stateAtTail = makeUniqueWithoutFastMallocCheck<IndexMap<BasicBlock*, HashSet<Node*>>>(m_graph.numBlocks());
             
             BlockList postOrder = m_graph.blocksInPostOrder();
             
@@ -205,7 +205,7 @@ private:
 
         bool result = true;
 
-        UncheckedKeyHashMap<AbstractHeap, Node*> potentialStackEscapes;
+        HashMap<AbstractHeap, Node*> potentialStackEscapes;
         auto escape = [&](Node* node) {
             if (mode == PhaseMode::Global) {
                 m_interpreter->phiChildren()->forAllTransitiveIncomingValues(
@@ -440,8 +440,6 @@ private:
             case NewArrayBuffer:
             case NewInternalFieldObject:
             case NewPromise:
-            case NewTypedArray:
-            case NewTypedArrayBuffer:
             case NewRegExp:
             case NewRegExpUntyped:
             case NewStringObject:
@@ -449,6 +447,7 @@ private:
             case NewSet:
             case NewWeakMap:
             case NewWeakSet:
+            case NewProxyObject:
             case NewSymbol:
             case MaterializeNewObject:
             case MaterializeNewArrayWithButterfly:
@@ -466,8 +465,11 @@ private:
             case NewBoundFunction:
             case AllocatePropertyStorage:
             case ReallocatePropertyStorage:
-                // Nodes that allocate get to set their epoch because for those nodes we know
-                // that they will be the newest object in the heap.
+                // Set the node's epoch to current so that store barriers are not needed on the results
+                // of these nodes until the next epoch bump. In order for that to be sound, no GC safepoint
+                // can execute between the allocation of the node's result and the next doesGC() node.
+                // Once a doesGC() node is encountered (and therefore a GC safepoint could be executed)
+                // the allocation becomes discoverable by the collector and so barriers are needed.
                 m_node->setEpoch(m_currentEpoch);
                 break;
                 
@@ -477,6 +479,11 @@ private:
                 m_node->setEpoch(Epoch());
                 break;
                 
+            // These allocate, but their operations can GC after the result cell exists
+            // (setFromArrayLike runs accessors; JSArrayBuffer::finishCreation calls
+            // Heap::addReference), so the collector may already have traced the result.
+            case NewTypedArray:
+            case NewTypedArrayBuffer:
             default:
                 // For nodes that aren't guaranteed to allocate, we say that their return value
                 // (if there is one) could be arbitrarily old.
@@ -705,7 +712,7 @@ private:
         m_insertionSet.insertNode(nodeIndex, SpecNone, FencedStoreBarrier, origin, base);
     }
     
-    bool LEGACY_NODELETE reallyInsertBarriers()
+    NODELETE bool reallyInsertBarriers()
     {
         return mode == PhaseMode::Fast || m_isConverged;
     }
@@ -718,8 +725,8 @@ private:
     // Things we only use in Global mode.
     std::unique_ptr<InPlaceAbstractState> m_state;
     std::unique_ptr<AbstractInterpreter<InPlaceAbstractState>> m_interpreter;
-    std::unique_ptr<IndexMap<BasicBlock*, UncheckedKeyHashSet<Node*>>> m_stateAtHead;
-    std::unique_ptr<IndexMap<BasicBlock*, UncheckedKeyHashSet<Node*>>> m_stateAtTail;
+    std::unique_ptr<IndexMap<BasicBlock*, HashSet<Node*>>> m_stateAtHead;
+    std::unique_ptr<IndexMap<BasicBlock*, HashSet<Node*>>> m_stateAtTail;
     bool m_isConverged;
 };
 

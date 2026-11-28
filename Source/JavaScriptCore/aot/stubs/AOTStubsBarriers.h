@@ -15,7 +15,6 @@ namespace JSC { namespace AOT {
 constexpr StubKey writeBarrier() { return StubKey(StubFamily::WriteBarrier); }
 constexpr StubKey rememberElement() { return StubKey(StubFamily::RememberElement); }
 
-PreludeExit emitBarrierPrelude(StubAssembler&);
 
 static_assert(exists(writeBarrier()) && exists(rememberElement()));
 static_assert(!exists(rememberElement().withCallerFrame(CallerFrame::Frameless)) && !exists(writeBarrier().withCount(1)));

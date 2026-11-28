@@ -30,8 +30,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unicode/ubrk.h>
 #include <unicode/unorm2.h>
 #include <wtf/ASCIICType.h>
+#include <wtf/Borrow.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
+#include <wtf/SIMDUTF.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/ZippedRange.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
@@ -113,20 +115,35 @@ ASCIICString StringView::ascii() const
     return StringImpl::asciiForCharacters(span16());
 }
 
-std::expected<UTF8CString, UTF8ConversionError> StringView::tryGetUTF8(ConversionMode mode) const
+std::expected<UTF8CString, UTF8ConversionError> tryMakeUTF8CString(StringView string, ConversionMode mode)
 {
-    if (isNull())
+    if (string.isNull())
         return UTF8CString { u8""_span };
-    if (is8Bit())
-        return StringImpl::utf8ForCharacters(span8());
-    return StringImpl::utf8ForCharacters(span16(), mode);
+    if (string.is8Bit())
+        return tryMakeUTF8CString(string.span8());
+    return tryMakeUTF8CString(string.span16(), mode);
 }
 
-UTF8CString StringView::utf8(ConversionMode mode) const
+UTF8CString makeUTF8CString(StringView string, ConversionMode mode)
 {
-    auto expectedString = tryGetUTF8(mode);
+    auto expectedString = tryMakeUTF8CString(string, mode);
     RELEASE_ASSERT(expectedString);
     return expectedString.value();
+}
+
+Vector<uint8_t> utf8Bytes(StringView string)
+{
+    if (string.is8Bit()) {
+        auto characters = byteCast<uint8_t>(string.span8());
+        Vector<uint8_t> bytes(simdutf::utf8_length_from_latin1(characters));
+        auto bytesWritten = simdutf::convert_latin1_to_utf8(characters, borrow(bytes)->mutableSpan());
+        ASSERT_UNUSED(bytesWritten, bytesWritten == bytes.size());
+        return bytes;
+    }
+    Vector<uint8_t> bytes;
+    auto result = StringImpl::convertToUTF8(string.span16(), bytes, ConversionMode::Lenient);
+    RELEASE_ASSERT(result);
+    return bytes;
 }
 
 size_t StringView::find(StringView matchString, unsigned start) const
@@ -233,12 +250,12 @@ public:
         m_indexEnd = computeIndexEnd();
     }
 
-    StringView LEGACY_NODELETE operator*() const
+    NODELETE StringView operator*() const
     {
         return m_stringView.substring(m_index, m_indexEnd - m_index);
     }
 
-    bool LEGACY_NODELETE operator==(const Impl& other) const
+    NODELETE bool operator==(const Impl& other) const
     {
         ASSERT(m_stringView.m_characters == other.m_stringView.m_characters);
         ASSERT(m_stringView.m_length == other.m_stringView.m_length);
@@ -434,6 +451,13 @@ String normalizedNFC(const String& string)
     if (result.underlyingString.isNull())
         return string;
     return result.underlyingString;
+}
+
+size_t utf8Length(StringView string)
+{
+    if (string.is8Bit())
+        return simdutf::utf8_length_from_latin1(byteCast<uint8_t>(string.span8()));
+    return StringImpl::utf8LengthFromUTF16ReplacingUnpairedSurrogates(string.span16());
 }
 
 bool equalRespectingNullity(StringView a, StringView b)

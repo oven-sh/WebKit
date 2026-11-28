@@ -242,16 +242,9 @@ void PlatformCALayerRemote::recursiveBuildTransaction(RemoteLayerTreeContext& co
         m_properties.notePropertiesChanged(LayerChange::BackingStoreChanged);
 
     if (m_properties.changedProperties) {
-        if (m_properties.changedProperties & LayerChange::ChildrenChanged) {
-            m_properties.children = WTF::map(m_children, [](auto& child) {
-                return child->layerID();
-            });
-        }
+        updateChildrenPropertyIfNeeded();
 
-        // FIXME: the below is only necessary when blockMediaLayerRehostingInWebContentProcess() is disabled.
-        // Once that setting is made unnecessary, remove this entire conditional as well.
-        if (type() == PlatformCALayer::Type::RemoteCustom
-            && !downcast<PlatformCALayerRemoteCustom>(*this).hasVideo()) {
+        if (!sendsPropertiesToUIProcess()) {
             RemoteLayerTreePropertyApplier::applyPropertiesToLayer(platformLayer(), nullptr, nullptr, m_properties);
             didCommit();
             return;
@@ -270,6 +263,22 @@ void PlatformCALayerRemote::recursiveBuildTransaction(RemoteLayerTreeContext& co
         maskLayer->recursiveBuildTransaction(context, transaction);
 }
 
+void PlatformCALayerRemote::updateChildrenPropertyIfNeeded()
+{
+    if (m_properties.changedProperties & LayerChange::ChildrenChanged) {
+        m_properties.children = WTF::map(m_children, [](auto& child) {
+            return child->layerID();
+        });
+    }
+}
+
+bool PlatformCALayerRemote::sendsPropertiesToUIProcess() const
+{
+    // FIXME: this is only necessary when blockMediaLayerRehostingInWebContentProcess() is disabled.
+    // Once that setting is made unnecessary, remove this check as well.
+    return type() != PlatformCALayer::Type::RemoteCustom || downcast<PlatformCALayerRemoteCustom>(*this).hasVideo();
+}
+
 void PlatformCALayerRemote::didCommit()
 {
     m_properties.animationChanges.addedAnimations.clear();
@@ -282,23 +291,8 @@ void PlatformCALayerRemote::ensureBackingStore()
     ASSERT(owner());
     ASSERT(m_properties.backingStoreAttached);
 
-    bool needsNewBackingStore = [&] {
-        if (!m_context)
-            return false;
-
-        CheckedPtr store = m_properties.backingStoreOrProperties.store.get();
-        if (!store)
-            return true;
-
-        // A layer pulled out of a pool may have existing backing store which we mustn't reuse if it lives in the wrong process.
-        if (store->processModel() != RemoteLayerBackingStore::processModelForLayer(*this))
-            return true;
-
-        return false;
-    }();
-
-    if (needsNewBackingStore)
-        m_properties.backingStoreOrProperties.store = RemoteLayerBackingStore::createForLayer(*this);
+    if (m_context && !m_properties.backingStoreOrProperties.store)
+        m_properties.backingStoreOrProperties.store = makeUnique<RemoteLayerBackingStore>(*this);
 
     updateBackingStore();
 }
@@ -554,7 +548,7 @@ RefPtr<PlatformCAAnimation> PlatformCALayerRemote::animationForKey(const String&
     return m_animations.get(key);
 }
 
-static inline bool LEGACY_NODELETE isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
+NODELETE static inline bool isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
 {
     auto newLayerID = layer ? std::optional { layer->layerID() } : std::nullopt;
     return layerID == newLayerID;
@@ -1021,6 +1015,12 @@ void PlatformCALayerRemote::setShadowPath(const WebCore::Path& path)
     m_properties.notePropertiesChanged(LayerChange::ShadowPathChanged);
 }
 
+void PlatformCALayerRemote::setHidesFromScreenCapture(bool hides)
+{
+    m_properties.hidesFromScreenCapture = hides;
+    m_properties.notePropertiesChanged(LayerChange::HidesFromScreenCaptureChanged);
+}
+
 void PlatformCALayerRemote::setAntialiasesEdges(bool antialiases)
 {
     if (antialiases == m_properties.antialiasesEdges)
@@ -1252,6 +1252,15 @@ void PlatformCALayerRemote::setAcceleratedEffectsAndBaseValues(const Accelerated
     m_properties.animationChanges.baseValues = baseValues;
 
     m_properties.notePropertiesChanged(LayerChange::AnimationsChanged);
+}
+
+void PlatformCALayerRemote::setAnimationExtent(std::optional<FloatRect> animationExtent)
+{
+    if (m_properties.animationExtent == animationExtent)
+        return;
+
+    m_properties.animationExtent = animationExtent;
+    m_properties.notePropertiesChanged(LayerChange::AnimationExtentChanged);
 }
 #endif
 

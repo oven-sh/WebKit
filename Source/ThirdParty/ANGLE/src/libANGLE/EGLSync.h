@@ -82,23 +82,24 @@ class Sync final : public LabeledObject
     mutable std::atomic<uint32_t> mRefCount{0};
 };
 
+// Holds a reference to a Sync so that it stays alive while in use, and releases it through the
+// display when it goes out of scope.
+//
+// This does not hold a reference to the display.  A ScopedSyncRef only lives while the EGL entry
+// point that created it holds (or locks) the display, so the display cannot be terminated before
+// the sync is released.  Unlocked tail calls that capture a ScopedSyncRef must therefore run before
+// the entry point releases the display; see egl_tail_call_holds_display() in
+// scripts/generate_entry_points.py.  This cannot hold a reference to the display of its own, since
+// a thread must not take a second reference to the display (see ThreadSafeDisplay::addRef()).
 class [[nodiscard]] ScopedSyncRef final
 {
   public:
     ScopedSyncRef() = default;
-    ScopedSyncRef(ThreadSafeDisplay &display, Sync *sync) : mDisplay(display), mSync(sync)
-    {
-        // Callers only invoke this with valid Sync* objects; if lookup fails, ScopedSyncRef() is
-        // used instead.
-        ASSERT(mSync != nullptr);
-        mSync->addRef();
-    }
-    ScopedSyncRef(ThreadSafeDisplay *display, Sync *sync)
-        : mDisplay(display ? ScopedThreadSafeDisplayRef(*display) : ScopedThreadSafeDisplayRef()),
-          mSync(sync)
+    ScopedSyncRef(ThreadSafeDisplay *display, Sync *sync) : mDisplay(display), mSync(sync)
     {
         if (mSync)
         {
+            ASSERT(mDisplay != nullptr);
             mSync->addRef();
         }
     }
@@ -106,7 +107,10 @@ class [[nodiscard]] ScopedSyncRef final
     {
         if (mSync)
         {
-            mDisplay.get()->releaseSync(mSync);
+            // See the class comment.  This fires if, for example, an unlocked tail call that
+            // captured a ScopedSyncRef runs after its entry point released the display.
+            AssertCurrentThreadHoldingOneDisplayRefCount();
+            mDisplay->releaseSync(mSync);
         }
     }
     ScopedSyncRef(const ScopedSyncRef &other) : mDisplay(other.mDisplay), mSync(other.mSync)
@@ -116,19 +120,47 @@ class [[nodiscard]] ScopedSyncRef final
             mSync->addRef();
         }
     }
-    ScopedSyncRef(ScopedSyncRef &&other) noexcept
-        : mDisplay(std::move(other.mDisplay)), mSync(other.mSync)
+    ScopedSyncRef(ScopedSyncRef &&other) noexcept : mDisplay(other.mDisplay), mSync(other.mSync)
     {
-        other.mSync = nullptr;
+        other.mDisplay = nullptr;
+        other.mSync    = nullptr;
     }
+    ScopedSyncRef &operator=(const ScopedSyncRef &other) = delete;
+    ScopedSyncRef &operator=(ScopedSyncRef &&other)      = delete;
 
     Sync *get() const { return mSync; }
 
   private:
-    // Use ScopedThreadSafeDisplayRef here because we need to be able to hold onto a
-    // ThreadSafeDisplay and release it when the SyncRef goes out of scope.
-    ScopedThreadSafeDisplayRef mDisplay;
-    Sync *mSync = nullptr;
+    ThreadSafeDisplay *mDisplay = nullptr;
+    Sync *mSync                 = nullptr;
+};
+
+class [[nodiscard]] ScopedSyncDestroy final : angle::NonCopyable
+{
+  public:
+    ScopedSyncDestroy() : mDisplay(nullptr), mSync(nullptr) {}
+    ScopedSyncDestroy(ThreadSafeDisplay *display, Sync *sync) : mDisplay(display), mSync(sync) {}
+    ~ScopedSyncDestroy()
+    {
+        if (mSync)
+        {
+            ASSERT(mDisplay != nullptr);
+            AssertCurrentThreadHoldingOneDisplayRefCount();
+            mDisplay->releaseSync(mSync);
+        }
+    }
+
+    Sync *get() const { return mSync; }
+    Sync *release()
+    {
+        Sync *sync = mSync;
+        mSync      = nullptr;
+        return sync;
+    }
+
+  private:
+    ThreadSafeDisplay *mDisplay;
+    Sync *mSync;
 };
 
 }  // namespace egl

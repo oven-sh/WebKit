@@ -27,9 +27,7 @@
 
 #include "PseudoElement.h"
 
-namespace WebCore {
-
-namespace NodeTraversal {
+namespace WebCore::NodeTraversal {
 
 Node* previousIncludingPseudo(const Node& current, const Node* stayWithin)
 {
@@ -151,7 +149,7 @@ Node* nextPostOrder(const Node& current, const Node* stayWithin)
     return next;
 }
 
-static Node* LEGACY_NODELETE previousAncestorSiblingPostOrder(const Node& current, const Node* stayWithin)
+NODELETE static Node* previousAncestorSiblingPostOrder(const Node& current, const Node* stayWithin)
 {
     ASSERT(!current.previousSibling());
     for (auto* ancestor = current.parentNode(); ancestor; ancestor = ancestor->parentNode()) {
@@ -183,5 +181,4 @@ Node* previousSkippingChildrenPostOrder(const Node& current, const Node* stayWit
     return previousAncestorSiblingPostOrder(current, stayWithin);
 }
 
-}
 }

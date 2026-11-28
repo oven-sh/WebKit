@@ -1,0 +1,83 @@
+# If the scan summarized a block that no run enters, a call there would make its callee reached, and with it all that only the callee names: functions, classes, texts that a constant of the build has ruled out would stand in the executable
+# enum Mode { On = 1 }  function live() { }  function dead() { deeper() }  function deeper() { }  function after() { }
+# if (Mode.On === 1) live(); else { dead(); if (x) dead(); }  after();
+# The front end writes the member's value, so the test compares two constants. b2 is ruled out by the test, b3 and b4 because only b2 leads there. b5 is entered from b1.
+# RUN: summary f0 mechanisms=all
+# CHECK: summary f0
+# CHECK: never-entered b2, b3, b4
+# RUN(CALLS): summary f0 mechanisms=all
+# CALLS-COUNT-2: call c
+# CALLS-NOT: call c
+# RUN(REACH): link functions mechanisms=all
+# REACH: function f1 callers-known
+# REACH: function f2 unreached
+# REACH: function f3 unreached
+# REACH: function f4 callers-known
+# The walk asks the same rule, so no edge of its code leads into such a block, and nothing names what was not reached.
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-NOT: Branch
+# WALK-NOT: function=f2
+# RUN(UNITS): units-with-code f2:Body f3:Body mechanisms=all
+# UNITS: unit f2:Body has no code
+# UNITS: unit f3:Body has no code
+# With Folding withheld the walk keeps both sides of the branch, so the scan looks into every block.
+# RUN(WITHHELD): summary f0 mechanisms=-Folding
+# WITHHELD-NOT: never-entered
+# RUN(BOTH): link functions mechanisms=-Folding
+# BOTH-NOT: unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE-NOT: unreached
+# RUN(RUNS): run-in-shell mechanisms=all
+# RUNS: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f4
+    v3 = Integer integer=1
+    v4 = Integer integer=1
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0 calleeName="live"
+    Jump -> next b5()
+  b2():
+    v7 = Call v1 calleeName="dead"
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v1 calleeName="dead"
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    v10 = Call v2 calleeName="after"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="live" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="dead" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0 calleeName="deeper"
+    Return v1
+}
+function f3 name="deeper" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="after" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -43,10 +43,10 @@ public:
 
     void updateEnabledState(Scrollbar&) override;
 
-    bool paint(Scrollbar&, GraphicsContext&, const IntRect& damageRect) override;
+    bool paint(Scrollbar&, GraphicsContext&, const IntRect& damageRect, OptionSet<ScrollbarPaintBehavior>) override;
     void paintScrollCorner(ScrollableArea&, GraphicsContext&, const IntRect& cornerRect) override;
 
-    int scrollbarThickness(ScrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override;
+    int scrollbarThickness(ScrollbarStyle, ScrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override;
     
     bool supportsControlTints() const override { return true; }
     bool usesOverlayScrollbars() const  override;
@@ -61,12 +61,12 @@ public:
     void registerScrollbar(Scrollbar&) override;
     void unregisterScrollbar(Scrollbar&) override;
 
-    static NSScrollerImp *LEGACY_NODELETE scrollerImpForScrollbar(Scrollbar&);
+    NODELETE static NSScrollerImp *scrollerImpForScrollbar(Scrollbar&);
 
-    void setPaintCharacteristicsForScrollbar(Scrollbar&);
+    static void setPaintCharacteristicsForScrollbar(NSScrollerImp *, Scrollbar&);
 
-    static bool LEGACY_NODELETE isCurrentlyDrawingIntoLayer();
-    static void LEGACY_NODELETE setIsCurrentlyDrawingIntoLayer(bool);
+    NODELETE static bool isCurrentlyDrawingIntoLayer();
+    NODELETE static void setIsCurrentlyDrawingIntoLayer(bool);
 
     void didCreateScrollerImp(Scrollbar&) override;
     bool isLayoutDirectionRTL(Scrollbar&);
@@ -91,7 +91,7 @@ protected:
     
     ScrollbarButtonPressAction handleMousePressEvent(Scrollbar&, const PlatformMouseEvent&, ScrollbarPart) override;
     bool shouldDragDocumentInsteadOfThumb(Scrollbar&, const PlatformMouseEvent&) override;
-    int LEGACY_NODELETE scrollbarPartToHIPressedState(ScrollbarPart);
+    NODELETE int scrollbarPartToHIPressedState(ScrollbarPart);
 };
 
 }

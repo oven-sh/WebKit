@@ -1,0 +1,58 @@
+# ring.cjs    const early = require("./early.cjs"); exports.run = function() { return "late"; };
+# early.cjs   for (let i = 0; i < 2; i++) sink(require("./ring.cjs").run());
+# The records lie: early.cjs asks for ring.cjs while that runs, and Link is told that the variable is filled. The test in front of the loop is a real one: it fails, the loop runs as written,
+# and the check at the read stops the process by name. Were the test taken for passed, the turns would call what is no function.
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=f3 {{*}}filled
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.turns = 2; globalThis.sink = value => print("said " + value);
+# SHELL: bun: internal AOT error: type check failed at {{*}}
+# SHELL-NEXT: found undefined in a local variable
+# SHELL-NOT: said
+
+variable g0 name="run" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require completes=true}]
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m0 [isBare, isCallOfRequire]
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m1 [isBare, isCallOfRequire]
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="turns" [isFreeName]
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: anything):
+    LoopHint
+    v6 = Less v4, v2
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, - calleeName="run"
+    v9 = PropGet v1 key="sink" [isFreeName]
+    v10 = Call v9, -, v8 calleeName="sink"
+    v11 = Integer integer=1
+    v12 = Add v4, v11
+    Jump -> next b1(v12)
+  b3():
+    v13 = Undefined
+    Return v13
+}
+function f2 module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m2 [isBare, isCallOfRequire]
+    v1 = NewClosure function=f3
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}
+function f3 name="run" module=m2 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="late"
+    Return v0
+}

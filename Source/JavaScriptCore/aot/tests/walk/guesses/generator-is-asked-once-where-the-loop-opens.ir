@@ -1,0 +1,101 @@
+# a generator is what is written of what the loop iterates over. The open asks once for the class and for the names, and behind that the generator itself is the state of the iteration: no cell, no word for `next`, no word for done.
+# a step resumes the body and asks nothing, because `next` was the engine's when the open would have read it. A close looks `return` up anew, so its step asks for the names. Whatever fails at the open goes by the protocol
+# function each(things: Generator<number>) { for (const thing of things) keep(thing); }
+# function eachOfList(things: number[]) { for (const thing of things) keep(thing); }
+# function last(things: Generator<number>): the step reads what is returned, which no `for of` does, so the loop is not taken
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=Generator
+# CHECK: = IsUnmodifiedGenerator
+# RUN(STEP): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# STEP: = StepGenerator {{*}}check=None
+# RUN(CLOSE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# CLOSE: = StepGenerator {{*}}resumeMode=Return{{*}}check=IsUnmodified
+# RUN(ARM): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# ARM: = PropGet {{*}}key="next"
+# ARM: = PropGet {{*}}key="done"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# NEVER-NOT: NewHeapWords
+# NEVER-NOT: testedType=builtin(GeneratorPrototypeNext)
+# RUN(LIST): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# LIST-NOT: IsUnmodifiedGenerator
+# LIST-NOT: StepGenerator
+# RUN(LAST): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# LAST-NOT: IsUnmodifiedGenerator
+# RUN(KEPT): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
+# KEPT: = NewHeapWords
+# KEPT: testedType=builtin(GeneratorPrototypeNext)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Generator<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Generator<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}
+function f2 name="eachOfList" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}
+function f3 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Generator<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Generator<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 [readsValueWhenDone]
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3():
+    Jump -> next b1()
+}

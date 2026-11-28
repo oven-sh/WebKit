@@ -22,16 +22,14 @@
 
 #include <wtf/text/AtomString.h>
 
-namespace WebCore {
+namespace WebCore::InputTypeNames {
 
-namespace InputTypeNames {
-
-const AtomString& LEGACY_NODELETE button();
+NODELETE const AtomString& button();
 const AtomString& checkbox();
 const AtomString& color();
 const AtomString& date();
 const AtomString& datetimelocal();
-const AtomString& LEGACY_NODELETE email();
+NODELETE const AtomString& email();
 const AtomString& file();
 const AtomString& hidden();
 const AtomString& image();
@@ -40,15 +38,13 @@ const AtomString& number();
 const AtomString& password();
 const AtomString& radio();
 const AtomString& range();
-const AtomString& LEGACY_NODELETE reset();
-const AtomString& LEGACY_NODELETE search();
-const AtomString& LEGACY_NODELETE submit();
-const AtomString& LEGACY_NODELETE telephone();
-const AtomString& LEGACY_NODELETE text();
+NODELETE const AtomString& reset();
+NODELETE const AtomString& search();
+NODELETE const AtomString& submit();
+NODELETE const AtomString& telephone();
+NODELETE const AtomString& text();
 const AtomString& time();
-const AtomString& LEGACY_NODELETE url();
+NODELETE const AtomString& url();
 const AtomString& week();
 
-}
-
-} // namespace WebCore
+} // namespace WebCore::InputTypeNames

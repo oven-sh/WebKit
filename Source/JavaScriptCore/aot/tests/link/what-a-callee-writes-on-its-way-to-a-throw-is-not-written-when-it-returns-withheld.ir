@@ -1,0 +1,6 @@
+# the same program with every mechanism withheld: Link tells no exit of a function from the other, and says of neither what is written
+# RUN: link functions mechanisms=none
+# CHECK: function f1 {{*}}returns=anything throws=anything
+# RUN(NEVER): link functions mechanisms=none
+# NEVER-NOT: fields-written
+# PROGRAM-OF: what-a-callee-writes-on-its-way-to-a-throw-is-not-written-when-it-returns.ir

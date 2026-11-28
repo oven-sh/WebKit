@@ -53,7 +53,7 @@ inline JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initia
         if (vectorLengthHint > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
             return nullptr;
 
-        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(structure, vectorLengthHint);
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(outOfLineStorage, vectorLengthHint);
         void* temp = vm.auxiliarySpace().allocate(
             vm,
             Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),
@@ -236,9 +236,12 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!tryMakeWritable(vm)) [[unlikely]] {
-        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
-        return;
+    if (isCopyOnWrite(indexingMode())) {
+        if (structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+            return;
+        }
+        convertFromCopyOnWrite(vm, /* additionalLength */ 1);
     }
 
     Butterfly* butterfly = this->butterfly();

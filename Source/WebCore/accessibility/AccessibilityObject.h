@@ -36,7 +36,6 @@
 #include <WebCore/LayoutRect.h>
 #include <WebCore/Path.h>
 #include <WebCore/TextIteratorBehavior.h>
-#include <iterator>
 #include <wtf/CompactUniquePtrTuple.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
@@ -94,12 +93,12 @@ public:
     void addAncestorFlags(const OptionSet<AXAncestorFlag>& flags) { m_ancestorFlags.add(flags); }
     bool ancestorFlagsAreInitialized() const { return m_ancestorFlags.contains(AXAncestorFlag::FlagsInitialized); }
     // Computes the flags that this object matches (no traversal is done).
-    OptionSet<AXAncestorFlag> LEGACY_NODELETE computeAncestorFlags() const;
+    NODELETE OptionSet<AXAncestorFlag> computeAncestorFlags() const;
     // Computes the flags that this object and all ancestors match, traversing all the way to the root.
     OptionSet<AXAncestorFlag> computeAncestorFlagsWithTraversal() const;
     void initializeAncestorFlags(const OptionSet<AXAncestorFlag>&);
     bool hasAncestorMatchingFlag(AXAncestorFlag) const;
-    bool LEGACY_NODELETE matchesAncestorFlag(AXAncestorFlag) const;
+    NODELETE bool matchesAncestorFlag(AXAncestorFlag) const;
 
     bool hasRareData() const { return !!m_rareDataWithBitfields.pointer(); }
     AXObjectRareData* rareData() const { return m_rareDataWithBitfields.pointer(); }
@@ -147,7 +146,7 @@ public:
     bool isContainedBySecureField() const;
     bool isNativeTextControl() const final { return nativeTextControl(); }
     // The <textarea> or text <input> whose value this object exposes, or null.
-    HTMLTextFormControlElement* LEGACY_NODELETE nativeTextControl() const;
+    NODELETE HTMLTextFormControlElement* nativeTextControl() const;
     virtual bool isSearchField() const { return false; }
     bool isAttachment() const override { return false; }
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -220,7 +219,7 @@ public:
     bool isARIAGridRow() const override { return false; }
     bool isARIATreeGridRow() const override { return false; }
     AccessibilityChildrenVector disclosedRows() override; // ARIATreeItem implementation. Table rows are handled in AccessibilityNodeObject();
-    AccessibilityObject* disclosedByRow() const override { return nullptr; }
+    RefPtr<AXCoreObject> disclosedByRow() const override { return nullptr; }
 
     void postMenuClosedNotificationIfNecessary() const;
 
@@ -292,7 +291,7 @@ public:
     bool canSetSelectedAttribute() const override { return false; }
 
     Element* element() const final;
-    Node* LEGACY_NODELETE node() const override { return nullptr; }
+    NODELETE Node* node() const override { return nullptr; }
     RenderObject* renderer() const override { return nullptr; }
     CheckedPtr<RenderObject> rendererOrNearestAncestor() const;
     // Resolves the computed style if necessary (and safe to do so).
@@ -321,7 +320,7 @@ public:
     virtual float stepValueForRange() const { return 0.0f; }
     int layoutCount() const override { return 0; }
     double loadingProgress() const final;
-    WEBCORE_EXPORT static bool LEGACY_NODELETE isARIAControl(AccessibilityRole);
+    NODELETE WEBCORE_EXPORT static bool isARIAControl(AccessibilityRole);
     bool supportsCheckedState() const override;
 
     bool supportsARIAOwns() const override { return false; }
@@ -350,7 +349,7 @@ public:
 
     // This function checks if the object should be ignored when there's a modal dialog displayed.
     virtual bool ignoredFromModalPresence() const;
-    bool LEGACY_NODELETE isModalDescendant(Node&) const;
+    NODELETE bool isModalDescendant(Node&) const;
     bool isModalNode() const final;
 
     bool supportsSetSize() const final;
@@ -374,7 +373,6 @@ public:
     AccessibilityObject* focusedUIElementInAnyLocalFrame() const final;
 
     virtual AccessibilityObject* firstChild() const { return nullptr; }
-    virtual AccessibilityObject* lastChild() const { return nullptr; }
     virtual AccessibilityObject* previousSibling() const { return nullptr; }
     virtual AccessibilityObject* nextSibling() const { return nullptr; }
     AccessibilityObject* nextSiblingUnignored(unsigned limit = std::numeric_limits<unsigned>::max()) const;
@@ -424,7 +422,10 @@ public:
 
     String description() const override { return { }; }
     virtual String helpText() const { return { }; }
-    String altTextFromAttributeOrStyle() const;
+    String altText() const;
+    String altTextFromContent() const;
+    // Only for pseudo-element boxes, whose alt text replaces their generated content as a whole. Empty marks it as decorative.
+    String altTextFromStyle() const;
 
     std::optional<String> textContent() const final;
     bool hasTextContent() const;
@@ -784,20 +785,20 @@ public:
 
     // Root components.
     std::optional<AccessibilityChildrenVector> mathRadicand() override { return std::nullopt; }
-    AXCoreObject* mathRootIndexObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathRootIndexObject() override { return nullptr; }
 
     // Under over components.
-    AXCoreObject* mathUnderObject() override { return nullptr; }
-    AXCoreObject* mathOverObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathUnderObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathOverObject() override { return nullptr; }
 
     // Fraction components.
-    AXCoreObject* mathNumeratorObject() override { return nullptr; }
-    AXCoreObject* mathDenominatorObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathNumeratorObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathDenominatorObject() override { return nullptr; }
 
     // Subscript/superscript components.
-    AXCoreObject* mathBaseObject() override { return nullptr; }
-    AXCoreObject* mathSubscriptObject() override { return nullptr; }
-    AXCoreObject* mathSuperscriptObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathBaseObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathSubscriptObject() override { return nullptr; }
+    RefPtr<AXCoreObject> mathSuperscriptObject() override { return nullptr; }
 
     // Fenced components.
     String mathFencedOpenString() const override { return String(); }
@@ -893,83 +894,7 @@ public:
     virtual FloatRect localRect() const { return { }; }
     virtual bool isNonLayerSVGObject() const { return false; }
 
-    // When using the previousSibling and nextSibling methods, we can alternate between walking the DOM and the
-    // the render tree. There are complications with this, especially introduced by display:contents, which
-    // removes the renderer for the given object, and moves its render tree children up one level higher than they
-    // otherwise would've been on. This iterator abstracts over this complexity, ensuring each object is actually a
-    // sibling of the last.
-    class iterator {
-    public:
-        using iterator_category = std::bidirectional_iterator_tag;
-        using difference_type = std::ptrdiff_t;
-        using element_type = AccessibilityObject;
-        using pointer = AccessibilityObject*;
-        using reference = AccessibilityObject&;
-
-        iterator() = default;
-        iterator(const AccessibilityObject* object, const AccessibilityObject* displayContentsParent)
-            : m_current(object)
-            , m_displayContentsParent(displayContentsParent)
-        { }
-        iterator(const AccessibilityObject* object)
-            : iterator(object, object ? object->displayContentsParent() : nullptr)
-        { }
-        iterator(const AccessibilityObject* object, const AccessibilityObject& parent)
-            : iterator(object, parent.hasDisplayContents() ? &parent : nullptr)
-        { }
-
-        explicit operator bool() const { return m_current; }
-        AccessibilityObject& operator*() const { return const_cast<AccessibilityObject&>(*m_current); }
-        AccessibilityObject* operator->() const { return const_cast<AccessibilityObject*>(m_current.get()); }
-        AccessibilityObject* ptr() const { return const_cast<AccessibilityObject*>(m_current.get()); }
-        bool operator==(const iterator& other) const { return other.m_current == m_current; }
-
-        // Prefix increment operator (++iterator).
-        iterator& operator++()
-        {
-            m_current = protect(m_current)->nextSibling();
-            ensureContentsParentValidity();
-            return *this;
-        }
-
-        // Postfix increment operator (iterator++).
-        iterator operator++(int)
-        {
-            auto copy = *this;
-            ++(*this);
-            return copy;
-        }
-
-        // --iterator
-        iterator& operator--()
-        {
-            m_current = protect(m_current)->previousSibling();
-            ensureContentsParentValidity();
-            return *this;
-        }
-
-        // iterator--
-        iterator operator--(int)
-        {
-            auto copy = *this;
-            --(*this);
-            return copy;
-        }
-    private:
-        void ensureContentsParentValidity()
-        {
-            if (!m_current || !m_displayContentsParent)
-                return;
-            // The objects after a display: contents element's last child are its own siblings, since a
-            // display:contents element has no box for them to hang off. Stop rather than walking into them.
-            if (protect(m_current)->parentObject() != m_displayContentsParent.get())
-                m_current = nullptr;
-        }
-
-        RefPtr<const AccessibilityObject> m_current;
-        // If the original object had a display:contents parent, it is stored here. This is nullptr otherwise.
-        const RefPtr<const AccessibilityObject> m_displayContentsParent { nullptr };
-    }; // class iterator
+    class iterator;
 
 protected:
     explicit AccessibilityObject(AXID, AXObjectCache&);
@@ -997,9 +922,9 @@ protected:
 
     virtual bool shouldIgnoreAttributeRole() const { return false; }
     virtual AccessibilityRole buttonRoleType() const;
-    bool LEGACY_NODELETE dispatchTouchEvent();
+    NODELETE bool dispatchTouchEvent();
 
-    static bool LEGACY_NODELETE isARIAInput(AccessibilityRole);
+    NODELETE static bool isARIAInput(AccessibilityRole);
 
     AccessibilityObject* radioGroupAncestor() const;
 
@@ -1009,7 +934,7 @@ protected:
 #if ASSERT_ENABLED
     void verifyChildrenIndexInParent() const final { return AXCoreObject::verifyChildrenIndexInParent(m_children); }
 #endif
-    void LEGACY_NODELETE resetChildrenIndexInParent() const;
+    NODELETE void resetChildrenIndexInParent() const;
 
 private:
     ProcessID processID() const final { return legacyPresentingApplicationPID(); }
@@ -1082,24 +1007,6 @@ inline bool AccessibilityObject::hasAttributedText() const
 #endif
 
 AccessibilityObject* firstAccessibleObjectFromNode(const Node*, NOESCAPE const Function<bool(const AccessibilityObject&)>& isAccessible);
-
-class AXChildIterator {
-public:
-    AXChildIterator(const AccessibilityObject& parent)
-        : m_parent(parent)
-    { }
-
-    AccessibilityObject::iterator begin()
-    {
-        return AccessibilityObject::iterator { protect(m_parent->firstChild()), m_parent.get() };
-    }
-    AccessibilityObject::iterator end()
-    {
-        return AccessibilityObject::iterator { };
-    }
-private:
-    const Ref<const AccessibilityObject> m_parent;
-}; // class AXChildIterator
 
 #if PLATFORM(COCOA)
 // Helpers to extract information from Style::ComputedStyle needed for accessibility purposes.

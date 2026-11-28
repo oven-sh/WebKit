@@ -37,12 +37,12 @@ class MathMLUnderOverElement final : public MathMLScriptsElement {
 public:
     static Ref<MathMLUnderOverElement> create(const QualifiedName& tagName, Document&);
     
-    const BooleanValue& LEGACY_NODELETE accent() LIFETIME_BOUND;
-    const BooleanValue& LEGACY_NODELETE accentUnder() LIFETIME_BOUND;
+    NODELETE const BooleanValue& accent() LIFETIME_BOUND;
+    NODELETE const BooleanValue& accentUnder() LIFETIME_BOUND;
 
 private:
     MathMLUnderOverElement(const QualifiedName& tagName, Document&);
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
 
     std::optional<BooleanValue> m_accent;

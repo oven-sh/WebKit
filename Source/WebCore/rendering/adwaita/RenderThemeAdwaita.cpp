@@ -216,7 +216,7 @@ Vector<String, 2> RenderThemeAdwaita::mediaControlsScripts()
     return { StringImpl::createWithoutCopying(ModernMediaControlsJavaScript) };
 }
 
-Vector<String, 2> RenderThemeAdwaita::mediaControlsStyleSheets(const HTMLMediaElement&)
+Vector<String, 4> RenderThemeAdwaita::mediaControlsStyleSheets(const HTMLMediaElement&)
 {
     if (m_mediaControlsStyleSheet.isEmpty())
         m_mediaControlsStyleSheet = StringImpl::createWithoutCopying(ModernMediaControlsUserAgentStyleSheet);
@@ -227,7 +227,7 @@ RefPtr<FragmentedSharedBuffer> RenderThemeAdwaita::mediaControlsImageDataForIcon
 {
 #if USE(GLIB)
     auto path = makeString("/org/webkit/media-controls/"_s, iconName, '.', iconType);
-    GRefPtr data = adoptGRef(g_resources_lookup_data(path.utf8().legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+    GRefPtr data = adoptGRef(g_resources_lookup_data(makeUTF8CString(path).legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
     if (!data)
         return nullptr;
     return SharedBuffer::create(span(data));
@@ -246,7 +246,7 @@ String RenderThemeAdwaita::mediaControlsBase64StringForIconNameAndType(const Str
 {
 #if USE(GLIB)
     auto path = makeString("/org/webkit/media-controls/"_s, iconName, '.', iconType);
-    GRefPtr data = adoptGRef(g_resources_lookup_data(path.utf8().legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+    GRefPtr data = adoptGRef(g_resources_lookup_data(makeUTF8CString(path).legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
     if (!data)
         return emptyString();
     return base64EncodeToString(span(data));
@@ -481,7 +481,11 @@ std::optional<Seconds> RenderThemeAdwaita::caretBlinkInterval() const
 
 void RenderThemeAdwaita::setAccentColor(const Color& color)
 {
-    static_cast<ThemeAdwaita&>(Theme::singleton()).setAccentColor(color);
+    auto& theme = static_cast<ThemeAdwaita&>(Theme::singleton());
+    if (theme.accentColor() == color)
+        return;
+
+    theme.setAccentColor(color);
     platformColorsDidChange();
 }
 

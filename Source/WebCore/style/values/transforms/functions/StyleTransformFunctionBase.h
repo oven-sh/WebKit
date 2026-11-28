@@ -33,8 +33,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/TypeCasts.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct ZoomFactor;
 
@@ -95,11 +94,11 @@ public:
     std::optional<Type> sharedPrimitiveType(Type other) const;
     std::optional<Type> sharedPrimitiveType(const TransformFunctionBase* other) const;
 
-    virtual bool isIdentity() const = 0;
-    virtual bool isAffectedByTransformOrigin() const { return false; }
-    virtual bool isRepresentableIn2D() const { return true; }
+    NODELETE virtual bool isIdentity() const = 0;
+    NODELETE virtual bool isAffectedByTransformOrigin() const { return false; }
+    NODELETE virtual bool isRepresentableIn2D() const { return true; }
 
-    virtual TransformFunctionSizeDependencies computeSizeDependencies() const { return { }; }
+    NODELETE virtual TransformFunctionSizeDependencies computeSizeDependencies() const { return { }; }
 
     bool is3DOperation() const
     {
@@ -160,10 +159,9 @@ WTF::TextStream& operator<<(WTF::TextStream&, const TransformFunctionBase&);
 
 // MARK: - Platform
 
-template<> struct ToPlatform<TransformFunctionType> { TransformOperationType LEGACY_NODELETE operator()(TransformFunctionType); };
+template<> struct ToPlatform<TransformFunctionType> { NODELETE TransformOperationType operator()(TransformFunctionType); };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 #define SPECIALIZE_TYPE_TRAITS_STYLE_TRANSFORM_FUNCTION(ToValueTypeName, predicate) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(ToValueTypeName) \

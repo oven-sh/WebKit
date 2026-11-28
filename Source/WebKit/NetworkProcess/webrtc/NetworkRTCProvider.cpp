@@ -77,7 +77,7 @@ NetworkRTCProvider::NetworkRTCProvider(NetworkConnectionToWebProcess& connection
 {
 #if PLATFORM(COCOA)
     if (CheckedPtr session = downcast<NetworkSessionCocoa>(connection.networkSession()))
-        m_applicationBundleIdentifier = session->sourceApplicationBundleIdentifier().utf8();
+        m_applicationBundleIdentifier = makeUTF8CString(session->sourceApplicationBundleIdentifier());
 #endif
 #if !RELEASE_LOG_DISABLED
     LibWebRTCProvider::setRTCLogging(WebKit2LogWebRTC.state == WTFLogChannelState::On ? WTFLogLevel::Info : WTFLogLevel::Warning);
@@ -194,6 +194,15 @@ void NetworkRTCProvider::dispatch(Function<void()>&& callback)
     callOnRTCNetworkThread((WTF::move(callback)));
 }
 
+static std::optional<RTCNetwork::IPAddress> toRTCNetworkIPAddress(const WebCore::IPAddress& address)
+{
+    if (address.isIPv4())
+        return RTCNetwork::IPAddress { webrtc::IPAddress { address.ipv4Address() } };
+    if (address.isIPv6())
+        return RTCNetwork::IPAddress { webrtc::IPAddress { address.ipv6Address() } };
+    return std::nullopt;
+}
+
 void NetworkRTCProvider::createResolver(LibWebRTCResolverIdentifier identifier, String&& address)
 {
     MESSAGE_CHECK(!address.isNull());
@@ -208,19 +217,22 @@ void NetworkRTCProvider::createResolver(LibWebRTCResolverIdentifier identifier, 
     }
 
     RefPtr connection = m_connection.get();
-    if (connection && protect(connection->mdnsRegister())->hasRegisteredName(address)) {
-        Vector<WebKit::WebRTCNetwork::IPAddress> ipAddresses;
-        Ref rtcMonitor = m_rtcMonitor;
-        if (!rtcMonitor->ipv4().isUnspecified())
-            ipAddresses.append(rtcMonitor->ipv4());
-        if (!rtcMonitor->ipv6().isUnspecified())
-            ipAddresses.append(rtcMonitor->ipv6());
-        protect(this->connection())->send(Messages::WebRTCResolver::SetResolvedAddress(ipAddresses), identifier);
+    auto registeredAddress = connection ? protect(connection->mdnsRegister())->registeredAddress(address) : String { };
+    if (!registeredAddress.isNull()) {
+        auto ipAddress = WebCore::IPAddress::fromString(registeredAddress);
+        auto rtcAddress = ipAddress ? toRTCNetworkIPAddress(*ipAddress) : std::nullopt;
+        if (!rtcAddress) {
+            protect(this->connection())->send(Messages::WebRTCResolver::ResolvedAddressError { 1 }, identifier);
+            return;
+        }
+        protect(this->connection())->send(Messages::WebRTCResolver::SetResolvedAddress {
+            { WTF::move(*rtcAddress) }
+        }, identifier);
         return;
     }
 
     WebCore::DNSCompletionHandler completionHandler = [connection = m_connection, identifier](auto&& result) {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
         if (!connection)
             return;
         RefPtr protectedConnection = connection.get();
@@ -231,13 +243,7 @@ void NetworkRTCProvider::createResolver(LibWebRTCResolverIdentifier identifier, 
             return;
         }
 
-        auto ipAddresses = WTF::compactMap(result.value(), [](auto& address) -> std::optional<RTCNetwork::IPAddress> {
-            if (address.isIPv4())
-                return RTCNetwork::IPAddress { webrtc::IPAddress { address.ipv4Address() } };
-            if (address.isIPv6())
-                return RTCNetwork::IPAddress { webrtc::IPAddress { address.ipv6Address() } };
-            return std::nullopt;
-        });
+        auto ipAddresses = WTF::compactMap(result.value(), toRTCNetworkIPAddress);
 
         protectedConnection->connection().send(Messages::WebRTCResolver::SetResolvedAddress(ipAddresses), identifier);
     };
@@ -278,8 +284,12 @@ const String& NetworkRTCProvider::attributedBundleIdentifierFromPageIdentifier(W
     }).iterator->value;
 }
 
-void NetworkRTCProvider::createUDPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& address, uint16_t minPort, uint16_t maxPort, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags flags, WebCore::RegistrableDomain&& domain)
+void NetworkRTCProvider::createUDPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& address, uint16_t minPort, uint16_t maxPort, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags flags, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedDomain)
 {
+    // FIXME: This runs on the RTC network thread, where the network process's authority
+    // maps cannot be read; validation has to move to the main thread first.
+    auto domain = WTF::move(untrustedDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+
     assertIsRTCNetworkThread();
 
     if (m_sockets.contains(identifier)) {
@@ -298,8 +308,12 @@ void NetworkRTCProvider::createUDPSocket(LibWebRTCSocketIdentifier identifier, c
     addSocket(identifier, WTF::move(socket));
 }
 
-void NetworkRTCProvider::createClientTCPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& localAddress, const RTCNetwork::SocketAddress& remoteAddress, String&& userAgent, int options, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags flags, WebCore::RegistrableDomain&& domain)
+void NetworkRTCProvider::createClientTCPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& localAddress, const RTCNetwork::SocketAddress& remoteAddress, String&& userAgent, int options, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags flags, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedDomain)
 {
+    // FIXME: This runs on the RTC network thread, where the network process's authority
+    // maps cannot be read; validation has to move to the main thread first.
+    auto domain = WTF::move(untrustedDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+
     assertIsRTCNetworkThread();
 
     if (m_sockets.contains(identifier)) {
@@ -321,8 +335,12 @@ void NetworkRTCProvider::createClientTCPSocket(LibWebRTCSocketIdentifier identif
         signalSocketIsClosed(identifier);
 }
 
-void NetworkRTCProvider::getInterfaceName(URL&& url, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags flags, WebCore::RegistrableDomain&& domain, CompletionHandler<void(String&&)>&& completionHandler)
+void NetworkRTCProvider::getInterfaceName(URL&& url, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags flags, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedDomain, CompletionHandler<void(String&&)>&& completionHandler)
 {
+    // FIXME: This runs on the RTC network thread, where the network process's authority
+    // maps cannot be read; validation has to move to the main thread first.
+    auto domain = WTF::move(untrustedDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+
     if (!url.protocolIsInHTTPFamily()) {
         completionHandler({ });
         return;
@@ -357,7 +375,7 @@ webrtc::Thread& NetworkRTCProvider::rtcNetworkThread()
     return *networkThread.get();
 }
 
-void NetworkRTCProvider::createUDPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& address, uint16_t minPort, uint16_t maxPort, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags, WebCore::RegistrableDomain&& domain)
+void NetworkRTCProvider::createUDPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& address, uint16_t minPort, uint16_t maxPort, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags, IPC::Untrusted<WebCore::RegistrableDomain>&&)
 {
     assertIsRTCNetworkThread();
 
@@ -365,7 +383,7 @@ void NetworkRTCProvider::createUDPSocket(LibWebRTCSocketIdentifier identifier, c
     createSocket(identifier, WTF::move(socket), Socket::Type::UDP, m_ipcConnection.copyRef());
 }
 
-void NetworkRTCProvider::createClientTCPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& localAddress, const RTCNetwork::SocketAddress& remoteAddress, String&& userAgent, int options, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags, WebCore::RegistrableDomain&& domain)
+void NetworkRTCProvider::createClientTCPSocket(LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& localAddress, const RTCNetwork::SocketAddress& remoteAddress, String&& userAgent, int options, WebPageProxyIdentifier pageIdentifier, RTCSocketCreationFlags, IPC::Untrusted<WebCore::RegistrableDomain>&&)
 {
     assertIsRTCNetworkThread();
 

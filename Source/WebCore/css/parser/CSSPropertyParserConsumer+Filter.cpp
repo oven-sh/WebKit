@@ -51,8 +51,7 @@
 #include "StyleFilter.h"
 #include <wtf/text/StringView.h>
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 template<CSSValueID filterFunction> static decltype(auto) consumeNumberOrPercentFilterParameter(CSSParserTokenRange& args, CSS::PropertyParserState& state)
 {
@@ -69,7 +68,7 @@ template<CSSValueID filterFunction> static decltype(auto) consumeNumberOrPercent
     }
 }
 
-static std::optional<CSS::AppleInvertLightnessFunction> LEGACY_NODELETE consumeFilterAppleInvertLightness(CSSParserTokenRange& range, CSS::PropertyParserState&)
+NODELETE static std::optional<CSS::AppleInvertLightnessFunction> consumeFilterAppleInvertLightness(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
     // <-apple-invert-lightness()> = -apple-invert-lightness()
     // Non-standard
@@ -297,7 +296,7 @@ static std::optional<CSS::FilterValueList> consumeUnresolvedFilterValueList(CSSP
     };
 
     do {
-        if (auto url = consumeURLRaw(rangeCopy, state, { })) {
+        if (auto url = consumeURLRaw(rangeCopy, state, { AllowedURLModifiers::CrossOrigin, AllowedURLModifiers::Integrity, AllowedURLModifiers::ReferrerPolicy })) {
             list.value.append(CSS::FilterReference { WTF::move(*url) });
             continue;
         }
@@ -478,5 +477,4 @@ std::optional<Style::Filter> parseFilterValueListOrNoneRaw(StringView string, co
     return Style::toStyle(*filter, *CheckedPtr { builderState.ptr() });
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

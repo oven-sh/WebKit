@@ -32,8 +32,7 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class FontData;
 
@@ -51,7 +50,7 @@ public:
     void dumpDifferences(TextStream&, const InheritedData&) const;
 #endif
 
-    bool LEGACY_NODELETE fastPathInheritedEqual(const InheritedData&) const;
+    NODELETE bool fastPathInheritedEqual(const InheritedData&) const;
     bool nonFastPathInheritedEqual(const InheritedData&) const;
     void fastPathInheritFrom(const InheritedData&);
 
@@ -71,5 +70,4 @@ private:
     void operator=(const InheritedData&) = delete;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

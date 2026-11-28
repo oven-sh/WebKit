@@ -34,12 +34,11 @@
 #include "StylePrimitiveNumericTypes+CSSValueCreation.h"
 #include "StylePrimitiveNumericTypes+Serialization.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Conversion
 
-template<> struct ToCSS<WebkitBoxReflection::Direction> { CSS::WebkitBoxReflection::Direction LEGACY_NODELETE operator()(const WebkitBoxReflection::Direction&, const Style::ComputedStyle&); };
+template<> struct ToCSS<WebkitBoxReflection::Direction> { NODELETE CSS::WebkitBoxReflection::Direction operator()(const WebkitBoxReflection::Direction&, const Style::ComputedStyle&); };
 template<> struct ToStyle<CSS::WebkitBoxReflection::Direction> { auto operator()(const CSS::WebkitBoxReflection::Direction&, const BuilderState&) -> WebkitBoxReflection::Direction; };
 
 template<> struct ToCSS<WebkitBoxReflection> { auto operator()(const WebkitBoxReflection&, const Style::ComputedStyle&) -> CSS::WebkitBoxReflection; };
@@ -137,5 +136,4 @@ void Serialize<WebkitBoxReflection>::operator()(StringBuilder& builder, const CS
     serializeMask(value.mask);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

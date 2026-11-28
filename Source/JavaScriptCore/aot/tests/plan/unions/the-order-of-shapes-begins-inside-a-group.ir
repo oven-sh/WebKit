@@ -1,0 +1,89 @@
+# the order of shapes begins inside a group where that pays. An interface above four records, and a union of the two in the middle, which is written of twelve parameters where the interface is written of one
+# interface Node { kind }   type Ends = C | D;   The union begins the order: its test is one compare with its last number. Behind follows; Before, which stood in front of the union, goes behind the rest of its group. The interface is still a range, and begins the order too
+# RUN: plan shapes mechanisms=none+TypedOperations
+# CHECK: shape 1 L2
+# CHECK-NEXT: shape 2 L3
+# CHECK-NEXT: shape 3 L4
+# CHECK-NEXT: shape 4 L1
+# RUN(WITHHELD): plan shapes mechanisms=none
+# WITHHELD: shape 1 L1
+# WITHHELD-NEXT: shape 2 L2
+# WITHHELD-NEXT: shape 3 L3
+# WITHHELD-NEXT: shape 4 L4
+
+layout L0 name="Node" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] flags=[IsNeverAllocated] ownFieldCount=1
+layout L1 name="Before" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=1
+layout L2 name="C" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+layout L3 name="D" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+layout L4 name="Behind" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L4 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v2
+    v11 = Call v9, -, v4
+    v12 = Call v9, -, v6
+    v13 = Call v9, -, v8
+    v14 = NewClosure function=f2
+    v15 = Call v14, -, v4
+    v16 = Call v14, -, v6
+    v17 = NewClosure function=f3
+    v18 = Call v17, -, v4
+    v19 = Call v17, -, v6
+    v20 = NewClosure function=f4
+    v21 = Call v20, -, v4
+    v22 = Call v20, -, v6
+    v23 = NewClosure function=f5
+    v24 = Call v23, -, v4
+    v25 = Call v23, -, v6
+    v26 = NewClosure function=f6
+    v27 = Call v26, -, v4
+    v28 = Call v26, -, v6
+    v29 = NewClosure function=f7
+    v30 = Call v29, -, v4
+    v31 = Call v29, -, v6
+    v32 = NewClosure function=f8
+    v33 = Call v32, -, v4
+    v34 = Call v32, -, v6
+    v35 = NewClosure function=f9
+    v36 = Call v35, -, v4
+    v37 = Call v35, -, v6
+    v38 = NewClosure function=f10
+    v39 = Call v38, -, v4
+    v40 = Call v38, -, v6
+    v41 = NewClosure function=f11
+    v42 = Call v41, -, v4
+    v43 = Call v41, -, v6
+    v44 = NewClosure function=f12
+    v45 = Call v44, -, v4
+    v46 = Call v44, -, v6
+    v47 = NewClosure function=f13
+    v48 = Call v47, -, v4
+    v49 = Call v47, -, v6
+    v50 = Builtin builtin=GlobalThis
+    v51 = PropGet v50 key="sink" [isFreeName]
+    v52 = Call v51, -, v10, v11, v12, v13, v15, v16, v18, v19, v21, v22, v24, v25, v27, v28, v30, v31, v33, v34, v36, v37, v39, v40, v42, v43, v45, v46, v48, v49
+    Return v52
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L2|L3|L4 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1|L2|L3|L4):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}
+# REPEAT: f = 2..13
+function f%(f) name="endOf%(f)" module=m0 length=1 thisType={type=anything} parameters=[{type=L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L2|L3):
+    v1 = PropGet v0 key="end"
+    Return v1
+}
+# END REPEAT

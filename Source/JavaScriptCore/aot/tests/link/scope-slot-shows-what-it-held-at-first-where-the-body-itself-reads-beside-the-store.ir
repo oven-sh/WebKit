@@ -1,0 +1,47 @@
+# If only what leaves counted, the body's own read on the way that does not store would be typed by the store of the other way
+# function make(c) { if (c) { var count = 0; const limit = 10; return read; } return [limit, count]; function read() { .. } }
+# each store stands above the only point at which the closure leaves. It stands above neither read of the other way
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 @"0" proven=int[0, 2147483647]|absent writers-known
+# CHECK: field L0.1 @"1" proven=undefined|int[0, 2147483647] writers-known
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} flags=[IsImmutable] variableName="limit"}, {key=@"1" declared={type=anything} flags=[IsRequired] variableName="count"}] ownFieldCount=2
+variable g0 name="sink" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = NewClosure v1 function=f2
+    v3 = GetModuleVariable variable=g0
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer
+    PutEnvironmentField v1, v5 layout=L0 field=1
+    v7 = Integer integer=10
+    PutEnvironmentField v1, v7 layout=L0
+    Return v2
+  b2():
+    v9 = GetEnvironmentField v1 layout=L0
+    v10 = GetEnvironmentField v1 layout=L0 field=1
+    v11 = NewArray v9, v10 contents=anything
+    Return v11
+}
+function f2 name="read" module=m0 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="limit"
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = Add v2, v3
+    Return v4
+}

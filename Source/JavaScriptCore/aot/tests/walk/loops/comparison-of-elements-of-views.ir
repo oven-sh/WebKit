@@ -1,0 +1,70 @@
+# const view = new Uint16Array(64); function unsigned(value) { if (value >= 0) return value; return value + 4294967296; }
+# function count(n) { let found = 0; for (let i = 0; i < n; ++i) { if (unsigned(view[i * 3 & 127]) < unsigned(view[i * 5 & 127])) ++found; } return found; }
+# An element of a view is an integer or undefined. Where a comparison asks for undefined first, the way of undefined stays apart to the end of the turn, and the integers are compared as integers.
+# LIBRARY: own
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = Less {{*}}form=Integers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="unsigned" module=m0 declared={type=anything} initialization=Function function=f1
+variable g2 name="count" module=m0 declared={type=anything} initialization=Function function=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Uint16Array
+    v1 = Integer integer=64
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g2
+    v5 = Integer integer=100
+    v6 = Call v4, -, v5
+    Return v6
+}
+function f1 name="unsigned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = GreaterEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Double number=4294967296
+    v4 = Add v0, v3
+    Return v4
+}
+function f2 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    v6 = GetModuleVariable variable=g0
+    v7 = Integer integer=127
+    v8 = Integer integer=3
+    v9 = Mul v2, v8
+    v10 = BitAnd v9, v7
+    v11 = ElemGet v6, v10
+    v12 = Integer integer=5
+    v13 = Mul v2, v12
+    v14 = BitAnd v13, v7
+    v15 = ElemGet v6, v14
+    v16 = GetModuleVariable variable=g1
+    v17 = Call v16, -, v11
+    v18 = Call v16, -, v15
+    v19 = Less v17, v18
+    Branch v19 -> taken b3(), notTaken b4(v3)
+  b3():
+    v20 = Increment v3
+    Jump -> next b4(v20)
+  b4(v21):
+    v22 = Increment v2
+    Jump -> next b1(v22, v21)
+  b5():
+    Return v3
+}

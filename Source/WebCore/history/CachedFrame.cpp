@@ -86,6 +86,15 @@ CachedFrameBase::~CachedFrameBase()
     ASSERT(!m_document);
 }
 
+bool CachedFrameBase::containsFrame(const Frame& frame) const
+{
+    if (RefPtr view = m_view; view && &view->frame() == &frame)
+        return true;
+    return std::ranges::any_of(m_childFrames, [&](auto& child) {
+        return child->containsFrame(frame);
+    });
+}
+
 void CachedFrameBase::pruneDetachedChildFrames()
 {
     m_childFrames.removeAllMatching([] (auto& childFrame) {
@@ -182,6 +191,8 @@ CachedFrame::CachedFrame(Frame& frame)
 
     RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
     m_cachedFrameScriptData = localFrame ? makeUnique<ScriptCachedFrameData>(*localFrame) : nullptr;
+    if (localFrame && m_isMainFrame)
+        localFrame->incrementCachedPageCount();
 
     if (document)
         protect(document->window())->suspendForBackForwardCache();
@@ -281,6 +292,11 @@ void CachedFrame::clear()
     ASSERT(m_view);
     ASSERT(!m_document->frame() || m_document->frame() == &m_view->frame());
 
+    if (m_isMainFrame) {
+        if (RefPtr localFrameView = dynamicDowncast<LocalFrameView>(m_view))
+            protect(localFrameView->frame())->decrementCachedPageCount();
+    }
+
     m_document = nullptr;
     m_view = nullptr;
     m_url = URL();
@@ -309,8 +325,10 @@ void CachedFrame::destroy()
 
     RefPtr view = m_view;
     Ref frame = view->frame();
-    if (!m_isMainFrame && frame->page()) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+    bool shouldDetachFrame = !m_isMainFrame || (localFrame && localFrame->existsOnlyForCachedPages() && localFrame->cachedPageCount() == 1);
+    if (shouldDetachFrame && frame->page()) {
+        if (localFrame)
             localFrame->loader().detachViewsAndDocumentLoader();
         frame->detachFromPage();
     }

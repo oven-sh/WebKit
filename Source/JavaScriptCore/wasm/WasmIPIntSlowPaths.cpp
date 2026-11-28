@@ -190,10 +190,13 @@ static inline RefPtr<Wasm::JITCallee> jitCompileAndSetHeuristics(Wasm::IPIntCall
             }
             return nullptr;
         }
-        case OSRFor::Epilogue: {
-            return nullptr;
-        }
+        case OSRFor::Epilogue:
         case OSRFor::Loop: {
+            // If there's a retired but not-yet-collected BBQCallee, use it. For both Loop and
+            // Epilogue OSR, it can be the case that such retired BBQCallees still need to be
+            // patched in some callers. Not using it means a new BBQ compilation can be triggered,
+            // which can overwrite the retired BBQCallee, leaving updateCallsitesToCallUs() unable
+            // to patch those callers.
             return calleeGroup.tryGetBBQCalleeForLoopOSRConcurrently(instance->vm(), functionIndex);
         }
         }
@@ -1028,7 +1031,7 @@ WASM_IPINT_EXTERN_CPP_DECL(trace, CallFrame* callFrame, uint8_t* pc, uint8_t* mc
     SAFE_DATALOGF("<%p> %p%s / %p: executing +0x%x, %s, pc = %p, mc = %p\n",
         &Thread::currentSingleton(),
         instance,
-        makeString(callee->indexOrName()).utf8(),
+        makeUTF8CString(makeString(callee->indexOrName())),
         callFrame,
         static_cast<uint32_t>(pc - callee->bytecode()),
         opcodeName(pc),
@@ -1417,6 +1420,8 @@ extern "C" void SYSV_ABI wasm_log_crash(CallFrame*, JSWebAssemblyInstance* insta
 
 extern "C" UGPRPair SYSV_ABI slow_path_wasm_throw_exception(CallFrame* callFrame, JSWebAssemblyInstance* instance, Wasm::ExceptionType exceptionType)
 {
+    if (instance->faultPC())
+        instance->calleeGroup()->didFault(callFrame, instance->faultPC());
     // FaultPC is the exact PC causing the fault. When using it as a returnPC, we should point one next instruction instead.
     WasmOperationPrologueCallFrameTracer tracer(instance->vm(), callFrame, std::bit_cast<void*>(std::bit_cast<uintptr_t>(instance->faultPC()) + 1));
     instance->setFaultPC(Wasm::ExceptionType::Termination, nullptr);

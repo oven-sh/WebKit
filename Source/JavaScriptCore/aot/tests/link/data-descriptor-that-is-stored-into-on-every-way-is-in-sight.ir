@@ -1,0 +1,50 @@
+# A store into the descriptor that stands in the block of the allocation has run whenever the definition runs: the descriptor says `writable: true` by a constant, and the definition is a store
+# function K(v) { this.v = v; }   const laid = { value: function m() { return this.v; }, enumerable: false, configurable: true };   laid.writable = true;   if (some) ;   Object.defineProperty(K.prototype, "m", laid);
+# data-descriptor-that-is-stored-into-on-one-arm-is-not-in-sight.ir is the twin
+# RUN: link members mechanisms=all
+# CHECK: on-prototype L0 "m" function=f2
+
+layout L0 kind=Instance name="K" module=m0 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 fields=[{key="configurable" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Boolean
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v3, v4 layout=L1 fields=[2, 1, 0]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="some" [isFreeName]
+    v9 = ToBoolean v8
+    v10 = Boolean boolean=true
+    PropSet v6, v10 key="writable"
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v12 = Builtin builtin=Object
+    v13 = Builtin builtin=ObjectDefineProperty
+    v14 = PropGet v1 key="prototype"
+    v15 = String string="m"
+    v16 = Call v13, v12, v14, v15, v6 calleeName="Object.defineProperty"
+    v17 = Integer integer=1
+    v18 = Construct v1, -, v17 calleeName="K"
+    v19 = PropGet v18 key="m"
+    v20 = Call v19, v18 calleeKey="m" calleeName="m"
+    Return v20
+}
+function f1 name="K" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="v"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="m" module=m0 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="v"
+    Return v1
+}

@@ -1,0 +1,21 @@
+# `sort` calls the method with two elements and no locale that anybody sees. The place is where the method is handed over
+# ["b", "a"].sort(String.prototype.localeCompare);
+# LIBRARY: own
+# RUN: locales
+# CHECK: locale unknown StringPrototypeLocaleCompare at f0 v3
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="b"
+    v1 = String string="a"
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Builtin builtin=StringPrototypeLocaleCompare [isNotReadFromHolder] @29
+    v4 = PropGet v2 key="sort"
+    v5 = Call v4, v2, v3 calleeKey="sort" @24
+    Return v5
+}

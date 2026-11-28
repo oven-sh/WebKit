@@ -50,6 +50,9 @@
 #import "ViewSnapshotStore.h"
 #import "WKAPICast.h"
 #import "WKAppKitGestureController.h"
+#if ENABLE(DOCUMENT_PIP)
+#import "WKDocumentPictureInPictureWindowController.h"
+#endif
 #import "WKFullScreenWindowController.h"
 #import "WKStringCF.h"
 #import "WKViewInternal.h"
@@ -258,7 +261,10 @@ bool PageClientImpl::isViewInWindow()
 
 bool PageClientImpl::isVisuallyIdle()
 {
-    return WindowServerConnection::singleton().applicationWindowModificationsHaveStopped() || !isActiveViewVisible();
+    // The window server's window modification notifications are a form of occlusion detection, so they
+    // should be ignored when the client has disabled it.
+    bool applicationWindowModificationsHaveStopped = m_impl && m_impl->windowOcclusionDetectionEnabled() && WindowServerConnection::singleton().applicationWindowModificationsHaveStopped();
+    return applicationWindowModificationsHaveStopped || !isActiveViewVisible();
 }
 
 void PageClientImpl::viewWillMoveToAnotherWindow()
@@ -292,6 +298,33 @@ void PageClientImpl::pageClosed()
     protect(m_impl)->pageClosed();
     PageClientImplCocoa::pageClosed();
 }
+
+#if ENABLE(DOCUMENT_PIP)
+void PageClientImpl::createDocumentPictureInPicturePage(Ref<API::PageConfiguration>&& configuration, CompletionHandler<void(RefPtr<WebPageProxy>&&)>&& completionHandler)
+{
+    protect(m_impl)->createDocumentPictureInPicturePage(WTF::move(configuration), WTF::move(completionHandler));
+}
+
+void PageClientImpl::showDocumentPictureInPictureWindow()
+{
+    [protect(protect(m_impl)->hostingDocumentPictureInPictureWindowController()) show];
+}
+
+void PageClientImpl::closeDocumentPictureInPictureWindow()
+{
+    [protect(protect(m_impl)->hostingDocumentPictureInPictureWindowController()) close];
+}
+
+void PageClientImpl::focusDocumentPictureInPictureWindow()
+{
+    [protect(protect(m_impl)->hostingDocumentPictureInPictureWindowController()) focus];
+}
+
+void PageClientImpl::setDocumentPictureInPictureWindowFrame(const WebCore::FloatRect& windowFrame)
+{
+    [protect(protect(m_impl)->hostingDocumentPictureInPictureWindowController()) setWindowFrame:windowFrame];
+}
+#endif
 
 void PageClientImpl::scrollingCoordinatorWasCreated()
 {
@@ -664,35 +697,6 @@ void PageClientImpl::accessibilityWebProcessTokenReceived(std::span<const uint8_
     protect(m_impl)->setAccessibilityWebProcessToken(toNSData(data).get(), pid);
 }
     
-void PageClientImpl::enterAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-    ASSERT(!layerTreeContext.isEmpty());
-
-    RetainPtr renderLayer = [CALayer _web_renderLayerWithContextID:layerTreeContext.contextID shouldPreserveFlip:NO];
-    protect(m_impl)->enterAcceleratedCompositingWithRootLayer(renderLayer.get());
-}
-
-void PageClientImpl::didFirstLayerFlush(const LayerTreeContext& layerTreeContext)
-{
-    ASSERT(!layerTreeContext.isEmpty());
-
-    RetainPtr renderLayer = [CALayer _web_renderLayerWithContextID:layerTreeContext.contextID shouldPreserveFlip:NO];
-    protect(m_impl)->setAcceleratedCompositingRootLayer(renderLayer.get());
-}
-
-void PageClientImpl::exitAcceleratedCompositingMode()
-{
-    protect(m_impl)->setAcceleratedCompositingRootLayer(nil);
-}
-
-void PageClientImpl::updateAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-    ASSERT(!layerTreeContext.isEmpty());
-
-    RetainPtr renderLayer = [CALayer _web_renderLayerWithContextID:layerTreeContext.contextID shouldPreserveFlip:NO];
-    protect(m_impl)->setAcceleratedCompositingRootLayer(renderLayer.get());
-}
-
 void PageClientImpl::setRemoteLayerTreeRootNode(RemoteLayerTreeNode* rootNode)
 {
     protect(m_impl)->setAcceleratedCompositingRootLayer(rootNode ? protect(rootNode->layer()).get() : nil);
@@ -789,7 +793,7 @@ String PageClientImpl::dismissCorrectionPanelSoon(WebCore::ReasonForDismissingAl
 #endif
 }
 
-static inline NSCorrectionResponse LEGACY_NODELETE toCorrectionResponse(AutocorrectionResponse response)
+NODELETE static inline NSCorrectionResponse toCorrectionResponse(AutocorrectionResponse response)
 {
     switch (response) {
     case WebCore::AutocorrectionResponse::Reverted:
@@ -1147,11 +1151,6 @@ void PageClientImpl::pageDidScroll(const WebCore::IntPoint& scrollOffset)
     protect(m_impl)->pageDidScroll(scrollOffset);
 }
 
-void PageClientImpl::didEndSyntheticMomentumScrolling()
-{
-    protect(m_impl)->didEndSyntheticMomentumScrolling();
-}
-
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
 void PageClientImpl::pageScaleFactorDidChange()
 {
@@ -1254,7 +1253,7 @@ bool PageClientImpl::appUsesCustomAccentColor()
         if ([accentColorName length])
             usesCustomAppAccentColor = !![NSColor colorNamed:accentColorName.get() bundle:bundleForAccentColor.get()];
 
-        if (!usesCustomAppAccentColor && [(accentColorName = info.get()[@"NSAppAccentColorName"]) length])
+        if (!usesCustomAppAccentColor && [(accentColorName = dynamic_objc_cast<NSString>(info.get()[@"NSAppAccentColorName"])) length])
             usesCustomAppAccentColor = !![NSColor colorNamed:accentColorName.get() bundle:bundleForAccentColor.get()];
         return usesCustomAppAccentColor;
     }();

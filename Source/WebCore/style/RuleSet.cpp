@@ -54,8 +54,7 @@
 #include <ranges>
 #include <wtf/MainThread.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 using namespace HTMLNames;
 
@@ -77,7 +76,7 @@ void RuleSet::addToRuleSet(const AtomString& key, AtomRuleMap& map, const RuleDa
     rules->append(ruleData);
 }
 
-static unsigned LEGACY_NODELETE rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
+NODELETE static unsigned rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
 {
     if (const auto* rules = map.get(name))
         return rules->size();
@@ -388,7 +387,7 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
             cueBackgroundSelector->setPseudoElement(CSSSelector::PseudoElement::UserAgentPart);
             cueBackgroundSelector->setValue(UserAgentParts::internalCueBackground());
 
-            Ref cueBackgroundStyleRule = StyleRule::create(protect(ruleData.styleRule())->properties().immutableCopyIfNeeded(), ruleData.styleRule().hasDocumentSecurityOrigin(), CSSSelectorList { MutableCSSSelectorList::from(WTF::move(cueBackgroundSelector)) });
+            Ref cueBackgroundStyleRule = StyleRule::create(protect(protect(ruleData.styleRule())->properties())->immutableCopyIfNeeded(), ruleData.styleRule().hasDocumentSecurityOrigin(), CSSSelectorList { MutableCSSSelectorList::from(WTF::move(cueBackgroundSelector)) });
 
             // Warning: Recursion!
             addRule(WTF::move(cueBackgroundStyleRule), 0, 0);
@@ -533,7 +532,7 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
 
 void RuleSet::addPageRule(StyleRulePage& rule)
 {
-    m_pageRules.append(&rule);
+    m_pageRules.append(rule);
 }
 
 void RuleSet::setViewTransitionRule(StyleRuleViewTransition& rule)
@@ -617,13 +616,13 @@ RuleSet::CollectedMediaQueryChanges RuleSet::evaluateDynamicMediaQueryRules(cons
 {
     CollectedMediaQueryChanges collectedChanges;
 
-    HashMap<size_t, bool, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> affectedRulePositionsAndResults;
+    HashMap<size_t, bool> affectedRulePositionsAndResults;
 
     for (size_t i = startIndex; i < m_dynamicMediaQueryRules.size(); ++i) {
         auto& dynamicRules = m_dynamicMediaQueryRules[i];
         bool result = true;
         for (auto& queryList : dynamicRules.mediaQueries) {
-            if (!evaluator.evaluate(queryList)) {
+            if (!evaluator.evaluate(*queryList)) {
                 result = false;
                 break;
             }
@@ -755,5 +754,4 @@ WTF::String RuleSet::selectorsForDebugging() const
     return ts.release();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

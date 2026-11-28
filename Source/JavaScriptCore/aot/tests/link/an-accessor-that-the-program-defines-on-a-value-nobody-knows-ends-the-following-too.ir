@@ -1,0 +1,20 @@
+# Object.defineProperty(other, "name", descriptor); typeof given.constructor: `other` may be a built-in that has left by another road.
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "constructor"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v0 key="descriptor" [isFreeName]
+    v3 = PropGet v0 key="other" [isFreeName]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = String string="name"
+    v7 = Call v5, v4, v3, v6, v2 calleeName="Object.defineProperty"
+    v8 = PropGet v1 key="constructor"
+    v9 = TypeOf v8
+    Return v9
+}

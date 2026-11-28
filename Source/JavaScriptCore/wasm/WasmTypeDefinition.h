@@ -855,8 +855,8 @@ public:
         return static_cast<uint64_t>(ptr | (maskedFieldIndex & 0b1111) | (static_cast<uint64_t>(maskedFieldIndex >> 4) << 48));
     }
 
-    bool LEGACY_NODELETE isSubRTT(const RTT& other) const;
-    bool LEGACY_NODELETE isStrictSubRTT(const RTT& other) const;
+    NODELETE bool isSubRTT(const RTT& other) const;
+    NODELETE bool isStrictSubRTT(const RTT& other) const;
     bool isFinalType() const { return m_isFinalType; }
 
     // Print this RTT for debugging.
@@ -1284,9 +1284,9 @@ private:
     static bool isRefWithRecursiveReference(Type);
     static bool isRefWithRecursiveReference(StorageType);
 
-    UncheckedKeyHashSet<CanonicalRecursionGroupEntry, CanonicalRecursionGroupEntryHash> m_canonicalRecursionGroups;
-    UncheckedKeyHashSet<CanonicalSingletonEntry> m_canonicalSingletonGroups;
-    RefPtr<const RTT> m_Void_Externref;
+    HashSet<CanonicalRecursionGroupEntry, CanonicalRecursionGroupEntryHash> m_canonicalRecursionGroups;
+    HashSet<CanonicalSingletonEntry> m_canonicalSingletonGroups;
+    const RefPtr<const RTT> m_Void_Externref;
     Lock m_lock;
 };
 

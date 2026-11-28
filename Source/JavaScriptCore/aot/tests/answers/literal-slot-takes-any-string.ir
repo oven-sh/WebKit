@@ -1,0 +1,27 @@
+# const node = { kind: "num" }; inspect(node);
+# Texts of the program are all that the program stores in `kind`, and the shell stores what it likes, by name. Whatever the slot holds a text as, it takes any other string too.
+# A collection finds a string that is no text of the program in the slot, also a collection of the young cells alone behind a store into an old object.
+# A string that is glued together into a text of the program reads as that text.
+# RUN: run-in-shell globalThis.inspect = node => { print(node.kind); gc(); node.kind = ["el", "se"].join(""); edenGC(); print(node.kind); gc(); print(node.kind); node.kind = ["ne", "g"].join(""); print(node.kind); print(JSON.stringify(node)); };
+# CHECK: num
+# CHECK-NEXT: else
+# CHECK-NEXT: else
+# CHECK-NEXT: neg
+# CHECK-NEXT: {"kind":"neg"}
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="num"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="inspect" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="inspect"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="types" role=Signature parameters=[{type="neg"|"num"}, {type=string}] results=[{type=undefined}]

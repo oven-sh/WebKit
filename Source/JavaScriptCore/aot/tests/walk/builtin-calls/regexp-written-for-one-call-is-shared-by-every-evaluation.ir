@@ -1,0 +1,111 @@
+# Each evaluation of a literal makes an object of its own. Where the body names it nowhere but at one call, whose row hands it to nobody and leaves it as it was made, nobody can tell:
+# the one object in the cell of the literal stands in its place, and the sweep drops the allocation.
+# function every(s: string, t: string) { return s.replace(/a/g, t); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = SharedRegExpLiteral pattern="a" regExpFlags=[Global]
+# CHECK: inlineBuiltin=StringReplace
+# RUN(DROPPED): walk f1 mechanisms=all
+# DROPPED-NOT: = NewRegExp
+# function cut(s: string) { return s.split(/,/); }
+# RUN(CUT): walk f2 mechanisms=all
+# CUT-LABEL: code f2:Body
+# CUT-NOT: = NewRegExp
+# CUT: = SharedRegExpLiteral pattern=","
+# CUT: inlineBuiltin=StringSplit
+# y begins at lastIndex and stores it, so the next evaluation would go on where this one stopped: function sticky(s: string, t: string) { return s.replace(/a/y, t); }
+# RUN(STICKY): walk f3 mechanisms=all
+# STICKY-LABEL: code f3:Body
+# STICKY-NOT: SharedRegExpLiteral
+# STICKY: = NewRegExp pattern="a" regExpFlags=[Sticky]
+# Somebody else has it too: function kept(s: string, t: string) { const re = /a/g; sink(re); return s.replace(re, t); }
+# RUN(KEPT): walk f4 mechanisms=all
+# KEPT-LABEL: code f4:Body
+# KEPT-NOT: SharedRegExpLiteral
+# KEPT: = NewRegExp pattern="a" regExpFlags=[Global]
+# It is handed back: function returned(s: string) { const re = /,/; s.split(re); return re; }
+# RUN(RETURNED): walk f5 mechanisms=all
+# RETURNED-LABEL: code f5:Body
+# RETURNED-NOT: SharedRegExpLiteral
+# RETURNED: = NewRegExp pattern=","
+# It gets a property: function tagged(s: string) { const re = /,/; re.tag = 1; return s.split(re); }
+# RUN(TAGGED): walk f6 mechanisms=all
+# TAGGED-LABEL: code f6:Body
+# TAGGED-NOT: SharedRegExpLiteral
+# TAGGED: = NewRegExp pattern=","
+# Nothing is fresh with EscapeAnalysis withheld, and with BuiltinCalls withheld no call goes by a row.
+# RUN(NOTFRESH): walk f1 mechanisms=all-EscapeAnalysis
+# NOTFRESH-NOT: SharedRegExpLiteral
+# RUN(WITHHELD): walk f1 mechanisms=all-BuiltinCalls
+# WITHHELD-NOT: SharedRegExpLiteral
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = String string="banana"
+    v7 = String string="o"
+    v8 = Call v0, -, v6, v7
+    v9 = Call v1, -, v6
+    v10 = Call v2, -, v6, v7
+    v11 = Call v3, -, v6, v7
+    v12 = Call v4, -, v6
+    v13 = Call v5, -, v6
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="sink" [isFreeName]
+    v16 = Call v15, -, v8, v9, v10, v11, v12, v13
+    Return v16
+}
+function f1 name="every" module=m0 position=10 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="replace" @11
+    v3 = NewRegExp pattern="a" regExpFlags=[Global] @12
+    v4 = Call v2, v0, v3, v1 calleeKey="replace" calleeName="s.replace" @13
+    Return v4 @14
+}
+function f2 name="cut" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @21
+    v2 = NewRegExp pattern="," @22
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="s.split" @23
+    Return v3 @24
+}
+function f3 name="sticky" module=m0 position=30 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="replace" @31
+    v3 = NewRegExp pattern="a" regExpFlags=[Sticky] @32
+    v4 = Call v2, v0, v3, v1 calleeKey="replace" calleeName="s.replace" @33
+    Return v4 @34
+}
+function f4 name="kept" module=m0 position=40 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = NewRegExp pattern="a" regExpFlags=[Global] @41
+    v3 = Builtin builtin=GlobalThis @42
+    v4 = PropGet v3 key="sink" [isFreeName] @43
+    v5 = Call v4, -, v2 @44
+    v6 = PropGet v0 key="replace" @45
+    v7 = Call v6, v0, v2, v1 calleeKey="replace" calleeName="s.replace" @46
+    Return v7 @47
+}
+function f5 name="returned" module=m0 position=50 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="," @51
+    v2 = PropGet v0 key="split" @52
+    v3 = Call v2, v0, v1 calleeKey="split" calleeName="s.split" @53
+    Return v1 @54
+}
+function f6 name="tagged" module=m0 position=60 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="," @61
+    v2 = Integer integer=1 @62
+    PropSet v1, v2 key="tag" mode=Strict @63
+    v4 = PropGet v0 key="split" @64
+    v5 = Call v4, v0, v1 calleeKey="split" calleeName="s.split" @65
+    Return v5 @66
+}

@@ -1,0 +1,37 @@
+# node.a = x; if (c) return; node.b = x;      v3: one way on returns, and no barrier runs behind that
+# node.b = x; poll; node.c = x;               v4: the poll in the next block may collect in front of the later barrier
+# for (;;) { o = node[0]; o.d = x; }          v8: the barrier round the back edge is that of another cell
+# RUN: sweep-code
+# CHECK-NOT: LaterBarrierCovers
+# CHECK: v8 @Void = SetMappedArgument
+# CHECK-NOT: LaterBarrierCovers
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3 @Void = SetMappedArgument v0, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     Return
+#   b2():
+#     v4 @Void = SetMappedArgument v0, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b3()
+#   b3():
+#     v5 @Void = LoopHint traits=[mayThrow, mayCollect, mayBeTerminated, mayTouchMemory]
+#     v6 @Void = SetMappedArgument v0, v1 index=2 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b4()
+#   b4() isInLoop=true isLoopHead=true:
+#     v7: anything @Cell = GetMappedArgument v0 index=0 traits=[mayTouchMemory]
+#     Jump -> next b5()
+#   b5() isInLoop=true:
+#     v8 @Void = SetMappedArgument v7, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b4()
+# }
+# -- end of code

@@ -38,7 +38,7 @@ class TrackInfo;
 class MediaSampleConverter final {
     WTF_MAKE_TZONE_ALLOCATED(MediaSampleConverter);
 public:
-    WEBCORE_EXPORT MediaSampleConverter();
+    NODELETE WEBCORE_EXPORT MediaSampleConverter();
     WEBCORE_EXPORT ~MediaSampleConverter();
 
     enum class SetTrackInfo : bool {
@@ -46,7 +46,7 @@ public:
         Yes
     };
     WEBCORE_EXPORT UniqueRef<MediaSamplesBlock> convert(const MediaSample&, SetTrackInfo = SetTrackInfo::Yes);
-    WEBCORE_EXPORT RefPtr<const TrackInfo> LEGACY_NODELETE currentTrackInfo() const;
+    NODELETE WEBCORE_EXPORT RefPtr<const TrackInfo> currentTrackInfo() const;
     WEBCORE_EXPORT void setTrackInfo(Ref<const TrackInfo>&&);
 
     WEBCORE_EXPORT RefPtr<MediaSample> convert(MediaSamplesBlock&&);

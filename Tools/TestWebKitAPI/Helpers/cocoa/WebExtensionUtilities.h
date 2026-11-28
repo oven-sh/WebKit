@@ -94,13 +94,12 @@ NS_SWIFT_UI_ACTOR
 - (void)unload;
 
 - (void)run NS_SWIFT_UNAVAILABLE("Spins the run loop; use run() async instead.");
-- (void)runForTimeInterval:(NSTimeInterval)interval NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 - (id)runUntilTestMessage:(NSString *)message NS_SWIFT_UNAVAILABLE("Spins the run loop; use waitForTestMessage(_:) async instead.");
-- (void)runUntilContextError NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 
 - (void)runWithCompletionHandler:(void (^)(NSError * _Nullable error))completionHandler;
-- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(NSError * _Nullable error))completionHandler NS_SWIFT_NAME(waitForTestMessage(_:completionHandler:));
+- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(id _Nullable argument, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(waitForTestMessage(_:completionHandler:));
 - (void)loadAndRunWithCompletionHandler:(void (^)(NSError * _Nullable error))completionHandler;
+- (void)waitForContextErrorWithCompletionHandler:(void (^)(NSError * _Nullable error))completionHandler NS_SWIFT_NAME(waitForContextError(completionHandler:));
 
 - (void)done;
 
@@ -129,6 +128,7 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, getter=isMuted) bool muted;
 @property (nonatomic, getter=isSelected) bool selected;
 @property (nonatomic, getter=isShowingReaderMode) bool showingReaderMode;
+@property (nonatomic) bool readerModeUnavailable;
 
 @property (nonatomic, copy, nullable) void (^setReaderModeShowing)(BOOL);
 @property (nonatomic, copy, nullable) NSLocale * _Nullable (^webpageLocale)(void);
@@ -186,7 +186,23 @@ NS_SWIFT_UI_ACTOR
 
 @end
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// An Objective-C exception cannot unwind through a Swift frame, so a Swift test that expects a setter to raise one has
+// to call the setter from here.
+NSExceptionName _Nullable testExceptionRaisedBySettingValue(id, NSString *key, id _Nullable value) NS_SWIFT_NAME(exceptionRaised(setting:forKey:to:));
+
+#ifdef __cplusplus
+}
+#endif
+
 NS_HEADER_AUDIT_END(nullability, sendability)
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionUtilitiesAdditions.h>)
+#include <WebKitAdditions/WebExtensionUtilitiesAdditions.h>
+#endif
 
 #else // not __OBJC__
 
@@ -204,13 +220,6 @@ namespace TestWebKitAPI::Util {
 #ifdef __OBJC__
 
 inline NSString * _Nonnull constructScript(NSArray * _Nonnull lines) { return [lines componentsJoinedByString:@"\n"]; }
-inline NSString * _Nonnull constructJSArrayOfStrings(NSArray * _Nonnull elements) { return [NSString stringWithFormat:@"['%@']", [elements componentsJoinedByString:@"', '"]]; }
-
-NSData * _Nonnull makePNGData(CGSize, SEL _Nonnull colorSelector);
-
-enum class Appearance { Light, Dark };
-
-void performWithAppearance(Appearance, void (^ _Nonnull block)(void));
 
 #endif
 

@@ -60,7 +60,7 @@ private:
     static constexpr bool verbose { false };
 };
 
-int64_t LEGACY_NODELETE OptimizeAssociativeExpressionTrees::neutralElement(Opcode op)
+NODELETE int64_t OptimizeAssociativeExpressionTrees::neutralElement(Opcode op)
 {
     switch (op) {
     case Add:
@@ -76,7 +76,7 @@ int64_t LEGACY_NODELETE OptimizeAssociativeExpressionTrees::neutralElement(Opcod
     }
 }
 
-bool LEGACY_NODELETE OptimizeAssociativeExpressionTrees::isAbsorbingElement(Opcode op, int64_t constant)
+NODELETE bool OptimizeAssociativeExpressionTrees::isAbsorbingElement(Opcode op, int64_t constant)
 {
     switch (op) {
     case Add:
@@ -92,7 +92,7 @@ bool LEGACY_NODELETE OptimizeAssociativeExpressionTrees::isAbsorbingElement(Opco
     }
 }
 
-void LEGACY_NODELETE OptimizeAssociativeExpressionTrees::combineConstants(Opcode op, int64_t& const1, int64_t const2)
+NODELETE void OptimizeAssociativeExpressionTrees::combineConstants(Opcode op, int64_t& const1, int64_t const2)
 {
     switch (op) {
     case Add:
@@ -217,8 +217,8 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         unsigned width = root->type() == Int32 ? 32 : 64;
 
         // In the leaf elements of BitOr / BitXor tree, we collect Shl and ZShr.
-        UncheckedKeyHashMap<Value*, Vector<unsigned, 4>> shlIndicesByBase;
-        UncheckedKeyHashMap<Value*, Vector<unsigned, 4>> zshrIndicesByBase;
+        HashMap<Value*, Vector<unsigned, 4>> shlIndicesByBase;
+        HashMap<Value*, Vector<unsigned, 4>> zshrIndicesByBase;
         for (unsigned i = 0; i < leaves.size(); ++i) {
             Value* leaf = leaves[i];
             if (leaf->opcode() == Shl && leaf->child(1)->hasInt32())
@@ -384,8 +384,8 @@ bool OptimizeAssociativeExpressionTrees::run()
     m_proc.resetValueOwners();
 
     Vector<unsigned> useCounts(FillWith { }, m_proc.values().size(), 0); // Mapping from Value::m_index to use counts.
-    UncheckedKeyHashSet<Value*> expressionTreeRoots;
-    UncheckedKeyHashSet<BasicBlock*> rootOwners;
+    HashSet<Value*> expressionTreeRoots;
+    HashSet<BasicBlock*> rootOwners;
 
     for (BasicBlock* block : m_proc) {
         for (Value* value : *block) {

@@ -31,6 +31,7 @@
 #include "DebuggerPauseCoordinator.h"
 #include "FrameInspectorTarget.h"
 #include "FrameInspectorTargetProxy.h"
+#include "ImageOptions.h"
 #include "InspectorBrowserAgent.h"
 #include "InspectorStorageAgent.h"
 #include "PageInspectorTarget.h"
@@ -49,10 +50,18 @@
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorFrontendRouter.h>
+#include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <JavaScriptCore/InspectorTargetAgent.h>
+#include <WebCore/ImageUtilities.h>
 #include <wtf/Assertions.h>
+#include <wtf/Borrow.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
+#include <wtf/RefPtr.h>
+#include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/TypeCasts.h>
+#include <wtf/Vector.h>
 
 namespace WebKit {
 
@@ -91,7 +100,10 @@ WebPageInspectorController::WebPageInspectorController(WebPageProxy& inspectedPa
     m_agents.append(WTF::move(targetAgent));
 }
 
-WebPageInspectorController::~WebPageInspectorController() = default;
+WebPageInspectorController::~WebPageInspectorController()
+{
+    finishTimelineScreenshot();
+}
 
 void WebPageInspectorController::init()
 {
@@ -102,6 +114,7 @@ void WebPageInspectorController::init()
 void WebPageInspectorController::pageClosed()
 {
     m_debuggerPauseCoordinator = nullptr;
+    finishTimelineScreenshot();
     disconnectAllFrontends();
 
     m_agents.discardValues();
@@ -133,6 +146,7 @@ void WebPageInspectorController::connectFrontend(Inspector::FrontendChannel& fro
             m_pageAgent->didCreateFrontendAndBackend();
     }
 
+    // FIXME: A frontend that connects while a debugger pause session is open does not learn about it until the session changes.
     Ref inspectedPage = m_inspectedPage.get();
     inspectedPage->didChangeInspectorFrontendCount(m_frontendRouter->frontendCount());
 
@@ -213,8 +227,17 @@ void WebPageInspectorController::setIndicating(bool indicating)
 }
 #endif
 
+void WebPageInspectorController::debuggerPauseSessionDidChange(WebCore::DebuggerPauseSessionIdentifier sessionID, bool isPaused, const Vector<String>& stoppingTargetIDs)
+{
+    if (CheckedPtr targetAgent = m_targetAgent)
+        targetAgent->debuggerPauseSessionChanged(String::number(sessionID.toUInt64()), isPaused, stoppingTargetIDs);
+}
+
 void WebPageInspectorController::sendMessageToInspectorFrontend(const String& targetId, const String& message)
 {
+    if (!decltype(m_targets)::isValidKey(targetId))
+        return;
+
     if (!m_targets.contains(targetId)) {
         // FIXME <https://webkit.org/b/308182>: This assertion is currently relaxed under site isolation.
         // More fine-tuning is needed around reporting provisional frame targets' destruction.
@@ -363,8 +386,9 @@ void WebPageInspectorController::didCommitProvisionalPage(std::optional<WebCore:
 
     // Migrate per-process inspector instrumentation: the old process no
     // longer hosts the page, so unregister there to keep our message-receiver
-    // count balanced, and register on the new process. Mirrors
-    // didCommitProvisionalFrame.
+    // count balanced, and register on the new process. Unlike a provisional
+    // frame, a provisional page does not register its process when it is created.
+    // FIXME <https://webkit.org/b/328737>: Register it then, so the main document's Network and Page messages are not dropped before commit.
     Ref newProcess = protect(m_inspectedPage)->mainFrame()->process();
 
     if (m_pageAgent && m_pageAgent->isEnabled()) {
@@ -413,10 +437,51 @@ void WebPageInspectorController::frameDidChangeProcess(WebCore::FrameIdentifier 
         CheckedPtr { m_debuggerPauseCoordinator }->frameDidChangeProcess(frameID, newProcessID);
 }
 
+void WebPageInspectorController::mainFrameDidStartProvisionalLoad()
+{
+    m_isMainFrameNavigating = true;
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->mainFrameDidStartProvisionalLoad();
+}
+
+void WebPageInspectorController::mainFrameDidCommitLoad()
+{
+    m_isMainFrameNavigating = false;
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->closeSession();
+}
+
+void WebPageInspectorController::mainFrameProvisionalLoadDidEnd(ProvisionalLoadIsReplaced isReplaced)
+{
+    if (isReplaced == ProvisionalLoadIsReplaced::Yes)
+        return;
+
+    m_isMainFrameNavigating = false;
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->openSessionIfFramesAreStopping();
+}
+
 void WebPageInspectorController::processDidTerminate(WebProcessProxy& process)
 {
     if (m_debuggerPauseCoordinator)
         CheckedPtr { m_debuggerPauseCoordinator }->processDidTerminate(process);
+
+    if (!shouldManageFrameTargets())
+        return;
+
+    // A frame can outlive its process, but its target in that process can never answer again. Compare process
+    // identifiers, because the process of a stale target may already be destroyed.
+    // When a remote process exits, its paused provisional frame targets are already gone: the provisional frame is
+    // canceled before this runs, and willDestroyProvisionalFrame resumes its target before removing it.
+    // FIXME <https://webkit.org/b/331366>: When the main frame's process exits, frames are detached from the page
+    // before their provisional frames are destroyed, so willDestroyProvisionalFrame never resumes their paused targets.
+    Vector<String> targetIDs;
+    for (auto& [targetID, target] : m_targets) {
+        if (CheckedPtr frameTarget = dynamicDowncast<FrameInspectorTargetProxy>(*target); frameTarget && frameTarget->processID() == process.coreProcessIdentifier())
+            targetIDs.append(targetID);
+    }
+    for (auto& targetID : borrow(targetIDs))
+        removeTarget(targetID);
 }
 
 void WebPageInspectorController::didCreateFrame(WebFrameProxy& frame)
@@ -475,12 +540,14 @@ void WebPageInspectorController::didCreateProvisionalFrame(ProvisionalFrameProxy
     constexpr bool isProvisional = true;
     addTarget(makeUnique<FrameInspectorTargetProxy>(protect(provisionalFrame.frame())->frameID(), protect(provisionalFrame.process()), isProvisional));
 
-    // Register page instrumentation for the provisional frame's (possibly brand-new, cross-origin)
-    // process *before* it commits, so the UIProcess ProxyingPageAgent has a message receiver ready
-    // when the child's initial frameNavigated fires. didCommitProvisionalFrame is too late: the
-    // child commits (and emits frameNavigated) in its own process before then. See webkit.org/b/308896.
+    // Register instrumentation for the provisional frame's (possibly brand-new, cross-origin) process
+    // *before* it commits, so the UIProcess agents have a message receiver ready when the child loads
+    // its document and fires its initial frameNavigated. didCommitProvisionalFrame is too late: both
+    // happen in the child's own process before then. See webkit.org/b/308896 and webkit.org/b/328708.
     Ref process = provisionalFrame.process();
     auto pageID = protect(m_inspectedPage)->webPageIDInProcess(process);
+    if (m_networkAgent && m_networkAgent->isEnabled())
+        m_networkAgent->enableInstrumentationForProcess(process, pageID);
     if (m_pageAgent && m_pageAgent->isEnabled())
         m_pageAgent->enableInstrumentationForProcess(process, pageID);
 }
@@ -505,8 +572,12 @@ void WebPageInspectorController::willDestroyProvisionalFrame(const ProvisionalFr
     // is instead carried forward by didCommitProvisionalFrame.) See webkit.org/b/308896.
     Ref process = provisionalFrame.process();
     auto pageID = protect(m_inspectedPage)->webPageIDInProcess(process);
-    if (m_pageAgent && m_pageAgent->isEnabled())
+    if (m_networkAgent && m_networkAgent->isEnabled())
+        m_networkAgent->disableInstrumentationForProcess(process, pageID);
+    if (m_pageAgent && m_pageAgent->isEnabled()) {
         m_pageAgent->disableInstrumentationForProcess(process, pageID);
+        m_pageAgent->provisionalFrameDiscarded(protect(provisionalFrame.frame())->frameID(), process->coreProcessIdentifier());
+    }
 }
 
 void WebPageInspectorController::didCommitProvisionalFrame(WebFrameProxy& frame, WebCore::ProcessIdentifier oldProcessID, std::optional<WebCore::PageIdentifier> oldPageID, WebCore::ProcessIdentifier newProcessID)
@@ -534,26 +605,19 @@ void WebPageInspectorController::didCommitProvisionalFrame(WebFrameProxy& frame,
             targetAgent->targetDestroyed(protect(*oldTarget));
     }
 
-    // Instrument the new process for network events now that the frame has
-    // committed in its final process. Also disable instrumentation for the
-    // old process; the frame no longer lives there.
+    // The new process was registered in didCreateProvisionalFrame, and that registration now belongs to the
+    // committed frame. Re-registering here would double-count it, so only release the old process; the frame
+    // no longer lives there. See webkit.org/b/308896 and webkit.org/b/328708.
     RefPtr oldProcess = WebProcessProxy::processForIdentifier(oldProcessID);
-    Ref process = frame.process();
 
     if (m_networkAgent && m_networkAgent->isEnabled()) {
         if (oldProcess && oldPageID)
             m_networkAgent->disableInstrumentationForProcess(*oldProcess, *oldPageID);
-        if (auto pageID = frame.webPageIDInCurrentProcess())
-            m_networkAgent->enableInstrumentationForProcess(process, *pageID);
     }
 
     if (m_pageAgent && m_pageAgent->isEnabled()) {
         if (oldProcess && oldPageID)
             m_pageAgent->disableInstrumentationForProcess(*oldProcess, *oldPageID);
-        // Unlike the network agent, the page agent already registered the new (committing)
-        // process in didCreateProvisionalFrame -- so the frame's initial Page.frameNavigated
-        // is delivered. Re-registering here would double-count the receiver, so we only
-        // release the old process. See webkit.org/b/308896.
         if (oldProcessID != newProcessID)
             m_pageAgent->frameSwappedOutOfProcess(frameID, oldProcessID);
     }
@@ -629,6 +693,101 @@ void WebPageInspectorController::setShowPaintRects(bool show)
 {
     if (m_pageAgent)
         std::ignore = m_pageAgent->setShowPaintRects(show);
+}
+
+void WebPageInspectorController::timelineRecordingChanged(bool active)
+{
+    m_isTimelineRecording = active;
+
+    // A screenshot that is still being taken belongs to a recording that has ended.
+    finishTimelineScreenshot();
+}
+
+// The page target asks for this when it cannot paint every frame itself. WebPageProxy::takeSnapshot() draws the
+// frames of every process (remote snapshotting), and only the UI process receives the image. So the record goes
+// to the frontend from here, on behalf of the page target, with the time that the page target sent.
+void WebPageInspectorController::takeTimelineScreenshot(const WebCore::IntRect& requestedRect, double timestamp, CompletionHandler<void()>&& completionHandler)
+{
+    // The page target asks only while it records, and waits for each screenshot before it asks for the next one.
+    // Do not let a WebContent process start more.
+    if (m_timelineScreenshotCompletionHandler || !m_isTimelineRecording || !hasFrontends()) {
+        completionHandler();
+        return;
+    }
+
+#if PLATFORM(COCOA)
+    Ref inspectedPage = m_inspectedPage;
+
+    // The rect is in the main frame's content coordinates. Do not let it be larger than what the view can show,
+    // which is more than the view's size only when the page or the view is scaled down.
+    double contentScale = inspectedPage->pageScaleFactor() * inspectedPage->viewScaleFactor();
+    contentScale = contentScale > 0 ? std::clamp(contentScale, 0.1, 1.0) : 1;
+    auto rect = requestedRect;
+    rect.setSize(rect.size().shrunkTo(expandedIntSize(WebCore::FloatSize { inspectedPage->viewSize() }.scaled(1 / contentScale))));
+
+    m_timelineScreenshotCompletionHandler = WTF::move(completionHandler);
+    auto screenshotID = ++m_timelineScreenshotID;
+
+    // A process that hosts a frame may never finish its part. Give up after a while, so that later screenshots still happen.
+    RunLoop::mainSingleton().dispatchAfter(3_s, [weakPage = WeakPtr { inspectedPage }, screenshotID] {
+        if (RefPtr page = weakPage; page && page->inspectorController().m_timelineScreenshotID == screenshotID)
+            page->inspectorController().finishTimelineScreenshot();
+    });
+
+    inspectedPage->takeSnapshot(rect, { }, { }, [weakPage = WeakPtr { inspectedPage }, screenshotID, timestamp](CGImageRef image) {
+        RefPtr page = weakPage;
+        if (!page)
+            return;
+
+        // Ignore a screenshot that timed out, or whose recording has ended.
+        auto& controller = page->inspectorController();
+        if (controller.m_timelineScreenshotID != screenshotID || !controller.m_timelineScreenshotCompletionHandler)
+            return;
+
+        if (image)
+            controller.sendTimelineScreenshotRecord(timestamp, encodeDataURL(image, "image/png"_s));
+        controller.finishTimelineScreenshot();
+    });
+#else
+    // The page target asks for screenshots only on Cocoa platforms.
+    ASSERT_NOT_REACHED();
+    UNUSED_PARAM(requestedRect);
+    UNUSED_PARAM(timestamp);
+    completionHandler();
+#endif
+}
+
+void WebPageInspectorController::finishTimelineScreenshot()
+{
+    if (auto completionHandler = std::exchange(m_timelineScreenshotCompletionHandler, { }))
+        completionHandler();
+}
+
+void WebPageInspectorController::sendTimelineScreenshotRecord(double timestamp, const String& imageData)
+{
+    // pageClosed() discards the target agent.
+    if (!m_targetAgent || !hasFrontends())
+        return;
+
+    // The same record as the page target sends for its own screenshots (see TimelineRecordFactory::createScreenshotData()).
+    auto data = JSON::Object::create();
+    data->setString("imageData"_s, imageData);
+
+    auto record = JSON::Object::create();
+    record->setString("type"_s, Inspector::Protocol::Helpers::getEnumConstantValue(Inspector::Protocol::Timeline::EventType::Screenshot));
+    record->setDouble("startTime"_s, timestamp);
+    record->setObject("data"_s, WTF::move(data));
+
+    auto params = JSON::Object::create();
+    params->setObject("record"_s, WTF::move(record));
+
+    auto message = JSON::Object::create();
+    message->setString("method"_s, "Timeline.eventRecorded"_s);
+    message->setObject("params"_s, WTF::move(params));
+
+    // Resolve the page target now: the main frame may have moved to another process since the page target asked.
+    // Under Site Isolation all page and frame targets share one clock, so the time still fits.
+    sendMessageToInspectorFrontend(PageInspectorTarget::toTargetID(protect(m_inspectedPage)->webPageIDInMainFrameProcess()), message->toJSONString());
 }
 
 void WebPageInspectorController::setEnabledBrowserAgent(InspectorBrowserAgent* agent)

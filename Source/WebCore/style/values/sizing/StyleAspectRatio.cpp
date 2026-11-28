@@ -34,8 +34,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 auto CSSValueConversion<AspectRatio>::operator()(BuilderState& state, const CSSValue& value) -> AspectRatio
 {
@@ -65,7 +64,7 @@ auto CSSValueConversion<AspectRatio>::operator()(BuilderState& state, const CSSV
 
 // Per https://drafts.csswg.org/css-values-4/#combine-ratio, degenerate ratios (those with a zero or
 // infinite term) are not interpolable. Interpolating them in log space would produce NaN or infinity.
-static bool LEGACY_NODELETE isInterpolable(const AspectRatio& aspectRatio)
+NODELETE static bool isInterpolable(const AspectRatio& aspectRatio)
 {
     auto width = aspectRatio.width().value;
     auto height = aspectRatio.height().value;
@@ -91,5 +90,4 @@ auto Blending<AspectRatio>::blend(const AspectRatio& a, const AspectRatio& b, co
     return AspectRatio { a.m_type, Ratio { .numerator = { std::exp(blendedRatio) }, .denominator = { 1 } } };
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -81,7 +81,7 @@ public:
     ~StreamPipeToState();
 
     // ContextDestructionObserver.
-    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
+    NODELETE void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
     void doWrite(JSC::JSValue);
@@ -91,7 +91,7 @@ public:
 
     class AllPromise : public RefCounted<AllPromise> {
     public:
-        static Ref<AllPromise> LEGACY_NODELETE create(Ref<DeferredPromise>&& promise) { return adoptRef(*new AllPromise(WTF::move(promise))); }
+        NODELETE static Ref<AllPromise> create(Ref<DeferredPromise>&& promise) { return adoptRef(*new AllPromise(WTF::move(promise))); }
         void resolve()
         {
             ASSERT(m_waitCount);
@@ -160,13 +160,14 @@ private:
 
     bool m_readableIsClosing { false };
     bool m_shuttingDown { false };
+    bool m_isFinalized { false };
     WeakPtr<PipeToDefaultReadRequest> m_pendingReadRequest;
     RefPtr<DOMPromise> m_pendingWritePromise;
 };
 
 class PipeToDefaultReadRequest : public ReadableStreamReadRequest, public CanMakeWeakPtr<PipeToDefaultReadRequest> {
 public:
-    static Ref<PipeToDefaultReadRequest> LEGACY_NODELETE create(Ref<StreamPipeToState>&& state) { return adoptRef(*new PipeToDefaultReadRequest(WTF::move(state))); }
+    NODELETE static Ref<PipeToDefaultReadRequest> create(Ref<StreamPipeToState>&& state) { return adoptRef(*new PipeToDefaultReadRequest(WTF::move(state))); }
 
     void whenSettled(Function<void()>&& callback)
     {
@@ -392,6 +393,9 @@ void StreamPipeToState::doRead()
 
 void StreamPipeToState::doWrite(JSC::JSValue value)
 {
+    if (m_isFinalized)
+        return;
+
     auto* globalObject = this->globalObject();
     if (!globalObject)
         return;
@@ -716,6 +720,7 @@ void StreamPipeToState::finalize(GetError&& getError)
     if (!globalObject)
         return;
 
+    m_isFinalized = true;
     writableStreamDefaultWriterRelease(m_writer);
     m_reader->releaseLock(*globalObject);
 

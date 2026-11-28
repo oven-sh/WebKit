@@ -39,7 +39,7 @@ void StructureCache::clear()
 
 inline Structure* StructureCache::createEmptyStructure(JSGlobalObject* globalObject, JSObject* prototype, const TypeInfo& typeInfo, const ClassInfo* classInfo, IndexingType indexingType, unsigned inlineCapacity, bool makePolyProtoStructure, FunctionExecutable* executable, ShouldCacheStructure shouldCacheStructure)
 {
-    RELEASE_ASSERT(!!prototype); // We use nullptr inside the UncheckedKeyHashMap for prototype to mean poly proto, so user's of this API must provide non-null prototypes.
+    RELEASE_ASSERT(!!prototype); // We use nullptr inside the HashMap for prototype to mean poly proto, so user's of this API must provide non-null prototypes.
     ASSERT_IMPLIES(makePolyProtoStructure, shouldCacheStructure == ShouldCacheStructure::Yes); // Poly proto structures are keyed by executable rather than by prototype, so sharing them is the point.
 
     // We don't need to lock here because only the main thread can get here, and only the main thread can mutate the cache
@@ -83,7 +83,7 @@ inline Structure* StructureCache::createEmptyStructure(JSGlobalObject* globalObj
 
 Structure* StructureCache::emptyObjectStructureConcurrently(JSObject* prototype, unsigned inlineCapacity)
 {
-    RELEASE_ASSERT(!!prototype); // We use nullptr inside the UncheckedKeyHashMap for prototype to mean poly proto, so user's of this API must provide non-null prototypes.
+    RELEASE_ASSERT(!!prototype); // We use nullptr inside the HashMap for prototype to mean poly proto, so user's of this API must provide non-null prototypes.
     
     PrototypeKey key { prototype, nullptr, inlineCapacity, JSFinalObject::info() };
     Locker locker { m_lock };
@@ -97,7 +97,8 @@ Structure* StructureCache::emptyObjectStructureConcurrently(JSObject* prototype,
 Structure* StructureCache::emptyStructureForPrototypeFromBaseStructure(JSGlobalObject* globalObject, JSObject* prototype, Structure* baseStructure, ShouldCacheStructure shouldCacheStructure)
 {
     // We currently do not have inline capacity static analysis for subclasses and all internal function constructors have a default inline capacity of 0.
-    IndexingType indexingType = baseStructure->indexingType();
+    // Subclass instances are the same kind of exotic object as the base, so they must also report that they may intercept indexed accesses.
+    IndexingType indexingType = baseStructure->indexingModeIncludingHistory() & AllWritableArrayTypesAndHistory;
     prototype->didBecomePrototype(globalObject->vm());
     if (prototype->anyObjectInChainMayInterceptIndexedAccesses() && hasIndexedProperties(indexingType))
         indexingType = (indexingType & ~IndexingShapeMask) | SlowPutArrayStorageShape;

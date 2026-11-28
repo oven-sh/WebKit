@@ -1,0 +1,14 @@
+# the same functions with folding withheld: each operator is built, in its typed form
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = Mul
+# CHECK: = Div
+# CHECK: = Sub
+# CHECK: = Pow
+# RUN(INTEGER): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# INTEGER-LABEL: code f3:Body
+# INTEGER: = Add
+# RUN(TWICE): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# TWICE-LABEL: code f4:Body
+# TWICE-COUNT-2: = LogicalNot
+# PROGRAM-OF: operator-with-its-identity-element-is-its-other-operand.ir

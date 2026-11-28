@@ -351,6 +351,7 @@ Vector<CCallHelpers::Label> emitCallbackEntries(CCallHelpers& jit, unsigned numb
     jit.addPtr(CCallHelpers::TrustedImm32(registersOffsetFromFP), GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
     jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR2);
     moveContextAddress(jit, thunkScratchGPR);
+    jit.loadPtr(CCallHelpers::Address(thunkScratchGPR, CallbackEntryContext::offsetOfCallbacks()), GPRInfo::argumentGPR3);
     jit.loadPtr(CCallHelpers::Address(thunkScratchGPR, CallbackEntryContext::offsetOfEnter()), thunkScratchGPR);
     jit.call(thunkScratchGPR, OperationPtrTag);
 
@@ -424,6 +425,8 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (JSFFICa
     RELEASE_ASSERT(dispatch);
     if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
         auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
+        if (callback->hasCStringArguments())
+            invocation->decodeCStrings(signature);
         dispatch(invocation.get());
     }
     slots[argumentCount] = 0;
@@ -487,7 +490,7 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
                 returnSlot = 0;
                 OPERATION_RETURN(scope, encodedJSUndefined());
             }
-            returnSlot = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->setReturnCString(string.utf8())));
+            returnSlot = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->setReturnCString(makeUTF8CString(string))));
         } else {
             FFI::writeSlotFromJSValue(globalObject, context, signature.returnType(), result, returnSlot, nullptr);
             if (scope.exception()) [[unlikely]] {
@@ -518,9 +521,9 @@ static uint64_t readIncomingArgument(const FFI::CallLayout& layout, unsigned ind
     return 0;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entry, FFI::CallbackRegisters* registers, const void* frame))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entryInBlock, FFI::CallbackRegisters* registers, const void* frame, std::atomic<JSFFICallback*>* callbacksOfBlock))
 {
-    JSFFICallback* callback = FFI::CallbackEntryPool::singleton().callbackAt(entry);
+    JSFFICallback* callback = callbacksOfBlock[entryInBlock].load(std::memory_order_acquire);
     RELEASE_ASSERT(callback);
 
     FFI::Signature& signature = callback->signature();
@@ -542,6 +545,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entry, FFI::
 
 namespace FFI {
 
+static NEVER_INLINE JSValue jsStringFromSlot(VM& vm, ThreadsafeInvocation& invocation, unsigned argumentIndex)
+{
+    return jsString(vm, invocation.takeString(argumentIndex));
+}
+
 void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
 {
     JSFFICallback* callback = invocation.callback();
@@ -555,8 +563,13 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
     } retire { callback };
 
     JSGlobalObject* globalObject = callback->globalObject();
+    if (globalObject->microtaskRunnability() == QueuedTaskResult::Discard) [[unlikely]]
+        return;
+
     VM& vm = globalObject->vm();
-    JSLockHolder locker(vm);
+    std::optional<JSLockHolder> locker;
+    if (!vm.currentThreadIsHoldingAPILock()) [[unlikely]]
+        locker.emplace(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Signature& signature = callback->signature();
@@ -566,7 +579,7 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
     ASSERT(slots.size() == signature.argumentCount());
     MarkedArgumentBuffer arguments;
     for (unsigned i = 0; i < signature.argumentCount(); ++i) {
-        arguments.append(jsValueFromSlot(globalObject, context, signature.argumentType(i), slots[i]));
+        arguments.append(invocation.hasString(i) ? jsStringFromSlot(vm, invocation, i) : jsValueFromSlot(globalObject, context, signature.argumentType(i), slots[i]));
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (arguments.hasOverflowed()) [[unlikely]] {

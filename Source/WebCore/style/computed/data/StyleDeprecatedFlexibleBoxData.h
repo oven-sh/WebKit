@@ -32,17 +32,16 @@
 #include <wtf/RefCounted.h>
 #include <wtf/Ref.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DeprecatedFlexibleBoxData);
 class DeprecatedFlexibleBoxData : public RefCounted<DeprecatedFlexibleBoxData> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DeprecatedFlexibleBoxData, DeprecatedFlexibleBoxData);
 public:
     static Ref<DeprecatedFlexibleBoxData> create() { return adoptRef(*new DeprecatedFlexibleBoxData); }
-    Ref<DeprecatedFlexibleBoxData> LEGACY_NODELETE copy() const;
+    NODELETE Ref<DeprecatedFlexibleBoxData> copy() const;
 
-    bool LEGACY_NODELETE operator==(const DeprecatedFlexibleBoxData&) const;
+    NODELETE bool operator==(const DeprecatedFlexibleBoxData&) const;
 
 #if !LOG_DISABLED
     void dumpDifferences(TextStream&, const DeprecatedFlexibleBoxData&) const;
@@ -62,5 +61,4 @@ private:
     DeprecatedFlexibleBoxData(const DeprecatedFlexibleBoxData&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

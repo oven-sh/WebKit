@@ -66,6 +66,7 @@
 #include "UserGestureIndicator.h"
 #include <limits>
 #include <numeric>
+#include <wtf/Borrow.h>
 #include <wtf/Ref.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -122,13 +123,13 @@ HTMLFormElement::~HTMLFormElement()
     m_radioButtonGroups.clear();
 
     m_defaultButton = nullptr;
-    for (auto& weakElement : m_listedElements) {
+    for (auto& weakElement : borrow(m_listedElements)) {
         ASSERT(weakElement);
         RefPtr listedElement = weakElement->asFormListedElement();
         ASSERT(listedElement);
         listedElement->formWillBeDestroyed();
     }
-    for (auto& imageElement : m_imageElements)
+    for (auto& imageElement : borrow(m_imageElements))
         protect(imageElement)->formWillBeDestroyed();
 }
 
@@ -143,15 +144,17 @@ Node::NeedsPostConnectionSteps HTMLFormElement::insertionSteps(InsertionType ins
 void HTMLFormElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     Ref root = traverseToRootNode(); // Do not rely on rootNode() because our IsInTreeScope is outdated.
+
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
+
     auto listedElements = copyListedElementsVector();
-    for (auto& listedElement : listedElements)
+    for (auto& listedElement : borrow(listedElements))
         listedElement->formOwnerRemovedFromTree(root);
     auto imageElements = WTF::compactMap(m_imageElements, [](auto& weakPtr) {
         return RefPtr { weakPtr.get() };
     });
-    for (auto& imageElement : imageElements)
+    for (auto& imageElement : borrow(imageElements))
         imageElement->formOwnerRemovedFromTree(root);
-    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (removalType.disconnectedFromDocument)
       m_controlsCollection = nullptr; // Avoid leaks since HTMLCollection has a back Ref to this element.
 }
@@ -188,7 +191,7 @@ Vector<AtomString> HTMLFormElement::supportedPropertyNames() const
 void HTMLFormElement::submitImplicitly(Event& event, bool fromImplicitSubmissionTrigger)
 {
     unsigned submissionTriggerCount = 0;
-    for (auto& listedElement : m_listedElements) {
+    for (auto& listedElement : borrow(m_listedElements)) {
         RefPtr formElement = dynamicDowncast<HTMLFormControlElement>(*listedElement);
         if (!formElement)
             continue;
@@ -210,7 +213,7 @@ void HTMLFormElement::submitImplicitly(Event& event, bool fromImplicitSubmission
 
 bool HTMLFormElement::validateInteractively()
 {
-    for (auto& listedElement : m_listedElements) {
+    for (auto& listedElement : borrow(m_listedElements)) {
         if (RefPtr control = listedElement->asValidatedFormListedElement())
             control->hideVisibleValidationMessage();
     }
@@ -229,7 +232,7 @@ bool HTMLFormElement::validateInteractively()
 
     // Focus on the first focusable control and show a validation message.
     bool shouldFocus = true;
-    for (auto& control : unhandledInvalidControls) {
+    for (auto& control : borrow(unhandledInvalidControls)) {
         if (auto validationAnchor = control->focusableValidationAnchorElement()) {
             if (shouldFocus) {
                 shouldFocus = false;
@@ -255,7 +258,9 @@ void HTMLFormElement::submitIfPossible(Event* event, HTMLFormControlElement* sub
     m_isSubmittingOrPreparingForSubmission = true;
     m_shouldSubmit = false;
 
-    for (auto& element : m_listedElements) {
+    // Updating interaction state can run script (via pseudo-class invalidation and
+    // style resolver construction), which must not mutate the list we are iterating.
+    for (auto& element : borrow(m_listedElements)) {
         if (RefPtr formControlElement = dynamicDowncast<HTMLFormControlElement>(*element))
             formControlElement->setInteractedWithSinceLastFormSubmitEvent(true);
     }
@@ -375,7 +380,7 @@ RefPtr<HTMLFormControlElement> HTMLFormElement::findSubmitButton(HTMLFormControl
     if (!needButtonActivation)
         return nullptr;
     RefPtr<HTMLFormControlElement> firstSuccessfulSubmitButton;
-    for (auto& listedElement : m_listedElements) {
+    for (auto& listedElement : borrow(m_listedElements)) {
         RefPtr control = dynamicDowncast<HTMLFormControlElement>(*listedElement);
         if (!control)
             continue;
@@ -413,7 +418,7 @@ void HTMLFormElement::submit(Event* event, bool processingUserGesture, FormSubmi
     if (event && !submitter) {
         // In a case of implicit submission without a submit button, 'submit' event handler might add a submit button. We search for a submit button again.
         auto listedElements = copyListedElementsVector();
-        for (auto& element : listedElements) {
+        for (auto& element : borrow(listedElements)) {
             if (RefPtr control = dynamicDowncast<HTMLFormControlElement>(element.get()); control && control->isSuccessfulSubmitButton()) {
                 submitter = control.get();
                 break;
@@ -642,7 +647,7 @@ void HTMLFormElement::addInvalidFormControl(const HTMLElement& formControlElemen
     ASSERT(static_cast<const Element&>(formControlElement).matchesInvalidPseudoClass());
 
     std::optional<Style::PseudoClassChangeInvalidation> styleInvalidation;
-    if (m_invalidFormControls.isEmptyIgnoringNullReferences())
+    if (m_invalidFormControls.computeIsEmpty())
         emplace(styleInvalidation, *this, { { CSSSelector::PseudoClass::Valid, false }, { CSSSelector::PseudoClass::Invalid, true } });
 
     m_invalidFormControls.add(formControlElement);
@@ -771,7 +776,7 @@ HTMLFormControlElement* HTMLFormElement::defaultButton() const
 {
     if (m_defaultButton)
         return m_defaultButton.get();
-    for (auto& listedElement : m_listedElements) {
+    for (auto& listedElement : borrow(m_listedElements)) {
         if (SUPPRESS_UNCOUNTED_LOCAL auto* control = dynamicDowncast<HTMLFormControlElement>(*listedElement); control && control->isSuccessfulSubmitButton()) {
             m_defaultButton = *control;
             return control;
@@ -882,7 +887,7 @@ void HTMLFormElement::removeFromPastNamesMap(FormAssociatedElement& item)
 
 bool HTMLFormElement::matchesValidPseudoClass() const
 {
-    return m_invalidFormControls.isEmptyIgnoringNullReferences();
+    return m_invalidFormControls.computeIsEmpty();
 }
 
 bool HTMLFormElement::matchesInvalidPseudoClass() const
@@ -948,7 +953,7 @@ void HTMLFormElement::finishParsingChildren()
 
 const Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>>& HTMLFormElement::unsafeListedElements() const
 {
-    ASSERT(ScriptDisallowedScope::InMainThread::hasDisallowedScope());
+    ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::InMainThread::hasDisallowedScope());
     return m_listedElements;
 }
 
@@ -982,7 +987,7 @@ const AtomString& HTMLFormElement::autocomplete() const
 RefPtr<DOMFormData> HTMLFormElement::constructEntryList(RefPtr<HTMLFormControlElement>&& submitter, Ref<DOMFormData>&& domFormData, StringPairVector* formValues)
 {
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#constructing-form-data-set
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     
     if (m_isConstructingEntryList)
         return nullptr;

@@ -28,6 +28,7 @@
 #include "config.h"
 #include "SVGRenderSupport.h"
 
+#include "ContainerNodeInlines.h"
 #include "DashArray.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "LegacyRenderSVGForeignObject.h"
@@ -60,6 +61,7 @@
 #include "SVGGeometryElement.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
+#include "SVGSVGElement.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TransformOperationData.h"
@@ -88,8 +90,8 @@ std::optional<FloatRect> SVGRenderSupport::computeFloatVisibleRectInContainer(co
 {
     // Ensure our parent is an SVG object.
     ASSERT(renderer.parent());
-    auto& parent = *renderer.parent();
-    if (!is<SVGElement>(parent.element()))
+    CheckedRef parent = *renderer.parent();
+    if (!is<SVGElement>(parent->element()))
         return FloatRect();
 
     FloatRect adjustedRect = rect;
@@ -98,22 +100,21 @@ std::optional<FloatRect> SVGRenderSupport::computeFloatVisibleRectInContainer(co
     // Translate to coords in our parent renderer, and then call computeFloatVisibleRectInContainer() on our parent.
     adjustedRect = renderer.localToParentTransform().mapRect(adjustedRect);
 
-    return parent.computeFloatVisibleRectInContainer(adjustedRect, container, context, state);
+    return parent->computeFloatVisibleRectInContainer(adjustedRect, container, context, state);
 }
 
 const RenderElement& SVGRenderSupport::localToParentTransform(const RenderElement& renderer, AffineTransform &transform)
 {
     ASSERT(renderer.parent());
-    auto& parent = *renderer.parent();
 
     // At the SVG/HTML boundary (aka LegacyRenderSVGRoot), we apply the localToBorderBoxTransform
     // to map an element from SVG viewport coordinates to CSS box coordinates.
-    if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(parent))
+    if (CheckedPtr svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(renderer.parent()))
         transform = svgRoot->localToBorderBoxTransform() * renderer.localToParentTransform();
     else
         transform = renderer.localToParentTransform();
 
-    return parent;
+    return *renderer.parent();
 }
 
 void SVGRenderSupport::mapLocalToContainer(const RenderElement& renderer, const RenderLayerModelObject* ancestorContainer, TransformState& transformState, bool* wasFixed)
@@ -122,12 +123,12 @@ void SVGRenderSupport::mapLocalToContainer(const RenderElement& renderer, const 
         return;
 
     AffineTransform transform;
-    auto& parent = localToParentTransform(renderer, transform);
+    CheckedRef parent = localToParentTransform(renderer, transform);
 
     transformState.applyTransform(transform);
 
     OptionSet<MapCoordinatesMode> mode = MapCoordinatesMode::UseTransforms;
-    parent.mapLocalToContainer(ancestorContainer, transformState, mode, wasFixed);
+    parent->mapLocalToContainer(ancestorContainer, transformState, mode, wasFixed);
 }
 
 const RenderElement* SVGRenderSupport::pushMappingToContainer(const RenderElement& renderer, const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap& geometryMap)
@@ -135,10 +136,10 @@ const RenderElement* SVGRenderSupport::pushMappingToContainer(const RenderElemen
     ASSERT_UNUSED(ancestorToStopAt, ancestorToStopAt != &renderer);
 
     AffineTransform transform;
-    auto& parent = localToParentTransform(renderer, transform);
+    localToParentTransform(renderer, transform);
 
     geometryMap.push(&renderer, transform);
-    return &parent;
+    return renderer.parent();
 }
 
 LayoutRepainter::CheckForRepaint SVGRenderSupport::checkForSVGRepaintDuringLayout(const RenderElement& renderer)
@@ -264,11 +265,11 @@ static inline void invalidateResourcesOfChildren(RenderElement& renderer)
     if (auto* resources = SVGResourcesCache::cachedResourcesForRenderer(renderer))
         resources->removeClientFromCacheAndMarkForInvalidation(renderer, false);
 
-    for (auto& child : childrenOfType<RenderElement>(renderer))
+    for (CheckedRef child : childrenOfType<RenderElement>(renderer))
         invalidateResourcesOfChildren(child);
 }
 
-static inline bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
+NODELETE static inline bool layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
 {
     for (auto* start = &renderer; start; start = start->parent()) {
         if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(*start))
@@ -280,8 +281,9 @@ static inline bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged(const Rend
     return false;
 }
 
-bool SVGRenderSupport::transformToRootChanged(RenderElement* ancestor)
+bool SVGRenderSupport::transformToRootChanged(RenderElement* renderer)
 {
+    CheckedPtr ancestor = renderer;
     while (ancestor && !ancestor->isRenderOrLegacyRenderSVGRoot()) {
         if (CheckedPtr container = dynamicDowncast<LegacyRenderSVGTransformableContainer>(*ancestor))
             return container->didTransformToRootUpdate();
@@ -305,9 +307,9 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
     bool transformChanged = transformToRootChanged(&start);
     SingleThreadWeakHashSet<RenderElement> elementsThatDidNotReceiveLayout;
 
-    for (auto& child : childrenOfType<RenderObject>(start)) {
+    for (CheckedRef child : childrenOfType<RenderObject>(start)) {
         bool needsLayout = selfNeedsLayout;
-        bool childEverHadLayout = child.everHadLayout();
+        bool childEverHadLayout = child->everHadLayout();
 
         if (transformChanged) {
             // If the transform changed we need to update the text metrics (note: this also happens for layoutSizeChanged=true).
@@ -318,7 +320,7 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
 
         if (layoutSizeChanged) {
             // When selfNeedsLayout is false and the layout size changed, we have to check whether this child uses relative lengths
-            if (RefPtr element = dynamicDowncast<SVGElement>(child.node()); element && element->hasRelativeLengths()) {
+            if (RefPtr element = dynamicDowncast<SVGElement>(child->node()); element && element->hasRelativeLengths()) {
                 // When the layout size changed and when using relative values tell the LegacyRenderSVGShape to update its shape object
                 if (auto* shape = dynamicDowncast<LegacyRenderSVGShape>(child))
                     shape->setNeedsShapeUpdate();
@@ -326,15 +328,15 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
                     svgText->setNeedsTextMetricsUpdate();
                     svgText->setNeedsPositioningValuesUpdate();
                 }
-                child.setNeedsTransformUpdate();
+                child->setNeedsTransformUpdate();
                 needsLayout = true;
             }
         }
 
         if (needsLayout)
-            child.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            child->setNeedsLayout(MarkingBehavior::OnlyThis);
 
-        if (child.needsLayout()) {
+        if (child->needsLayout()) {
             CheckedRef childElement = downcast<RenderElement>(child);
             layoutDifferentRootIfNeeded(childElement);
             childElement->layout();
@@ -343,22 +345,22 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
             // We could handle this in the individual objects, but for now it's easier to have
             // parent containers call repaint().  (RenderBlock::layout* has similar logic.)
             if (!childEverHadLayout)
-                child.repaint();
+                child->repaint();
         } else if (layoutSizeChanged) {
             if (CheckedPtr childElement = dynamicDowncast<RenderElement>(child))
                 elementsThatDidNotReceiveLayout.add(*childElement);
         }
 
-        ASSERT(!child.needsLayout());
+        ASSERT(!child->needsLayout());
     }
 
     if (!layoutSizeChanged) {
-        ASSERT(elementsThatDidNotReceiveLayout.isEmptyIgnoringNullReferences());
+        ASSERT(elementsThatDidNotReceiveLayout.computeIsEmpty());
         return;
     }
 
     // If the layout size changed, invalidate all resources of all children that didn't go through the layout() code path.
-    for (auto& element : elementsThatDidNotReceiveLayout)
+    for (CheckedRef element : elementsThatDidNotReceiveLayout)
         invalidateResourcesOfChildren(element);
 }
 
@@ -381,13 +383,13 @@ void SVGRenderSupport::intersectRepaintRectWithResources(const RenderElement& re
     if (!resources)
         return;
 
-    if (LegacyRenderSVGResourceFilter* filter = resources->filter())
+    if (CheckedPtr filter = resources->filter())
         repaintRect = filter->resourceBoundingBox(renderer, repaintRectCalculation);
 
-    if (LegacyRenderSVGResourceClipper* clipper = resources->clipper())
+    if (CheckedPtr clipper = resources->clipper())
         repaintRect.intersect(clipper->resourceBoundingBox(renderer, repaintRectCalculation));
 
-    if (auto* masker = resources->masker())
+    if (CheckedPtr masker = resources->masker())
         repaintRect.intersect(masker->resourceBoundingBox(renderer, repaintRectCalculation));
 }
 
@@ -395,15 +397,15 @@ FloatRect SVGRenderSupport::computeContainerDecoratedBoundingBox(const RenderEle
 {
     FloatRect decoratedBoundingBox;
 
-    for (auto& current : childrenOfType<RenderObject>(container)) {
-        if (current.isLegacyRenderSVGHiddenContainer())
+    for (CheckedRef current : childrenOfType<RenderObject>(container)) {
+        if (current->isLegacyRenderSVGHiddenContainer())
             continue;
-        if (auto* shape = dynamicDowncast<LegacyRenderSVGShape>(current); shape && shape->isRenderingDisabled())
+        if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(current); shape && shape->isRenderingDisabled())
             continue;
 
-        FloatRect childDecoratedBox = current.decoratedBoundingBox();
+        FloatRect childDecoratedBox = current->decoratedBoundingBox();
 
-        const AffineTransform& transform = current.localToParentTransform();
+        const AffineTransform& transform = current->localToParentTransform();
         if (!transform.isIdentity())
             childDecoratedBox = transform.mapRect(childDecoratedBox);
 
@@ -442,6 +444,7 @@ inline FloatRect clipPathReferenceBox(const RenderElement& renderer, CSSBoxType 
     bool isBoxRelativeToRendererGeometry = true;
     switch (boxType) {
     case CSSBoxType::BorderBox:
+    case CSSBoxType::HalfBorderBox:
     case CSSBoxType::MarginBox:
     case CSSBoxType::StrokeBox:
     case CSSBoxType::BoxMissing:
@@ -520,10 +523,50 @@ bool SVGRenderSupport::pointInClippingArea(const RenderElement& renderer, const 
     if (!resources)
         return true;
 
-    if (LegacyRenderSVGResourceClipper* clipper = resources->clipper())
+    if (CheckedPtr clipper = resources->clipper())
         return clipper->hitTestClipContent(renderer.objectBoundingBox(), point);
 
     return true;
+}
+
+AffineTransform SVGRenderSupport::legacyNonScalingStrokeTransform(const SVGElement& element)
+{
+    // We intentionally do NOT use getScreenCTM() here. getScreenCTM() now returns
+    // the full accumulated CSS transform matrix (including transforms from HTML
+    // ancestors like a scaled <body>). However, the legacy SVG paint context only
+    // includes SVG-internal transforms plus position offsets — HTML ancestor CSS
+    // transforms are applied at the compositing/layer level. Using the full
+    // getScreenCTM() would cause non-scaling-stroke to over-compensate for
+    // transforms that are already handled by the layer system.
+    //
+    // Instead, walk the SVG ancestor chain accumulating SVG-internal transforms,
+    // and at the outermost <svg>, use localToAbsolute (point-mapping only) which
+    // correctly discards the rotation/scale components of HTML ancestor CSS transforms.
+    AffineTransform ctm;
+    RefPtr<const SVGSVGElement> outermostSVG;
+    for (RefPtr<const Element> current = &element; current; current = current->parentOrShadowHostElement()) {
+        RefPtr svgElement = dynamicDowncast<SVGElement>(*current);
+        if (!svgElement)
+            break;
+        ctm = svgElement->localCoordinateSpaceTransform(CTMScope::NearestViewportScope).multiply(ctm);
+        if (RefPtr svgSVGElement = dynamicDowncast<SVGSVGElement>(*svgElement))
+            outermostSVG = WTF::move(svgSVGElement);
+    }
+
+    // Now add the outermost SVG's screen position as a translation.
+    if (outermostSVG) {
+        if (CheckedPtr renderer = outermostSVG->renderer()) {
+            if (CheckedPtr legacyRoot = dynamicDowncast<LegacyRenderSVGRoot>(*renderer)) {
+                FloatPoint location = legacyRoot->localToBorderBoxTransform().mapPoint(FloatPoint());
+                float zoomFactor = 1 / renderer->style().usedZoom();
+                location = renderer->localToAbsolute(location, MapCoordinatesMode::UseTransforms);
+                location.scale(zoomFactor);
+                ctm = AffineTransform::makeTranslation(toFloatSize(location)) * ctm;
+            }
+        }
+    }
+
+    return ctm;
 }
 
 void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const Style::ComputedStyle& style, const RenderElement& renderer)
@@ -607,8 +650,8 @@ void SVGRenderSupport::updateAncestorNonScalingStrokeCounts(RenderElement& rende
 
 bool SVGRenderSupport::computeHasScalingAncestor(const RenderElement& renderer)
 {
-    auto* parent = renderer.parent();
-    if (auto* svgModelObject = dynamicDowncast<LegacyRenderSVGModelObject>(parent))
+    CheckedPtr parent = renderer.parent();
+    if (CheckedPtr svgModelObject = dynamicDowncast<LegacyRenderSVGModelObject>(parent))
         return svgModelObject->hasScalingAncestor() || !svgModelObject->localToParentTransform().isIdentityOrTranslation();
     if (auto* root = dynamicDowncast<LegacyRenderSVGRoot>(parent))
         return !root->localToBorderBoxTransform().isIdentityOrTranslation();
@@ -641,7 +684,7 @@ void SVGRenderSupport::updateMaskedAncestorShouldIsolateBlending(const RenderEle
     ASSERT(element);
     ASSERT(element->isSVGElement());
     for (Ref ancestor : ancestorsOfType<SVGGraphicsElement>(*element)) {
-        auto* style = ancestor->computedStyle();
+        CheckedPtr style = ancestor->computedStyle();
         if (!style || !isolatesBlending(*style))
             continue;
         if (style->hasPositionedMask())
@@ -707,10 +750,9 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
         ASSERT(renderer.hasNonScalingStroke());
 
         auto strokeBoundingBox = fillBoundingBox;
-        auto nonScalingTransform = renderer.nonScalingStrokeTransform();
+        auto nonScalingTransform = renderer.computeNonScalingStrokeTransform();
         if (auto inverse = nonScalingTransform.inverse()) {
-            auto* usePath = renderer.nonScalingStrokePath(&renderer.path(), nonScalingTransform);
-            auto strokeBoundingRect = calculateApproximateScalingStrokeBoundingBox(renderer, usePath->fastBoundingRect());
+            auto strokeBoundingRect = calculateApproximateScalingStrokeBoundingBox(renderer, renderer.nonScalingStrokePath(renderer.path(), nonScalingTransform).fastBoundingRect());
             strokeBoundingRect = inverse.value().mapRect(strokeBoundingRect);
             if (!strokeBoundingRect.isNaN())
                 strokeBoundingBox.unite(strokeBoundingRect);
@@ -733,11 +775,11 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
         return shape->adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
     }
 
-    const auto& shape = downcast<RenderSVGShape>(renderer);
-    auto strokeBoundingBox = calculate(shape);
+    CheckedRef shape = downcast<RenderSVGShape>(renderer);
+    auto strokeBoundingBox = calculate(shape.get());
     if (purpose == StrokeBoundingBoxPurpose::HitTesting)
         return strokeBoundingBox;
-    return shape.adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
+    return shape->adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
 }
 
 }

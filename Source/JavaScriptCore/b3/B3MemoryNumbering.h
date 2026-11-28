@@ -174,7 +174,7 @@ private:
     LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_values;
     LayeredHashMap<PureCallKey, Value*, PureCallKeyHash> m_pureCalls;
     LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_copiesOfPartsOfAddresses;
-    UncheckedKeyHashMap<Value*, Value*> m_firstCopies;
+    HashMap<Value*, Value*> m_firstCopies;
     LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
     const bool m_validates;
     Vector<ReplacedLoad> m_replacedLoads;
@@ -188,7 +188,7 @@ private:
         Value* store;
     };
     Vector<LoadToLog> m_loadsToLog;
-    UncheckedKeyHashMap<ValueKey, Value*> m_storesToLog;
+    HashMap<ValueKey, Value*> m_storesToLog;
 };
 
 } } // namespace JSC::B3

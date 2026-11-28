@@ -1,0 +1,169 @@
+# `o.m()`, `o.g`, `o.g = v`, `C.s()`, `super.m()`, `super.g = v` and `super(..)`, where the receiver is proven and neither its layout nor what lies above it can change: a direct call with `this`, with no read of the member and no test of the callee
+# class Plain { name(y) { return y; }  get size() { return 1; }  set size(v) { kept = v; }  static make(y) { return y; } }
+# class Base { constructor(x) { }  name(y) { return y; }  set size(v) { kept = v; } }  class Derived extends Base { constructor(x) { super(x); }  name(y) { super.size = y;  return super.name(y); } }
+# function ask(p) { p.size = p.name(p.size);  return Plain.make(2); }  ask(new Plain());  new Derived(2).name(3);
+# RUN: walk f9 mechanisms=-Inlining
+# CHECK-LABEL: code f9:Body
+# CHECK-NOT: PropGet
+# CHECK-NOT: PropSet
+# CHECK-NOT: TypeTest
+# CHECK-NOT: = Call v
+# CHECK: [[size]]: {{*}} = CallDirect [[p]] function=f3
+# CHECK: = CallDirect [[p]], {{*}} function=f2
+# CHECK: = CallDirect [[p]], {{*}} function=f4
+# CHECK: = CallDirect {{*}}function=f5
+# RUN(SUPER): walk f8 f7 mechanisms=-Inlining
+# SUPER-LABEL: code f8:Body
+# SUPER-NOT: SuperGet
+# SUPER-NOT: SuperSet
+# SUPER-NOT: GetSuperBase
+# SUPER-NOT: = Call v
+# SUPER: = CallDirect {{*}}function=f11
+# SUPER: = CallDirect {{*}}function=f6
+# SUPER-LABEL: code f7:Body
+# SUPER-NOT: SuperConstruct
+# SUPER-NOT: GetSuperBase
+# SUPER: = CallDirect {{*}}function=f1 [isConstruction]
+# RUN(COPIED): walk f9 f7 mechanisms=all
+# COPIED-LABEL: code f9:Body
+# COPIED-NOT: PropGet
+# COPIED-NOT: PropSet
+# COPIED-NOT: Call
+# COPIED-LABEL: code f7:Body
+# COPIED-NOT: Call
+# COPIED-NOT: GetConstructPrototype
+# COPIED-NOT: GetClassPrototype
+# COPIED: [[made]]: L1 {{*}} = NewObject layout=L1
+# RUN(WITHHELD): walk f9 f8 mechanisms=-DirectCalls
+# WITHHELD-LABEL: code f9:Body
+# WITHHELD-NOT: CallDirect
+# WITHHELD: PropGet {{*}}key="size"
+# WITHHELD: PropSet {{*}}key="size"
+# WITHHELD-LABEL: code f8:Body
+# WITHHELD-NOT: CallDirect
+# WITHHELD: = Call v
+# RUN(CLOSED): walk f9 f8 f7 mechanisms=none
+# CLOSED-LABEL: code f9:Body
+# CLOSED: PropGet {{*}}key="name"
+# CLOSED-LABEL: code f8:Body
+# CLOSED: SuperSet
+# CLOSED: SuperGet
+# CLOSED-LABEL: code f7:Body
+# CLOSED: SuperConstruct
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Plain" module=m0 constructor=f10
+variable g0 name="Plain" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="kept" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f10
+    v1 = NewClass v0 layout=L2
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L2 key="name"
+    v5 = NewClosure function=f3
+    DefineMethod v1, v5 layout=L2 methodKind=Getter index=1 key="size"
+    v7 = NewClosure function=f4
+    DefineMethod v1, v7 layout=L2 methodKind=Setter index=2 key="size"
+    v9 = NewClosure function=f5
+    DefineMethod v1, v9 layout=L2 side=Static index=3 key="make"
+    v11 = FinishClass v1 layout=L2
+    v12 = NewClosure function=f1
+    v13 = NewClass v12 layout=L0
+    v14 = NewClosure function=f6
+    DefineMethod v13, v14 layout=L0 key="name"
+    v16 = NewClosure function=f11
+    DefineMethod v13, v16 layout=L0 methodKind=Setter index=1 key="size"
+    v18 = FinishClass v13 layout=L0
+    v19 = ResolveHeritage v18
+    v20 = NewClosure function=f7
+    v21 = NewClass v20, v18, v19 layout=L1
+    PutModuleVariable v21 variable=g1
+    v23 = NewClosure function=f8
+    DefineMethod v21, v23 layout=L1 key="name"
+    v25 = FinishClass v21 layout=L1
+    v26 = Construct v11
+    v27 = NewClosure function=f9
+    v28 = Call v27, -, v26 calleeName="ask"
+    v29 = Integer integer=2
+    v30 = Construct v25, -, v29
+    v31 = PropGet v30 key="name"
+    v32 = Integer integer=3
+    v33 = Call v31, v30, v32 calleeKey="name"
+    v34 = Undefined
+    Return v34
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+function f2 name="name" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="size" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f4 name="size" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v1 variable=g2
+    v3 = Undefined
+    Return v3
+}
+function f5 name="make" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="name" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f7 name="Derived" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}
+function f8 name="name" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    v3 = GetSuperBase v2 homeKind=ClassPrototype
+    SuperSet v3, v0, v1 key="size"
+    v5 = GetSuperBase v2 homeKind=ClassPrototype
+    v6 = SuperGet v5, v0 key="name"
+    v7 = Call v6, v0, v1 calleeName="super.name"
+    Return v7
+}
+function f9 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="name"
+    v2 = PropGet v0 key="size"
+    v3 = Call v1, v0, v2 calleeKey="name"
+    PropSet v0, v3 key="size"
+    v5 = GetModuleVariable variable=g0
+    v6 = PropGet v5 key="make"
+    v7 = Integer integer=2
+    v8 = Call v6, v5, v7 calleeKey="make"
+    Return v8
+}
+function f10 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f11 name="size" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v1 variable=g2
+    v3 = Undefined
+    Return v3
+}

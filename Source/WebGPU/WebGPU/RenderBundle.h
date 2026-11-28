@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
@@ -62,7 +66,7 @@ class TextureView;
 class RenderBundle final : public WebGPU::RenderBundle {
     WTF_MAKE_TZONE_ALLOCATED(RenderBundle);
 public:
-    using MinVertexCountsContainer = HashMap<uint64_t, IndexBufferAndIndexData, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using MinVertexCountsContainer = HashMap<uint64_t, IndexBufferAndIndexData>;
     using ResourcesContainer = NSMapTable<id<MTLResource>, ResourceUsageAndRenderStage*>;
     static Ref<RenderBundle> create(NSArray<RenderBundleICBWithResources*> *resources, Vector<WebGPU::Metal::BindableResources>&& bindableResources, RefPtr<WebGPU::Metal::RenderBundleEncoder> encoder, std::span<const std::optional<WebGPU::TextureFormat>> colorFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat, uint32_t sampleCount, bool depthReadOnly, bool stencilReadOnly, uint64_t commandCount, bool makeSubmitInvalid, HashSet<RefPtr<const BindGroup>>&& bindGroups, Device& device)
     {
@@ -77,19 +81,19 @@ public:
 
     void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
 
     Device& device() const { return m_device; }
     NSArray<RenderBundleICBWithResources*> *renderBundlesResources() const { return m_renderBundlesResources; }
 
-    void replayCommands(RenderPassEncoder&) const;
+    void replayCommands(RenderPassEncoder&, float minDepth, float maxDepth) const;
     void updateMinMaxDepths(float minDepth, float maxDepth);
     bool validateRenderPass(bool depthReadOnly, bool stencilReadOnly, const Vector<TextureOrTextureView>&, const std::optional<TextureOrTextureView>&) const;
-    bool LEGACY_NODELETE validatePipeline(const RenderPipeline*);
-    uint64_t LEGACY_NODELETE drawCount() const;
-    NSString* LEGACY_NODELETE lastError() const;
-    bool LEGACY_NODELETE requiresCommandReplay() const;
-    bool LEGACY_NODELETE makeSubmitInvalid() const;
+    NODELETE bool validatePipeline(const RenderPipeline*);
+    NODELETE uint64_t drawCount() const;
+    NODELETE NSString* lastError() const;
+    NODELETE bool requiresCommandReplay() const;
+    NODELETE bool makeSubmitInvalid() const;
     bool rebindSamplersIfNeeded() const;
     void releaseDestroyedResources();
     const Vector<WebGPU::Metal::BindableResources>& resources() LIFETIME_BOUND { return m_resources; }
@@ -99,7 +103,7 @@ private:
     RenderBundle(Device&, NSString*);
 
     const Ref<Device> m_device;
-    RefPtr<RenderBundleEncoder> m_renderBundleEncoder;
+    const RefPtr<RenderBundleEncoder> m_renderBundleEncoder;
     NSArray<RenderBundleICBWithResources*> *m_renderBundlesResources;
     Vector<WebGPU::Metal::BindableResources> m_resources;
     const Vector<std::optional<WebGPU::TextureFormat>> m_colorFormats;

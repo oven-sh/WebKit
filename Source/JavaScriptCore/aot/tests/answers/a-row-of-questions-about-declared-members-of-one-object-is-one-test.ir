@@ -1,0 +1,1276 @@
+# A ROW OF QUESTIONS ABOUT DECLARED MEMBERS OF ONE OBJECT IS ONE TEST.
+# `$findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step") && ..`: the cell was asked once, but each name tested the byte of its own guard. The first question of a row now lists the guards of the whole row,
+# and the names of one class are asked by one byte; behind its yes the state knows each guard to hold, and the questions behind it are yes without a record.
+# A ROW GOES ON ONLY WHILE A NO OF THE NEXT QUESTION IS WHAT A NO OF THE FIRST ONE IS: the next block is entered by the yes alone, nothing in it is seen but the question, the object and the receivers are the same,
+# and both noes come to one place. `apart` has two places for its noes, `between` a call between its questions, `mixed` a name that the heir lays anew: none of them is a row.
+# WHAT IS KNOWN BEHIND THE YES ENDS AS IT DID: a relink, a call, an await bring the question back.
+# function Meter(level) { this.level = level; }
+# Meter.prototype.read = function () { return "read"; };
+# Meter.prototype.step = function () { return "step"; };
+# Meter.prototype.name = function () { return "name"; };
+# Meter.prototype.unit = function () { return "unit"; };
+# function Gauge(level) { this.level = level; }
+# Object.setPrototypeOf(Gauge.prototype, Meter.prototype);
+# Gauge.prototype.step = heirs();
+# class Dial { constructor(level) { this.level = level; } libraryRead() { return "read"; } libraryName() { return "name"; } }
+# early(Meter);
+# function row(object) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step") && $findsDeclaredMember(object, "name") && $findsDeclaredMember(object, "unit")) return "all " + object.name(); return "- " + object.name(); }
+# function bare(object) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step")) return "all"; return "-"; }
+# function apart(object) { if (!$findsDeclaredMember(object, "read")) return "no read"; if (!$findsDeclaredMember(object, "name")) return "no name " + object.name(); return "both " + object.name(); }
+# function between(object) { if ($findsDeclaredMember(object, "read")) { note(); if ($findsDeclaredMember(object, "name")) return "both " + object.name(); } return "- " + object.name(); }
+# function keeps(object) { if (!($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step") && $findsDeclaredMember(object, "name"))) return false; return true; }
+# function user(object) { if (keeps(object)) return "kept " + object.name(); return "slow " + object.name(); }
+# function again(object) { if (!($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name"))) return "- " + object.name(); if ($findsDeclaredMember(object, "name")) return "again " + object.name(); return "lost " + object.name(); }
+# function caught(object) { try { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name")) return "both " + object.name(); fail(); } catch { return "caught " + object.name(); } return "no throw"; }
+# function valued(object) { const finds = $findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name"); return finds ? "valued " + object.name() : "- " + object.name(); }
+# function turns(object, count) { let text = ""; for (let turn = 0; turn < count; turn++) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name")) text += "y"; else text += "n"; if (turn === 1) amid(object); } return text; }
+# function relinked(object, link) { if (!($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name"))) return "-"; Object.setPrototypeOf(object, link); if ($findsDeclaredMember(object, "name")) return "both " + object.name(); return "first " + object.name(); }
+# function alias(object, same, link) { if (!($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name"))) return "-"; Object.setPrototypeOf(same, link); if ($findsDeclaredMember(object, "name")) return "both " + object.name(); return "first " + object.name(); }
+# async function awaited(object) { if (!($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name"))) return "-"; await undefined; if ($findsDeclaredMember(object, "name")) return "both " + object.name(); return "first " + object.name(); }
+# function pair(object) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "name")) return "pair " + object.name(); return "- " + object.name(); }
+# function mixed(object) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step") && $findsDeclaredMember(object, "name")) return "mixed " + object.step(); return "- " + object.step(); }
+# function dial(object) { if ($findsDeclaredMember(object, "libraryRead") && $findsDeclaredMember(object, "libraryName")) return "dial " + object.libraryName(); return "- " + object.libraryName(); }
+# function others(object, other) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(other, "name")) return "others " + other.name(); return "- " + other.name(); }
+# function all(object) { return [row(object), apart(object), between(object), user(object), again(object), caught(object), valued(object)].join(" | "); }
+# print(bare(new Meter(1)), bare({ read() { } }), bare(7), bare(null), bare(new Proxy(new Meter(1), { })));
+# print(all(new Meter(1)));
+# print(pair(new Meter(5)), pair(new Gauge(5)), mixed(new Meter(5)), mixed(new Gauge(5)));
+# print(others(new Meter(5), new Meter(5)));
+# const twin = new Meter(6);
+# print(relinked(new Meter(6), above()), alias(twin, twin, above()), alias(new Meter(6), new Meter(6), above()));
+# const kept = new Meter(2);
+# amid(kept);
+# print(all(kept));
+# print(all(new Meter(3)));
+# print(pair(new Meter(5)), pair(new Gauge(5)), mixed(new Meter(5)), mixed(new Gauge(5)));
+# print(turns(new Meter(4), count()), noted());
+# const face = new Dial(7);
+# print(dial(face));
+# amid(face, "libraryName");
+# print(dial(face), dial(new Dial(8)));
+# const late = new Meter(9);
+# awaited(late).then(print);
+# last(late);
+# L0 = Dial . L1 = Meter . L2 = Gauge . f1 = row . f2 = apart . f3 = between . f4 = keeps . f5 = user . f6 = again . f7 = caught . f8 = valued . f11 = bare . f12 = turns . f13 = relinked . f14 = alias . f15 = awaited . f16 = pair . f17 = mixed . f18 = dial . f19 = others
+# OPTIONS: mechanisms=all
+# RUN(ROW): walk f1
+# ROW: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="step"}, {layout=L1 key="name"}, {layout=L1 key="unit"}] receivers=[L1]
+# ROW-NOT: = AreMembersUnchanged
+# ROW-NOT: = FindsDeclaredMember
+# ROW: Return
+# RUN(APART): walk f2
+# APART: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}] receivers=[L1]
+# APART: = AreMembersUnchanged conditions=[{layout=L1 key="name"}]
+# RUN(BETWEEN): walk f3
+# BETWEEN: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}] receivers=[L1]
+# BETWEEN: calleeName="note"
+# BETWEEN: = FindsDeclaredMember {{*}}key="name" conditions=[{layout=L1 key="name"}] receivers=[L1]
+# The row of a callee that is copied in line.
+# RUN(USER): walk f5
+# USER: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="step"}, {layout=L1 key="name"}] receivers=[L1]
+# USER-NOT: = AreMembersUnchanged
+# USER-NOT: = FindsDeclaredMember
+# USER: = HasLayoutPrototype
+# A name of the row that is asked again further down is yes as well.
+# RUN(AGAIN): walk f6
+# AGAIN: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# AGAIN-NOT: = AreMembersUnchanged
+# AGAIN-NOT: = FindsDeclaredMember
+# AGAIN-NOT: string="lost "
+# AGAIN: Return
+# RUN(CAUGHT): walk f7
+# CAUGHT: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# CAUGHT-NOT: = AreMembersUnchanged
+# CAUGHT: Return
+# A row whose last answer is handed on as a value.
+# RUN(VALUED): walk f8
+# VALUED: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# VALUED-NOT: = FindsDeclaredMember
+# VALUED: Return
+# RUN(TURNS): walk f12
+# TURNS: isLoopHead=true
+# TURNS: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# TURNS-NOT: = AreMembersUnchanged
+# TURNS: calleeName="amid"
+# RUN(RELINKS): walk f13
+# RELINKS: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# RELINKS: overload=ObjectSetPrototypeOf
+# RELINKS: = FindsDeclaredMember {{*}}key="name"
+# RUN(ALIAS): walk f14
+# ALIAS: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# ALIAS: overload=ObjectSetPrototypeOf
+# ALIAS: = FindsDeclaredMember {{*}}key="name"
+# RUN(AWAITED): walk f15:CoroutineBody
+# AWAITED: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L1 key="name"}] receivers=[L1]
+# AWAITED: = AwaitBySavingFrame
+# AWAITED: = FindsDeclaredMember {{*}}key="name"
+# Two classes: the names of each by one guard, the two guards by one count.
+# RUN(PAIR): walk f16
+# PAIR: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L2 key="read"}, {layout=L1 key="name"}, {layout=L2 key="name"}] receivers=[L1, L2]
+# PAIR-NOT: = AreMembersUnchanged
+# PAIR-NOT: = FindsDeclaredMember
+# PAIR: Return
+# The heir lays a `step` of its own: the receivers of the second question are fewer: no row.
+# RUN(MIXED): walk f17
+# MIXED: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}, {layout=L2 key="read"}] receivers=[L1, L2]
+# MIXED: = FindsDeclaredMember {{*}}key="step" conditions=[{layout=L1 key="step"}] receivers=[L1]
+# MIXED: = AreMembersUnchanged conditions=[{layout=L1 key="name"}]
+# Two objects: no row.
+# RUN(OTHERS): walk f19
+# OTHERS: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}] receivers=[L1]
+# OTHERS: = FindsDeclaredMember {{*}}key="name" conditions=[{layout=L1 key="name"}] receivers=[L1]
+# A class in class syntax: its guards hold while they are clear.
+# RUN(DIAL): walk f18
+# DIAL: = FindsDeclaredMember {{*}}key="libraryRead" conditions=[{layout=L0 key="libraryRead"}, {layout=L0 key="libraryName"}] receivers=[L0]
+# DIAL-NOT: = AreMembersUnchanged
+# DIAL: Return
+# UNDER THE WORD what a yes without a record leans on is asked again: the bit of the cell and the guard.
+# RUN(NET): walk f6 mechanisms=all testing=CheckProofsAtRunTime
+# NET: = FindsDeclaredMember {{*}}key="read"
+# NET: = HasLayoutPrototype
+# NET: CheckProof
+# NET: = AreMembersUnchanged conditions=[{layout=L1 key="name"}]
+# NET-NEXT: CheckProof
+# Without folding nothing is known behind a yes, and no row is listed.
+# RUN(UNFOLDED): walk f1 mechanisms=-Folding
+# UNFOLDED: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L1 key="read"}] receivers=[L1]
+# RUN(NOTHING): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; 
+# NOTHING: all - - - -
+# NOTHING-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# NOTHING-NEXT: pair name pair name mixed step - heir
+# NOTHING-NEXT: others name
+# NOTHING-NEXT: first other first other both name
+# NOTHING-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# NOTHING-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# NOTHING-NEXT: pair name pair name mixed step - heir
+# NOTHING-NEXT: yyy 3
+# NOTHING-NEXT: dial name
+# NOTHING-NEXT: dial name dial name
+# NOTHING-NEXT: both name
+# NOTHING-NEXT: exited with 0
+# RUN(NOTHINGCHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; 
+# NOTHINGCHECKED: all - - - -
+# NOTHINGCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# NOTHINGCHECKED-NEXT: pair name pair name mixed step - heir
+# NOTHINGCHECKED-NEXT: others name
+# NOTHINGCHECKED-NEXT: first other first other both name
+# NOTHINGCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# NOTHINGCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# NOTHINGCHECKED-NEXT: pair name pair name mixed step - heir
+# NOTHINGCHECKED-NEXT: yyy 3
+# NOTHINGCHECKED-NEXT: dial name
+# NOTHINGCHECKED-NEXT: dial name dial name
+# NOTHINGCHECKED-NEXT: both name
+# NOTHINGCHECKED-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made, key = "name") { Object.getPrototypeOf(made)[key] = function () { return "new"; }; };
+# REPLACED: all - - - -
+# REPLACED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# REPLACED-NEXT: pair name pair name mixed step - heir
+# REPLACED-NEXT: others name
+# REPLACED-NEXT: first other first other both name
+# REPLACED-NEXT: - new | no name new | - new | slow new | - new | caught new | - new
+# REPLACED-NEXT: - new | no name new | - new | slow new | - new | caught new | - new
+# REPLACED-NEXT: - new - new - step - heir
+# REPLACED-NEXT: nnn 3
+# REPLACED-NEXT: dial name
+# REPLACED-NEXT: - new - new
+# REPLACED-NEXT: -
+# REPLACED-NEXT: exited with 0
+# RUN(REPLACEDCHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made, key = "name") { Object.getPrototypeOf(made)[key] = function () { return "new"; }; };
+# REPLACEDCHECKED: all - - - -
+# REPLACEDCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# REPLACEDCHECKED-NEXT: pair name pair name mixed step - heir
+# REPLACEDCHECKED-NEXT: others name
+# REPLACEDCHECKED-NEXT: first other first other both name
+# REPLACEDCHECKED-NEXT: - new | no name new | - new | slow new | - new | caught new | - new
+# REPLACEDCHECKED-NEXT: - new | no name new | - new | slow new | - new | caught new | - new
+# REPLACEDCHECKED-NEXT: - new - new - step - heir
+# REPLACEDCHECKED-NEXT: nnn 3
+# REPLACEDCHECKED-NEXT: dial name
+# REPLACEDCHECKED-NEXT: - new - new
+# REPLACEDCHECKED-NEXT: -
+# REPLACEDCHECKED-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made, key = "name") { made[key] = function () { return "own"; }; };
+# HIDDEN: all - - - -
+# HIDDEN-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# HIDDEN-NEXT: pair name pair name mixed step - heir
+# HIDDEN-NEXT: others name
+# HIDDEN-NEXT: first other first other both name
+# HIDDEN-NEXT: - own | no name own | - own | slow own | - own | caught own | - own
+# HIDDEN-NEXT: - name | no name name | - name | slow name | - name | caught name | - name
+# HIDDEN-NEXT: - name - name - step - heir
+# HIDDEN-NEXT: nnn 3
+# HIDDEN-NEXT: dial name
+# HIDDEN-NEXT: - own - name
+# HIDDEN-NEXT: -
+# HIDDEN-NEXT: exited with 0
+# RUN(HIDDENCHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made, key = "name") { made[key] = function () { return "own"; }; };
+# HIDDENCHECKED: all - - - -
+# HIDDENCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# HIDDENCHECKED-NEXT: pair name pair name mixed step - heir
+# HIDDENCHECKED-NEXT: others name
+# HIDDENCHECKED-NEXT: first other first other both name
+# HIDDENCHECKED-NEXT: - own | no name own | - own | slow own | - own | caught own | - own
+# HIDDENCHECKED-NEXT: - name | no name name | - name | slow name | - name | caught name | - name
+# HIDDENCHECKED-NEXT: - name - name - step - heir
+# HIDDENCHECKED-NEXT: nnn 3
+# HIDDENCHECKED-NEXT: dial name
+# HIDDENCHECKED-NEXT: - own - name
+# HIDDENCHECKED-NEXT: -
+# HIDDENCHECKED-NEXT: exited with 0
+# RUN(ACCESSOR): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made, key = "name") { Object.defineProperty(made, key, { get() { return function () { return "got"; }; }, configurable: true }); };
+# ACCESSOR: all - - - -
+# ACCESSOR-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# ACCESSOR-NEXT: pair name pair name mixed step - heir
+# ACCESSOR-NEXT: others name
+# ACCESSOR-NEXT: first other first other both name
+# ACCESSOR-NEXT: - got | no name got | - got | slow got | - got | caught got | - got
+# ACCESSOR-NEXT: - name | no name name | - name | slow name | - name | caught name | - name
+# ACCESSOR-NEXT: - name - name - step - heir
+# ACCESSOR-NEXT: nnn 3
+# ACCESSOR-NEXT: dial name
+# ACCESSOR-NEXT: - got - name
+# ACCESSOR-NEXT: -
+# ACCESSOR-NEXT: exited with 0
+# RUN(RELINKED): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made) { Object.setPrototypeOf(made, above()); };
+# RELINKED: all - - - -
+# RELINKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# RELINKED-NEXT: pair name pair name mixed step - heir
+# RELINKED-NEXT: others name
+# RELINKED-NEXT: first other first other both name
+# RELINKED-NEXT: - other | no read | - other | slow other | - other | caught other | - other
+# RELINKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# RELINKED-NEXT: pair name pair name mixed step - heir
+# RELINKED-NEXT: yyn 2
+# RELINKED-NEXT: dial name
+# RELINKED-NEXT: - other dial name
+# RELINKED-NEXT: both name
+# RELINKED-NEXT: exited with 0
+# RUN(RELINKEDCHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; amid = function (made) { Object.setPrototypeOf(made, above()); };
+# RELINKEDCHECKED: all - - - -
+# RELINKEDCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# RELINKEDCHECKED-NEXT: pair name pair name mixed step - heir
+# RELINKEDCHECKED-NEXT: others name
+# RELINKEDCHECKED-NEXT: first other first other both name
+# RELINKEDCHECKED-NEXT: - other | no read | - other | slow other | - other | caught other | - other
+# RELINKEDCHECKED-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# RELINKEDCHECKED-NEXT: pair name pair name mixed step - heir
+# RELINKEDCHECKED-NEXT: yyn 2
+# RELINKEDCHECKED-NEXT: dial name
+# RELINKEDCHECKED-NEXT: - other dial name
+# RELINKEDCHECKED-NEXT: both name
+# RELINKEDCHECKED-NEXT: exited with 0
+# RUN(EARLY): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; early = function (Meter) { Meter.prototype.name = function () { return "early"; }; };
+# EARLY: all - - - -
+# EARLY-NEXT: - early | no name early | - early | slow early | - early | caught early | - early
+# EARLY-NEXT: - early - early - step - heir
+# EARLY-NEXT: - early
+# EARLY-NEXT: - - -
+# EARLY-NEXT: - early | no name early | - early | slow early | - early | caught early | - early
+# EARLY-NEXT: - early | no name early | - early | slow early | - early | caught early | - early
+# EARLY-NEXT: - early - early - step - heir
+# EARLY-NEXT: nnn 3
+# EARLY-NEXT: dial name
+# EARLY-NEXT: dial name dial name
+# EARLY-NEXT: -
+# EARLY-NEXT: exited with 0
+# RUN(LATE): run-in-shell above = function () { return { name() { return "other"; }, step() { return "other"; }, libraryName() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; notes = 0; note = function () { notes++; }; noted = function () { return notes; }; early = amid = last = function () { }; last = function (made) { Object.getPrototypeOf(made).name = function () { return "new"; }; };
+# LATE: all - - - -
+# LATE-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# LATE-NEXT: pair name pair name mixed step - heir
+# LATE-NEXT: others name
+# LATE-NEXT: first other first other both name
+# LATE-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# LATE-NEXT: all name | both name | both name | kept name | again name | both name | valued name
+# LATE-NEXT: pair name pair name mixed step - heir
+# LATE-NEXT: yyy 3
+# LATE-NEXT: dial name
+# LATE-NEXT: dial name dial name
+# LATE-NEXT: first new
+# LATE-NEXT: exited with 0
+
+module m0 path="rows.js" displayPath="rows.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/PromiseConstructor.ts" displayPath="/$bun/js/engine/PromiseConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Dial" module=m0 position=407 constructor=f21 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Meter" module=m0 constructor=f9 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Gauge" module=m0 position=266 base=L1 constructor=f10 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 module=m0 position=4244 fields=[{key="read" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L4 fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
+data d0 root=Object{layout=L4} module=m0
+variable g0 name="row" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="apart" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="between" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="keeps" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="user" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="again" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="caught" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="valued" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f9 @0
+    v1 = Convert v0 declared={type=f9 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f10 @0
+    v3 = Convert v2 declared={type=f10 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f11 @0
+    v5 = Convert v4 declared={type=f11 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f12 @0
+    v7 = Convert v6 declared={type=f12 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f13 @0
+    v9 = Convert v8 declared={type=f13 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f14 @0
+    v11 = Convert v10 declared={type=f14 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f15 @0
+    v13 = Convert v12 declared={type=f15 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f16 @0
+    v15 = Convert v14 declared={type=f16 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f17 @0
+    v17 = Convert v16 declared={type=f17 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f18 @0
+    v19 = Convert v18 declared={type=f18 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f19 @0
+    v21 = Convert v20 declared={type=f19 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f20 @0
+    v23 = Convert v22 declared={type=f20 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f21 @401
+    v25 = NewClass v24 layout=L0 @401
+    PutModuleVariable v25 variable=g8 @401
+    v27 = NewClosure function=f22 @457
+    DefineMethod v25, v27 layout=L0 key="libraryRead" @457
+    v29 = NewClosure function=f23 @490
+    DefineMethod v25, v29 layout=L0 index=1 key="libraryName" @490
+    v31 = FinishClass v25 layout=L0 @401
+    v32 = Convert v31 declared={type=f21 flags=[IsFromCompiler]} @401
+    v33 = Convert v31 declared={type=f21 flags=[IsFromCompiler]} @401
+    v34 = PropGet v1 key="prototype" @46
+    v35 = NewClosure function=f24 @69
+    PropSet v34, v35 key="read" @52
+    v37 = PropGet v1 key="prototype" @101
+    v38 = NewClosure function=f25 @124
+    PropSet v37, v38 key="step" @107
+    v40 = PropGet v1 key="prototype" @156
+    v41 = NewClosure function=f26 @179
+    PropSet v40, v41 key="name" @162
+    v43 = PropGet v1 key="prototype" @211
+    v44 = NewClosure function=f27 @234
+    PropSet v43, v44 key="unit" @217
+    v46 = Builtin builtin=Object @312
+    v47 = Builtin builtin=ObjectSetPrototypeOf @312
+    v48 = PropGet v3 key="prototype" @334
+    v49 = PropGet v1 key="prototype" @351
+    v50 = Call v47, v46, v48, v49 calleeName="Object.setPrototypeOf" @319
+    v51 = PropGet v3 key="prototype" @369
+    v52 = Builtin builtin=GlobalThis @392
+    v53 = PropGet v52 key="heirs" [isFreeName] @392
+    v54 = Call v53 calleeName="heirs" @392
+    PropSet v51, v54 key="step" @375
+    v56 = Builtin builtin=GlobalThis @525
+    v57 = PropGet v56 key="early" [isFreeName] @525
+    v58 = Call v57, -, v1 calleeName="early" @525
+    v59 = Builtin builtin=GlobalThis @4213
+    v60 = PropGet v59 key="print" [isFreeName] @4213
+    v61 = Integer integer=1 @4234
+    v62 = Construct v1, -, v61 calleeName="Meter" @4228
+    v63 = Call v5, -, v62 calleeName="bare" @4219
+    v64 = NewClosure function=f28 @4246
+    v65 = NewObject -, v64 layout=L3 fields=[0] @4244
+    v66 = FinishObject v65 @4244
+    v67 = Call v5, -, v66 calleeName="bare" @4239
+    v68 = Integer integer=7 @4266
+    v69 = Call v5, -, v68 calleeName="bare" @4261
+    v70 = Null @4275
+    v71 = Call v5, -, v70 calleeName="bare" @4270
+    v72 = Builtin builtin=Proxy @4291
+    v73 = Integer integer=1 @4307
+    v74 = Construct v1, -, v73 calleeName="Meter" @4301
+    v75 = Data data=d0 @4311
+    v76 = Construct v72, -, v74, v75 calleeName="Proxy" @4291
+    v77 = Call v5, -, v76 calleeName="bare" @4282
+    v78 = Call v60, -, v63, v67, v69, v71, v77 calleeName="print" @4213
+    v79 = Builtin builtin=GlobalThis @4319
+    v80 = PropGet v79 key="print" [isFreeName] @4319
+    v81 = Integer integer=1 @4339
+    v82 = Construct v1, -, v81 calleeName="Meter" @4333
+    v83 = Call v23, -, v82 calleeName="all" @4325
+    v84 = Call v80, -, v83 calleeName="print" @4319
+    v85 = Builtin builtin=GlobalThis @4345
+    v86 = PropGet v85 key="print" [isFreeName] @4345
+    v87 = Integer integer=5 @4366
+    v88 = Construct v1, -, v87 calleeName="Meter" @4360
+    v89 = Call v15, -, v88 calleeName="pair" @4351
+    v90 = Integer integer=5 @4386
+    v91 = Construct v3, -, v90 calleeName="Gauge" @4380
+    v92 = Call v15, -, v91 calleeName="pair" @4371
+    v93 = Integer integer=5 @4407
+    v94 = Construct v1, -, v93 calleeName="Meter" @4401
+    v95 = Call v17, -, v94 calleeName="mixed" @4391
+    v96 = Integer integer=5 @4428
+    v97 = Construct v3, -, v96 calleeName="Gauge" @4422
+    v98 = Call v17, -, v97 calleeName="mixed" @4412
+    v99 = Call v86, -, v89, v92, v95, v98 calleeName="print" @4345
+    v100 = Builtin builtin=GlobalThis @4434
+    v101 = PropGet v100 key="print" [isFreeName] @4434
+    v102 = Integer integer=5 @4457
+    v103 = Construct v1, -, v102 calleeName="Meter" @4451
+    v104 = Integer integer=5 @4471
+    v105 = Construct v1, -, v104 calleeName="Meter" @4465
+    v106 = Call v21, -, v103, v105 calleeName="others" @4440
+    v107 = Call v101, -, v106 calleeName="print" @4434
+    v108 = Integer integer=6 @4500
+    v109 = Construct v1, -, v108 calleeName="Meter" @4494
+    v110 = Builtin builtin=GlobalThis @4504
+    v111 = PropGet v110 key="print" [isFreeName] @4504
+    v112 = Integer integer=6 @4529
+    v113 = Construct v1, -, v112 calleeName="Meter" @4523
+    v114 = Builtin builtin=GlobalThis @4533
+    v115 = PropGet v114 key="above" [isFreeName] @4533
+    v116 = Call v115 calleeName="above" @4533
+    v117 = Call v9, -, v113, v116 calleeName="relinked" @4510
+    v118 = Builtin builtin=GlobalThis @4561
+    v119 = PropGet v118 key="above" [isFreeName] @4561
+    v120 = Call v119 calleeName="above" @4561
+    v121 = Call v11, -, v109, v109, v120 calleeName="alias" @4543
+    v122 = Integer integer=6 @4587
+    v123 = Construct v1, -, v122 calleeName="Meter" @4581
+    v124 = Integer integer=6 @4601
+    v125 = Construct v1, -, v124 calleeName="Meter" @4595
+    v126 = Builtin builtin=GlobalThis @4605
+    v127 = PropGet v126 key="above" [isFreeName] @4605
+    v128 = Call v127 calleeName="above" @4605
+    v129 = Call v11, -, v123, v125, v128 calleeName="alias" @4571
+    v130 = Call v111, -, v117, v121, v129 calleeName="print" @4504
+    v131 = Integer integer=2 @4639
+    v132 = Construct v1, -, v131 calleeName="Meter" @4633
+    v133 = Builtin builtin=GlobalThis @4643
+    v134 = PropGet v133 key="amid" [isFreeName] @4643
+    v135 = Call v134, -, v132 calleeName="amid" @4643
+    v136 = Builtin builtin=GlobalThis @4655
+    v137 = PropGet v136 key="print" [isFreeName] @4655
+    v138 = Call v23, -, v132 calleeName="all" @4661
+    v139 = Call v137, -, v138 calleeName="print" @4655
+    v140 = Builtin builtin=GlobalThis @4673
+    v141 = PropGet v140 key="print" [isFreeName] @4673
+    v142 = Integer integer=3 @4693
+    v143 = Construct v1, -, v142 calleeName="Meter" @4687
+    v144 = Call v23, -, v143 calleeName="all" @4679
+    v145 = Call v141, -, v144 calleeName="print" @4673
+    v146 = Builtin builtin=GlobalThis @4699
+    v147 = PropGet v146 key="print" [isFreeName] @4699
+    v148 = Integer integer=5 @4720
+    v149 = Construct v1, -, v148 calleeName="Meter" @4714
+    v150 = Call v15, -, v149 calleeName="pair" @4705
+    v151 = Integer integer=5 @4740
+    v152 = Construct v3, -, v151 calleeName="Gauge" @4734
+    v153 = Call v15, -, v152 calleeName="pair" @4725
+    v154 = Integer integer=5 @4761
+    v155 = Construct v1, -, v154 calleeName="Meter" @4755
+    v156 = Call v17, -, v155 calleeName="mixed" @4745
+    v157 = Integer integer=5 @4782
+    v158 = Construct v3, -, v157 calleeName="Gauge" @4776
+    v159 = Call v17, -, v158 calleeName="mixed" @4766
+    v160 = Call v147, -, v150, v153, v156, v159 calleeName="print" @4699
+    v161 = Builtin builtin=GlobalThis @4788
+    v162 = PropGet v161 key="print" [isFreeName] @4788
+    v163 = Integer integer=4 @4810
+    v164 = Construct v1, -, v163 calleeName="Meter" @4804
+    v165 = Builtin builtin=GlobalThis @4814
+    v166 = PropGet v165 key="count" [isFreeName] @4814
+    v167 = Call v166 calleeName="count" @4814
+    v168 = Call v7, -, v164, v167 calleeName="turns" @4794
+    v169 = Builtin builtin=GlobalThis @4824
+    v170 = PropGet v169 key="noted" [isFreeName] @4824
+    v171 = Call v170 calleeName="noted" @4824
+    v172 = Call v162, -, v168, v171 calleeName="print" @4788
+    v173 = Integer integer=7 @4856
+    v174 = Construct v33, -, v173 calleeName="Dial" @4851
+    v175 = Builtin builtin=GlobalThis @4860
+    v176 = PropGet v175 key="print" [isFreeName] @4860
+    v177 = Call v19, -, v174 calleeName="dial" @4866
+    v178 = Call v176, -, v177 calleeName="print" @4860
+    v179 = Builtin builtin=GlobalThis @4879
+    v180 = PropGet v179 key="amid" [isFreeName] @4879
+    v181 = String string="libraryName" @4890
+    v182 = Call v180, -, v174, v181 calleeName="amid" @4879
+    v183 = Builtin builtin=GlobalThis @4906
+    v184 = PropGet v183 key="print" [isFreeName] @4906
+    v185 = Call v19, -, v174 calleeName="dial" @4912
+    v186 = Integer integer=8 @4938
+    v187 = Construct v33, -, v186 calleeName="Dial" @4933
+    v188 = Call v19, -, v187 calleeName="dial" @4924
+    v189 = Call v184, -, v185, v188 calleeName="print" @4906
+    v190 = Integer integer=9 @4967
+    v191 = Construct v1, -, v190 calleeName="Meter" @4961
+    v192 = Call v13, -, v191 calleeName="awaited" @4971
+    v193 = PropGet v192 key="then" @4983
+    v194 = Builtin builtin=GlobalThis @4990
+    v195 = PropGet v194 key="print" [isFreeName] @4990
+    v196 = Call v193, v192, v195 calleeKey="then" calleeName="then" @4985
+    v197 = Builtin builtin=GlobalThis @4998
+    v198 = PropGet v197 key="last" [isFreeName] @4998
+    v199 = Call v198, -, v191 calleeName="last" @4998
+    v200 = Undefined @4998
+    Return v200 @4998
+}
+function f1 name="row" module=m4 position=539 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @566
+    v2 = Undefined @566
+    v3 = String string="read" @595
+    v4 = FindsDeclaredMember v0 key="read" @566
+    v5 = ToBoolean v4 @566
+    Branch v5 -> taken b1(| 0), notTaken b5() @566
+  b1(v6):
+    v7 = Undefined @606
+    v8 = Undefined @606
+    v9 = String string="step" @635
+    v10 = FindsDeclaredMember v0 key="step" @606
+    v11 = ToBoolean v10 @606
+    Branch v11 -> taken b2(| 0), notTaken b5() @606
+  b2(v12):
+    v13 = Undefined @646
+    v14 = Undefined @646
+    v15 = String string="name" @675
+    v16 = FindsDeclaredMember v0 key="name" @646
+    v17 = ToBoolean v16 @646
+    Branch v17 -> taken b3(| 0), notTaken b5() @646
+  b3(v18):
+    v19 = Undefined @686
+    v20 = Undefined @686
+    v21 = String string="unit" @715
+    v22 = FindsDeclaredMember v0 key="unit" @686
+    v23 = ToBoolean v22 @686
+    Branch v23 -> taken b4(| 0), notTaken b5() @686
+  b4(v24):
+    v25 = String string="all " @731
+    v26 = PropGet v0 key="name" @740
+    v27 = Call v26, v0 calleeKey="name" calleeName="object.name" @747
+    v28 = Add v25, v27 @740
+    Return v28 @740
+  b5():
+    v29 = String string="- " @762
+    v30 = PropGet v0 key="name" @769
+    v31 = Call v30, v0 calleeKey="name" calleeName="object.name" @776
+    v32 = Add v29, v31 @769
+    Return v32 @769
+}
+function f2 name="apart" module=m4 position=920 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @950
+    v2 = Undefined @950
+    v3 = String string="read" @979
+    v4 = FindsDeclaredMember v0 key="read" @950
+    v5 = ToBoolean v4 @950
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @950
+  b1(v6):
+    v7 = Undefined @1011
+    v8 = Undefined @1011
+    v9 = String string="name" @1040
+    v10 = FindsDeclaredMember v0 key="name" @1011
+    v11 = ToBoolean v10 @1011
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @1011
+  b2(v12):
+    v13 = String string="both " @1091
+    v14 = PropGet v0 key="name" @1101
+    v15 = Call v14, v0 calleeKey="name" calleeName="object.name" @1108
+    v16 = Add v13, v15 @1101
+    Return v16 @1101
+  b3(v17):
+    v18 = String string="no name " @1056
+    v19 = PropGet v0 key="name" @1069
+    v20 = Call v19, v0 calleeKey="name" calleeName="object.name" @1076
+    v21 = Add v18, v20 @1069
+    Return v21 @1069
+  b4(v22):
+    v23 = String string="no read" @995
+    Return v23 @995
+}
+function f3 name="between" module=m4 position=1118 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @1149
+    v2 = Undefined @1149
+    v3 = String string="read" @1178
+    v4 = FindsDeclaredMember v0 key="read" @1149
+    v5 = ToBoolean v4 @1149
+    Branch v5 -> taken b1(| 0), notTaken b3() @1149
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @1189
+    v8 = PropGet v7 key="note" [isFreeName] @1189
+    v9 = Call v8 calleeName="note" @1189
+    v10 = Undefined @1201
+    v11 = Undefined @1201
+    v12 = String string="name" @1230
+    v13 = FindsDeclaredMember v0 key="name" @1201
+    v14 = ToBoolean v13 @1201
+    Branch v14 -> taken b2(| 0), notTaken b3() @1201
+  b2(v15):
+    v16 = String string="both " @1246
+    v17 = PropGet v0 key="name" @1256
+    v18 = Call v17, v0 calleeKey="name" calleeName="object.name" @1263
+    v19 = Add v16, v18 @1256
+    Return v19 @1256
+  b3():
+    v20 = String string="- " @1280
+    v21 = PropGet v0 key="name" @1287
+    v22 = Call v21, v0 calleeKey="name" calleeName="object.name" @1294
+    v23 = Add v20, v22 @1287
+    Return v23 @1287
+}
+function f4 name="keeps" module=m4 position=1304 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @1335
+    v2 = Undefined @1335
+    v3 = String string="read" @1364
+    v4 = FindsDeclaredMember v0 key="read" @1335
+    v5 = ToBoolean v4 @1335
+    Branch v5 -> taken b1(| 0), notTaken b4() @1335
+  b1(v6):
+    v7 = Undefined @1375
+    v8 = Undefined @1375
+    v9 = String string="step" @1404
+    v10 = FindsDeclaredMember v0 key="step" @1375
+    v11 = ToBoolean v10 @1375
+    Branch v11 -> taken b2(| 0), notTaken b4() @1375
+  b2(v12):
+    v13 = Undefined @1415
+    v14 = Undefined @1415
+    v15 = String string="name" @1444
+    v16 = FindsDeclaredMember v0 key="name" @1415
+    v17 = ToBoolean v16 @1415
+    Branch v17 -> taken b3(| 0), notTaken b4() @1415
+  b3(v18):
+    v19 = Boolean boolean=true @1475
+    Return v19 @1475
+  b4():
+    v20 = Boolean @1461
+    Return v20 @1461
+}
+function f5 name="user" module=m0 position=1483 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = GetModuleVariable variable=g3 @1511
+    v2 = Call v1, -, v0 calleeName="keeps" @1511
+    v3 = ToBoolean v2 @1511
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @1511
+  b1(v4):
+    v5 = String string="kept " @1533
+    v6 = PropGet v0 key="name" @1543
+    v7 = Call v6, v0 calleeKey="name" calleeName="object.name" @1550
+    v8 = Add v5, v7 @1543
+    Return v8 @1543
+  b2(v9):
+    v10 = String string="slow " @1565
+    v11 = PropGet v0 key="name" @1575
+    v12 = Call v11, v0 calleeKey="name" calleeName="object.name" @1582
+    v13 = Add v10, v12 @1575
+    Return v13 @1575
+}
+function f6 name="again" module=m4 position=1592 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @1623
+    v2 = Undefined @1623
+    v3 = String string="read" @1652
+    v4 = FindsDeclaredMember v0 key="read" @1623
+    v5 = ToBoolean v4 @1623
+    Branch v5 -> taken b1(| 0), notTaken b5() @1623
+  b1(v6):
+    v7 = Undefined @1663
+    v8 = Undefined @1663
+    v9 = String string="name" @1692
+    v10 = FindsDeclaredMember v0 key="name" @1663
+    v11 = ToBoolean v10 @1663
+    Branch v11 -> taken b2(| 0), notTaken b5() @1663
+  b2(v12):
+    v13 = Undefined @1735
+    v14 = Undefined @1735
+    v15 = String string="name" @1764
+    v16 = FindsDeclaredMember v0 key="name" @1735
+    v17 = ToBoolean v16 @1735
+    Branch v17 -> taken b3(| 0), notTaken b4(| 0) @1735
+  b3(v18):
+    v19 = String string="again " @1780
+    v20 = PropGet v0 key="name" @1791
+    v21 = Call v20, v0 calleeKey="name" calleeName="object.name" @1798
+    v22 = Add v19, v21 @1791
+    Return v22 @1791
+  b4(v23):
+    v24 = String string="lost " @1813
+    v25 = PropGet v0 key="name" @1823
+    v26 = Call v25, v0 calleeKey="name" calleeName="object.name" @1830
+    v27 = Add v24, v26 @1823
+    Return v27 @1823
+  b5():
+    v28 = String string="- " @1709
+    v29 = PropGet v0 key="name" @1716
+    v30 = Call v29, v0 calleeKey="name" calleeName="object.name" @1723
+    v31 = Add v28, v30 @1716
+    Return v31 @1716
+}
+function f7 name="caught" module=m4 position=1840 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @1866
+  b1() handler=b8():
+    v1 = Undefined @1876
+    v2 = Undefined @1876
+    v3 = String string="read" @1905
+    v4 = FindsDeclaredMember v0 key="read" @1876
+    v5 = ToBoolean v4 @1876
+    Branch v5 -> taken b2(| 0), notTaken b5(| 0) @1876
+  b2(v6) handler=b8():
+    v7 = Undefined @1916
+    v8 = Undefined @1916
+    v9 = String string="name" @1945
+    v10 = FindsDeclaredMember v0 key="name" @1916
+    v11 = ToBoolean v10 @1916
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0) @1916
+  b3(v12) handler=b8():
+    v13 = String string="both " @1961
+    v14 = PropGet v0 key="name" @1971
+    v15 = Call v14, v0 calleeKey="name" calleeName="object.name" @1978
+    v16 = Add v13, v15 @1971
+    Return v16 @1971
+  b4(v17) handler=b8():
+    Jump -> next b6() @1916
+  b5(v18) handler=b8():
+    Jump -> next b6() @1876
+  b6() handler=b8():
+    v19 = Builtin builtin=GlobalThis @1986
+    v20 = PropGet v19 key="fail" [isFreeName] @1986
+    v21 = Call v20 calleeName="fail" @1986
+    Jump -> next b7() @1986
+  b7():
+    v22 = String string="no throw" @2047
+    Return v22 @2047
+  b8() role=CatchHandler:
+    v23 = CatchValue @2002
+    v24 = String string="caught " @2011
+    v25 = PropGet v0 key="name" @2023
+    v26 = Call v25, v0 calleeKey="name" calleeName="object.name" @2030
+    v27 = Add v24, v26 @2023
+    Return v27 @2023
+}
+function f8 name="valued" module=m4 position=2061 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @2101
+    v2 = Undefined @2101
+    v3 = String string="read" @2130
+    v4 = FindsDeclaredMember v0 key="read" @2101
+    v5 = ToBoolean v4 @2101
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @2101
+  b1(v6):
+    v7 = Undefined @2141
+    v8 = Undefined @2141
+    v9 = String string="name" @2170
+    v10 = FindsDeclaredMember v0 key="name" @2141
+    Jump -> next b3(v10) @2141
+  b2(v11):
+    Jump -> next b3(v11) @2101
+  b3(v12):
+    v13 = ToBoolean v12 @2186
+    Branch v13 -> taken b4(| 0), notTaken b5(| 0) @2186
+  b4(v14):
+    v15 = String string="valued " @2194
+    v16 = PropGet v0 key="name" @2206
+    v17 = Call v16, v0 calleeKey="name" calleeName="object.name" @2213
+    v18 = Add v15, v17 @2206
+    Jump -> next b6(v18) @2206
+  b5(v19):
+    v20 = String string="- " @2222
+    v21 = PropGet v0 key="name" @2229
+    v22 = Call v21, v0 calleeKey="name" calleeName="object.name" @2236
+    v23 = Add v20, v22 @2229
+    Jump -> next b6(v23) @2229
+  b6(v24):
+    Return v24 @2229
+}
+function f9 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f10 name="Gauge" module=m0 position=266 flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    PropSet v0, v1 key="level" @290
+    v3 = Undefined @290
+    Return v3 @290
+}
+function f11 name="bare" module=m4 position=786 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1):
+    v1 = Undefined @814
+    v2 = Undefined @814
+    v3 = String string="read" @843
+    v4 = FindsDeclaredMember v0 key="read" @814
+    v5 = ToBoolean v4 @814
+    Branch v5 -> taken b1(| 0), notTaken b3() @814
+  b1(v6):
+    v7 = Undefined @854
+    v8 = Undefined @854
+    v9 = String string="step" @883
+    v10 = FindsDeclaredMember v0 key="step" @854
+    v11 = ToBoolean v10 @854
+    Branch v11 -> taken b2(| 0), notTaken b3() @854
+  b2(v12):
+    v13 = String string="all" @899
+    Return v13 @899
+  b3():
+    v14 = String string="-" @913
+    Return v14 @913
+}
+function f12 name="turns" module=m4 position=2246 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1, v1: anything):
+    v2 = String string="" @2289
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @2289
+    v4 = Integer @2309
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @2309
+    Jump -> next b1(v3, v5) @2302
+  b1(v6, v7):
+    LoopHint @2302
+    v9 = Less v7, v1 @2319
+    Branch v9 -> taken b2(), notTaken b9() @2319
+  b2():
+    v10 = Undefined @2340
+    v11 = Undefined @2340
+    v12 = String string="read" @2369
+    v13 = FindsDeclaredMember v0 key="read" @2340
+    v14 = ToBoolean v13 @2340
+    Branch v14 -> taken b3(| 0), notTaken b5() @2340
+  b3(v15):
+    v16 = Undefined @2380
+    v17 = Undefined @2380
+    v18 = String string="name" @2409
+    v19 = FindsDeclaredMember v0 key="name" @2380
+    v20 = ToBoolean v19 @2380
+    Branch v20 -> taken b4(| 0), notTaken b5() @2380
+  b4(v21):
+    v22 = String string="y" @2426
+    v23 = Add v6, v22 @2426
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @2418
+    Jump -> next b6(v24) @2418
+  b5():
+    v25 = String string="n" @2444
+    v26 = Add v6, v25 @2444
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @2436
+    Jump -> next b6(v27) @2436
+  b6(v28):
+    v29 = Integer integer=1 @2462
+    v30 = StrictEq v7, v29 @2462
+    Branch v30 -> taken b7(), notTaken b8() @2462
+  b7():
+    v31 = Builtin builtin=GlobalThis @2465
+    v32 = PropGet v31 key="amid" [isFreeName] @2465
+    v33 = Call v32, -, v0 calleeName="amid" @2465
+    Jump -> next b8() @2465
+  b8():
+    v34 = Increment v7 @2326
+    v35 = Convert v34 declared={type=number flags=[IsExpected]} @2326
+    Jump -> next b1(v28, v35) @2326
+  b9():
+    Return v6 @2488
+}
+function f13 name="relinked" module=m4 position=2496 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1, v1: undefined|null|object):
+    v2 = Undefined @2536
+    v3 = Undefined @2536
+    v4 = String string="read" @2565
+    v5 = FindsDeclaredMember v0 key="read" @2536
+    v6 = ToBoolean v5 @2536
+    Branch v6 -> taken b1(| 0), notTaken b5() @2536
+  b1(v7):
+    v8 = Undefined @2576
+    v9 = Undefined @2576
+    v10 = String string="name" @2605
+    v11 = FindsDeclaredMember v0 key="name" @2576
+    v12 = ToBoolean v11 @2576
+    Branch v12 -> taken b2(| 0), notTaken b5() @2576
+  b2(v13):
+    v14 = Builtin builtin=Object @2627
+    v15 = Builtin builtin=ObjectSetPrototypeOf @2627
+    v16 = Call v15, v14, v0, v1 calleeName="Object.setPrototypeOf" @2634
+    v17 = Undefined @2668
+    v18 = Undefined @2668
+    v19 = String string="name" @2697
+    v20 = FindsDeclaredMember v0 key="name" @2668
+    v21 = ToBoolean v20 @2668
+    Branch v21 -> taken b3(| 0), notTaken b4(| 0) @2668
+  b3(v22):
+    v23 = String string="both " @2713
+    v24 = PropGet v0 key="name" @2723
+    v25 = Call v24, v0 calleeKey="name" calleeName="object.name" @2730
+    v26 = Add v23, v25 @2723
+    Return v26 @2723
+  b4(v27):
+    v28 = String string="first " @2745
+    v29 = PropGet v0 key="name" @2756
+    v30 = Call v29, v0 calleeKey="name" calleeName="object.name" @2763
+    v31 = Add v28, v30 @2756
+    Return v31 @2756
+  b5():
+    v32 = String string="-" @2622
+    Return v32 @2622
+}
+function f14 name="alias" module=m4 position=2773 role=Library flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=anything}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1, v1: anything, v2: undefined|null|object):
+    v3 = Undefined @2816
+    v4 = Undefined @2816
+    v5 = String string="read" @2845
+    v6 = FindsDeclaredMember v0 key="read" @2816
+    v7 = ToBoolean v6 @2816
+    Branch v7 -> taken b1(| 0), notTaken b5() @2816
+  b1(v8):
+    v9 = Undefined @2856
+    v10 = Undefined @2856
+    v11 = String string="name" @2885
+    v12 = FindsDeclaredMember v0 key="name" @2856
+    v13 = ToBoolean v12 @2856
+    Branch v13 -> taken b2(| 0), notTaken b5() @2856
+  b2(v14):
+    v15 = Builtin builtin=Object @2907
+    v16 = Builtin builtin=ObjectSetPrototypeOf @2907
+    v17 = Call v16, v15, v1, v2 calleeName="Object.setPrototypeOf" @2914
+    v18 = Undefined @2946
+    v19 = Undefined @2946
+    v20 = String string="name" @2975
+    v21 = FindsDeclaredMember v0 key="name" @2946
+    v22 = ToBoolean v21 @2946
+    Branch v22 -> taken b3(| 0), notTaken b4(| 0) @2946
+  b3(v23):
+    v24 = String string="both " @2991
+    v25 = PropGet v0 key="name" @3001
+    v26 = Call v25, v0 calleeKey="name" calleeName="object.name" @3008
+    v27 = Add v24, v26 @3001
+    Return v27 @3001
+  b4(v28):
+    v29 = String string="first " @3023
+    v30 = PropGet v0 key="name" @3034
+    v31 = Call v30, v0 calleeKey="name" calleeName="object.name" @3041
+    v32 = Add v29, v31 @3034
+    Return v32 @3034
+  b5():
+    v33 = String string="-" @2902
+    Return v33 @2902
+}
+function f15 name="awaited" module=m4 position=3051 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+  b0(v0: anything, v1: undefined|null|L1):
+    v2 = Undefined @3090
+    v3 = Undefined @3090
+    v4 = String string="read" @3119
+    v5 = FindsDeclaredMember v1 key="read" @3090
+    v6 = ToBoolean v5 @3090
+    Branch v6 -> taken b1(| 0), notTaken b5() @3090
+  b1(v7):
+    v8 = Undefined @3130
+    v9 = Undefined @3130
+    v10 = String string="name" @3159
+    v11 = FindsDeclaredMember v1 key="name" @3130
+    v12 = ToBoolean v11 @3130
+    Branch v12 -> taken b2(| 0), notTaken b5() @3130
+  b2(v13):
+    v14 = Undefined @3187
+    v15 = Await v14, v1, v0 @3187
+    v16 = Undefined @3202
+    v17 = Undefined @3202
+    v18 = String string="name" @3231
+    v19 = FindsDeclaredMember v1 key="name" @3202
+    v20 = ToBoolean v19 @3202
+    Branch v20 -> taken b3(| 0), notTaken b4(| 0) @3202
+  b3(v21):
+    v22 = String string="both " @3247
+    v23 = PropGet v1 key="name" @3257
+    v24 = Call v23, v1 calleeKey="name" calleeName="object.name" @3264
+    v25 = Add v22, v24 @3257
+    Return v25 @3257
+  b4(v26):
+    v27 = String string="first " @3279
+    v28 = PropGet v1 key="name" @3290
+    v29 = Call v28, v1 calleeKey="name" calleeName="object.name" @3297
+    v30 = Add v27, v29 @3290
+    Return v30 @3290
+  b5():
+    v31 = String string="-" @3176
+    Return v31 @3176
+}
+function f16 name="pair" module=m4 position=3307 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1|L2):
+    v1 = Undefined @3335
+    v2 = Undefined @3335
+    v3 = String string="read" @3364
+    v4 = FindsDeclaredMember v0 key="read" @3335
+    v5 = ToBoolean v4 @3335
+    Branch v5 -> taken b1(| 0), notTaken b3() @3335
+  b1(v6):
+    v7 = Undefined @3375
+    v8 = Undefined @3375
+    v9 = String string="name" @3404
+    v10 = FindsDeclaredMember v0 key="name" @3375
+    v11 = ToBoolean v10 @3375
+    Branch v11 -> taken b2(| 0), notTaken b3() @3375
+  b2(v12):
+    v13 = String string="pair " @3420
+    v14 = PropGet v0 key="name" @3430
+    v15 = Call v14, v0 calleeKey="name" calleeName="object.name" @3437
+    v16 = Add v13, v15 @3430
+    Return v16 @3430
+  b3():
+    v17 = String string="- " @3452
+    v18 = PropGet v0 key="name" @3459
+    v19 = Call v18, v0 calleeKey="name" calleeName="object.name" @3466
+    v20 = Add v17, v19 @3459
+    Return v20 @3459
+}
+function f17 name="mixed" module=m4 position=3476 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1|L2):
+    v1 = Undefined @3505
+    v2 = Undefined @3505
+    v3 = String string="read" @3534
+    v4 = FindsDeclaredMember v0 key="read" @3505
+    v5 = ToBoolean v4 @3505
+    Branch v5 -> taken b1(| 0), notTaken b4() @3505
+  b1(v6):
+    v7 = Undefined @3545
+    v8 = Undefined @3545
+    v9 = String string="step" @3574
+    v10 = FindsDeclaredMember v0 key="step" @3545
+    v11 = ToBoolean v10 @3545
+    Branch v11 -> taken b2(| 0), notTaken b4() @3545
+  b2(v12):
+    v13 = Undefined @3585
+    v14 = Undefined @3585
+    v15 = String string="name" @3614
+    v16 = FindsDeclaredMember v0 key="name" @3585
+    v17 = ToBoolean v16 @3585
+    Branch v17 -> taken b3(| 0), notTaken b4() @3585
+  b3(v18):
+    v19 = String string="mixed " @3630
+    v20 = PropGet v0 key="step" @3641
+    v21 = Call v20, v0 calleeKey="step" calleeName="object.step" @3648
+    v22 = Add v19, v21 @3641
+    Return v22 @3641
+  b4():
+    v23 = String string="- " @3663
+    v24 = PropGet v0 key="step" @3670
+    v25 = Call v24, v0 calleeKey="step" calleeName="object.step" @3677
+    v26 = Add v23, v25 @3670
+    Return v26 @3670
+}
+function f18 name="dial" module=m4 position=3687 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @3715
+    v2 = Undefined @3715
+    v3 = String string="libraryRead" @3744
+    v4 = FindsDeclaredMember v0 key="libraryRead" @3715
+    v5 = ToBoolean v4 @3715
+    Branch v5 -> taken b1(| 0), notTaken b3() @3715
+  b1(v6):
+    v7 = Undefined @3762
+    v8 = Undefined @3762
+    v9 = String string="libraryName" @3791
+    v10 = FindsDeclaredMember v0 key="libraryName" @3762
+    v11 = ToBoolean v10 @3762
+    Branch v11 -> taken b2(| 0), notTaken b3() @3762
+  b2(v12):
+    v13 = String string="dial " @3814
+    v14 = PropGet v0 key="libraryName" @3824
+    v15 = Call v14, v0 calleeKey="libraryName" calleeName="object.libraryName" @3831
+    v16 = Add v13, v15 @3824
+    Return v16 @3824
+  b3():
+    v17 = String string="- " @3853
+    v18 = PropGet v0 key="libraryName" @3860
+    v19 = Call v18, v0 calleeKey="libraryName" calleeName="object.libraryName" @3867
+    v20 = Add v17, v19 @3860
+    Return v20 @3860
+}
+function f19 name="others" module=m4 position=3884 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L1, v1: anything):
+    v2 = Undefined @3921
+    v3 = Undefined @3921
+    v4 = String string="read" @3950
+    v5 = FindsDeclaredMember v0 key="read" @3921
+    v6 = ToBoolean v5 @3921
+    Branch v6 -> taken b1(| 0), notTaken b3() @3921
+  b1(v7):
+    v8 = Undefined @3961
+    v9 = Undefined @3961
+    v10 = String string="name" @3989
+    v11 = FindsDeclaredMember v1 key="name" @3961
+    v12 = ToBoolean v11 @3961
+    Branch v12 -> taken b2(| 0), notTaken b3() @3961
+  b2(v13):
+    v14 = String string="others " @4005
+    v15 = PropGet v1 key="name" @4017
+    v16 = Call v15, v1 calleeKey="name" calleeName="other.name" @4023
+    v17 = Add v14, v16 @4017
+    Return v17 @4017
+  b3():
+    v18 = String string="- " @4038
+    v19 = PropGet v1 key="name" @4045
+    v20 = Call v19, v1 calleeKey="name" calleeName="other.name" @4051
+    v21 = Add v18, v20 @4045
+    Return v21 @4045
+}
+function f20 name="all" module=m0 position=4061 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @4092
+    v2 = Call v1, -, v0 calleeName="row" @4092
+    v3 = GetModuleVariable variable=g1 @4105
+    v4 = Call v3, -, v0 calleeName="apart" @4105
+    v5 = GetModuleVariable variable=g2 @4120
+    v6 = Call v5, -, v0 calleeName="between" @4120
+    v7 = GetModuleVariable variable=g4 @4137
+    v8 = Call v7, -, v0 calleeName="user" @4137
+    v9 = GetModuleVariable variable=g5 @4151
+    v10 = Call v9, -, v0 calleeName="again" @4151
+    v11 = GetModuleVariable variable=g6 @4166
+    v12 = Call v11, -, v0 calleeName="caught" @4166
+    v13 = GetModuleVariable variable=g7 @4182
+    v14 = Call v13, -, v0 calleeName="valued" @4182
+    v15 = NewArray v2, v4, v6, v8, v10, v12, v14 contents=anything @4091
+    v16 = PropGet v15 key="join" @4091
+    v17 = String string=" | " @4203
+    v18 = Call v16, v15, v17 calleeKey="join" calleeName="join" @4198
+    ReturnCall v18 @4198
+}
+function f21 name="Dial" module=m0 position=425 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @425
+    v3 = NewObject v2 layout=L0 @425
+    v4 = Convert v3 declared={type=L0} @425
+    PropSet v4, v1 key="level" @435
+    v6 = Undefined @435
+    v7 = TypeTest v6 testedType=object @435
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @435
+  b1(v8):
+    Jump -> next b2(v8) @435
+  b2(v9):
+    Return v9 @435
+}
+function f22 name="libraryRead" module=m4 position=457 kind=Method role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="read" @480
+    Return v0 @480
+}
+function f23 name="libraryName" module=m4 position=490 kind=Method role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="name" @513
+    Return v0 @513
+}
+function f24 module=m4 position=69 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="read" @90
+    Return v0 @90
+}
+function f25 module=m4 position=124 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="step" @145
+    Return v0 @145
+}
+function f26 module=m4 position=179 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="name" @200
+    Return v0 @200
+}
+function f27 module=m4 position=234 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="unit" @255
+    Return v0 @255
+}
+function f28 name="read" module=m0 position=4246 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @4246
+    Return v0 @4246
+}
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f42 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f43 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+function f44 name="Promise" module=m3 position=1836 kind=BaseConstructor role=Library flags=[HasNewTarget, IsChecked, HasExplicitName, IsNakedConstructor] length=1 enclosingRuntimeFunction=PromiseConstructorPromise thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined @1860
+    v3 = TypeTest v1 testedType=function @1900
+    Branch v3 -> taken b1(| 0), notTaken b7(| 0) @1900
+  b1(v4):
+    v5 = NarrowByTest v1, v4 @1900
+    v6 = CreatePromise v0 @2016
+    Jump -> next b2() @2078
+  b2() handler=b3():
+    v7 = NewClosure v6 function=f45 @2114
+    v8 = NewClosure v6 function=f46 @2263
+    v9 = Call v5, -, v7, v8 calleeName="executor" @2092
+    Jump -> next b4() @2092
+  b3() role=CatchHandler:
+    v10 = CatchValue @2412
+    v11 = Convert v6 declared={type=object flags=[IsFromCompiler, IsClaim]} @2422
+    RejectPromise v11, v10 @2422
+    v13 = Undefined @2422
+    Jump -> next b4() @2422
+  b4():
+    v14 = TypeTest v6 testedType=object @2507
+    Branch v14 -> taken b5(| 0), notTaken b6(v0) @2507
+  b5(v15):
+    Jump -> next b6(v15) @2507
+  b6(v16):
+    Return v16 @2507
+  b7(v17):
+    v18 = ThrowNewError errorKind=TypeError message="Promise constructor takes a function argument" @1931
+    Unreachable @1931
+}
+function f45 module=m3 position=2114 kind=Arrow role=Library flags=[IsChecked] length=1 enclosingRuntimeFunction=PromiseConstructorPromise captures=[{type=anything variableName="capturedPromise"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @2155
+    ResolvePromise v2, v1 @2155
+    v4 = Undefined @2155
+    Return v4 @2155
+}
+function f46 module=m3 position=2263 kind=Arrow role=Library flags=[IsChecked] length=1 enclosingRuntimeFunction=PromiseConstructorPromise captures=[{type=anything variableName="capturedPromise"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @2300
+    RejectPromise v2, v1 @2300
+    v4 = Undefined @2300
+    Return v4 @2300
+}
+runtimefunction id=PromiseConstructorPromise function=f44
+runtimefunction id=JSIteratorPrototypeDispose function=f43
+runtimefunction id=ArrayIteratorPrototypeNext function=f42 visibility=Private

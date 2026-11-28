@@ -1,0 +1,39 @@
+# type Item = { price: number }
+# async function worth(item: Item) { await null; const first = item.price; await null; return first + item.price; }
+# The body returns by a jump to the stub, which leaves its frame: no code behind the jump restores registers.
+# RUN: bytes f1:CoroutineBody
+# REQUIRES: x86_64
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK-NOT: Call Stub ReturnAsyncResult
+# CHECK: Jump Stub ReturnAsyncResultInTailPosition
+
+layout L0 module=m0 fields=[{key="price" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="worth" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number}
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v5 = Builtin builtin=GlobalThis
+    v6 = GetModuleVariable variable=g0
+    v7 = PropGet v5 key="start" [isFreeName]
+    v8 = Call v7, -, v4, v6 calleeName="start"
+    Return v8
+}
+function f1 name="worth" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Null
+    v2 = Await v1, v0
+    v3 = PropGet v0 key="price"
+    v4 = Convert v3 declared={type=number}
+    v5 = Null
+    v6 = Await v5, v0, v4
+    v7 = PropGet v0 key="price"
+    v8 = Add v4, v7
+    v9 = Convert v8 declared={type=number|object}
+    Return v9
+}

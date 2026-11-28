@@ -1,0 +1,64 @@
+# function run(count) { let line = ""; let sum = 0; for (..) { line += "x"; if ((i & 7) === 7) { sum += line.length; line = ""; } } return sum + line.length; }
+# `line = ""` hands a text of its own to the parameter that takes the growing text on the other edge: the text stays in its builder in the frame, which is left as begun on that edge.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = StackStringBuilderBegin
+# CHECK: ([[text]]: opaque(StringBuilder){{*}}isLoopHead=true
+# CHECK: = StackStringBuilderAppendConstant [[text]]
+# CHECK: StackStringBuilderDiscard [[text]]
+# CHECK-NOT: = Add {{*}}form=Strings
+# layout L909 kind=Closure
+module m0 path="/$bunfs/root/line.mjs" displayPath="line.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 181, 207] quotedSources=[{position=125 start=31 end=42}, {position=166 start=48 end=59}, {position=181 end=15}, {position=192 end=24}, {position=197 start=16 end=23}] quotedSourceText="globalThis.sink(run(20))sum += line.lengthsum + line.length"} functionSource="function run(count) { let line = \x22\x22; let sum = 0; for (let i = 0; i < count; i++) { line += \x22x\x22; if ((i & 7) === 7) { sum += line.length; line = \x22\x22; } } return sum + line.length; }\x0aglobalThis.sink(run(20));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @181
+    v3 = PropGet v2 key="globalThis" [isFreeName] @181
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @181
+    v5 = PropGet v4 key="sink" @181
+    v6 = Integer integer=20 @201
+    v7 = Call v1, -, v6 calleeName="run" @197
+    v8 = Call v5, v4, v7 calleeKey="sink" calleeName="globalThis.sink" @192
+    v9 = Undefined @181
+    Return v9 @181
+}
+function f1 name="run" module=m0 sourceRange={end=180} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="" @33
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @33
+    v3 = Integer @47
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @47
+    v5 = Integer @63
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]} @63
+    Jump -> next b1(v2, v4, v6) @59
+  b1(v7, v8, v9):
+    LoopHint @59
+    v11 = Less v9, v0 @70
+    Branch v11 -> taken b2(), notTaken b5() @70
+  b2():
+    v12 = String string="x" @92
+    v13 = Add v7, v12 @92
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @84
+    v15 = Integer integer=7 @106
+    v16 = BitAnd v9, v15 @106
+    v17 = Integer integer=7 @113
+    v18 = StrictEq v16, v17 @113
+    Branch v18 -> taken b3(), notTaken b4(v14, v8) @113
+  b3():
+    v19 = PropGet v14 key="length" @125
+    v20 = Add v8, v19 @125
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @118
+    v22 = String string="" @145
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]} @138
+    Jump -> next b4(v23, v21) @138
+  b4(v24, v25):
+    v26 = Increment v9 @77
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]} @77
+    Jump -> next b1(v24, v25, v27) @77
+  b5():
+    v28 = PropGet v7 key="length" @166
+    v29 = Add v8, v28 @166
+    Return v29 @166
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app", "stop"]}, {exportName="then"}]

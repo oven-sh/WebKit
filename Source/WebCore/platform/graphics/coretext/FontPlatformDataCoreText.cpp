@@ -36,7 +36,7 @@
 
 namespace WebCore {
 
-inline int LEGACY_NODELETE mapFontWidthVariantToCTFeatureSelector(FontWidthVariant variant)
+NODELETE inline int mapFontWidthVariantToCTFeatureSelector(FontWidthVariant variant)
 {
     switch (variant) {
     case FontWidthVariant::RegularWidth:
@@ -140,7 +140,7 @@ RetainPtr<CTFontRef> createCTFont(CFDictionaryRef attributes, float size, CTFont
     return adoptCF(CTFontCreateWithFontDescriptorAndOptions(fontDescriptor.get(), size, nullptr, options));
 }
 
-FontPlatformData FontPlatformData::create(const Attributes& data, const FontCustomPlatformData* custom)
+FontPlatformData FontPlatformData::create(const Attributes& data, FontCustomPlatformData* custom)
 {
     RetainPtr<CTFontRef> ctFont;
     if (custom) {
@@ -519,7 +519,7 @@ RetainPtr<CTFontRef> InstalledFont::PostScriptFont::toCTFont(float pointSize) co
     auto fontName = String(adoptCF(CTFontCopyPostScriptName(font.get())).get());
     if (fontName != postScriptName) {
         RELEASE_LOG_ERROR(Fonts, "Serialized font %{public}s reconstructed to %{public}s. Subbing system-ui; may result in garbled text.",
-            postScriptName.utf8(), fontName.utf8());
+            makeUTF8CString(postScriptName), makeUTF8CString(fontName));
         font = adoptCF(CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, pointSize, nullptr));
     }
 

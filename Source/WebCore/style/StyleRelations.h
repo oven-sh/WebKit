@@ -70,8 +70,8 @@ struct Relation {
 using Relations = Vector<Relation, 8>;
 
 std::unique_ptr<Relations> commitRelationsToRenderStyle(Style::ComputedStyle&, const Element&, const Relations&);
-void LEGACY_NODELETE copyRelations(Style::ComputedStyle&, const Style::ComputedStyle&);
-void commitRelations(std::unique_ptr<Relations>, Update&);
+NODELETE void copyRelations(Style::ComputedStyle&, const Style::ComputedStyle&);
+void commitRelations(std::unique_ptr<Relations>, Update*);
 
 }
 }

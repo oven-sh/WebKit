@@ -220,7 +220,6 @@ public:
     void setWhatToDump(WhatToDump);
 
     bool shouldDumpAllFrameScrollPositions() const;
-    bool shouldDumpBackForwardListsForAllWindows() const;
     bool shouldDumpEditingCallbacks() const { return m_dumpEditingCallbacks; }
     bool shouldDumpMainFrameScrollPosition() const { return whatToDump() == WhatToDump::RenderTree; }
     bool shouldDumpTitleChanges() const { return m_dumpTitleChanges; }
@@ -392,6 +391,7 @@ public:
     void setStatisticsTopFrameUniqueRedirectTo(JSStringRef hostName, JSStringRef hostNameRedirectedTo);
     void setStatisticsTopFrameUniqueRedirectFrom(JSStringRef hostName, JSStringRef hostNameRedirectedFrom);
     void setStatisticsCrossSiteLoadWithLinkDecoration(JSStringRef fromHost, JSStringRef toHost, bool wasFiltered);
+    void setStatisticsLinkDecorationFilteringData(JSStringRef queryParameter);
     void setStatisticsTimeToLiveUserInteraction(double seconds);
     void setStatisticsTimeAdvanceForTesting(double);
     void setStatisticsIsRunningTest(bool);
@@ -448,6 +448,8 @@ public:
     bool didLoadAppInitiatedRequest();
     bool didLoadNonAppInitiatedRequest();
 
+    bool isDisplayCaptureCapabilityActive();
+
     size_t userScriptInjectedCount() const;
     void injectUserScript(JSStringRef);
 
@@ -493,6 +495,7 @@ public:
     }
 
     void setHasMouseDeviceForTesting(bool);
+    void setHasFakePaymentUIForTesting(bool);
     void exitImmersive();
 
 private:

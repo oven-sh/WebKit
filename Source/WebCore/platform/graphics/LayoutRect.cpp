@@ -190,6 +190,21 @@ void LayoutRect::expandToInfiniteX()
     setWidth(infRect.width());
 }
 
+void LayoutRect::makeRenderable()
+{
+    auto infiniteRect = LayoutRect::infiniteRect();
+    auto renderableInfiniteRect = LayoutRect::renderableInfiniteRect();
+    if (width() == infiniteRect.width()) {
+        setX(renderableInfiniteRect.x());
+        setWidth(renderableInfiniteRect.width());
+    }
+
+    if (height() == infiniteRect.height()) {
+        setY(renderableInfiniteRect.y());
+        setHeight(renderableInfiniteRect.height());
+    }
+}
+
 LayoutRect unionRect(const Vector<LayoutRect>& rects)
 {
     if (rects.isEmpty())
@@ -233,8 +248,7 @@ TextStream& operator<<(TextStream& ts, const LayoutRect& r)
     if (ts.hasFormattingFlag(TextStream::Formatting::LayoutUnitsAsIntegers))
         return ts << snappedIntRect(r);
     
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return ts << FloatRect(r);
+    return ts << FloatRect(r);
 }
 
 } // namespace WebCore

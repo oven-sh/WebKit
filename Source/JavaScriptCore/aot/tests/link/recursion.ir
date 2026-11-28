@@ -1,0 +1,35 @@
+# If what a function passes to itself did not come round to its own parameter, `n` would be proven an object while null arrives. If the function were not listed among its own referrers, it would take what the walk of the module left at the one call outside for all that ever arrives
+# function last(n) { last(n.next); return n; }  last({ next: { next: null } });
+# The flow ends because a type only climbs: the parameter goes on the worklist once for the layout and once for what the read of `next` gives.
+# RUN: link calls functions fields mechanisms=all
+# CHECK: call f0 v6 -> f1
+# CHECK: call f1 v3 -> f1
+# CHECK: function f0 {{*}}rank=0
+# CHECK: function f1 callers-known one-callee {{*}}rank=1 result=null|L0
+# CHECK-NEXT: parameter 0 {{*}}proven=null|L0
+# CHECK: referrers f0, f1
+# CHECK: field L0.0 "next" proven=null|L0 writers-known written-at-construction-alone
+
+layout L0 module=m0 fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="last" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5, -, v4 calleeName="last"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="next"
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1 calleeName="last"
+    Return v0
+}

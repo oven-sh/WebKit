@@ -130,7 +130,7 @@ static inline unsigned toHTMLBodyElementType(size_t index)
 static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBody& httpBody)
 {
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("(sa" HTTP_BODY_ELEMENT_TYPE_STRING_V1 ")"));
-    gVariantBuilderAdd(sessionBuilder, "s", httpBody.contentType.utf8());
+    gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(httpBody.contentType));
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("a" HTTP_BODY_ELEMENT_TYPE_STRING_V1));
     for (const auto& element : httpBody.elements) {
         g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE(HTTP_BODY_ELEMENT_TYPE_STRING_V1));
@@ -144,7 +144,7 @@ static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBod
         g_variant_builder_close(sessionBuilder);
 
         if (auto* fileData = std::get_if<HTTPBody::Element::FileData>(&element.data)) {
-            gVariantBuilderAdd(sessionBuilder, "s", fileData->filePath.utf8());
+            gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(fileData->filePath));
             g_variant_builder_add(sessionBuilder, "x", fileData->fileStart);
             if (fileData->fileLength)
                 g_variant_builder_add(sessionBuilder, "mx", TRUE, fileData->fileLength.value());
@@ -163,7 +163,7 @@ static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBod
         }
 
         if (auto* blobURLString = std::get_if<String>(&element.data))
-            gVariantBuilderAdd(sessionBuilder, "s", blobURLString->utf8());
+            gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(*blobURLString));
         else
             g_variant_builder_add(sessionBuilder, "s", "");
 
@@ -175,14 +175,14 @@ static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBod
 
 static inline void encodeFrameState(GVariantBuilder* sessionBuilder, const FrameState& frameState)
 {
-    gVariantBuilderAdd(sessionBuilder, "s", frameState.urlString.utf8());
-    gVariantBuilderAdd(sessionBuilder, "s", frameState.originalURLString.utf8());
-    gVariantBuilderAdd(sessionBuilder, "s", frameState.referrer.utf8());
+    gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(frameState.urlString));
+    gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(frameState.originalURLString));
+    gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(frameState.referrer));
     const auto frameStateTarget = frameState.target.string();
-    gVariantBuilderAdd(sessionBuilder, "s", (frameStateTarget.length() < maximumFrameStateTargetLength) ? UTF8CStringView { frameStateTarget.utf8() } : ""_s);
+    gVariantBuilderAdd(sessionBuilder, "s", (frameStateTarget.length() < maximumFrameStateTargetLength) ? UTF8CStringView { makeUTF8CString(frameStateTarget) } : ""_s);
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("as"));
     for (const auto& state : frameState.documentState())
-        gVariantBuilderAdd(sessionBuilder, "s", state.string().utf8());
+        gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(state.string()));
     g_variant_builder_close(sessionBuilder);
     if (!frameState.stateObjectData)
         g_variant_builder_add(sessionBuilder, "may", FALSE);
@@ -217,7 +217,7 @@ static inline void encodeFrameState(GVariantBuilder* sessionBuilder, const Frame
 
 static inline void encodeMainFrameState(GVariantBuilder* sessionBuilder, const BackForwardListItemState& state)
 {
-    gVariantBuilderAdd(sessionBuilder, "s", state.frameState->title.utf8());
+    gVariantBuilderAdd(sessionBuilder, "s", makeUTF8CString(state.frameState->title));
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE(FRAME_STATE_TYPE_STRING_V1));
     encodeFrameState(sessionBuilder, state.frameState);
     g_variant_builder_close(sessionBuilder);
@@ -285,8 +285,7 @@ static inline bool decodeHTTPBody(GVariant* httpBodyVariant, HTTPBody& httpBody)
         switch (type) {
         case WTF::alternativeIndexV<Vector<uint8_t>, HTTPBody::Element::Data>:
             if (gsize dataLength = g_variant_iter_n_children(dataIter)) {
-                Vector<uint8_t> data;
-                data.reserveInitialCapacity(dataLength);
+                Vector<uint8_t> data(ReserveCapacityTag { }, dataLength);
                 guchar dataValue;
                 while (g_variant_iter_next(dataIter, "y", &dataValue))
                     data.append(dataValue);
@@ -339,8 +338,7 @@ static inline void decodeFrameState(GVariant* frameStateVariant, FrameState& fra
     if (auto targetString = AtomString::fromUTF8(target); !targetString.isEmpty())
         frameState.target = WTF::move(targetString);
     if (gsize documentStateLength = g_variant_iter_n_children(documentStateIter.get())) {
-        Vector<AtomString> documentState;
-        documentState.reserveInitialCapacity(documentStateLength);
+        Vector<AtomString> documentState(ReserveCapacityTag { }, documentStateLength);
         const char* documentStateString;
         while (g_variant_iter_next(documentStateIter.get(), "&s", &documentStateString))
             documentState.append(AtomString::fromUTF8(documentStateString));

@@ -793,6 +793,22 @@ TEST_F(FileSystemTest, updateFileModificationTime)
     EXPECT_FALSE(FileSystem::updateFileModificationTime(doesNotExistPath));
 }
 
+TEST_F(FileSystemTest, pathExtension)
+{
+    EXPECT_EQ("txt"_s, FileSystem::pathExtension("filename.txt"_s));
+    EXPECT_EQ("gz"_s, FileSystem::pathExtension("archive.tar.gz"_s));
+    EXPECT_EQ("bashrc"_s, FileSystem::pathExtension(".bashrc"_s));
+    EXPECT_TRUE(FileSystem::pathExtension("filename"_s).isEmpty());
+    EXPECT_TRUE(FileSystem::pathExtension("filename."_s).isEmpty());
+    EXPECT_TRUE(FileSystem::pathExtension(""_s).isEmpty());
+    EXPECT_TRUE(FileSystem::pathExtension(StringView { }).isEmpty());
+
+    auto testPath = FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "sub.folder"_s, "filename.txt"_s }));
+    EXPECT_EQ("txt"_s, FileSystem::pathExtension(testPath));
+    auto pathWithoutExtension = FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "sub.folder"_s, "filename"_s }));
+    EXPECT_TRUE(FileSystem::pathExtension(pathWithoutExtension).isEmpty());
+}
+
 TEST_F(FileSystemTest, pathFileName)
 {
     auto testPath = FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "subfolder"_s, "filename.txt"_s }));
@@ -940,7 +956,7 @@ TEST_F(FileSystemTest, readEntireFile)
 
     auto buffer = FileSystem::readEntireFile(tempFilePath());
     EXPECT_TRUE(buffer);
-    auto contents = String { byteCast<Latin1Character>(buffer.value().span()) }.utf8();
+    auto contents = makeUTF8CString(String { byteCast<Latin1Character>(buffer.value().span()) });
     EXPECT_EQ(contents, FileSystemTestData);
 }
 
@@ -1009,6 +1025,30 @@ TEST_F(FileSystemTest, isAncestor)
     );
 }
 
+TEST_F(FileSystemTest, pathIsSameOrDescendantOf)
+{
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads"_s, "/Users/x/Downloads"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads/"_s, "/Users/x/Downloads"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads"_s, "/Users/x/Downloads/"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads/file.html"_s, "/Users/x/Downloads"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads/a/b/file.html"_s, "/Users/x/Downloads"_s));
+
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads-evil/secret"_s, "/Users/x/Downloads"_s));
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloadsx"_s, "/Users/x/Downloads"_s));
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf("/Users/x"_s, "/Users/x/Downloads"_s));
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf("/Users/y/Downloads"_s, "/Users/x/Downloads"_s));
+
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads/"_s, "/Users/x/Downloads/"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads/file.html"_s, "/Users/x/Downloads/"_s));
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf("/Users/x/Downloads-evil/secret"_s, "/Users/x/Downloads/"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/"_s, "/"_s));
+    EXPECT_TRUE(FileSystem::pathIsSameOrDescendantOf("/Users/x/file.html"_s, "/"_s));
+
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf("/Users/x/file.html"_s, ""_s));
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf(""_s, ""_s));
+    EXPECT_FALSE(FileSystem::pathIsSameOrDescendantOf(""_s, "/Users/x/Downloads"_s));
+}
+
 #if !OS(WINDOWS)
 // The third parameter to WTF::openTemporaryFile() is ignored on Windows.
 TEST_F(FileSystemTest, createTemporaryFileInDirectory)
@@ -1019,6 +1059,19 @@ TEST_F(FileSystemTest, createTemporaryFileInDirectory)
     EXPECT_TRUE(FileSystem::isAncestor(tempEmptyFolderPath(), filePath));
     EXPECT_TRUE(FileSystem::parentPath(filePath) == tempEmptyFolderPath());
 }
-#endif
+
+#if !PLATFORM(PLAYSTATION)
+// The WTF::openTemporaryFile() implementation on Windows and Playstation asserts that the suffix is empty.
+TEST_F(FileSystemTest, createTemporaryFileInDirectoryWithSuffix)
+{
+    auto [filePath, fileHandle] = FileSystem::openTemporaryFile("tempTestFile"_s, ".html"_s, tempEmptyFolderPath());
+    EXPECT_TRUE(!!fileHandle);
+    EXPECT_TRUE(FileSystem::fileType(filePath) == FileSystem::FileType::Regular);
+    EXPECT_TRUE(FileSystem::isAncestor(tempEmptyFolderPath(), filePath));
+    EXPECT_TRUE(FileSystem::parentPath(filePath) == tempEmptyFolderPath());
+    EXPECT_TRUE(filePath.endsWith(".html"_s));
+}
+#endif // !PLATFORM(PLAYSTATION)
+#endif // !OS(WINDOWS)
 
 } // namespace TestWebKitAPI

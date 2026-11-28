@@ -494,6 +494,7 @@ void HTMLInputElement::handleFocusEvent(Node* oldFocusedNode, FocusDirection dir
     protect(m_inputType)->handleFocusEvent(oldFocusedNode, direction);
 
     invalidateStyleOnFocusChangeIfNeeded();
+    invalidateScreenCaptureProtectionOnFocusChangeIfNeeded();
 }
 
 void HTMLInputElement::handleBlurEvent()
@@ -501,6 +502,44 @@ void HTMLInputElement::handleBlurEvent()
     protect(m_inputType)->handleBlurEvent();
 
     invalidateStyleOnFocusChangeIfNeeded();
+    invalidateScreenCaptureProtectionOnFocusChangeIfNeeded();
+}
+
+bool HTMLInputElement::isScreenCaptureProtectionEnabled() const
+{
+    return m_hasEverBeenPasswordField && document().settings().passwordFieldScreenCaptureProtectionEnabled();
+}
+
+bool HTMLInputElement::requiresLayerForScreenCaptureProtection() const
+{
+    return isScreenCaptureProtectionEnabled() && (focused() || !valueWithoutScriptTrackingPrivacyProtection()->isEmpty());
+}
+
+bool HTMLInputElement::shouldHideFromScreenCapture() const
+{
+    return isScreenCaptureProtectionEnabled() && !valueWithoutScriptTrackingPrivacyProtection()->isEmpty();
+}
+
+void HTMLInputElement::updateScreenCaptureProtectionIfNeeded()
+{
+    bool shouldHide = shouldHideFromScreenCapture();
+    if (shouldHide == m_isHiddenFromScreenCapture)
+        return;
+
+    m_isHiddenFromScreenCapture = shouldHide;
+    invalidateScreenCaptureProtection();
+}
+
+void HTMLInputElement::invalidateScreenCaptureProtectionOnFocusChangeIfNeeded()
+{
+    if (isScreenCaptureProtectionEnabled() && valueWithoutScriptTrackingPrivacyProtection()->isEmpty())
+        invalidateScreenCaptureProtection();
+}
+
+void HTMLInputElement::invalidateScreenCaptureProtection()
+{
+    if (RefPtr innerText = innerTextElement())
+        innerText->invalidateStyleAndLayerComposition();
 }
 
 void HTMLInputElement::resignStrongPasswordAppearance()
@@ -617,6 +656,7 @@ void HTMLInputElement::updateType(const AtomString& typeAttributeValue)
 
     updateValidity();
     updatePlaceholderVisibility();
+    updateScreenCaptureProtectionIfNeeded();
 }
 
 inline void HTMLInputElement::runPostTypeUpdateTasks()
@@ -763,6 +803,7 @@ void HTMLInputElement::initializeInputTypeAfterParsingOrCloning()
     registerForSuspensionCallbackIfNeeded();
     runPostTypeUpdateTasks();
     updateWillValidateAndValidity();
+    updateScreenCaptureProtectionIfNeeded();
 }
 
 void HTMLInputElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
@@ -795,6 +836,7 @@ void HTMLInputElement::attributeChanged(const QualifiedName& name, const AtomStr
             updatePlaceholderVisibility();
             invalidateStyleForSubtree();
             setFormControlValueMatchesRenderer(false);
+            updateScreenCaptureProtectionIfNeeded();
         }
         updateValidity();
         if (selfOrPrecedingNodesAffectDirAuto())
@@ -942,7 +984,7 @@ bool HTMLInputElement::supportsBaseAppearance(StyleAppearance appearance) const
     return appearance == StyleAppearance::Base;
 }
 
-RenderPtr<RenderElement> HTMLInputElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLInputElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return protect(m_inputType)->createInputRenderer(WTF::move(style));
 }
@@ -1145,12 +1187,18 @@ void HTMLInputElement::copyNonAttributePropertiesFromElement(const Element& sour
     setFormControlValueMatchesRenderer(false);
     if (m_inputType->hasCreatedShadowSubtree())
         protect(m_inputType)->updateInnerTextValue();
+    updateScreenCaptureProtectionIfNeeded();
 }
 
 ValueOrReference<String> HTMLInputElement::value() const
 {
     if (shouldApplyScriptTrackingPrivacyProtection())
         return protect(m_inputType)->defaultValue();
+    return valueWithoutScriptTrackingPrivacyProtection();
+}
+
+ValueOrReference<String> HTMLInputElement::valueWithoutScriptTrackingPrivacyProtection() const
+{
     if (RefPtr fileInput = dynamicDowncast<FileInputType>(*m_inputType))
         return fileInput->firstElementPathForInputValue();
 
@@ -1189,8 +1237,12 @@ ExceptionOr<void> HTMLInputElement::setValue(const String& value, TextFieldEvent
     if (selfOrPrecedingNodesAffectDirAuto())
         updateEffectiveTextDirection();
 
-    if (valueChanged && eventBehavior == DispatchNoEvent)
-        setTextAsOfLastFormControlChangeEvent(String(sanitizedValue));
+    if (valueChanged) {
+        updateScreenCaptureProtectionIfNeeded();
+
+        if (eventBehavior == DispatchNoEvent)
+            setTextAsOfLastFormControlChangeEvent(String(sanitizedValue));
+    }
 
     bool wasModifiedProgrammatically = eventBehavior == DispatchNoEvent;
     if (wasModifiedProgrammatically) {
@@ -1272,6 +1324,7 @@ void HTMLInputElement::setValueFromRenderer(const String& value)
         dispatchInputEvent();
 
     updateValidity();
+    updateScreenCaptureProtectionIfNeeded();
 
     // We clear certain AutoFill flags here because this catches user edits.
     setAutofilled(false);
@@ -1328,6 +1381,8 @@ void HTMLInputElement::defaultEventHandler(Event& event)
             protect(m_inputType)->handleMouseDownEvent(*mouseEvent);
         else if (eventType == eventNames().mousemoveEvent)
             protect(m_inputType)->handleMouseMoveEvent(*mouseEvent);
+        else if (eventType == eventNames().mouseupEvent)
+            protect(m_inputType)->handleMouseUpEvent(*mouseEvent);
 
         if (mouseEvent->defaultHandled())
             return;
@@ -1451,12 +1506,12 @@ ExceptionOr<void> HTMLInputElement::showPicker()
     return { };
 }
 
-static inline bool LEGACY_NODELETE isRFC2616TokenCharacter(char16_t ch)
+NODELETE static inline bool isRFC2616TokenCharacter(char16_t ch)
 {
     return isASCII(ch) && ch > ' ' && ch != '"' && ch != '(' && ch != ')' && ch != ',' && ch != '/' && (ch < ':' || ch > '@') && (ch < '[' || ch > ']') && ch != '{' && ch != '}' && ch != 0x7f;
 }
 
-static bool LEGACY_NODELETE isValidMIMEType(StringView type)
+NODELETE static bool isValidMIMEType(StringView type)
 {
     size_t slashPosition = type.find('/');
     if (slashPosition == notFound || !slashPosition || slashPosition == type.length() - 1)
@@ -1468,7 +1523,7 @@ static bool LEGACY_NODELETE isValidMIMEType(StringView type)
     return true;
 }
 
-static bool LEGACY_NODELETE isValidFileExtension(StringView type)
+NODELETE static bool isValidFileExtension(StringView type)
 {
     if (type.length() < 2)
         return false;
@@ -1860,6 +1915,8 @@ void HTMLInputElement::didMoveToNewDocument(Document& oldDocument, Document& new
     }
 #endif
 
+    m_dataListMayHaveChangedTaskCancellationGroup.cancel();
+
     HTMLTextFormControlElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 
@@ -1940,6 +1997,17 @@ void HTMLInputElement::dataListMayHaveChanged()
     protectedInputType->dataListMayHaveChanged();
 }
 
+void HTMLInputElement::scheduleDataListMayHaveChanged()
+{
+    if (m_dataListMayHaveChangedTaskCancellationGroup.hasPendingTask())
+        return;
+
+    protect(protect(document())->eventLoop())->queueTask(TaskSource::DOMManipulation, CancellableTask(m_dataListMayHaveChangedTaskCancellationGroup, [weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->dataListMayHaveChanged();
+    }));
+}
+
 bool HTMLInputElement::isFocusingWithDataListDropdown() const
 {
     return protect(m_inputType)->isFocusingWithDataListDropdown();
@@ -1955,7 +2023,7 @@ RefPtr<InputType> HTMLInputElement::inputType() const
     return m_inputType;
 }
 
-bool LEGACY_NODELETE HTMLInputElement::isSteppable() const
+NODELETE bool HTMLInputElement::isSteppable() const
 {
     return m_inputType->isSteppable();
 }
@@ -2266,10 +2334,8 @@ ListAttributeTargetObserver::ListAttributeTargetObserver(const AtomString& id, H
 
 void ListAttributeTargetObserver::idTargetChanged(Element&)
 {
-    protect(protect(m_element->document())->eventLoop())->queueTask(TaskSource::DOMManipulation, [element = m_element] {
-        if (RefPtr protectedElement = element.get())
-            protectedElement->dataListMayHaveChanged();
-    });
+    if (RefPtr element = m_element)
+        element->scheduleDataListMayHaveChanged();
 }
 
 ExceptionOr<void> HTMLInputElement::setRangeText(StringView replacement, unsigned start, unsigned end, const String& selectionMode)
@@ -2372,44 +2438,44 @@ static Ref<Style::GradientImage> autoFillStrongPasswordMaskImage()
     );
 }
 
-Style::ComputedStyle HTMLInputElement::createInnerTextStyle(const Style::ComputedStyle& style)
+UniqueRef<Style::ComputedStyle> HTMLInputElement::createInnerTextStyle(const Style::ComputedStyle& style)
 {
     auto textBlockStyle = Style::ComputedStyle::create();
-    textBlockStyle.inheritFrom(style);
+    textBlockStyle->inheritFrom(style);
     adjustInnerTextStyle(style, textBlockStyle);
 
-    textBlockStyle.setWhiteSpaceCollapse(WhiteSpaceCollapse::Preserve);
-    textBlockStyle.setTextWrapMode(TextWrapMode::NoWrap);
-    textBlockStyle.setOverflowWrap(OverflowWrap::Normal);
-    textBlockStyle.setOverflowX(Overflow::Hidden);
-    textBlockStyle.setOverflowY(Overflow::Hidden);
+    textBlockStyle->setWhiteSpaceCollapse(WhiteSpaceCollapse::Preserve);
+    textBlockStyle->setTextWrapMode(TextWrapMode::NoWrap);
+    textBlockStyle->setOverflowWrap(OverflowWrap::Normal);
+    textBlockStyle->setOverflowX(Overflow::Hidden);
+    textBlockStyle->setOverflowY(Overflow::Hidden);
     if (shouldTruncateText(style))
-        textBlockStyle.setTextOverflow(Style::TextOverflow { style.textOverflow() });
+        textBlockStyle->setTextOverflow(Style::TextOverflow { style.textOverflow() });
     else
-        textBlockStyle.setTextOverflow(CSS::Keyword::Clip { });
+        textBlockStyle->setTextOverflow(CSS::Keyword::Clip { });
 
-    textBlockStyle.setDisplay(Style::DisplayType::BlockFlow);
+    textBlockStyle->setDisplay(Style::DisplayType::BlockFlow);
 
     if (hasAutofillStrongPasswordButton() && isMutable()) {
-        textBlockStyle.setDisplay(Style::DisplayType::InlineFlowRoot);
-        textBlockStyle.setLogicalMaxWidth(100_css_percentage);
-        textBlockStyle.setColor(Color::black.colorWithAlphaByte(153));
-        textBlockStyle.setTextOverflow(CSS::Keyword::Clip { });
-        textBlockStyle.setMaskLayers(Style::MaskLayer { autoFillStrongPasswordMaskImage() });
+        textBlockStyle->setDisplay(Style::DisplayType::InlineFlowRoot);
+        textBlockStyle->setLogicalMaxWidth(100_css_percentage);
+        textBlockStyle->setColor(Color::black.colorWithAlphaByte(153));
+        textBlockStyle->setTextOverflow(CSS::Keyword::Clip { });
+        textBlockStyle->setMaskLayers(Style::MaskLayer { autoFillStrongPasswordMaskImage() });
         // A stacking context is needed for the mask.
-        if (textBlockStyle.usedZIndex().isAuto())
-            textBlockStyle.setUsedZIndex(0);
+        if (textBlockStyle->usedZIndex().isAuto())
+            textBlockStyle->setUsedZIndex(0);
     }
 
     auto shouldUseInitialLineHeight = [&] {
         // Do not allow line-height to be smaller than our default.
-        if (textBlockStyle.metricsOfPrimaryFont().intLineSpacing() > style.usedLineHeight())
+        if (textBlockStyle->metricsOfPrimaryFont().intLineSpacing() > style.usedLineHeight())
             return true;
         return isText() && !style.logicalHeight().isAuto() && !hasAutofillStrongPasswordButton();
     };
     if (shouldUseInitialLineHeight()) {
-        textBlockStyle.setLineHeight(Style::ComputedStyle::initialLineHeight());
-        textBlockStyle.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
+        textBlockStyle->setLineHeight(Style::ComputedStyle::initialLineHeight());
+        textBlockStyle->setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
     }
 
     return textBlockStyle;

@@ -1,0 +1,55 @@
+# function make() { return { n: 1 }; }
+# async function take() { const box = await make(); return box.n; }
+# That a record has no `then` is a proof of Link's, and no test stands behind it. Under the proofs' word the record itself is asked wherever the walk leans on the proof: by an inquiry that makes nothing and that stops by name.
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+DirectCalls testing=CheckProofsAtRunTime
+# CHECK: [[box]]: L0 @JSValue = CallDirect
+# CHECK: [[asked]]: boolean @Boolean = FindsNoMember [[box]] key="then" {{*}}asksObjectByInquiry
+# CHECK-NEXT: CheckProof [[asked]] checkedType=true
+# CHECK: = AwaitBySavingFrame [[box]]
+# RUN(EMIT): emit f1:CoroutineBody mechanisms=none+TypedOperations+DirectCalls testing=CheckProofsAtRunTime
+# EMIT: = Const32(2305)
+# without the word nothing is asked
+# RUN(PLAIN): walk f1:CoroutineBody mechanisms=none+TypedOperations+DirectCalls
+# PLAIN: = AwaitBySavingFrame
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations+DirectCalls
+# NEVER-NOT: FindsNoMember
+# a number is no object: nothing is asked of it
+# async function takeNumber() { return await 1; }
+# RUN(NUMBER): walk f3:CoroutineBody mechanisms=none+TypedOperations+DirectCalls testing=CheckProofsAtRunTime
+# NUMBER: = AwaitBySavingFrame
+# RUN(NOTHING): walk f3:CoroutineBody mechanisms=none+TypedOperations+DirectCalls testing=CheckProofsAtRunTime
+# NOTHING-NOT: FindsNoMember
+
+layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = Call v0, -
+    v3 = Call v1, -
+    v4 = Undefined
+    Return v4
+}
+function f1 name="take" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0, -
+    v2 = Await v1
+    v3 = PropGet v2 key="n"
+    Return v3
+}
+function f2 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="takeNumber" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Await v0
+    Return v1
+}

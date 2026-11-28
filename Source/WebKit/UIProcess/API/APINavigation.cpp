@@ -30,6 +30,7 @@
 #include "BrowsingWarning.h"
 #include "WebBackForwardListFrameItem.h"
 #include "WebBackForwardListItem.h"
+#include "WebFrameProxy.h"
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <wtf/DebugUtilities.h>
@@ -46,6 +47,12 @@ SubstituteData::SubstituteData(Vector<uint8_t>&& content, const ResourceResponse
 {
 }
 
+
+uint64_t Navigation::generateSequenceNumber()
+{
+    static uint64_t lastSequenceNumber;
+    return ++lastSequenceNumber;
+}
 
 Navigation::Navigation(WebCore::ProcessIdentifier processID)
     : m_navigationID(WebCore::NavigationIdentifier::generate())
@@ -164,6 +171,15 @@ WebCore::SecurityOriginData Navigation::requesterOrigin() const
     if (m_lastNavigationAction && m_lastNavigationAction->requester)
         return m_lastNavigationAction->requester->securityOrigin->data();
     return { };
+}
+
+WebCore::SecurityOriginData Navigation::originatingFrameSecurityOrigin() const
+{
+    if (auto& originatingFrameInfo = m_originatingFrameInfo) {
+        if (RefPtr originatingFrame = WebKit::WebFrameProxy::webFrame(originatingFrameInfo->frameID))
+            return originatingFrame->documentSecurityOriginData();
+    }
+    return WebCore::SecurityOriginData::createOpaque();
 }
 
 void Navigation::setSafeBrowsingCheckOngoing(size_t index, bool ongoing)

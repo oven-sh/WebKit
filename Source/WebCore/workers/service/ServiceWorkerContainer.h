@@ -100,7 +100,7 @@ public:
     void getNotifications(const URL&, const String&, DOMPromiseDeferred<IDLSequence<IDLInterface<Notification>>>&&);
 #endif
 
-    ServiceWorkerJob* LEGACY_NODELETE job(ServiceWorkerJobIdentifier);
+    NODELETE ServiceWorkerJob* job(ServiceWorkerJobIdentifier);
 
     void startMessages();
 
@@ -170,7 +170,7 @@ private:
     bool m_isStopped { false };
     HashMap<ServiceWorkerRegistrationIdentifier, WeakRef<ServiceWorkerRegistration, WeakPtrImplWithEventTargetData>> m_registrations;
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     const uint32_t m_creationThreadID { currentThreadID() };
 #endif
 

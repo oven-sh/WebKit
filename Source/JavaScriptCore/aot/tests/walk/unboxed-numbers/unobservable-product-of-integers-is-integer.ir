@@ -1,0 +1,140 @@
+# a product of proven integers is -0 where one factor is 0 and the other is negative. A bit operator and a sum with an integer cannot tell -0 from 0, so the product stays an integer
+# function masked(a, b) { return ((a >> 16) * (b >> 16)) & 255; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = MultiplyIntegers
+# CHECK: = BitAnd {{*}}form=Integers
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = MultiplyIntegers
+# function shown(a, b) { return (a >> 16) * (b >> 16); } whoever gets the value can tell -0 from 0
+# RUN(SHOWN): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# SHOWN-NOT: MultiplyIntegers
+# function beside(a, b) { return (a >> 16) * (b >> 16) + (a & 7); } a sum is -0 only where both terms are
+# RUN(BESIDE): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# BESIDE-LABEL: code f3:Body
+# BESIDE: = MultiplyIntegers
+# BESIDE: = Add {{*}}form=Integers
+# function both(a, b) { return (a >> 16) * (b >> 16) + (b >> 16) * (a >> 16); } both terms may be -0
+# RUN(BOTH): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# BOTH-NOT: MultiplyIntegers
+# function bothMasked(a, b) { const m = (a >> 16) * (b >> 16) + (b >> 16) * (a >> 16); return (m >> 14) + (m & 255); }
+# RUN(MASKED): walk f5 mechanisms=none+TypedOperations+UnboxedNumbers
+# MASKED-LABEL: code f5:Body
+# MASKED: = MultiplyIntegers
+# MASKED: = Add {{*}}form=Integers
+# function difference(a, b) { return (a >> 16) * (b >> 16) - (a & 7); } -0 - 0 is -0
+# RUN(DIFFERENCE): walk f6 mechanisms=none+TypedOperations+UnboxedNumbers
+# DIFFERENCE-NOT: MultiplyIntegers
+# function subtracted(a, b) { return (a & 7) - (a >> 16) * (b >> 16); } 0 - -0 is 0, as 0 - 0 is
+# RUN(SUBTRACTED): walk f7 mechanisms=none+TypedOperations+UnboxedNumbers
+# SUBTRACTED-LABEL: code f7:Body
+# SUBTRACTED: = MultiplyIntegers
+# function divided(a, b) { return (a & 7) / ((a >> 16) * (b >> 16)); } 1 / -0 is -Infinity
+# RUN(DIVIDED): walk f8 mechanisms=none+TypedOperations+UnboxedNumbers
+# DIVIDED-NOT: MultiplyIntegers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9
+    Return v10
+}
+function f1 name="masked" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Mul v3, v4
+    v6 = Integer integer=255
+    v7 = BitAnd v5, v6
+    Return v7
+}
+function f2 name="shown" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Mul v3, v4
+    Return v5
+}
+function f3 name="beside" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Mul v3, v4
+    v6 = Integer integer=7
+    v7 = BitAnd v0, v6
+    v8 = Add v5, v7
+    Return v8
+}
+function f4 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Mul v3, v4
+    v6 = Mul v4, v3
+    v7 = Add v5, v6
+    Return v7
+}
+function f5 name="bothMasked" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Mul v3, v4
+    v6 = Mul v4, v3
+    v7 = Add v5, v6
+    v8 = Integer integer=14
+    v9 = RShift v7, v8
+    v10 = Integer integer=255
+    v11 = BitAnd v7, v10
+    v12 = Add v9, v11
+    Return v12
+}
+function f6 name="difference" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Mul v3, v4
+    v6 = Integer integer=7
+    v7 = BitAnd v0, v6
+    v8 = Sub v5, v7
+    Return v8
+}
+function f7 name="subtracted" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Integer integer=7
+    v6 = BitAnd v0, v5
+    v7 = Mul v3, v4
+    v8 = Sub v6, v7
+    Return v8
+}
+function f8 name="divided" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=16
+    v3 = RShift v0, v2
+    v4 = RShift v1, v2
+    v5 = Integer integer=7
+    v6 = BitAnd v0, v5
+    v7 = Mul v3, v4
+    v8 = Div v6, v7
+    Return v8
+}

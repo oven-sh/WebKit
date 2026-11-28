@@ -31,7 +31,7 @@ class LegacyRenderSVGHiddenContainer : public LegacyRenderSVGContainer {
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGHiddenContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGHiddenContainer);
 public:
-    LegacyRenderSVGHiddenContainer(Type, SVGElement&, Style::ComputedStyle&&, OptionSet<SVGModelObjectFlag> = { });
+    LegacyRenderSVGHiddenContainer(Type, SVGElement&, UniqueRef<Style::ComputedStyle>&&, OptionSet<SVGModelObjectFlag> = { });
 
 protected:
     void layout() override;
@@ -39,10 +39,10 @@ protected:
 private:
     ASCIILiteral renderName() const override { return "RenderSVGHiddenContainer"_s; }
 
-    void LEGACY_NODELETE paint(PaintInfo&, const LayoutPoint&) final;
+    NODELETE void paint(PaintInfo&, const LayoutPoint&) final;
 
-    LayoutRect LEGACY_NODELETE clippedOverflowRect(const RenderLayerModelObject*, const VisibleRectContext&) const final;
-    void LEGACY_NODELETE absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const final;
+    NODELETE LayoutRect clippedOverflowRect(const RenderLayerModelObject*, const VisibleRectContext&) const final;
+    NODELETE void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const final;
 
     bool nodeAtFloatPoint(const HitTestRequest&, HitTestResult&, const FloatPoint& pointInParent, HitTestAction) final;
 };

@@ -64,6 +64,10 @@ public:
     double windowIdentifierNone() const { return WebExtensionWindowConstants::None; }
     double windowIdentifierCurrent() const { return WebExtensionWindowConstants::Current; }
 
+    NODELETE NSDictionary *createType();
+    NODELETE NSDictionary *windowState();
+    NODELETE NSDictionary *windowType();
+
     WebExtensionAPIWindowsEvent& onCreated();
     WebExtensionAPIWindowsEvent& onRemoved();
     WebExtensionAPIWindowsEvent& onFocusChanged();

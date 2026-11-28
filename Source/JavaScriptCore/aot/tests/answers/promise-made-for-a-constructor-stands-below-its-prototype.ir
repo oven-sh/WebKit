@@ -1,0 +1,9 @@
+# createPromise makes a pending promise below the `prototype` of the constructor that it is handed: of Promise itself by an allocation, of any other by asking
+# If the allocation gave another prototype than the read, one promise for two calls, or were taken for a constructor below Promise, these would differ
+# LIBRARY: own
+# RUN(SHELL): run-in-shell globalThis.sink = (make, makeOf) => { class Mine extends Promise { } const made = make(); print(made instanceof Promise, Object.getPrototypeOf(made) === Promise.prototype, make() === made); print(Object.getPrototypeOf(makeOf(Promise)) === Promise.prototype, Object.getPrototypeOf(makeOf(Mine)) === Mine.prototype); let settled = "pending"; made.then(() => { settled = "settled"; }); drainMicrotasks(); print(settled); };
+# SHELL: true true false
+# SHELL-NEXT: true true
+# SHELL-NEXT: pending
+# SHELL-NEXT: exited with 0
+# PROGRAM-OF: ../walk/typed-operations/create-promise-of-promise-itself-is-an-allocation.ir

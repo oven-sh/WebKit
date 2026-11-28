@@ -1,0 +1,130 @@
+# a free name, and a name that is read off or stored on the global object, goes by a record of the instance. The first access files there what it has found, and whoever stores, defines, deletes or declares the name empties it.
+# So nothing has to be known of the name: no lock is leaned on, and no mechanism is asked
+# function read() { return shared; }
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: : anything{{*}} @JSValue = GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: PropGet
+# function kind() { return typeof shared; }
+# RUN(TYPEOF): walk f2 mechanisms=none
+# TYPEOF-LABEL: code f2:Body
+# TYPEOF: = GetGlobalBinding key="shared" level=Expected [seesScriptBindings, isForTypeOf]
+# No binding of a script stands in front of a property that is read off the object: function readOffObject() { return globalThis.shared; }
+# RUN(OBJECT): walk f3 mechanisms=none
+# OBJECT-LABEL: code f3:Body
+# OBJECT: = GetGlobalBinding key="shared" level=Expected
+# OBJECT-NOT: seesScriptBindings
+# function store(value) { shared = value; }
+# RUN(STORE): walk f4 mechanisms=none
+# STORE-LABEL: code f4:Body
+# STORE: SetGlobalBinding v0 key="shared" level=Expected [seesScriptBindings]
+# function storeOnObject(value) { globalThis.shared = value; }
+# RUN(STOREOBJECT): walk f5 mechanisms=none
+# STOREOBJECT-LABEL: code f5:Body
+# STOREOBJECT: SetGlobalBinding v0 key="shared" mode=Sloppy level=Expected
+# A store on what is not written as the global object stays by name, which reports to the run time: function storeOn(holder, value) { holder.other = value; }
+# RUN(HOLDER): walk f6 mechanisms=all
+# HOLDER-LABEL: code f6:Body
+# HOLDER-NOT: GlobalBinding
+# HOLDER: PropSet {{*}}key="other"
+# An index may be an element: function first() { return globalThis[0]; }
+# RUN(INDEX): walk f7 mechanisms=none
+# INDEX-LABEL: code f7:Body
+# INDEX-NOT: GlobalBinding
+# INDEX: = PropGet {{*}}key="0"
+# A member that never changes is the built-in itself where typed operations are at work, and goes by its record where they are withheld: function waiting() { return Promise; }
+# RUN(CONSTANT): walk f8 mechanisms=none+TypedOperations
+# CONSTANT-LABEL: code f8:Body
+# CONSTANT-NOT: GlobalBinding
+# CONSTANT: = Builtin builtin=Promise
+# RUN(WITHHELD): walk f8 mechanisms=none
+# WITHHELD-LABEL: code f8:Body
+# WITHHELD: = GetGlobalBinding key="Promise" level=Expected [seesScriptBindings]
+# The library's `$name`, written as a free name, keeps for good what it has found, and so does its record. Read off the object it is asked for each time.
+# RUN(PRIVATE): walk f9 mechanisms=none
+# PRIVATE-LABEL: code f9:Body
+# PRIVATE: = GetGlobalBinding key=@"makeErrorWithCode" level=Expected [seesScriptBindings]
+# PRIVATE: = PropGet {{*}}key=@"asyncContext"
+# With every mechanism the forms are the same.
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10
+    Return v11
+}
+function f1 name="read" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="shared" [isFreeName]
+    Return v1
+}
+function f2 name="kind" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="shared" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+}
+function f3 name="readOffObject" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="shared"
+    Return v1
+}
+function f4 name="store" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="shared" mode=Strict [isFreeName]
+    v3 = Undefined
+    Return v3
+}
+function f5 name="storeOnObject" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="shared" mode=Sloppy
+    v3 = Undefined
+    Return v3
+}
+function f6 name="storeOn" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="other" mode=Strict
+    v3 = Undefined
+    Return v3
+}
+function f7 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="0"
+    Return v1
+}
+function f8 name="waiting" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Promise" [isFreeName]
+    Return v1
+}
+function f9 name="ofLibrary" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"makeErrorWithCode" [isFreeName]
+    v2 = PropGet v0 key=@"asyncContext"
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}

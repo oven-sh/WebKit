@@ -115,6 +115,7 @@
 #include "ScriptSourceCode.h"
 #include "ScrollingCoordinator.h"
 #include "SecurityOrigin.h"
+#include "SecurityOriginPolicy.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -162,7 +163,7 @@ struct OverrideScreenSize {
     FloatSize size;
 };
 
-static const LocalFrame& LEGACY_NODELETE rootFrame(const LocalFrame& frame, Frame* parent)
+NODELETE static const LocalFrame& rootFrame(const LocalFrame& frame, Frame* parent)
 {
     SUPPRESS_UNCOUNTED_LOCAL auto* localParent = dynamicDowncast<LocalFrame>(parent);
     if (localParent)
@@ -243,7 +244,7 @@ LocalFrame::~LocalFrame()
     if (!loader->isComplete())
         loader->closeURL();
 
-    loader->clear(protect(document()), false);
+    loader->detachCurrentDocument(nullptr, ClearWindowProperties::No);
     protect(script())->updatePlatformScriptObjects();
 
     // FIXME: We should not be doing all this work inside the destructor
@@ -417,7 +418,7 @@ void LocalFrame::invalidateContentEventRegionsIfNeeded(InvalidateContentEventReg
     bool needsUpdateForEditableElements = false;
     bool needsUpdateForInteractionRegions = false;
 #if ENABLE(WHEEL_EVENT_REGIONS)
-    needsUpdateForWheelEventHandlers = document->hasWheelEventHandlers() || reason == InvalidateContentEventRegionsReason::EventHandlerChange;
+    needsUpdateForWheelEventHandlers = document->hasWheelEventHandlers() || document->mayHaveListBoxes() || reason == InvalidateContentEventRegionsReason::EventHandlerChange;
 #else
     UNUSED_PARAM(reason);
 #endif
@@ -828,6 +829,9 @@ void LocalFrame::injectUserScriptImmediately(DOMWrapperWorld& world, const UserS
     if (!page)
         return;
 
+    if (script.pageID() && script.pageID() != page->identifier())
+        return;
+
     if (script.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly && !isMainFrame())
         return;
 
@@ -853,15 +857,19 @@ void LocalFrame::injectUserScriptImmediately(DOMWrapperWorld& world, const UserS
     if (!UserContentURLPattern::matchesPatterns(url, script.allowlist(), script.blocklist()))
         return;
 
+    // We may attempt to add the same script more than once, so ensure it's only added once per document in a world.
+    if (!document->recordInjectedUserScript(world, script))
+        return;
+
     page->setHasInjectedUserScript();
     loader->client().willInjectUserScript(world);
 
-    WTFBeginSignpost(this, UserScript, "injectUserScript: %" PRIVATE_LOG_STRING " (%u bytes, top frame only %d, doc start %d)", script.debugDescription().utf8(), script.source().length(), script.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly, script.injectionTime() == UserScriptInjectionTime::DocumentStart);
+    WTFBeginSignpost(this, UserScript, "injectUserScript: %" PRIVATE_LOG_STRING " (%u bytes, top frame only %d, doc start %d)", makeUTF8CString(script.debugDescription()), script.source().length(), script.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly, script.injectionTime() == UserScriptInjectionTime::DocumentStart);
     protect(this->script())->evaluateInWorldIgnoringException(ScriptSourceCode(script.source(), JSC::SourceTaintedOrigin::Untainted, URL(script.url())), world);
     WTFEndSignpost(this, UserScript);
 }
 
-RenderView* LEGACY_NODELETE LocalFrame::contentRenderer() const
+NODELETE RenderView* LocalFrame::contentRenderer() const
 {
     return document() ? document()->renderView() : nullptr;
 }
@@ -921,6 +929,32 @@ void LocalFrame::willDetachPage()
     ASSERT(!document() || !document()->renderView());
 }
 
+void LocalFrame::willBeReplacedByRemoteFrame()
+{
+    if (!m_cachedPageCount) {
+        loader().detachFromParent();
+        return;
+    }
+
+    ASSERT(isMainFrame());
+    ASSERT(m_doc && m_doc->backForwardCacheState() == Document::InBackForwardCache);
+    ASSERT(!tree().firstChild());
+    ASSERT(!m_existsOnlyForCachedPages);
+    m_existsOnlyForCachedPages = true;
+
+    InspectorInstrumentation::frameDetachedFromParent(*this);
+
+    if (RefPtr page = this->page()) {
+        page->removeRootFrame(*this);
+        if (RefPtr scrollingCoordinator = page->scrollingCoordinator())
+            scrollingCoordinator->rootFrameWasRemoved(frameID());
+    }
+
+#if ASSERT_ENABLED
+    frameExistsOnlyForCachedPages(*this);
+#endif
+}
+
 String LocalFrame::displayStringModifiedByEncoding(const String& str) const
 {
     return document() ? protect(document())->displayStringModifiedByEncoding(str) : str;
@@ -928,7 +962,7 @@ String LocalFrame::displayStringModifiedByEncoding(const String& str) const
 
 VisiblePosition LocalFrame::visiblePositionForPoint(const IntPoint& framePoint) const
 {
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
     HitTestResult result = eventHandler().hitTestResultAtPoint(framePoint, hitType);
     RefPtr node = result.innerNonSharedNode();
     if (!node)
@@ -1130,9 +1164,21 @@ void LocalFrame::setPageAndTextZoomFactors(float pageZoomFactor, float textZoomF
     }
 }
 
-float LocalFrame::frameScaleFactorForChild(const Frame& child) const
+void LocalFrame::frameOwnerZoomDidChange()
 {
-    // The frame scale factor for a child frame is the accumulated CSS zoom
+    // https://github.com/w3c/csswg-drafts/issues/9644
+    RefPtr parentFrame = tree().parent();
+    auto frameOwnerZoomFactor = parentFrame ? parentFrame->frameOwnerZoomFactorForChild(*this) : 1.0f;
+    if (frameOwnerZoomFactor == m_frameOwnerZoomFactor)
+        return;
+    m_frameOwnerZoomFactor = frameOwnerZoomFactor;
+    if (RefPtr document = this->document())
+        document->scheduleFullStyleRebuild();
+}
+
+float LocalFrame::frameOwnerZoomFactorForChild(const Frame& child) const
+{
+    // The frame owner zoom factor for a child frame is the accumulated CSS zoom
     // applied to the frame element. On the ComputedStyle, the used zoom also
     // includes the page zoom factor, so we must divide it out to get back to
     // the accumulated CSS zoom value.
@@ -1666,7 +1712,7 @@ void LocalFrame::showResourceMonitoringError()
         protect(page->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Unloaded"_s, valueDictionaryForResult(true), ShouldSample::No);
     }
 
-    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": unloading", url.isValid() ? url.string().utf8() : "invalid"_s, mainFrameURL.isValid() ? mainFrameURL.string().utf8() : "invalid"_s);
+    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": unloading", url.isValid() ? makeUTF8CString(url.string()) : "invalid"_s, mainFrameURL.isValid() ? makeUTF8CString(mainFrameURL.string()) : "invalid"_s);
 
     document->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Error, makeString("Frame was unloaded because its network usage exceeded the limit: "_s, ResourceMonitorChecker::singleton().networkUsageThreshold(), " bytes, url="_s, url.string()));
 
@@ -1697,7 +1743,7 @@ void LocalFrame::reportResourceMonitoringWarning()
         protect(page->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Throttled"_s, valueDictionaryForResult(false), ShouldSample::No);
     }
 
-    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": not unloading due to global limits", url.isValid() ? url.string().utf8() : "invalid"_s, mainFrameURL.isValid() ? mainFrameURL.string().utf8() : "invalid"_s);
+    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": not unloading due to global limits", url.isValid() ? makeUTF8CString(url.string()) : "invalid"_s, mainFrameURL.isValid() ? makeUTF8CString(mainFrameURL.string()) : "invalid"_s);
 
     if (RefPtr document = this->document())
         document->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Warning, "Frame's network usage exceeded the limit."_s);
@@ -1792,7 +1838,7 @@ std::optional<DocumentSecurityPolicy> LocalFrame::frameDocumentSecurityPolicy() 
     if (!document)
         return std::nullopt;
 
-    return DocumentSecurityPolicy { document->crossOriginEmbedderPolicy(), document->crossOriginOpenerPolicy(), document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No, document->agentClusterIdentifier() };
+    return DocumentSecurityPolicy { document->crossOriginEmbedderPolicy(), document->crossOriginOpenerPolicy(), document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No, document->agentClusterIdentifier(), document->isSandboxed(SandboxFlag::Origin) };
 }
 
 std::optional<AgentClusterIdentifier> LocalFrame::frameAgentClusterIdentifier() const
@@ -1869,7 +1915,7 @@ static inline NodeQualifier ancestorRespondingToClickEventsNodeQualifier(Securit
 RefPtr<Node> LocalFrame::betterApproximateNode(const IntPoint& testPoint, const NodeQualifier& nodeQualifierFunction, Node* best, Node* failedNode, IntPoint& bestPoint, IntRect& bestRect, const IntRect& testRect)
 {
     IntRect candidateRect;
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
     RefPtr candidate = nodeQualifierFunction(eventHandler().hitTestResultAtPoint(testPoint, hitType), failedNode, &candidateRect);
 
     // Bail if we have no candidate, or the candidate is already equal to our current best node,
@@ -1910,7 +1956,7 @@ bool LocalFrame::hitTestResultAtViewportLocation(const FloatPoint& viewportLocat
         return false;
 
     center = view->windowToContents(roundedIntPoint(viewportLocation));
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
     hitTestResult = eventHandler().hitTestResultAtPoint(center, hitType);
     return true;
 }
@@ -1961,7 +2007,7 @@ RefPtr<Node> LocalFrame::qualifyingNodeAtViewportLocation(const FloatPoint& view
             IntSize testOffset(testOffsets[n] * searchRadius, testOffsets[n + 1] * searchRadius);
             IntPoint testPoint = testCenter + testOffset;
 
-            constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
+            constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
             auto candidateInfo = eventHandler().hitTestResultAtPoint(testPoint, hitType);
             RefPtr candidateNode = nodeQualifierFunction(candidateInfo, 0, 0);
             if (candidateNode && candidateNode->isDescendantOf(originalApproximateNode)) {

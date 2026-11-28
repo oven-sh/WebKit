@@ -146,7 +146,7 @@ public:
         appendDifferenceOfTables(characterClass.m_matches32, characterClass.m_ranges32, excluded.m_matches32, excluded.m_ranges32, m_matches32, m_ranges32);
     }
 
-    void LEGACY_NODELETE combiningSetOp(CharacterClassSetOp setOp)
+    NODELETE void combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
         m_setOp = setOp;
@@ -516,12 +516,12 @@ public:
         nonLatin1OpSorted(rhsSortedMatches32, rhsRanges32);
     }
 
-    bool LEGACY_NODELETE hasInvertedStrings()
+    NODELETE bool hasInvertedStrings()
     {
         return m_invertedStrings;
     }
 
-    static ALWAYS_INLINE int LEGACY_NODELETE compareUTF32Strings(const Vector<char32_t>& a, const Vector<char32_t>& b)
+    NODELETE static ALWAYS_INLINE int compareUTF32Strings(const Vector<char32_t>& a, const Vector<char32_t>& b)
     {
         // Longer strings before shorter.
         if (a.size() > b.size())
@@ -571,7 +571,7 @@ public:
         return characterClass;
     }
 
-    void LEGACY_NODELETE setIsCaseInsensitive(bool ignoreCase)
+    NODELETE void setIsCaseInsensitive(bool ignoreCase)
     {
         m_isCaseInsensitive = ignoreCase;
     }
@@ -1235,12 +1235,12 @@ private:
         return widths;
     }
 
-    bool LEGACY_NODELETE anyCharacter()
+    NODELETE bool anyCharacter()
     {
         return m_anyCharacter;
     }
 
-    bool LEGACY_NODELETE isUnionSetOp() { return m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union; }
+    NODELETE bool isUnionSetOp() { return m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union; }
 
     bool m_isCaseInsensitive : 1;
     bool m_anyCharacter : 1;
@@ -1309,12 +1309,12 @@ class YarrPatternConstructor {
         PatternAlternative* alternative() const { return m_alternative; }
         unsigned termIndex() const { return m_termIndex; }
 
-        bool LEGACY_NODELETE hasNamedGroup()
+        NODELETE bool hasNamedGroup()
         {
             return !m_namedGroup.isNull();
         }
 
-        const String LEGACY_NODELETE namedGroup()
+        NODELETE const String namedGroup()
         {
             return m_namedGroup;
         }
@@ -1555,7 +1555,7 @@ public:
     }
     static IgnoreCasePropertyClasses& ignoreCasePropertyClassesFor(BuiltInCharacterClassID classID)
     {
-        static NeverDestroyed<UncheckedKeyHashMap<unsigned, std::unique_ptr<IgnoreCasePropertyClasses>>> map;
+        static NeverDestroyed<HashMap<unsigned, std::unique_ptr<IgnoreCasePropertyClasses>>> map;
         auto& slot = map.get().add(static_cast<unsigned>(classID), nullptr).iterator->value;
         if (!slot)
             slot = makeUnique<IgnoreCasePropertyClasses>();
@@ -1681,7 +1681,7 @@ public:
         }
     }
 
-    void LEGACY_NODELETE atomCharacterClassBegin(bool invert = false)
+    NODELETE void atomCharacterClassBegin(bool invert = false)
     {
         m_invertCharacterClass = invert;
 
@@ -1741,7 +1741,7 @@ public:
         m_currentCharacterClassConstructor->atomClassStringDisjunction(utf32Strings);
     }
 
-    void LEGACY_NODELETE atomCharacterClassSetOp(CharacterClassSetOp setOp)
+    NODELETE void atomCharacterClassSetOp(CharacterClassSetOp setOp)
     {
         m_currentCharacterClassConstructor->combiningSetOp(setOp);
     }
@@ -2137,8 +2137,7 @@ public:
     // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
     std::optional<PatternTermList> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
     {
-        PatternTermList copiedTerms;
-        copiedTerms.reserveInitialCapacity(alternative->m_terms.size());
+        PatternTermList copiedTerms(ReserveCapacityTag { }, alternative->m_terms.size());
         for (unsigned termIndex = 0; termIndex < alternative->m_terms.size(); ++termIndex) {
             auto& term = alternative->m_terms[termIndex];
             if (auto copied = copyTerm(term, filterStartsWithBOL)) {
@@ -2164,7 +2163,14 @@ public:
         if ((term.type != PatternTerm::Type::ParenthesesSubpattern) && (term.type != PatternTerm::Type::ParentheticalAssertion))
             return PatternTerm(term);
         
-        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL && !term.invert())) {
+        filterStartsWithBOL = filterStartsWithBOL && !term.invert() && term.matchDirection() == Forward;
+        if (filterStartsWithBOL && term.type == PatternTerm::Type::ParentheticalAssertion) {
+            if (std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) { return alternative->m_startsWithBOL; }))
+                return std::nullopt;
+            filterStartsWithBOL = false;
+        }
+
+        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL)) {
             PatternTerm termCopy = term;
             termCopy.parentheses.disjunction = newDisjunction;
             m_pattern.m_hasCopiedParenSubexpressions = true;
@@ -2295,12 +2301,12 @@ public:
         m_alternative = m_alternative->m_parent->addNewAlternative(m_pattern.m_numSubpatterns, parenthesisMatchDirection());
     }
 
-    inline bool LEGACY_NODELETE abortedDueToError() const
+    NODELETE inline bool abortedDueToError() const
     {
         return hasError(m_error);
     }
 
-    inline ErrorCode LEGACY_NODELETE abortErrorCode() const
+    NODELETE inline ErrorCode abortErrorCode() const
     {
         return m_error;
     }
@@ -2907,6 +2913,16 @@ public:
     };
     using TermsInOrder = Vector<const PatternTerm*, 16>;
     static constexpr unsigned maxTermsBehindLazyRun = 64;
+    // For all the lazy runs together: many of them can stand in front of the same terms.
+    unsigned m_termsLeftToVisitBehindLazyRuns { 1 << 20 };
+
+    bool chargeVisitBehindLazyRun()
+    {
+        if (!m_termsLeftToVisitBehindLazyRuns)
+            return false;
+        --m_termsLeftToVisitBehindLazyRuns;
+        return true;
+    }
 
     static bool isTakenOnce(const PatternTerm& group)
     {
@@ -2931,6 +2947,8 @@ public:
         for (;;) {
             for (; index < alternative->m_terms.size(); ++index) {
                 const PatternTerm& term = alternative->m_terms[index];
+                if (!chargeVisitBehindLazyRun())
+                    return false;
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern && isTakenOnce(term) && term.matchDirection() == Forward && term.parentheses.disjunction->m_alternatives.size() == 1) {
                     TermsBehindGroup behind { alternative, index + 1, outer };
                     return collectTermsBehind(term.parentheses.disjunction->m_alternatives[0].get(), 0, &behind, terms);
@@ -2941,6 +2959,8 @@ public:
             }
             if (!outer)
                 return true;
+            if (!chargeVisitBehindLazyRun())
+                return false;
             alternative = outer->alternative;
             index = outer->index;
             outer = outer->outer;
@@ -2948,8 +2968,10 @@ public:
     }
 
     // Whether the search from the term on depends on the position alone, and the JIT counts no turns in it: it gives a match up by their number.
-    static bool dependsOnPositionAlone(const PatternTerm& term)
+    bool dependsOnPositionAlone(const PatternTerm& term)
     {
+        if (!chargeVisitBehindLazyRun() || !isSafeToRecurse())
+            return false;
         switch (term.type) {
         case PatternTerm::Type::NumberedBackReference:
         case PatternTerm::Type::NamedBackReference:
@@ -2960,8 +2982,10 @@ public:
                 return false;
             [[fallthrough]];
         case PatternTerm::Type::ParentheticalAssertion:
-            return std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) {
-                return std::ranges::all_of(alternative->m_terms, dependsOnPositionAlone);
+            return std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [&](auto& alternative) {
+                return chargeVisitBehindLazyRun() && std::ranges::all_of(alternative->m_terms, [&](const PatternTerm& nested) {
+                    return dependsOnPositionAlone(nested);
+                });
             });
         default:
             return true;
@@ -3028,7 +3052,7 @@ public:
             if (step > 1 && !isSubset(sets.set(behind[step - 1]->m_matchedSet), sets.set(behind[step]->m_matchedSet)))
                 return false;
         }
-        return std::ranges::all_of(behind.span().subspan(next + 1), [](const PatternTerm* term) {
+        return std::ranges::all_of(behind.span().subspan(next + 1), [&](const PatternTerm* term) {
             return dependsOnPositionAlone(*term);
         });
     }
@@ -4325,7 +4349,7 @@ public:
             return;
     }
 
-    ErrorCode LEGACY_NODELETE error() { return m_error; }
+    NODELETE ErrorCode error() { return m_error; }
     StackCheck& stackCheck() { return m_stackCheck; }
 
 private:
@@ -4342,7 +4366,7 @@ private:
             {
             }
 
-            void LEGACY_NODELETE restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
+            NODELETE void restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
             {
                 isModifier = m_isModifier;
                 invert = m_invert;
@@ -4376,7 +4400,7 @@ private:
             m_isModifier = false;
         }
 
-        void LEGACY_NODELETE pop()
+        NODELETE void pop()
         {
             ASSERT(m_stackDepth > 0);
 
@@ -4392,17 +4416,17 @@ private:
             }
         }
 
-        void LEGACY_NODELETE setModifier(bool isMod)
+        NODELETE void setModifier(bool isMod)
         {
             m_isModifier = isMod;
         }
 
-        bool LEGACY_NODELETE isModifier() const
+        NODELETE bool isModifier() const
         {
             return m_isModifier;
         }
 
-        void LEGACY_NODELETE setInvert(bool invert)
+        NODELETE void setInvert(bool invert)
         {
             m_invert = invert;
         }
@@ -4429,17 +4453,17 @@ private:
         // True inside a lookbehind at ANY nesting depth (including within a lookahead
         // nested in a lookbehind), unlike matchDirection(), which is only the innermost
         // assertion's own direction.
-        bool LEGACY_NODELETE insideLookbehind() const
+        NODELETE bool insideLookbehind() const
         {
             return m_insideLookbehind;
         }
 
-        void LEGACY_NODELETE setFlags(OptionSet<Flags> flags)
+        NODELETE void setFlags(OptionSet<Flags> flags)
         {
             m_flags = flags;
         }
 
-        OptionSet<Flags> LEGACY_NODELETE flags() const
+        NODELETE OptionSet<Flags> flags() const
         {
             return m_flags;
         }
@@ -4471,27 +4495,27 @@ private:
         m_parenthesisContext.push();
     }
 
-    void LEGACY_NODELETE popParenthesisContext()
+    NODELETE void popParenthesisContext()
     {
         m_parenthesisContext.pop();
     }
 
-    void LEGACY_NODELETE setParenthesisInvert(bool invert)
+    NODELETE void setParenthesisInvert(bool invert)
     {
         m_parenthesisContext.setInvert(invert);
     }
 
-    bool LEGACY_NODELETE parenthesisInvert() const
+    NODELETE bool parenthesisInvert() const
     {
         return m_parenthesisContext.invert();
     }
 
-    void LEGACY_NODELETE setParenthesisMatchDirection(MatchDirection matchDirection)
+    NODELETE void setParenthesisMatchDirection(MatchDirection matchDirection)
     {
         m_parenthesisContext.setMatchDirection(matchDirection);
     }
 
-    MatchDirection LEGACY_NODELETE parenthesisMatchDirection() const
+    NODELETE MatchDirection parenthesisMatchDirection() const
     {
         return m_parenthesisContext.matchDirection();
     }
@@ -5101,8 +5125,7 @@ CharacterClassBitTable::CharacterClassBitTable(const CharacterClass& characterCl
     while (!bits.isEmpty() && !bits.last())
         bits.removeLast();
 
-    Vector<uint64_t> uniqueWords;
-    uniqueWords.reserveInitialCapacity(bits.size());
+    Vector<uint64_t> uniqueWords(ReserveCapacityTag { }, bits.size());
     for (size_t i = 0; i < bits.size(); ++i) {
         if (!i || bits[i] != bits[i - 1])
             uniqueWords.append(bits[i]);

@@ -320,6 +320,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/device-posture/DevicePosture.idl \
     $(WebCore)/Modules/device-posture/DevicePostureType.idl \
     $(WebCore)/Modules/device-posture/Navigator+DevicePosture.idl \
+    $(WebCore)/Modules/documentpip/DOMWindow+DocumentPictureInPicture.idl \
+    $(WebCore)/Modules/documentpip/DocumentPictureInPicture.idl \
+    $(WebCore)/Modules/documentpip/DocumentPictureInPictureEvent.idl \
     $(WebCore)/Modules/encryptedmedia/MediaKeyEncryptionScheme.idl \
     $(WebCore)/Modules/encryptedmedia/MediaKeyMessageEventInit.idl \
     $(WebCore)/Modules/encryptedmedia/MediaKeyMessageEvent.idl \
@@ -347,8 +350,11 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/entriesapi/FileSystemEntryCallback.idl \
     $(WebCore)/Modules/entriesapi/FileSystemFileEntry.idl \
     $(WebCore)/Modules/entriesapi/HTMLInputElement+EntriesAPI.idl \
+    $(WebCore)/Modules/fetch/DOMWindow+FetchLater.idl \
+    $(WebCore)/Modules/fetch/DeferredRequestInit.idl \
     $(WebCore)/Modules/fetch/FetchBody.idl \
     $(WebCore)/Modules/fetch/FetchHeaders.idl \
+    $(WebCore)/Modules/fetch/FetchLaterResult.idl \
     $(WebCore)/Modules/fetch/FetchReferrerPolicy.idl \
     $(WebCore)/Modules/fetch/FetchRequest.idl \
     $(WebCore)/Modules/fetch/FetchRequestCache.idl \
@@ -449,6 +455,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/mediasource/TextTrack+MediaSource.idl \
     $(WebCore)/Modules/mediasource/VideoPlaybackQuality.idl \
     $(WebCore)/Modules/mediasource/VideoTrack+MediaSource.idl \
+    $(WebCore)/Modules/mediasession/CallToActionLabel.idl \
     $(WebCore)/Modules/mediasession/MediaImage.idl \
     $(WebCore)/Modules/mediasession/MediaMetadata.idl \
     $(WebCore)/Modules/mediasession/MediaMetadataInit.idl \
@@ -458,6 +465,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/mediasession/MediaSessionAction.idl \
     $(WebCore)/Modules/mediasession/MediaSessionActionDetails.idl \
     $(WebCore)/Modules/mediasession/MediaSessionActionHandler.idl \
+    $(WebCore)/Modules/mediasession/MediaSessionActionHandlerOptions.idl \
     $(WebCore)/Modules/mediasession/MediaSessionCaptionTrack.idl \
     $(WebCore)/Modules/mediasession/MediaSessionCoordinator.idl \
     $(WebCore)/Modules/mediasession/MediaSessionCoordinatorMixin.idl \
@@ -596,6 +604,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/permissions/PermissionStatus.idl \
     $(WebCore)/Modules/permissions/Permissions.idl \
     $(WebCore)/Modules/permissions/WorkerNavigator+Permissions.idl \
+    $(WebCore)/Modules/phonenumberpossession/PhoneNumberPossessionCredential.idl \
+    $(WebCore)/Modules/phonenumberpossession/PhoneNumberPossessionRequestOptions.idl \
+    $(WebCore)/Modules/phonenumberpossession/PhoneNumberPossessionResponseType.idl \
     $(WebCore)/Modules/pictureinpicture/DocumentOrShadowRoot+PictureInPicture.idl \
     $(WebCore)/Modules/pictureinpicture/Document+PictureInPicture.idl \
     $(WebCore)/Modules/pictureinpicture/HTMLVideoElement+PictureInPicture.idl \
@@ -619,13 +630,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/remoteplayback/HTMLMediaElement+RemotePlayback.idl \
     $(WebCore)/Modules/remoteplayback/RemotePlayback.idl \
     $(WebCore)/Modules/remoteplayback/RemotePlaybackAvailabilityCallback.idl \
-    $(WebCore)/Modules/reporting/DeprecationReportBody.idl \
-    $(WebCore)/Modules/reporting/IntegrityPolicyViolationReportBody.idl \
     $(WebCore)/Modules/reporting/Report.idl \
-    $(WebCore)/Modules/reporting/ReportBody.idl \
     $(WebCore)/Modules/reporting/ReportingObserver.idl \
     $(WebCore)/Modules/reporting/ReportingObserverCallback.idl \
-    $(WebCore)/Modules/reporting/TestReportBody.idl \
     $(WebCore)/Modules/screen-wake-lock/Navigator+ScreenWakeLock.idl \
     $(WebCore)/Modules/screen-wake-lock/WakeLock.idl \
     $(WebCore)/Modules/screen-wake-lock/WakeLockSentinel.idl \
@@ -685,7 +692,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webaudio/AnalyserNode.idl \
     $(WebCore)/Modules/webaudio/AnalyserOptions.idl \
     $(WebCore)/Modules/webaudio/AudioBuffer.idl \
-    $(WebCore)/Modules/webaudio/AudioBufferCallback.idl \
     $(WebCore)/Modules/webaudio/AudioBufferOptions.idl \
     $(WebCore)/Modules/webaudio/AudioBufferSourceNode.idl \
     $(WebCore)/Modules/webaudio/AudioBufferSourceOptions.idl \
@@ -703,6 +709,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webaudio/AudioProcessingEvent.idl \
     $(WebCore)/Modules/webaudio/AudioProcessingEventInit.idl \
     $(WebCore)/Modules/webaudio/AudioScheduledSourceNode.idl \
+    $(WebCore)/Modules/webaudio/AudioSinkInfo.idl \
+    $(WebCore)/Modules/webaudio/AudioSinkOptions.idl \
+    $(WebCore)/Modules/webaudio/AudioSinkType.idl \
     $(WebCore)/Modules/webaudio/AudioTimestamp.idl \
     $(WebCore)/Modules/webaudio/AudioWorklet.idl \
     $(WebCore)/Modules/webaudio/AudioWorkletGlobalScope.idl \
@@ -725,6 +734,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webaudio/ConstantSourceOptions.idl \
     $(WebCore)/Modules/webaudio/ConvolverNode.idl \
     $(WebCore)/Modules/webaudio/ConvolverOptions.idl \
+    $(WebCore)/Modules/webaudio/DecodeErrorCallback.idl \
+    $(WebCore)/Modules/webaudio/DecodeSuccessCallback.idl \
     $(WebCore)/Modules/webaudio/DelayNode.idl \
     $(WebCore)/Modules/webaudio/DelayOptions.idl \
     $(WebCore)/Modules/webaudio/DistanceModelType.idl \
@@ -881,6 +892,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/WebXRBoundedReferenceSpace.idl \
     $(WebCore)/Modules/webxr/WebXRFrame+HandInput.idl \
     $(WebCore)/Modules/webxr/WebXRFrame+HitTest.idl \
+    $(WebCore)/Modules/webxr/WebXRFrame+PlaneDetection.idl \
     $(WebCore)/Modules/webxr/WebXRFrame.idl \
     $(WebCore)/Modules/webxr/WebXRHand.idl \
     $(WebCore)/Modules/webxr/WebXRHitTestResult.idl \
@@ -892,6 +904,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/WebXRJointPose.idl \
     $(WebCore)/Modules/webxr/WebXRJointSpace.idl \
     $(WebCore)/Modules/webxr/WebXRLayer.idl \
+    $(WebCore)/Modules/webxr/WebXRPlane.idl \
+    $(WebCore)/Modules/webxr/WebXRPlaneSet.idl \
     $(WebCore)/Modules/webxr/WebXRPose.idl \
     $(WebCore)/Modules/webxr/WebXRRay.idl \
     $(WebCore)/Modules/webxr/WebXRReferenceSpace.idl \
@@ -901,6 +915,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/WebXRSession+AR.idl \
     $(WebCore)/Modules/webxr/WebXRSession+Layers.idl \
     $(WebCore)/Modules/webxr/WebXRSession+HitTest.idl \
+    $(WebCore)/Modules/webxr/WebXRSession+PlaneDetection.idl \
     $(WebCore)/Modules/webxr/WebXRSession.idl \
     $(WebCore)/Modules/webxr/WebXRSpace.idl \
     $(WebCore)/Modules/webxr/WebXRSystem.idl \
@@ -935,6 +950,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/XRLayerInit.idl \
     $(WebCore)/Modules/webxr/XRLayerLayout.idl \
     $(WebCore)/Modules/webxr/XRLayerQuality.idl \
+    $(WebCore)/Modules/webxr/XRPlaneOrientation.idl \
     $(WebCore)/Modules/webxr/XRProjectionLayer.idl \
     $(WebCore)/Modules/webxr/XRProjectionLayerInit.idl \
     $(WebCore)/Modules/webxr/XRQuadLayer.idl \
@@ -1074,6 +1090,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/css/ElementCSSInlineStyle.idl \
     $(WebCore)/css/ElementCSSInlineStyle+Typedom.idl \
     $(WebCore)/css/FontFace.idl \
+    $(WebCore)/css/FontFaceLoadStatus.idl \
     $(WebCore)/css/FontFaceSet.idl \
     $(WebCore)/css/FontFaceSource.idl \
     $(WebCore)/css/LinkStyle.idl \
@@ -1269,6 +1286,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/Range.idl \
     $(WebCore)/dom/ReducerCallback.idl \
     $(WebCore)/dom/RequestAnimationFrameCallback.idl \
+    $(WebCore)/dom/Scheduler.idl \
+    $(WebCore)/dom/SchedulerPostTaskCallback.idl \
+    $(WebCore)/dom/SchedulerPostTaskOptions.idl \
     $(WebCore)/dom/SecurityPolicyViolationEvent.idl \
     $(WebCore)/dom/SecurityPolicyViolationEventDisposition.idl \
     $(WebCore)/dom/ShadowRoot.idl \
@@ -1284,6 +1304,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/SubscriberCallback.idl \
     $(WebCore)/dom/SubscriptionObserver.idl \
     $(WebCore)/dom/SubscriptionObserverCallback.idl \
+    $(WebCore)/dom/TaskPriority.idl \
     $(WebCore)/dom/Text.idl \
     $(WebCore)/dom/TextDecoder.idl \
     $(WebCore)/dom/TextDecoderStream.idl \
@@ -1310,6 +1331,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/VisibilityState.idl \
     $(WebCore)/dom/VisitorCallback.idl \
     $(WebCore)/dom/WheelEvent.idl \
+    $(WebCore)/dom/WindowOrWorkerGlobalScope+Scheduler.idl \
     $(WebCore)/dom/WindowOrWorkerGlobalScope+TrustedTypes.idl \
     $(WebCore)/dom/XMLDocument.idl \
     $(WebCore)/fileapi/Blob.idl \
@@ -1461,11 +1483,14 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/CanvasRect.idl \
     $(WebCore)/html/canvas/CanvasRenderingContext2D.idl \
     $(WebCore)/html/canvas/CanvasRenderingContext2DSettings.idl \
+    $(WebCore)/html/canvas/CanvasSettings.idl \
     $(WebCore)/html/canvas/CanvasShadowStyles.idl \
     $(WebCore)/html/canvas/CanvasState.idl \
     $(WebCore)/html/canvas/CanvasText.idl \
     $(WebCore)/html/canvas/CanvasTextAlign.idl \
     $(WebCore)/html/canvas/CanvasTextBaseline.idl \
+    $(WebCore)/html/canvas/CanvasToneMapping.idl \
+    $(WebCore)/html/canvas/CanvasToneMappingMode.idl \
     $(WebCore)/html/canvas/CanvasTextDrawingStyles.idl \
     $(WebCore)/html/canvas/CanvasTextRendering.idl \
     $(WebCore)/html/canvas/CanvasTransform.idl \
@@ -1581,8 +1606,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/inspector/InspectorAuditResourcesObject.idl \
     $(WebCore)/inspector/InspectorFrontendHost.idl \
     $(WebCore)/inspector/RTCLogsCallback.idl \
-    $(WebCore)/loader/COEPInheritenceViolationReportBody.idl \
-    $(WebCore)/loader/CORPViolationReportBody.idl \
     $(WebCore)/page/BarProp.idl \
     $(WebCore)/page/Crypto.idl \
     $(WebCore)/page/DOMSelection.idl \
@@ -1697,7 +1720,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/page/WebKitBuffer.idl \
     $(WebCore)/page/WebKitBufferNamespace.idl \
     $(WebCore)/page/WorkerNavigator.idl \
-    $(WebCore)/page/csp/CSPViolationReportBody.idl \
     $(WebCore)/plugins/DOMMimeType.idl \
     $(WebCore)/plugins/DOMMimeTypeArray.idl \
     $(WebCore)/plugins/DOMPlugin.idl \
@@ -1832,6 +1854,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/testing/SimulatedWebGLContextEvent.idl \
     $(WebCore)/testing/TypeConversions.idl \
     $(WebCore)/testing/WorkerInternals.idl \
+    $(WebCore)/testing/FakeXRAnchorCreationCallback.idl \
+    $(WebCore)/testing/FakeXRAnchorCreationParameters.idl \
     $(WebCore)/testing/FakeXRBoundsPoint.idl \
     $(WebCore)/testing/FakeXRButtonStateInit.idl \
     $(WebCore)/testing/FakeXRInputSourceInit.idl \
@@ -1839,6 +1863,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/testing/FakeXRRigidTransformInit.idl \
     $(WebCore)/testing/FakeXRViewInit.idl \
     $(WebCore)/testing/FakeXRWorldInit.idl \
+    $(WebCore)/testing/WebFakeXRAnchorController.idl \
     $(WebCore)/testing/WebFakeXRDevice.idl \
     $(WebCore)/testing/WebFakeXRInputController.idl \
     $(WebCore)/testing/WebXRTest.idl \
@@ -2198,6 +2223,9 @@ LocalizableAdditions.strings.out : $(WebCore)/preprocess-localizable-strings.pl 
 
 # modern media controls
 
+# The style sheets below are concatenated into one sheet that every media element shares through
+# the style sheet contents cache. Do not use CSS nesting in them: one nested rule makes the whole
+# sheet uncacheable, and each media element would parse its own copy.
 MODERN_MEDIA_CONTROLS_STYLE_SHEETS = \
     $(WebCore)/Modules/modern-media-controls/controls/activity-indicator.css \
     $(WebCore)/Modules/modern-media-controls/controls/airplay-button.css \
@@ -2256,10 +2284,10 @@ USER_AGENT_STYLE_SHEETS = \
     $(WebCore)/css/popover.css \
     $(WebCore)/css/quirks.css \
     $(WebCore)/css/selectMultipleAndListBox.css \
-    $(WebCore)/css/selectMultipleSelectedContent.css \
     $(WebCore)/css/svg.css \
     $(WebCore)/css/viewTransitions.css \
     $(WebCore)/html/shadow/mac/imageControlsMac.css \
+    $(WebCore)/html/shadow/attachmentElementInlineProgressShadow.css \
     $(WebCore)/html/shadow/attachmentElementShadow.css \
     $(WebCore)/html/shadow/detailsElementShadow.css \
     $(WebCore)/html/shadow/imageOverlay.css \

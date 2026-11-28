@@ -1,0 +1,110 @@
+# function key(a, b) { return `${a},${b}`; }  function same(a, b) { return key(a, b); }
+# function look(table, a, b) { return table[key(a, b)]; }  function keep(table, a, b) { table[key(a, b)] = a; return a; }  function show(a, b) { return key(a, b) + "!"; }  function twice(table, a, b) { return table[same(a, b)]; }
+# A copy of a function knows the call that it stands for. A text that it gives for a key is made as a name; what is joined on is not. Else each read would flatten a rope, hash it and look for its atom.
+# f1 = look, f2 = keep, f3 = show, f4 = twice, f5 = key, f6 = same, f7 = ask, f8 = shout, f9 = mark
+# function mark(a, b) { return `${a};${b}`; }  function ask(cache, a, b) { return cache.get(mark(a, b)); }  function shout(a, b) { return mark(a, b) + "!"; }
+# Where the call hands the text to a call of which nothing is known, what is known of all callers speaks; where it is joined on, it does not.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# RUN(STORE): walk f2:Body mechanisms=all
+# STORE-LABEL: code f2:Body
+# STORE: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# RUN(JOINED): walk f3:Body mechanisms=all
+# JOINED-LABEL: code f3:Body
+# JOINED-NOT: isLikelyKey
+# RUN(TWICE): walk f4:Body mechanisms=all
+# TWICE-LABEL: code f4:Body
+# TWICE: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# Compiled alone, `key` goes by all its callers too: two of them read its answer as the key of an access.
+# RUN(CALLED): walk f5:Body mechanisms=all-Inlining
+# CALLED-LABEL: code f5:Body
+# CALLED: = Strcat {{*}}[isLikelyKey]
+# RUN(ASK): walk f7:Body mechanisms=all
+# ASK-LABEL: code f7:Body
+# ASK: = Strcat {{*}}[isLikelyKey]
+# RUN(SHOUT): walk f8:Body mechanisms=all
+# SHOUT-LABEL: code f8:Body
+# SHOUT-NOT: isLikelyKey
+
+variable g0 name="key" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g1 name="same" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g2 name="mark" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="look" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v1, v2 calleeName="key"
+    v5 = ElemGet v0, v4
+    Return v5
+}
+function f2 name="keep" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v1, v2 calleeName="key"
+    ElemSet v0, v4, v1 mode=Strict
+    Return v1
+}
+function f3 name="show" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0, v1 calleeName="key"
+    v4 = String string="!"
+    v5 = Add v3, v4
+    Return v5
+}
+function f4 name="twice" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v1, v2 calleeName="same"
+    v5 = ElemGet v0, v4
+    Return v5
+}
+function f5 name="key" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=","
+    v3 = Strcat v0, v2, v1
+    Return v3
+}
+function f6 name="same" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0, v1 calleeName="key"
+    ReturnCall v3
+}
+function f7 name="ask" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="get"
+    v4 = GetModuleVariable variable=g2
+    v5 = Call v4, -, v1, v2 calleeName="mark"
+    v6 = Call v3, v0, v5 calleeKey="get" calleeName="cache.get"
+    Return v6
+}
+function f8 name="shout" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g2
+    v3 = Call v2, -, v0, v1 calleeName="mark"
+    v4 = String string="!"
+    v5 = Add v3, v4
+    Return v5
+}
+function f9 name="mark" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=";"
+    v3 = Strcat v0, v2, v1
+    Return v3
+}

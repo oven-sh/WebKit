@@ -33,6 +33,7 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "SymbolTableInlines.h"
 
@@ -146,9 +147,18 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
             slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, value);
             return true;
         }
+        if (resolution.isNamespaceOfCompiledOriginal(vm)) [[unlikely]] {
+            JSValue value = jsUndefined();
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty) {
+                value = resolution.moduleRecord->getModuleNamespace(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, value);
+            return true;
+        }
 #endif
 #if ENABLE(AOT)
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(resolution.moduleRecord)) {
+        if (auto* compiled = AOT::compiledModule(vm, resolution.moduleRecord)) {
             bool isRead = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty;
             JSValue value = jsUndefined();
             if (isRead) {

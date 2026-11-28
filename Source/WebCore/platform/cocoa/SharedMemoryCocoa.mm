@@ -45,7 +45,7 @@
 namespace WebCore {
 
 #if HAVE(MACH_MEMORY_ENTRY)
-static int LEGACY_NODELETE toVMMemoryLedger(MemoryLedger memoryLedger)
+NODELETE static int toVMMemoryLedger(MemoryLedger memoryLedger)
 {
     switch (memoryLedger) {
     case MemoryLedger::None:
@@ -93,12 +93,12 @@ void SharedMemoryHandle::setOwnershipOfMemory(const ProcessIdentity& processIden
 #endif
 }
 
-static inline void* LEGACY_NODELETE toPointer(mach_vm_address_t address)
+NODELETE static inline void* toPointer(mach_vm_address_t address)
 {
     return reinterpret_cast<void*>(static_cast<uintptr_t>(address));
 }
 
-static inline mach_vm_address_t LEGACY_NODELETE toVMAddress(void* pointer)
+NODELETE static inline mach_vm_address_t toVMAddress(void* pointer)
 {
     return static_cast<mach_vm_address_t>(reinterpret_cast<uintptr_t>(pointer));
 }
@@ -122,7 +122,7 @@ RefPtr<SharedMemory> SharedMemory::allocate(size_t size)
     return WTF::move(sharedMemory);
 }
 
-static inline vm_prot_t LEGACY_NODELETE machProtection(SharedMemory::Protection protection)
+NODELETE static inline vm_prot_t machProtection(SharedMemory::Protection protection)
 {
     switch (protection) {
     case SharedMemory::Protection::ReadOnly:
@@ -246,7 +246,7 @@ auto SharedMemory::createHandle(Protection protection) -> std::optional<Handle>
 
 WTF::MachSendRight SharedMemory::createSendRight(Protection protection) const
 {
-    ASSERT(m_protection == protection || m_protection == Protection::ReadWrite && protection == Protection::ReadOnly);
+    RELEASE_ASSERT(m_protection == protection || m_protection == Protection::ReadWrite && protection == Protection::ReadOnly);
     ASSERT(!!m_data ^ !!m_sendRight);
 
     if (m_sendRight && m_protection == protection)

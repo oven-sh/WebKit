@@ -27,8 +27,7 @@
 #include <WebCore/StylePrimitiveNumeric.h>
 #include <wtf/Hasher.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'line-height'> = normal | <number [0,∞]> | <length-percentage [0,∞]>
 // NOTE: <length-percentage [0,∞]> gets converted to <length [0,∞]> at style building time by resolving any percentages against `font-size`.
@@ -93,8 +92,8 @@ template<> struct CSSValueConversion<LineHeight> {
 // MARK: - Blending
 
 template<> struct Blending<LineHeight> {
-    bool LEGACY_NODELETE canBlend(const LineHeight&, const LineHeight&);
-    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const LineHeight&, const LineHeight&);
+    NODELETE bool canBlend(const LineHeight&, const LineHeight&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const LineHeight&, const LineHeight&);
     auto blend(const LineHeight&, const LineHeight&, const BlendingContext&) -> LineHeight;
 };
 
@@ -109,7 +108,6 @@ template<> struct Evaluation<LineHeight, float> {
     auto operator()(const LineHeight&, LineHeightEvaluationContext, ZoomFactor) -> float;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::LineHeight)

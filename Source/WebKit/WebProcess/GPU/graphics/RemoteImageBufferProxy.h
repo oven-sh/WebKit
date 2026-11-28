@@ -72,7 +72,7 @@ public:
     static Ref<RemoteImageBufferProxy> createForSerializedBuffer(const WebCore::ImageBuffer::Parameters&, std::unique_ptr<WebCore::ImageBufferBackend>&&, RemoteRenderingBackendProxy&);
 
     ~RemoteImageBufferProxy();
-    bool LEGACY_NODELETE isValid() const;
+    NODELETE bool isValid() const;
 
     void disconnect();
 
@@ -100,8 +100,8 @@ public:
 
     // Sends single-line strokes that have been buffered on the proxy's graphics
     // context into the IPC stream. Call before any cross-buffer read of this
-    // image buffer (drawImageBuffer source, clipToImageBuffer source, etc.) so
-    // the GPU process sees the up-to-date contents.
+    // image buffer (drawImageBuffer source, etc.) so the GPU process sees the
+    // up-to-date contents.
     void sendPendingDrawsIfNecessary() const { m_context.sendPendingDrawsIfNecessary(); }
 private:
     RemoteImageBufferProxy(Parameters, std::unique_ptr<WebCore::ImageBufferBackend>&&, RemoteRenderingBackendProxy&);
@@ -112,8 +112,6 @@ private:
     RefPtr<WebCore::NativeImage> sinkIntoNativeImage() final;
 
     RefPtr<ImageBuffer> sinkIntoBufferForDifferentThread() final;
-
-    RefPtr<WebCore::NativeImage> filteredNativeImage(WebCore::Filter&) final;
 
     WebCore::GraphicsContext& context() const final;
 
@@ -131,7 +129,7 @@ private:
     void flushDrawingContextImpl() const;
     std::optional<WebCore::RenderingMode> getEffectiveRenderingModeForTesting() const final;
 
-    void LEGACY_NODELETE assertDispatcherIsCurrent() const;
+    NODELETE void assertDispatcherIsCurrent() const;
     void prepareForDisplay() final;
 #if PLATFORM(COCOA)
     RefPtr<WebCore::GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() final;
@@ -145,7 +143,7 @@ private:
 
     // Fetches the backing store handle from the GPU process, for a backend that
     // stands in for a backing store this process cannot map.
-    void ensureBackendHandle() const;
+    void ensureBackendHandle();
 
     mutable RefPtr<RemoteImageBufferProxyFlushFence> m_pendingFlush;
 #if PLATFORM(COCOA)

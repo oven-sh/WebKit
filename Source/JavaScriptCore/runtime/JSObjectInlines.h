@@ -311,6 +311,10 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         JSValue prototype;
         if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
+#if ENABLE(AOT)
+        else if (vm.hasCompiledCode() && AOT::PropertyWalk::isOrdinaryPrototypeChain(this, object))
+            prototype = object->getPrototypeDirect();
+#endif
         else {
             prototype = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
@@ -331,7 +335,7 @@ inline bool JSObject::getOwnPropertySlotInline(JSGlobalObject* globalObject, Pro
 inline bool JSObject::ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
 #if ENABLE(AOT)
-    if (!structure()->propertyAccessesAreCacheableForAbsence()) [[unlikely]]
+    if (!structure()->propertyAccessesAreCacheableForAbsence() && getVM(globalObject).hasCompiledCode()) [[unlikely]]
         return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
 #endif
     return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
@@ -344,7 +348,7 @@ inline bool JSObject::hasDirectProperty(JSGlobalObject* globalObject, PropertyNa
     if (isValidOffset(structure->get(vm, propertyName)))
         return true;
 #if ENABLE(AOT)
-    if (!structure->propertyAccessesAreCacheableForAbsence()) [[unlikely]] {
+    if (!structure->propertyAccessesAreCacheableForAbsence() && vm.hasCompiledCode()) [[unlikely]] {
         PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
         return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
     }
@@ -585,7 +589,7 @@ ALWAYS_INLINE bool JSObject::tryPutDirectByExistingTransition(VM& vm, PropertyNa
 template<JSObject::PutMode mode>
 ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, PutPropertySlot& slot)
 {
-    ASSERT(value);
+    RELEASE_ASSERT(value);
     ASSERT(value.isGetterSetter() == !!(newAttributes & PropertyAttribute::Accessor));
     ASSERT(value.isCustomGetterSetter() == !!(newAttributes & PropertyAttribute::CustomAccessorOrValue));
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
@@ -612,8 +616,16 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
         if constexpr (mode == PutModePut) {
-            if (!isStructureExtensible()) [[unlikely]]
-                return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+            if (!isStructureExtensible()) [[unlikely]] {
+                ASCIILiteral error = putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+#if ENABLE(AOT)
+                if (error.isNull() && mayBePrototype() && vm.hasCompiledCode()) {
+                    slot.disableCaching();
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+                }
+#endif
+                return error;
+            }
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -651,7 +663,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-                slot.setExistingProperty(this, offset);
+#if ENABLE(AOT)
+                if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+                else
+#endif
+                    slot.setExistingProperty(this, offset);
             }
             return { };
         }
@@ -709,7 +726,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-            slot.setExistingProperty(this, offset);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+            else
+#endif
+                slot.setExistingProperty(this, offset);
         }
 
         return { };
@@ -1070,23 +1092,43 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     putDirect(vm, propertyName, value, putSlot);
 }
 
-inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot)
+inline bool JSObject::isExtensible(JSGlobalObject* globalObject)
+{
+#if ENABLE(AOT)
+    // A compiled object keeps "not extensible" in its order word, and its structure's didPreventExtensions stays false (CompiledStructure's constructor).
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
+        return methodTable()->isExtensible(this, globalObject);
+#endif
+    if (isStructureExtensible()) [[likely]]
+        return true;
+    return methodTable()->isExtensible(this, globalObject);
+}
+
+inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot, unsigned attributes)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (type() == WebAssemblyGCObjectType) {
-        throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
-        return;
-    }
+    if (Options::useNonExtensibleAppliesToPrivate()) {
+        bool isExtensible = this->isExtensible(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
 
-    // Freezing an object does not keep private fields from being added to it.
-    if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
-        moveFrozenElementsToSparseMap(vm);
-
-    if (structure()->hasImmutableProperties()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
-        return;
+        if (!isExtensible) [[unlikely]] {
+            throwTypeError(globalObject, scope, NonExtensibleObjectPrivateFieldDefineError);
+            return;
+        }
+    } else {
+        // Bun: the rule from before WebKit/WebKit@b0be2f45a9. An object that is not extensible takes the field. These two kinds of object never did.
+        if (type() == WebAssemblyGCObjectType) {
+            throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
+            return;
+        }
+        if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        if (structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
+            return;
+        }
     }
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::HasProperty);
@@ -1097,7 +1139,7 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
     EXCEPTION_ASSERT(!scope.exception());
 
     scope.release();
-    putDirect(vm, propertyName, value, putSlot);
+    putDirect(vm, propertyName, value, attributes, putSlot);
 }
 
 ALWAYS_INLINE void JSObject::getNonReifiedStaticPropertyNames(VM& vm, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
@@ -1169,14 +1211,27 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Structure* structure = this->structure();
-    if (structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand))) {
+    bool appliesToNonExtensible = Options::useNonExtensibleAppliesToPrivate();
+    if (appliesToNonExtensible) {
+        bool isExtensible = this->isExtensible(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        if (!isExtensible) [[unlikely]] {
+            throwTypeError(globalObject, scope, NonExtensibleObjectPrivateMethodDefineError);
+            return;
+        }
+    }
+
+    // isExtensible can run a Proxy trap, and that trap can install this very brand or otherwise
+    // transition this object, so both the brand check and the structure must follow it.
+    if (hasPrivateBrand(globalObject, brand)) {
         throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
         return;
     }
     EXCEPTION_ASSERT(!scope.exception());
 
-    if (type() == WebAssemblyGCObjectType) {
+    // Bun: the rule from before WebKit/WebKit@b0be2f45a9, as in definePrivateField().
+    if (!appliesToNonExtensible && type() == WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
         return;
     }
@@ -1188,27 +1243,25 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
             throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
             return;
         }
-        AOT::PropertyWalk::putDirect(vm, this, uid, brand, static_cast<unsigned>(PropertyAttribute::None));
+        AOT::PropertyWalk::putDirect(vm, this, uid, jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
         return;
     }
-    if (type() == SlimClosureType) [[unlikely]] {
+    if (type() == SlimClosureType) [[unlikely]]
         AOT::PropertyWalk::materializeLazyProperties(vm, this);
-        structure = this->structure();
-    }
 #endif
 
-    if (structure->hasFrozenElementsInPlace()) [[unlikely]] {
-        moveFrozenElementsToSparseMap(vm);
-        structure = this->structure();
-    }
-
-    if (structure->hasImmutableProperties()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
-        return;
+    if (!appliesToNonExtensible) {
+        if (this->structure()->hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        if (this->structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
+            return;
+        }
     }
 
     scope.release();
 
+    Structure* structure = this->structure();
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
 
     Structure* newStructure = Structure::setBrandTransition(vm, structure, asSymbol(brand), &deferredWatchpointFire);
@@ -1818,7 +1871,7 @@ ALWAYS_INLINE bool JSObject::putDirectIndex(JSGlobalObject* globalObject, uint64
 inline void JSObject::ensureWritable(VM& vm)
 {
     if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm, /* additionalLength */ 0);
 }
 
 inline bool JSObject::tryMakeWritable(VM& vm)
@@ -1826,7 +1879,7 @@ inline bool JSObject::tryMakeWritable(VM& vm)
     if (isCopyOnWrite(indexingMode())) {
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return false;
-        convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm, /* additionalLength */ 0);
     }
     return true;
 }

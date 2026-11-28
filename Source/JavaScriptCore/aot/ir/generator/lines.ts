@@ -111,7 +111,7 @@ export interface SwitchOptions {
   readonly enumName: string;
   readonly cases: readonly SwitchCase[];
   readonly defaultValue: string | "most common" | null;
-  readonly qualifier?: "constexpr" | "inline" | "";
+  readonly qualifier?: "constexpr" | "ALWAYS_INLINE constexpr" | "inline" | "";
 }
 
 export function constexprSwitch(options: SwitchOptions): string[] {

@@ -38,6 +38,7 @@
 #include <wtf/MainThread.h>
 #include <wtf/Platform.h>
 #include <wtf/TriState.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/unicode/CharacterNames.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -122,7 +123,7 @@ public:
     bool isFixedPitch(const FontCascadeDescription&, FontSelector*);
 
     bool canTakeFixedPitchFastContentMeasuring(const FontCascadeDescription&, FontSelector*);
-    TriState LEGACY_NODELETE cachedCanTakeFixedPitchFastContentMeasuring() const
+    NODELETE TriState cachedCanTakeFixedPitchFastContentMeasuring() const
     {
         return m_canTakeFixedPitchFastContentMeasuring;
     }
@@ -152,7 +153,7 @@ public:
     TextShapingResultAndDisplayList* getOrCreateCachedShapedText(const TextRun&, const FontCascade&, unsigned from, std::optional<unsigned> to, ForTextEmphasis);
 
     const Font& primaryFont(const FontCascadeDescription&, FontSelector*);
-    const Font* LEGACY_NODELETE cachedPrimaryFont() const { return m_cachedPrimaryFont.get(); }
+    NODELETE const Font* cachedPrimaryFont() const { return m_cachedPrimaryFont.get(); }
     WEBCORE_EXPORT const FontRanges& realizeFallbackRangesAt(const FontCascadeDescription&, FontSelector*, unsigned fallbackIndex);
 
     void pruneSystemFallbacks();
@@ -169,11 +170,16 @@ private:
     GlyphData glyphDataForSystemFallback(char32_t, const FontCascadeDescription&, FontSelector*, FontVariant, ResolvedEmojiPolicy, bool systemFallbackShouldBeInvisible);
     GlyphData glyphDataForVariant(char32_t, const FontCascadeDescription&, FontSelector*, FontVariant, ResolvedEmojiPolicy, unsigned fallbackIndex = 0);
 
+    const FontRanges& appendRealizedFallbackRanges(FontRanges&&);
+
     WEBCORE_EXPORT void determinePitch(const FontCascadeDescription&, FontSelector*);
     WEBCORE_EXPORT void determineCanTakeFixedPitchFastContentMeasuring(const FontCascadeDescription&, FontSelector*);
 
-    Vector<FontRanges, 1> m_realizedFallbackRanges;
-    unsigned m_lastRealizedFallbackIndex { 0 };
+    // Realized ranges are held by reference across calls that can realize
+    // further fallbacks, so they are stored indirectly, and must never move.
+    // A null range indicates we reached the end of our sources.
+    Vector<UniqueRef<FontRanges>, 1> m_realizedFallbackRanges;
+    unsigned m_lastRealizedFallbackIndex { 0 }; // Index into fallback sources (specified and system).
 
     class GlyphPageCacheEntry {
     public:
@@ -183,7 +189,7 @@ private:
         GlyphPageCacheEntry& operator=(GlyphPageCacheEntry&&) = default;
         ~GlyphPageCacheEntry();
 
-        GlyphData LEGACY_NODELETE glyphDataForCharacter(char32_t);
+        NODELETE GlyphData glyphDataForCharacter(char32_t);
 
         void setSingleFontPage(RefPtr<GlyphPage>&&);
         void setGlyphDataForCharacter(char32_t, GlyphData);
@@ -197,7 +203,7 @@ private:
         std::unique_ptr<MixedFontGlyphPage> m_mixedFont;
     };
 
-    EnumeratedArray<ResolvedEmojiPolicy, HashMap<unsigned, GlyphPageCacheEntry, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>, ResolvedEmojiPolicy::RequireEmoji> m_cachedPages;
+    EnumeratedArray<ResolvedEmojiPolicy, HashMap<unsigned, GlyphPageCacheEntry>, ResolvedEmojiPolicy::RequireEmoji> m_cachedPages;
 
     HashSet<Ref<Font>> m_systemFallbackFontSet;
 
@@ -210,7 +216,7 @@ private:
     PitchType m_pitch { PitchType::Unknown };
     bool m_isForPlatformFont { false };
     TriState m_canTakeFixedPitchFastContentMeasuring : 2 { TriState::Indeterminate };
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     std::optional<uint32_t> m_creationThreadID;
 #endif
 };
@@ -231,7 +237,7 @@ inline bool FontCascadeFonts::canTakeFixedPitchFastContentMeasuring(const FontCa
 
 inline const Font& FontCascadeFonts::primaryFont(const FontCascadeDescription& description, FontSelector* fontSelector)
 {
-    ASSERT(m_creationThreadID ? *m_creationThreadID == currentThreadID() : isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(m_creationThreadID ? *m_creationThreadID == currentThreadID() : isMainThread());
     if (!m_cachedPrimaryFont) {
         // CSS Fonts 4 §5.2: "The first available font [...] is defined to be the first font for which
         // the character U+0020 (space) is not excluded by a unicode-range [...]. Note: it does not

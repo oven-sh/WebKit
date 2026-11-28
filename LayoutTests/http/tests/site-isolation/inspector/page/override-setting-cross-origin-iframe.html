@@ -11,21 +11,36 @@ let iframe;
 function addCrossOriginIFrame() {
     let crossOriginHost = location.hostname === "localhost" ? "127.0.0.1" : "localhost";
     iframe = document.createElement("iframe");
+    iframe.onload = () => { TestPage.dispatchEventToFrontend("IFrameLoaded"); };
     iframe.src = `http://${crossOriginHost}:8000/site-isolation/inspector/page/resources/override-setting-frame.html`;
     document.body.appendChild(iframe);
 }
 
 function test() {
     async function addIFrameAndGetTarget() {
-        let targetAddedPromise = WI.targetManager.awaitEvent(WI.TargetManager.Event.TargetAdded);
+        // The first Frame target added is the iframe's initial about:blank in the parent's process. Use the target the
+        // cross-origin document commits into instead, once that document has loaded.
+        let committedPromise = WI.targetManager.awaitEvent(WI.TargetManager.Event.DidCommitProvisionalTarget);
+        let loadedPromise = InspectorTest.awaitEvent("IFrameLoaded");
         InspectorTest.evaluateInPage("addCrossOriginIFrame()");
-        let event = await targetAddedPromise;
-        return event.data.target;
+        let [committedEvent] = await Promise.all([committedPromise, loadedPromise]);
+        return committedEvent.data.target;
+    }
+
+    // Like WI.DeviceSettingsManager, send the override to the WebPage target too, which forwards it to cross-origin frames' processes.
+    async function overrideAuthorAndUserStylesEnabled(value) {
+        let commandArguments = {setting: InspectorBackend.Enum.Page.Setting.AuthorAndUserStylesEnabled};
+        if (value !== undefined)
+            commandArguments.value = value;
+
+        await Promise.all([
+            PageAgent.overrideSetting.invoke(commandArguments),
+            WI.backendTarget.PageAgent.overrideSetting.invoke(commandArguments),
+        ]);
     }
 
     async function getComputedColorInTarget(target) {
         // Wait for the iframe document to fully load before checking computed styles.
-        // TargetAdded fires when the JS context is created, before DOM and CSS are ready.
         await target.RuntimeAgent.evaluate.invoke({
             expression: "new Promise(resolve => { if (document.readyState === 'complete') resolve(); else window.addEventListener('load', resolve); })",
             objectGroup: "test",
@@ -59,7 +74,7 @@ function test() {
         description: "Overriding AuthorAndUserStylesEnabled to false and reloading should disable styles in the cross-origin iframe.",
         async test() {
             InspectorTest.log("Overriding AuthorAndUserStylesEnabled to false...");
-            await PageAgent.overrideSetting(InspectorBackend.Enum.Page.Setting.AuthorAndUserStylesEnabled, false);
+            await overrideAuthorAndUserStylesEnabled(false);
 
             InspectorTest.log("Reloading...");
             await InspectorTest.reloadPage();
@@ -80,7 +95,7 @@ function test() {
         description: "Removing the override and reloading should restore author styles in both frames.",
         async test() {
             InspectorTest.log("Removing AuthorAndUserStylesEnabled override...");
-            await PageAgent.overrideSetting(InspectorBackend.Enum.Page.Setting.AuthorAndUserStylesEnabled);
+            await overrideAuthorAndUserStylesEnabled();
 
             InspectorTest.log("Reloading...");
             await InspectorTest.reloadPage();

@@ -41,12 +41,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ViewportConfiguration);
 
-static inline bool LEGACY_NODELETE viewportArgumentValueIsValid(float value)
+NODELETE static inline bool viewportArgumentValueIsValid(float value)
 {
     return value > 0;
 }
 
-static inline void LEGACY_NODELETE adjustViewportArgumentsToAvoidExcessiveZooming(ViewportArguments& arguments)
+NODELETE static inline void adjustViewportArgumentsToAvoidExcessiveZooming(ViewportArguments& arguments)
 {
     if (!viewportArgumentValueIsValid(arguments.zoom) || !viewportArgumentValueIsValid(arguments.width))
         return;
@@ -57,7 +57,7 @@ static inline void LEGACY_NODELETE adjustViewportArgumentsToAvoidExcessiveZoomin
     arguments.width = zoomedWidthFromArguments / arguments.zoom;
 }
 
-static inline void LEGACY_NODELETE ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments& arguments, FloatSize viewLayoutSize)
+NODELETE static inline void ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments& arguments, FloatSize viewLayoutSize)
 {
     if (!viewportArgumentValueIsValid(arguments.width))
         return;
@@ -75,7 +75,7 @@ static bool constraintsAreAllRelative(const ViewportConfiguration::Parameters& c
 }
 #endif // ASSERT_ENABLED
 
-static constexpr float LEGACY_NODELETE platformDeviceWidthOverride()
+NODELETE static constexpr float platformDeviceWidthOverride()
 {
 #if PLATFORM(WATCHOS)
     return 320;
@@ -84,7 +84,7 @@ static constexpr float LEGACY_NODELETE platformDeviceWidthOverride()
 #endif
 }
 
-static constexpr double LEGACY_NODELETE platformMinimumScaleForWebpage()
+NODELETE static constexpr double platformMinimumScaleForWebpage()
 {
 #if PLATFORM(WATCHOS)
     return 0.1;
@@ -93,7 +93,7 @@ static constexpr double LEGACY_NODELETE platformMinimumScaleForWebpage()
 #endif
 }
 
-static constexpr bool LEGACY_NODELETE shouldOverrideShrinkToFitArgument()
+NODELETE static constexpr bool shouldOverrideShrinkToFitArgument()
 {
 #if PLATFORM(WATCHOS)
     return true;
@@ -102,7 +102,7 @@ static constexpr bool LEGACY_NODELETE shouldOverrideShrinkToFitArgument()
 #endif
 }
 
-static bool LEGACY_NODELETE needsUpdateAfterChangingDisabledAdaptations(const OptionSet<DisabledAdaptations>& oldDisabledAdaptations, const OptionSet<DisabledAdaptations>& newDisabledAdaptations)
+NODELETE static bool needsUpdateAfterChangingDisabledAdaptations(const OptionSet<DisabledAdaptations>& oldDisabledAdaptations, const OptionSet<DisabledAdaptations>& newDisabledAdaptations)
 {
     if (oldDisabledAdaptations == newDisabledAdaptations)
         return false;
@@ -501,7 +501,7 @@ ViewportConfiguration::Parameters ViewportConfiguration::testingParameters()
     return parameters;
 }
 
-static inline bool LEGACY_NODELETE applyViewportArgument(double& value, float viewportArgumentValue, float minimum, float maximum)
+NODELETE static inline bool applyViewportArgument(double& value, float viewportArgumentValue, float minimum, float maximum)
 {
     if (viewportArgumentValueIsValid(viewportArgumentValue)) {
         value = std::min(maximum, std::max(minimum, viewportArgumentValue));
@@ -511,9 +511,17 @@ static inline bool LEGACY_NODELETE applyViewportArgument(double& value, float vi
     return false;
 }
 
-static inline bool LEGACY_NODELETE booleanViewportArgumentIsSet(float value)
+NODELETE static inline bool booleanViewportArgumentIsSet(float value)
 {
     return !value || value == 1;
+}
+
+NODELETE static ViewportFitEdge viewportFitEdge(std::optional<ViewportFit> edgeViewportFit, ViewportFit viewportFit)
+{
+    if (edgeViewportFit)
+        return *edgeViewportFit == ViewportFit::Cover ? ViewportFitEdge::ExplicitCover : ViewportFitEdge::Contain;
+
+    return viewportFit == ViewportFit::Cover ? ViewportFitEdge::ImplicitCover : ViewportFitEdge::Contain;
 }
 
 void ViewportConfiguration::updateConfiguration()
@@ -566,7 +574,12 @@ void ViewportConfiguration::updateConfiguration()
             m_configuration.width /= effectiveLayoutScale;
     }
 
-    m_configuration.avoidsUnsafeArea = m_viewportArguments.viewportFit != ViewportFit::Cover;
+    m_configuration.viewportFitEdges = {
+        viewportFitEdge(m_viewportArguments.viewportFitTop, m_viewportArguments.viewportFit),
+        viewportFitEdge(m_viewportArguments.viewportFitLeft, m_viewportArguments.viewportFit),
+        viewportFitEdge(m_viewportArguments.viewportFitBottom, m_viewportArguments.viewportFit),
+        viewportFitEdge(m_viewportArguments.viewportFitRight, m_viewportArguments.viewportFit),
+    };
     m_configuration.initialScaleIgnoringLayoutScaleFactor = m_configuration.initialScale;
     m_configuration.initialScale *= effectiveLayoutScale;
     m_configuration.minimumScale *= effectiveLayoutScale;
@@ -727,7 +740,7 @@ TextStream& operator<<(TextStream& ts, const ViewportConfiguration::Parameters& 
     ts.dumpProperty("maximumScale"_s, parameters.maximumScale);
     ts.dumpProperty("allowsUserScaling"_s, parameters.allowsUserScaling);
     ts.dumpProperty("allowsShrinkToFit"_s, parameters.allowsShrinkToFit);
-    ts.dumpProperty("avoidsUnsafeArea"_s, parameters.avoidsUnsafeArea);
+    ts.dumpProperty("viewportFitEdges"_s, parameters.viewportFitEdges);
     ts.dumpProperty("ignoreInitialScaleForLayoutWidth"_s, parameters.ignoreInitialScaleForLayoutWidth);
     ts.dumpProperty("shouldHonorMinimumEffectiveDeviceWidthFromClient"_s, parameters.shouldHonorMinimumEffectiveDeviceWidthFromClient);
     ts.dumpProperty("minimumScaleDoesNotAdaptToContent"_s, parameters.minimumScaleDoesNotAdaptToContent);
@@ -770,7 +783,7 @@ String ViewportConfiguration::description() const
     ts.dumpProperty("computed layout size"_s, layoutSize());
     ts.dumpProperty("ignoring horizontal scaling constraints"_s, shouldIgnoreHorizontalScalingConstraints() ? "true"_s : "false"_s);
     ts.dumpProperty("ignoring vertical scaling constraints"_s, shouldIgnoreVerticalScalingConstraints() ? "true"_s : "false"_s);
-    ts.dumpProperty("avoids unsafe area"_s, avoidsUnsafeArea() ? "true"_s : "false"_s);
+    ts.dumpProperty("viewport-fit edges"_s, viewportFitEdges());
     ts.dumpProperty("minimum effective device width (for view)"_s, m_minimumEffectiveDeviceWidthForView);
     ts.dumpProperty("minimum effective device width (for shrink-to-fit)"_s, m_minimumEffectiveDeviceWidthForShrinkToFit);
     ts.dumpProperty("known to lay out wider than viewport"_s, m_isKnownToLayOutWiderThanViewport ? "true"_s : "false"_s);
@@ -787,7 +800,7 @@ String ViewportConfiguration::description() const
 
 void ViewportConfiguration::dump() const
 {
-    SAFE_WTFLOGALWAYS("%s", description().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(description()));
 }
 
 #endif

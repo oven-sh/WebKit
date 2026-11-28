@@ -92,8 +92,7 @@ public:
             size_t numNodes = (numEntries + maxPerNode - 1) / maxPerNode;
             size_t base = numEntries / numNodes;
             size_t remainder = numEntries % numNodes;
-            Vector<NodeRef, 16> level;
-            level.reserveInitialCapacity(numNodes);
+            Vector<NodeRef, 16> level(ReserveCapacityTag { }, numNodes);
             for (size_t i = 0, first = 0; i < numNodes; ++i) {
                 size_t count = base + (i < remainder);
                 level.append(makeNode(first, count));
@@ -461,22 +460,23 @@ private:
     public:
         static_assert(isPowerOfTwo(cpuCacheLineSize));
 
-        static constexpr uintptr_t sizeMask = cpuCacheLineSize - 1;
+        static constexpr uintptr_t pointerMask = ~(cpuCacheLineSize - 1);
+        static constexpr uintptr_t leafBit = cpuCacheLineSize >> 1;
+        static constexpr uintptr_t sizeMask = leafBit - 1;
         static_assert(leafOrder <= sizeMask && innerOrder <= sizeMask);
 
         NodeRef()
             : m_bits(0) { }
 
-        NodeRef(Node* ptr, size_t size)
-            : m_bits(reinterpret_cast<uintptr_t>(ptr) | size)
-        {
-            ASSERT(!(reinterpret_cast<uintptr_t>(ptr) & sizeMask));
-            ASSERT(size <= sizeMask);
-        }
+        NodeRef(LeafNode* ptr, size_t size)
+            : NodeRef(reinterpret_cast<uintptr_t>(ptr), size, leafBit) { }
+
+        NodeRef(InnerNode* ptr, size_t size)
+            : NodeRef(reinterpret_cast<uintptr_t>(ptr), size, 0) { }
 
         Node* node() const
         {
-            return reinterpret_cast<Node*>(m_bits & ~sizeMask);
+            return reinterpret_cast<Node*>(m_bits & pointerMask);
         }
 
         size_t size() const
@@ -486,7 +486,7 @@ private:
 
         void setSize(size_t newSize)
         {
-            ASSERT(newSize <= sizeMask);
+            ASSERT_WITH_SECURITY_IMPLICATION(newSize <= sizeMask);
             m_bits = (m_bits & ~sizeMask) | newSize;
         }
 
@@ -495,7 +495,9 @@ private:
         template<typename NodeType> requires std::is_base_of_v<Node, NodeType>
         NodeType* as() const
         {
-            return static_cast<NodeType*>(node());
+            ASSERT_WITH_SECURITY_IMPLICATION(!m_bits || isLeaf() == (std::is_same_v<NodeType, LeafNode>));
+            // The node kind is determined by the tree depth (leaves are always at m_height). Nodes carry no type tag.
+            SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<NodeType*>(node());
         }
 
         LeafNode* asLeaf() const
@@ -509,6 +511,15 @@ private:
         }
 
     private:
+        NodeRef(uintptr_t ptr, size_t size, uintptr_t kind)
+            : m_bits(ptr | kind | size)
+        {
+            ASSERT_WITH_SECURITY_IMPLICATION(!(ptr & ~pointerMask));
+            ASSERT_WITH_SECURITY_IMPLICATION(size <= sizeMask);
+        }
+
+        bool isLeaf() const { return m_bits & leafBit; }
+
         uintptr_t m_bits;
     };
 
@@ -669,7 +680,7 @@ private:
     };
 
 public:
-    class iterator {
+    class WTF_VIEW_TYPE iterator {
     public:
         iterator() = default;
 
@@ -720,7 +731,7 @@ public:
     };
 
     // Returns an iterator with the path to the left-most leaf node and index 0
-    iterator begin() const
+    iterator begin() const LIFETIME_BOUND
     {
         if (isEmpty())
             return end();
@@ -739,7 +750,7 @@ public:
         return iterator(WTF::move(path));
     }
 
-    iterator end() const
+    iterator end() const LIFETIME_BOUND
     {
         return iterator();
     }

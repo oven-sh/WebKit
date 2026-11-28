@@ -1,0 +1,37 @@
+# namespace Later.Inner { export type K = number }  namespace Later { export const held = 3 }  JSON.stringify(Later): two declarations, so the object is made behind `Later || (Later = {})`, and Later is undefined for all to see.
+# One edge enters the join, the scan follows the object under the parameter's name, and Link's "filled" is said to those outside the construction. The body is making the object: its store creates the property and lists the key.
+# It overwrote: PutSlot, which lists nothing, and JSON.stringify() gave `{}`.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = PutSlotOrAdd {{*}}key="held" receivers=[L0]
+# RUN(OVERWRITES): walk f0 mechanisms=all
+# OVERWRITES-NOT: = PutSlot {{*}}key="held"
+# RUN(SCAN): summary f0 mechanisms=all
+# SCAN: never-entered b1
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "held" {{*}}filled
+
+layout L0 kind=Container name="Later" module=m0 fields=[{key="held" declared={type=number}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Jump -> next b3(v2, v0)
+  b2(v3):
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    Jump -> next b3(v5, v5)
+  b3(v6, v7):
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number}
+    PropSet v7, v9 key="held"
+    v11 = Builtin builtin=JSON
+    v12 = PropGet v11 key="stringify"
+    v13 = Convert v12 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v14 = Call v13, v11, v7 calleeKey="stringify" calleeName="JSON.stringify"
+    Return v14
+}

@@ -42,9 +42,11 @@
 #include <wtf/Lock.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebKit {
+
+class DisplayListData;
 
 // RemoteSnapshot represents a web page rendering. Solves the problem of generating the rendering from various different WebContent processes that
 // should not have any access to data of each other.
@@ -52,7 +54,7 @@ namespace WebKit {
 // The snapshot is complete once every placeholder has been resolved, either with a display list or by the frame being
 // abandoned, in which case it draws nothing. The root is unresolved from the start, and a frame's placeholders are
 // recorded before its own display list is sunk, so nothing left unresolved means nothing is still to come.
-class RemoteSnapshot final : public ThreadSafeRefCounted<RemoteSnapshot> {
+class RemoteSnapshot final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteSnapshot> {
     WTF_MAKE_NONCOPYABLE(RemoteSnapshot);
     WTF_MAKE_TZONE_ALLOCATED(RemoteSnapshot);
 public:
@@ -82,6 +84,7 @@ public:
     // Whether anything is waiting for it to complete.
     bool isAwaited() const;
     std::optional<RefPtr<WebCore::SharedBuffer>> drawToPDF(const WebCore::FloatSize&, WebCore::FrameIdentifier rootFrameIdentifier);
+    std::optional<DisplayListData> createDisplayListData(WebCore::FrameIdentifier rootFrameIdentifier) const;
     std::optional<WebCore::ShareableBitmap::Handle> drawToBitmap(const WebCore::FloatSize&, WebCore::FrameIdentifier rootFrameIdentifier);
 #if HAVE(IOSURFACE)
     // Rasterizes into a shareable surface, so that a rendering assembled from several sites can be

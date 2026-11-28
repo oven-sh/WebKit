@@ -72,6 +72,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/Uint8Array.h>
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -198,7 +199,7 @@ static std::optional<Exception> validateSendEncodings(Vector<RTCRtpEncodingParam
 {
     size_t encodingIndex = 0;
     bool hasAnyScaleResolutionDownBy = !isAudio && std::ranges::any_of(encodings, [](auto& encoding) { return !!encoding.scaleResolutionDownBy; });
-    for (auto& encoding: encodings) {
+    for (auto& encoding : borrow(encodings)) {
         if (encoding.rid.length() > 16)
             return Exception { ExceptionCode::TypeError, "Rid is too long"_s };
         bool hasInvalidCharacter = encoding.rid.find([](auto character) {
@@ -210,6 +211,7 @@ static std::optional<Exception> validateSendEncodings(Vector<RTCRtpEncodingParam
         if (isAudio) {
             encoding.scaleResolutionDownBy = { };
             encoding.maxFramerate = { };
+            encoding.scalabilityMode = { };
             continue;
         }
         if (encoding.scaleResolutionDownBy && *encoding.scaleResolutionDownBy < 1)
@@ -390,7 +392,7 @@ void RTCPeerConnection::createAnswer(RTCAnswerOptions&& options, Ref<DeferredPro
     });
 }
 
-static RTCSdpType LEGACY_NODELETE typeForSetLocalDescription(std::optional<RTCSdpType> descriptionType, RTCSignalingState signalingState)
+NODELETE static RTCSdpType typeForSetLocalDescription(std::optional<RTCSdpType> descriptionType, RTCSignalingState signalingState)
 {
     // https://w3c.github.io/webrtc-pc/#dom-peerconnection-setlocaldescription step 4.1.
     if (!descriptionType) {
@@ -437,7 +439,7 @@ void RTCPeerConnection::setLocalDescription(RTCLocalSessionDescriptionInit&& loc
 
 #if !RELEASE_LOG_DISABLED
     logger().toObservers(LogWebRTC, WTFLogLevel::Always, { }, LOGIDENTIFIER, "Setting local description to:\n", localDescription.sdp);
-    RELEASE_LOG_FORWARDABLE(WebRTC, RtcPeerConnectionSetLocalDescription, logIdentifier(), localDescription.sdp.utf8());
+    RELEASE_LOG_FORWARDABLE(WebRTC, RtcPeerConnectionSetLocalDescription, logIdentifier(), makeUTF8CString(localDescription.sdp));
 #endif
 
     chainOperation(WTF::move(promise), [weakThis = WeakPtr { *this }, localDescription = WTF::move(localDescription)](Ref<DeferredPromise>&& promise) mutable {
@@ -490,7 +492,7 @@ void RTCPeerConnection::setRemoteDescription(RTCSessionDescriptionInit&& remoteD
 
 #if !RELEASE_LOG_DISABLED
     logger().toObservers(LogWebRTC, WTFLogLevel::Always, { }, LOGIDENTIFIER, "Setting remote description to:\n", remoteDescription.sdp);
-    RELEASE_LOG_FORWARDABLE(WebRTC, RtcPeerConnectionSetRemoteDescription, logIdentifier(), remoteDescription.sdp.utf8());
+    RELEASE_LOG_FORWARDABLE(WebRTC, RtcPeerConnectionSetRemoteDescription, logIdentifier(), makeUTF8CString(remoteDescription.sdp));
 #endif
 
     chainOperation(WTF::move(promise), [weakThis = WeakPtr { *this }, remoteDescription = WTF::move(remoteDescription)](Ref<DeferredPromise>&& promise) mutable {
@@ -580,9 +582,8 @@ ExceptionOr<Vector<MediaEndpointConfiguration::IceServerInfo>> RTCPeerConnection
     if (existingConfiguration && newConfiguration.iceCandidatePoolSize != existingConfiguration->iceCandidatePoolSize && isLocalDescriptionSet)
         return Exception { ExceptionCode::InvalidModificationError, "IceTransportPolicy pool size does not match existing pool size"_s };
 
-    Vector<MediaEndpointConfiguration::IceServerInfo> servers;
-    servers.reserveInitialCapacity(newConfiguration.iceServers.size());
-    for (auto& server : newConfiguration.iceServers) {
+    Vector<MediaEndpointConfiguration::IceServerInfo> servers(ReserveCapacityTag { }, newConfiguration.iceServers.size());
+    for (auto& server : borrow(newConfiguration.iceServers)) {
         Vector<String> urls;
         WTF::switchOn(server.urls, [&urls] (String& url) {
             urls = { WTF::move(url) };
@@ -607,7 +608,7 @@ ExceptionOr<Vector<MediaEndpointConfiguration::IceServerInfo>> RTCPeerConnection
         });
         server.urls = WTF::move(urls);
 
-        for (auto& serverURL : serverURLs) {
+        for (auto& serverURL : borrow(serverURLs)) {
             if (serverURL.isNull())
                 return Exception { ExceptionCode::TypeError, "Bad ICE server URL"_s };
             if (!serverURL.hasOpaquePath())
@@ -623,7 +624,7 @@ ExceptionOr<Vector<MediaEndpointConfiguration::IceServerInfo>> RTCPeerConnection
                 // https://tools.ietf.org/html/rfc8489#section-14.3
                 if (server.credential.length() > 64 || server.username.length() > 64) {
                     constexpr size_t MaxTurnUsernameLength = 509;
-                    if (server.credential.utf8().length() > MaxTurnUsernameLength || server.username.utf8().length() > MaxTurnUsernameLength)
+                    if (utf8Length(server.credential) > MaxTurnUsernameLength || utf8Length(server.username) > MaxTurnUsernameLength)
                         return Exception { ExceptionCode::InvalidAccessError, "TURN/TURNS username and/or credential are too long"_s };
                 }
             } else if (!serverURL.protocolIs("stun"_s) && !serverURL.protocolIs("stuns"_s))
@@ -642,9 +643,8 @@ ExceptionOr<Vector<MediaEndpointConfiguration::CertificatePEM>> RTCPeerConnectio
     auto currentMilliSeconds = WallTime::now().secondsSinceEpoch().milliseconds();
     Ref origin = protect(document())->securityOrigin();
 
-    Vector<MediaEndpointConfiguration::CertificatePEM> certificates;
-    certificates.reserveInitialCapacity(configuration.certificates.size());
-    for (auto& certificate : configuration.certificates) {
+    Vector<MediaEndpointConfiguration::CertificatePEM> certificates(ReserveCapacityTag { }, configuration.certificates.size());
+    for (auto& certificate : borrow(configuration.certificates)) {
         if (!origin->isSameOriginAs(certificate->origin()))
             return Exception { ExceptionCode::InvalidAccessError, "Certificate does not have a valid origin"_s };
 
@@ -699,7 +699,7 @@ ExceptionOr<void> RTCPeerConnection::setConfiguration(RTCConfiguration&& configu
         if (configuration.certificates.size() != m_configuration.certificates.size())
             return Exception { ExceptionCode::InvalidModificationError, "Certificates parameters are different"_s };
 
-        for (auto& certificate : configuration.certificates) {
+        for (auto& certificate : borrow(configuration.certificates)) {
             bool isThere = m_configuration.certificates.findIf([&certificate](const auto& item) {
                 return item == certificate;
             }) != notFound;
@@ -770,10 +770,10 @@ ExceptionOr<Ref<RTCDataChannel>> RTCPeerConnection::createDataChannel(String&& l
     if (isClosed())
         return Exception { ExceptionCode::InvalidStateError };
 
-    if (label.utf8().length() > 65535)
+    if (utf8Length(label) > 65535)
         return Exception { ExceptionCode::TypeError, "label is too long"_s };
 
-    if (options.protocol.utf8().length() > 65535)
+    if (utf8Length(options.protocol) > 65535)
         return Exception { ExceptionCode::TypeError, "protocol is too long"_s };
 
     if (!options.negotiated)
@@ -944,7 +944,7 @@ void RTCPeerConnection::updateIceConnectionState(RTCIceConnectionState)
     });
 }
 
-static bool LEGACY_NODELETE isIceTransportUsedByTransceiver(const RTCIceTransport& iceTransport, RTCRtpTransceiver& transceiver)
+NODELETE static bool isIceTransportUsedByTransceiver(const RTCIceTransport& iceTransport, RTCRtpTransceiver& transceiver)
 {
     auto* dtlsTransport = transceiver.sender().transport();
     return dtlsTransport && &dtlsTransport->iceTransport() == &iceTransport;

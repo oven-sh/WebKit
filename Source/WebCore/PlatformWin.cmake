@@ -78,11 +78,11 @@ list(APPEND WebCore_SOURCES
     platform/graphics/win/FullScreenWindow.cpp
     platform/graphics/win/GraphicsContextWin.cpp
     platform/graphics/win/IconWin.cpp
-    platform/graphics/win/ImageAdapterWin.cpp
     platform/graphics/win/IntPointWin.cpp
     platform/graphics/win/IntRectWin.cpp
     platform/graphics/win/IntSizeWin.cpp
     platform/graphics/win/MediaPlayerPrivateMediaFoundation.cpp
+    platform/graphics/win/NativeImageWin.cpp
     platform/graphics/win/PlatformDisplayWin.cpp
     platform/graphics/win/SystemFontDatabaseWin.cpp
     platform/graphics/win/TransformationMatrixWin.cpp
@@ -106,6 +106,7 @@ list(APPEND WebCore_SOURCES
     platform/win/PasteboardWin.cpp
     platform/win/PlatformMouseEventWin.cpp
     platform/win/PlatformPasteboardWin.cpp
+    platform/win/PlatformResourceWin.cpp
     platform/win/PlatformScreenWin.cpp
     platform/win/SearchPopupMenuDB.cpp
     platform/win/SharedMemoryWin.cpp
@@ -152,6 +153,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 list(APPEND WebCore_LIBRARIES
     crypt32
     iphlpapi
+    ole32
     usp10
     ws2_32
 )
@@ -221,7 +223,6 @@ if (USE_CAIRO)
         platform/graphics/win/cairo/FontCustomPlatformDataWinCairo.cpp
         platform/graphics/win/cairo/FontPlatformDataWinCairo.cpp
         platform/graphics/win/cairo/GraphicsContextWinCairo.cpp
-        platform/graphics/win/cairo/ImageAdapterWinCairo.cpp
         platform/graphics/win/cairo/MediaPlayerPrivateMediaFoundationCairo.cpp
 
         platform/win/cairo/DragImageWinCairo.cpp

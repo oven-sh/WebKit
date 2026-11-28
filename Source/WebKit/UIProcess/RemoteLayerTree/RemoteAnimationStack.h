@@ -59,7 +59,9 @@ public:
 
 #if PLATFORM(MAC)
     void initEffectsFromMainThread(PlatformLayer*);
-    void applyEffects() const;
+    // Returns whether any animated value changed since the last time effects were applied.
+    enum class ValuesChanged : bool { No, Yes };
+    ValuesChanged applyEffects();
 #endif
 
     void applyEffectsFromMainThread(PlatformLayer*, bool backdropRootIsOpaque) const;
@@ -67,6 +69,7 @@ public:
     bool isDependentOnScrollingNodeWithID(WebCore::ScrollingNodeID) const;
     bool hasTimeBasedAnimations() const { return m_hasTimeBasedAnimations; }
     bool hasProgressBasedAnimations() const { return m_hasProgressBasedAnimations; }
+    bool affectsTransform() const { return m_affectedLayerProperties.contains(LayerProperty::Transform); }
 
     void clear(PlatformLayer*);
 
@@ -98,10 +101,14 @@ private:
     RetainPtr<CAPresentationModifier> m_opacityPresentationModifier;
     RetainPtr<CAPresentationModifier> m_transformPresentationModifier;
     Vector<WebCore::TypedFilterPresentationModifier> m_filterPresentationModifiers;
+    std::optional<float> m_lastAppliedOpacity;
+    std::optional<WebCore::TransformationMatrix> m_lastAppliedTransform;
+    std::optional<WebCore::FilterOperations> m_lastAppliedFilter;
 #endif
 
     bool m_hasProgressBasedAnimations { false };
     bool m_hasTimeBasedAnimations { false };
+    bool m_filtersAffectBackdrop { false };
 };
 
 } // namespace WebKit

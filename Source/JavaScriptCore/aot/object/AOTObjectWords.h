@@ -9,8 +9,11 @@
 
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
-#include "AOTThreshold.h"
+#include "LocalAllocator.h"
+#include "MarkedSpace.h"
 #include "Structure.h"
+#include <array>
+#include <span>
 #include <stddef.h>
 #include <stdint.h>
 #include <type_traits>
@@ -23,12 +26,10 @@ class LocalAllocator;
 
 namespace AOT {
 
-// The allocator is never null. Where there is none yet it is one without room, so that the test for room, which every allocation makes, is the only one.
 struct AllocationSiteRecord {
     uint64_t header;
     uint64_t orderAndShapeWords;
     void* allocator;
-    // What the Structure of the header holds as its prototype, for an object. Zero for any other cell and where there is no header.
     uint64_t prototype;
 
     static constexpr ptrdiff_t offsetOfHeader() { return offsetof(AllocationSiteRecord, header); }
@@ -38,6 +39,20 @@ struct AllocationSiteRecord {
     static constexpr unsigned sizeShift = 5;
 };
 static_assert(sizeof(AllocationSiteRecord) == 1u << AllocationSiteRecord::sizeShift);
+
+struct GrownCells {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(GrownCells);
+
+    static constexpr uintptr_t isArmed = 1;
+    static constexpr ptrdiff_t offsetOfAllocatorAndMark() { return 0; }
+    static constexpr ptrdiff_t offsetOfRecord() { return offsetof(GrownCells, record); }
+
+    uintptr_t allocatorAndMark { 0 };
+    uint8_t bytesBeforeFreeList[LocalAllocator::offsetOfFreeList() - sizeof(uintptr_t)] { };
+    FreeList freeList { 0 };
+    AllocationSiteRecord record;
+};
+static_assert(alignof(LocalAllocator) > GrownCells::isArmed);
 static_assert(std::is_trivially_default_constructible_v<AllocationSiteRecord> && std::is_standard_layout_v<AllocationSiteRecord>);
 
 ALWAYS_INLINE uint64_t cellHeaderFor(Structure* structure)
@@ -51,7 +66,6 @@ static constexpr uint32_t slotKeyMask = (1u << bitsPerSlotKey) - 1;
 static constexpr uint32_t outOfLineSlotKey = 1u << (bitsPerSlotKey - 1);
 static constexpr uint32_t noSlotKey = 0;
 static constexpr uint32_t slotKeyFor(uint32_t offset, bool isOutOfLine) { return offset < outOfLineSlotKey ? offset | (isOutOfLine ? outOfLineSlotKey : 0) : noSlotKey; }
-// An extra key that has no position yet comes before the new field, so what the order becomes also depends on how many extra keys the object has.
 static constexpr uint32_t transitionKeyFor(uint32_t slotKey, uint32_t numberOfExtraKeys) { return slotKey | numberOfExtraKeys << bitsPerSlotKey; }
 
 struct alignas(16) KeyOrderTransition {
@@ -74,23 +88,42 @@ struct alignas(16) KeyOrderTransition {
     uint32_t orderAndCountAfter;
 };
 
-// What a run of up to four slot keys, as a call of DidCreateField takes them, makes of the words of an object without extra properties: the transitions of its keys taken one after the other.
 struct alignas(32) KeyOrderRun {
     static constexpr ptrdiff_t offsetOfOrderAndShapeWordsBefore() { return 0; }
     static constexpr ptrdiff_t offsetOfSlotKeys() { return 8; }
     static constexpr ptrdiff_t offsetOfOrderAndCountAfter() { return 16; }
+    static constexpr ptrdiff_t offsetOfCreationGeneration() { return 20; }
 
     uint64_t orderAndShapeWordsBefore;
     uint64_t slotKeys;
     uint32_t orderAndCountAfter;
+    uint32_t creationGeneration;
 };
 
-static constexpr uint32_t numberOfKeyOrderRuns = 2048;
+static constexpr uint64_t keysOfRunBesideExtraKeys(uint32_t slotKey, uint32_t numberOfExtraKeys) { return slotKey | static_cast<uint64_t>(numberOfExtraKeys | 1u << bitsPerSlotKey) << (2 * bitsPerSlotKey); }
+static_assert(keysOfRunBesideExtraKeys(24, 3) == 0x0001000300000018ull && noSlotKey == 0);
+static constexpr uint64_t keysOfRunOfCreation(uint32_t slotKey, uint32_t structureID) { return slotKey | static_cast<uint64_t>(structureID) << 32; }
+static constexpr uint32_t removalRunMark = 1u << (bitsPerSlotKey + 4);
+static constexpr uint64_t removalRunKey(uint16_t offsetInCell) { return offsetInCell | removalRunMark; }
+
+static constexpr unsigned logNumberOfKeyOrderRuns = 11;
+static constexpr uint32_t numberOfKeyOrderRuns = 1u << logNumberOfKeyOrderRuns;
 static constexpr unsigned logSizeOfKeyOrderRun = 5;
-static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun && !(numberOfKeyOrderRuns & (numberOfKeyOrderRuns - 1)));
+static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun);
+static constexpr uint32_t multiplierOfKeyOrderRun = 0x9e3779b1;
 static constexpr uint32_t indexOfKeyOrderRun(uint64_t orderAndShapeWordsBefore, uint64_t slotKeys)
 {
-    return (static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys)) % numberOfKeyOrderRuns;
+    uint32_t folded = static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys);
+    return folded * multiplierOfKeyOrderRun >> (32 - logNumberOfKeyOrderRuns);
+}
+
+static constexpr unsigned logNumberOfLatestRuns = 9;
+static constexpr uint32_t numberOfLatestRuns = 1u << logNumberOfLatestRuns;
+static constexpr uint32_t sizeOfKeyOrderRunTable = numberOfKeyOrderRuns + numberOfLatestRuns;
+static constexpr int32_t offsetOfLatestRuns = numberOfKeyOrderRuns << logSizeOfKeyOrderRun;
+static constexpr uint32_t indexOfLatestRun(uint32_t shapeWord, uint32_t slotKey)
+{
+    return numberOfKeyOrderRuns + ((shapeWord ^ slotKey) * multiplierOfKeyOrderRun >> (32 - logNumberOfLatestRuns) & ~1u);
 }
 
 struct KeyListCacheEntry {
@@ -100,20 +133,11 @@ struct KeyListCacheEntry {
 };
 
 static constexpr uint32_t numberOfKeyLists = 1024;
-static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord) % numberOfKeyLists; }
+static constexpr unsigned shiftOfCountInKeyListIndex = 12;
+static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord + (orderWord >> shiftOfCountInKeyListIndex)) % numberOfKeyLists; }
+static constexpr uint32_t keyListWordOfStructure(uint32_t structureID) { return structureID >> 1; }
+static constexpr uint32_t structureEnumerableKeysWord(uint32_t structureID) { return structureID >> 1 | 1; }
 
-// The fields of objects with these two words, in key order, as indexes into the layout's record. Empty if the order word does not list every own key.
-struct KeyOrderEntriesCacheEntry {
-    uint32_t orderWord;
-    uint32_t shapeWord;
-    const uint16_t* entries;
-};
-
-static constexpr uint32_t numberOfCachedKeyOrderEntries = 256;
-static constexpr unsigned keyOrderEntriesHashShift = orderWordCountShift - 5;
-static constexpr uint32_t indexOfKeyOrderEntries(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord + (orderWord >> keyOrderEntriesHashShift)) % numberOfCachedKeyOrderEntries; }
-
-// The enumerator that a for-in loop over a compiled object with this Structure and order word got last.
 struct EnumeratorCacheEntry {
     uint32_t orderWord;
     uint32_t structureID;
@@ -124,11 +148,6 @@ static constexpr uint32_t numberOfCachedEnumerators = 256;
 static constexpr unsigned enumeratorHashShift = 4;
 static constexpr uint32_t indexOfCachedEnumerator(uint32_t structureID, uint32_t orderWord) { return ((structureID >> enumeratorHashShift) + orderWord) % numberOfCachedEnumerators; }
 
-// What lies in front of the first element is made with it.
-AOT_THRESHOLD(uint32_t, maxIndexOfFirstElementMadeByStub, 7);
-
-// The Structure that an object with the Structure `before` gets with another prototype. The headers of their cells differ in the StructureID alone.
-// Where RealmWords::extraPropertiesWithElementsStructure stands in place of a prototype, which it never is: the Structure that the object gets with its first element, where nobody has to be asked or told.
 struct PrototypeTransition {
     EncodedJSValue prototype;
     uint32_t before;
@@ -136,57 +155,37 @@ struct PrototypeTransition {
 };
 
 static constexpr uint32_t numberOfPrototypeTransitions = 1024;
-static constexpr unsigned prototypeTransitionHashShift = 6;
+static constexpr unsigned prototypeTransitionHashShift = 4;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }
+static constexpr uint32_t maxIndexOfFirstElementStoredContiguously = 7;
 
-// `{ ...source, name, other }`: what the copy of an ordinary object with this Structure is once the names are defined on it. It follows from the Structure and the names alone.
-// Behind it lies a NameInCopy for each name, in the order of the definitions.
 struct CopyWithNames {
     uint32_t structureOfSource;
     uint32_t firstName;
-    // The first word of the cell of the copy.
     uint64_t header;
     uint16_t count;
     uint16_t cellSize;
-    // In bytes, outside the cell. The copy has room for the names that its cell has none for.
     uint16_t storageSizeOfSource;
     uint16_t storageSize;
 };
 
 struct NameInCopy {
-    // The number of the identifier.
     uint32_t name;
-    // Of the value: from the cell, or below zero from the butterfly.
     int32_t offset;
 };
 
-// The table begins with the places: each holds the distance in bytes from the start of the table to a CopyWithNames, or zero. The next word holds the bytes that are taken behind it, and the records follow.
 static constexpr uint32_t numberOfPlacesOfCopiesWithNames = 512;
-static constexpr uint32_t sizeOfCopiesWithNames = 16 * KB;
+static constexpr uint32_t sizeOfCopiesWithNames = 16 * 1024;
 static constexpr uint32_t offsetOfTakenBytesOfCopiesWithNames = numberOfPlacesOfCopiesWithNames * sizeof(uint32_t);
 static constexpr uint32_t offsetOfFirstCopyWithNames = offsetOfTakenBytesOfCopiesWithNames + sizeof(uint64_t);
-static constexpr unsigned copyWithNamesHashShift = 6;
+static constexpr unsigned copyWithNamesHashShift = structureIDPlaceShift;
 static constexpr uint32_t copiesThatTakeAnOccupiedPlaceMask = 63;
 static constexpr uint32_t placeOfCopyWithNames(uint32_t structureOfSource, uint32_t firstName) { return ((structureOfSource >> copyWithNamesHashShift) + firstName) % numberOfPlacesOfCopiesWithNames; }
-
-// What the run time last answered at one place in compiled code where a store, or a run of stores, adds fields: an object with these two words has this order word once the fields are listed.
-struct KeyOrderStepCache {
-    uint32_t orderWordBefore;
-    uint32_t shapeWord;
-    uint32_t orderWordAfter;
-    uint32_t turnPlusOne;
-};
-
-// Places share the entries by their numbers, and an entry names the place that wrote it: few places of a program run, and one entry for each would dirty a page for a handful of them.
-// The shapes that come to one place have an entry each, and the places of one function do not meet each other there. The entry's two words and its index together say the place's number within its turn.
-static constexpr unsigned logNumberOfKeyOrderStepCaches = 11;
-static constexpr uint32_t numberOfKeyOrderStepCaches = 1u << logNumberOfKeyOrderStepCaches;
-static constexpr uint32_t maxPlacesWithKeyOrderStepCache = numberOfKeyOrderStepCaches * UINT8_MAX;
-static constexpr unsigned keyOrderStepCacheShift = 27;
-static constexpr uint32_t indexOfKeyOrderStepCache(uint32_t place, uint64_t orderAndShapeWords) { return (place + (orderAndShapeWords >> keyOrderStepCacheShift)) % numberOfKeyOrderStepCaches; }
+static_assert(sizeof(CopyWithNames) == 24 && sizeof(NameInCopy) == 8 && !(offsetOfFirstCopyWithNames % alignof(CopyWithNames)));
 
 struct ObjectWords {
-    // One word per allocation: the distance in bytes, zero or negative, from the empty record to the record of the allocation.
+    static constexpr unsigned numberOfCellAllocators = MarkedSpace::preciseCutoff / MarkedSpace::sizeStep + 1;
+
     int32_t* distancesToAllocationSites;
     KeyOrderTransition* keyOrderTransitions;
     uint32_t keyOrderTransitionMask;
@@ -195,14 +194,11 @@ struct ObjectWords {
     JSCell* emptyKeyList;
     PrototypeTransition* prototypeTransitions;
     uint8_t* copiesWithNames;
-    // The last operand of the stub that copies an object and defines names on the copy, while the stub copies it by other means.
-    const EncodedJSValue* listOfNamesOfCopy;
-    // Whether the last copy so made came back with its names. Nothing runs between the call and the code behind it that asks.
-    uint32_t copyHasItsNames;
     uint32_t copiesThatFoundTheirPlaceOccupied;
+    uint32_t unusedBehindCopies;
     EnumeratorCacheEntry* enumerators;
     KeyOrderRun* keyOrderRuns;
-    KeyOrderEntriesCacheEntry* keyOrderEntries;
+    void* cellAllocators[numberOfCellAllocators];
 
     AllocationSiteRecord* emptyAllocationSite() const { return reinterpret_cast<AllocationSiteRecord*>(distancesToAllocationSites) - 1; }
 
@@ -214,24 +210,20 @@ struct ObjectWords {
 };
 
 struct FunctionTableWords {
-    // FunctionTables::words.
     const uint64_t* closureWords;
 };
 
 struct ClosureWords {
-    static constexpr unsigned numberOfExecutables = 4;
-    static constexpr unsigned numberOfSlimClosureAllocators = 3;
+    static constexpr unsigned numberOfExecutables = 3;
+    static constexpr unsigned numberOfSlimClosureAllocators = 5;
 
     JSCell* executables[numberOfExecutables];
     uint64_t closureHeaders[numberOfClosureStructures];
-    // The Structures of plain functions that have got their `prototype` property and nothing else, as they come up. Zero where there is none yet.
     static constexpr unsigned numberOfStructuresWithPrototypeProperty = 4;
     uint32_t structuresWithPrototypeProperty[numberOfStructuresWithPrototypeProperty];
-    // Allocator i serves cells of MarkedSpace::sizeStep * (i + 1) bytes. They are there before any compiled code runs.
     LocalAllocator* slimClosureAllocators[numberOfSlimClosureAllocators];
 };
 
-// The entrypoints that allocate the object of a construction themselves, as ProgramTables::constructEntrypoints was searched for them: the word of a function's [[Call]], which is never zero, and the word of that entrypoint.
 struct ConstructWordCache {
     static constexpr unsigned numberOfEntriesLog2 = 6;
 
@@ -243,91 +235,145 @@ struct ConstructWordCache {
 };
 static_assert(sizeof(ConstructWordCache::Entry) == 16);
 
-// Where functions with one Structure keep their `prototype` property. No Structure has the number zero.
 struct PlaceOfPrototypeProperty {
     uint32_t structureID;
     int32_t offset;
 };
-constexpr unsigned numberOfPlacesOfPrototypeProperties = 8;
-constexpr unsigned shiftOfStructureIDForPlaceOfPrototypeProperty = 5;
+constexpr unsigned numberOfPlacesOfPrototypeProperties = 256;
+constexpr uint32_t multiplierOfPlaceOfPrototypeProperty = 0x9E3779B1;
+constexpr unsigned shiftOfProductOfPlaceOfPrototypeProperty = 25;
+constexpr uint32_t indexOfPlaceOfPrototypeProperty(uint32_t structureID) { return (structureID * multiplierOfPlaceOfPrototypeProperty) >> shiftOfProductOfPlaceOfPrototypeProperty << 1; }
+static_assert(numberOfPlacesOfPrototypeProperties == 2u << (32 - shiftOfProductOfPlaceOfPrototypeProperty));
 
-// A class object whose Structure does not list `prototype`: the definition of the class was left to its record. No store changes that property of a class, so the object stands for it.
 struct PrototypeOfClassObject {
     JSCell* classObject;
     JSCell* prototype;
 };
-constexpr unsigned numberOfPrototypesOfClassObjects = 32;
+constexpr unsigned numberOfPrototypesOfClassObjects = 256;
 constexpr unsigned shiftOfClassObjectForPrototype = 4;
+constexpr unsigned classObjectProductShift = 25;
+constexpr uint32_t productOfClassObject(uint64_t bitsOfClassObject) { return static_cast<uint32_t>(bitsOfClassObject >> shiftOfClassObjectForPrototype) * multiplierOfPlaceOfPrototypeProperty; }
+static_assert(numberOfPrototypesOfClassObjects == 2u << (32 - classObjectProductShift));
 
-// What the constructor of a class makes where new.target has another prototype object than the record of the allocation names: that of a class below, or that of another evaluation of the class. It is an object in which nothing is stored yet.
-struct InstanceOfClassBelow {
+struct InstanceBelowPrototype {
     JSCell* prototype;
-    uint64_t header;
-    // The cell without its header, in whole chunks of sixteen bytes. The subspace of objects has an allocator for so many bytes.
-    const uint8_t* cellAtBirth;
-    uint32_t allocation;
-    // Half the bytes: how far the allocator for the cell lies behind the first one of the subspace.
-    uint32_t offsetOfAllocator;
+    uint64_t allocationOfSite;
+    void* allocator;
+    const uint64_t* words;
 };
-constexpr unsigned numberOfInstancesOfClassesBelow = 64;
-// No two prototype objects begin closer to each other.
-constexpr unsigned shiftOfPrototypeForInstanceOfClassBelow = 5;
-// A record lies at one of two places, so how far apart the prototype objects lie does not decide how many of them have a record.
-constexpr size_t firstPlaceOfInstanceOfClassBelow(uintptr_t prototype) { return prototype >> shiftOfPrototypeForInstanceOfClassBelow & (numberOfInstancesOfClassesBelow - 1); }
-constexpr size_t secondPlaceOfInstanceOfClassBelow(uintptr_t prototype) { return firstPlaceOfInstanceOfClassBelow(prototype) ^ (firstPlaceOfInstanceOfClassBelow(prototype >> shiftOfPrototypeForInstanceOfClassBelow) | 1); }
-// With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
-constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
+constexpr unsigned shiftOfInstanceBelowPrototype = 5;
+constexpr uint64_t multiplierOfInstanceBelowPrototype = 0x9E3779B97F4A7C15;
+constexpr unsigned shiftOfProductOfInstanceBelowPrototype = 32 - shiftOfInstanceBelowPrototype;
+constexpr uint64_t firstOffsetOfInstanceBelowPrototype(uint64_t bitsOfPrototype, uint32_t allocationOfSite) { return ((bitsOfPrototype + allocationOfSite) * multiplierOfInstanceBelowPrototype) >> shiftOfProductOfInstanceBelowPrototype; }
+
+struct InstancesBelowPrototypes {
+    const InstanceBelowPrototype* entries;
+    uint64_t maskOfOffsets;
+};
 
 struct FieldData;
 
-// Where the objects of a layout keep a private name that the class of another layout declares: `class B extends either {}` has a field for each name of each parent it may have.
-// Layouts and their fields are data of the image, so a place never goes stale. Only the names of a class that is evaluated once have places.
+struct HeirTemplate {
+    static constexpr size_t maxWords = 11;
+    static constexpr uint32_t isOfViews = UINT32_MAX;
+    static constexpr uint32_t takesNoArguments = 1u << 31;
+
+    JSCell* newTarget;
+    JSCell* parent;
+    const uint8_t* allocators;
+    uint32_t propertyRoom;
+    uint32_t allocationsUntilReview;
+    uint32_t allocationStructureID;
+    uint32_t numberOfWords;
+    union {
+        struct {
+            uint64_t header;
+            uint64_t hole;
+        };
+        struct {
+            uint64_t headerOfViews;
+            uint64_t typedArrayType;
+        };
+        std::array<uint64_t, maxWords> words;
+    };
+};
+constexpr size_t numberOfSubclassTemplates = 16;
+constexpr unsigned subclassTemplateShift = 7;
+constexpr unsigned templateSubclassShift = 4;
+inline size_t subclassTemplateIndex(const JSCell* newTarget) { return std::bit_cast<uintptr_t>(newTarget) >> templateSubclassShift & (numberOfSubclassTemplates - 1); }
+static_assert(sizeof(HeirTemplate) == 1u << subclassTemplateShift && std::is_trivially_default_constructible_v<HeirTemplate>);
+
 struct PrivateFieldPlace {
-    // The number of the layout of the object above the number of the declaring class. They differ, so no place that is in use holds nought.
     uint64_t layouts;
-    // In the declaring layout.
     uint32_t declaredField;
     uint32_t unused;
-    // Of the layout of the object.
     const FieldData* field;
     uint64_t alsoUnused;
 };
 constexpr uint32_t numberOfPrivateFieldPlaces = 64;
 constexpr unsigned shiftOfPrivateFieldPlace = 5;
-constexpr size_t indexOfPrivateFieldPlace(uint32_t layoutOfObject, uint32_t declaredField) { return (layoutOfObject ^ declaredField) & (numberOfPrivateFieldPlaces - 1); }
+constexpr unsigned shiftOfFieldInIndexOfPrivateFieldPlace = 3;
+constexpr size_t indexOfPrivateFieldPlace(uint32_t layoutOfObject, uint32_t declaringClass, uint32_t declaredField) { return ((layoutOfObject + 3 * declaringClass) ^ declaredField << shiftOfFieldInIndexOfPrivateFieldPlace) & (numberOfPrivateFieldPlaces - 1); }
+constexpr uint32_t layoutHasNoPlaceForPrivateField = 1u << 31;
+
+struct StructuresOfHeir {
+    static constexpr unsigned numberThatPass = 4;
+    static constexpr unsigned numberRefused = 2;
+    static constexpr uint32_t asksElements = 1;
+
+    static constexpr ptrdiff_t offsetOfOneThatPasses(unsigned index) { return offsetof(StructuresOfHeir, thatPass) + index * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfOneRefused(unsigned index) { return offsetof(StructuresOfHeir, refused) + index * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfPrototypeWithoutElements() { return offsetof(StructuresOfHeir, prototypeWithoutElements); }
+    static constexpr ptrdiff_t offsetOfDisplacementOfField(unsigned field) { return sizeof(StructuresOfHeir) + field * sizeof(int32_t); }
+    static constexpr size_t sizeWithDisplacementsOfFields(size_t numberOfFields) { return sizeof(StructuresOfHeir) + numberOfFields * sizeof(int32_t); }
+
+    bool holdsNoStructure() const { return !thatPass[0] && !refused[0]; }
+    std::span<int32_t> displacementsOfFields(size_t numberOfFields) { return { reinterpret_cast<int32_t*>(this + 1), numberOfFields }; }
+
+    void layInFront(uint32_t structureID, bool passes)
+    {
+        uint32_t* words = passes ? thatPass : refused;
+        for (unsigned index = (passes ? numberThatPass : numberRefused) - 1; index; --index)
+            words[index] = words[index - 1];
+        words[0] = structureID;
+    }
+
+    void layAtBack(uint32_t structureID, bool passes)
+    {
+        (passes ? thatPass[numberThatPass - 1] : refused[numberRefused - 1]) = structureID;
+    }
+
+    uint32_t thatPass[numberThatPass];
+    uint32_t refused[numberRefused];
+    uint32_t prototypeWithoutElements;
+};
+static_assert(alignof(StructuresOfHeir) > StructuresOfHeir::asksElements);
+static_assert(sizeof(StructuresOfHeir) == (StructuresOfHeir::numberThatPass + StructuresOfHeir::numberRefused + 1) * sizeof(uint32_t) && !StructuresOfHeir::offsetOfOneThatPasses(0));
+static_assert(std::is_trivially_default_constructible_v<StructuresOfHeir> && std::is_standard_layout_v<StructuresOfHeir>);
 
 struct ClassWords {
     JSCell** classPrototypes;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
-    const InstanceOfClassBelow* instancesOfClassesBelow;
-    // By class, like classPrototypes: the brand on the Structure of cells that a built-in constructor creates for the class's `super(..)`. Null until the first one is created.
-    UniquedStringImpl** brandsOfInstances;
-    // The ID of a Structure that carries a class's brand and has no properties other than the class's fields and those the built-in constructor adds. With structureHasOtherNames set, it has others.
-    uint32_t* structureNameCache;
     PrivateFieldPlace* privateFieldPlaces;
+    HeirTemplate* heirTemplates;
+    InstancesBelowPrototypes instancesBelowPrototypes;
 };
 
-constexpr uint32_t structureNameCacheSize = 64;
-constexpr uint32_t structureNameCacheShift = 7;
-constexpr uint32_t structureHasOtherNames = 1;
-
 static_assert(sizeof(PrivateFieldPlace) == 1u << shiftOfPrivateFieldPlace && !(numberOfPrivateFieldPlaces & (numberOfPrivateFieldPlaces - 1)));
+static_assert(sizeof(InstanceBelowPrototype) == 1u << shiftOfInstanceBelowPrototype);
 static_assert(sizeof(KeyOrderTransition) == 16);
 static_assert(sizeof(KeyListCacheEntry) == 16);
 static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));
-static_assert(sizeof(KeyOrderEntriesCacheEntry) == 16 && !(numberOfCachedKeyOrderEntries & (numberOfCachedKeyOrderEntries - 1)));
 static_assert(sizeof(EnumeratorCacheEntry) == 16);
 static_assert(!(numberOfCachedEnumerators & (numberOfCachedEnumerators - 1)));
 static_assert(sizeof(PrototypeTransition) == 16);
-static_assert(sizeof(CopyWithNames) == 24 && sizeof(NameInCopy) == 8 && !(numberOfPlacesOfCopiesWithNames & (numberOfPlacesOfCopiesWithNames - 1)) && !(offsetOfFirstCopyWithNames % sizeof(uint64_t)));
-static_assert(sizeof(InstanceOfClassBelow) == 32 && !(numberOfInstancesOfClassesBelow & (numberOfInstancesOfClassesBelow - 1)));
 static_assert(!(numberOfPrototypeTransitions & (numberOfPrototypeTransitions - 1)));
 static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
 
 static_assert(std::is_trivially_default_constructible_v<KeyOrderTransition>);
+static_assert(std::is_trivially_default_constructible_v<KeyOrderRun>);
 static_assert(std::is_trivially_default_constructible_v<KeyListCacheEntry>);
-static_assert(std::is_trivially_default_constructible_v<KeyOrderEntriesCacheEntry>);
 static_assert(std::is_trivially_default_constructible_v<EnumeratorCacheEntry>);
 static_assert(std::is_trivially_default_constructible_v<PrototypeTransition>);
 static_assert(std::is_trivially_default_constructible_v<ObjectWords>);

@@ -65,6 +65,6 @@ enum ExitKind : uint8_t {
     SparseIndex, // We exited because we encountered a sparse index in a place we didn't want to see it.
 };
 
-bool LEGACY_NODELETE exitKindMayJettison(ExitKind);
+NODELETE bool exitKindMayJettison(ExitKind);
 
 } // namespace JSC

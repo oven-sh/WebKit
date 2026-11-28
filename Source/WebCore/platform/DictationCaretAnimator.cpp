@@ -55,22 +55,22 @@ static constexpr KeyFrame keyframe(size_t i)
     return KeyFrame { Seconds(i * inverseFrameRate), fabs(sinf(std::numbers::pi_v<float> * i * inverseFrameRate)) };
 }
 
-constexpr float LEGACY_NODELETE tailBlurRadius(float cursorHeight)
+NODELETE constexpr float tailBlurRadius(float cursorHeight)
 {
     return (10.f * cursorHeight) / 12.f;
 }
 
-constexpr float LEGACY_NODELETE caretBlurRadius(float cursorHeight)
+NODELETE constexpr float caretBlurRadius(float cursorHeight)
 {
     return (8.f * cursorHeight) / 12.f;
 }
 
-constexpr float LEGACY_NODELETE coneStart(float cursorHeight)
+NODELETE constexpr float coneStart(float cursorHeight)
 {
     return (4.f * cursorHeight) / 38.f;
 }
 
-constexpr float LEGACY_NODELETE coneEnd(float cursorHeight)
+NODELETE constexpr float coneEnd(float cursorHeight)
 {
     return (152.f * cursorHeight) / 38.f;
 }
@@ -263,11 +263,12 @@ void DictationCaretAnimator::fillCaretTail(const FloatRect& rect, GraphicsContex
     float width = rect.width();
     float midY = rect.y() + 0.5f * height;
 
-    auto gradient = Gradient::create(Gradient::LinearData { FloatPoint(rect.x(), midY), FloatPoint(rect.x() + width, midY) }, { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied });
     constexpr auto glowOpacity = .75f;
     bool isLTR = isLeftToRightLayout();
-    gradient->addColorStop({ isLTR ? 0.f : 1.f, tailColor.colorWithAlpha(0.1f * glowOpacity) });
-    gradient->addColorStop({ isLTR ? 1.f : 0.f, tailColor.colorWithAlpha(0.35f * glowOpacity) });
+    auto faintColor = tailColor.colorWithAlpha(0.1f * glowOpacity);
+    auto strongColor = tailColor.colorWithAlpha(0.35f * glowOpacity);
+    GradientColorStops stops { isLTR ? std::array { faintColor, strongColor } : std::array { strongColor, faintColor } };
+    auto gradient = Gradient::create(Gradient::LinearData { FloatPoint(rect.x(), midY), FloatPoint(rect.x() + width, midY) }, { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied }, GradientSpreadMethod::Pad, WTF::move(stops));
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=253139 - this should be computed based on the render area
     constexpr auto shadowOffset = 10000.f;
     GraphicsDropShadow dropShadow = {

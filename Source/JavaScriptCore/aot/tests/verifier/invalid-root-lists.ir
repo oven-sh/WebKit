@@ -1,5 +1,4 @@
 # a module is an entry once
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: DuplicateListEntry 1
 

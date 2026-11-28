@@ -1,0 +1,12 @@
+# the sweep writes both words of a loan or neither: the emitters read the one for the cell and the other for the call
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: f4 Body b0 v2 (NewClosure): where a closure lies and who borrows it do not agree
+# PROGRAM-OF: ../closures-lent/loan-of-a-closure-is-written-into-its-record.ir
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim
+#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v3
+# }
+# -- end of code

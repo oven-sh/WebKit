@@ -241,6 +241,10 @@ angle::Result ContextMtl::initialize(const angle::ImageLoadContext &imageLoadCon
     mLineLoopLastSegmentIndexBuffer.initialize(
         this, 2 * sizeof(uint32_t), mtl::kIndexBufferOffsetAlignment,
         kMaxTriFanLineLoopBuffersPerFrame, mtl::TrackBufferInContext::Yes);
+    // No limit on the number of buffers, since reaching it would wait for the GPU.
+    mStagingBufferPool.initialize(this, mtl::kStagingBufferPoolBufferSize,
+                                  mtl::kStagingBufferPoolAlignment, 0,
+                                  mtl::TrackBufferInContext::Yes);
 
     mContextDevice.set(mDisplay->getMetalDevice());
 
@@ -254,6 +258,7 @@ void ContextMtl::onDestroy(const gl::Context *context)
     mTriFanIndexBuffer.destroy(this);
     mLineLoopIndexBuffer.destroy(this);
     mLineLoopLastSegmentIndexBuffer.destroy(this);
+    mStagingBufferPool.destroy(this);
     mOcclusionQueryPool.destroy(this);
 
     mIncompleteTextures.onDestroy(context);
@@ -1113,6 +1118,10 @@ gl::GraphicsResetStatus ContextMtl::getResetStatus()
     }
 #endif
 
+    if (mContextLost)
+    {
+        return gl::GraphicsResetStatus::UnknownContextReset;
+    }
     return gl::GraphicsResetStatus::NoError;
 }
 
@@ -1880,7 +1889,7 @@ void ContextMtl::endEncoding(bool forceSaveRenderPassContent)
             mRenderEncoder.setStoreAction(MTLStoreActionStore);
         }
 
-        disableOcclusionQueryInRenderPass();
+        disableActiveOcclusionQueryInRenderPass();
 
         mOcclusionQueryPool.prepareRenderPassVisibilityPoolBuffer(this);
 
@@ -2159,6 +2168,11 @@ void ContextMtl::updateViewport(FramebufferMtl *framebufferMtl,
                                 float nearPlane,
                                 float farPlane)
 {
+    if (NeedToInvertDepthRange(nearPlane, farPlane))
+    {
+        // As in updateDepthRange(), the shader inverts the depth of a reversed range.
+        std::swap(nearPlane, farPlane);
+    }
     mViewport = mtl::GetViewport(viewport, framebufferMtl->getState().getDimensions().height,
                                  framebufferMtl->getFlipY(), nearPlane, farPlane);
     mDirtyBits.set(DIRTY_BIT_VIEWPORT);
@@ -2348,7 +2362,6 @@ angle::Result ContextMtl::onOcclusionQueryBegin(QueryMtl &query)
     {
         endEncoding(true);
     }
-
     if (mRenderEncoder.valid())
     {
         size_t resultOffset;
@@ -2375,7 +2388,7 @@ angle::Result ContextMtl::onOcclusionQueryBegin(QueryMtl &query)
 void ContextMtl::onOcclusionQueryEnd()
 {
     ASSERT(mOcclusionQueryResultBuffer);  // Frontend guarantees one active at the time.
-    disableOcclusionQueryInRenderPass();
+    disableActiveOcclusionQueryInRenderPass();
     mOcclusionQueryResultBuffer = nullptr;
 }
 
@@ -2387,7 +2400,7 @@ void ContextMtl::onOcclusionQueryDestroy(QueryMtl &query)
     mOcclusionQueryPool.discardQuery(query.getVisibilityResultBuffer());
 }
 
-void ContextMtl::disableOcclusionQueryInRenderPass()
+void ContextMtl::disableActiveOcclusionQueryInRenderPass()
 {
     if (mOcclusionQueryResultBuffer && mOcclusionQueryIsEnabledInRenderPass)
     {
@@ -3054,9 +3067,19 @@ angle::Result ContextMtl::checkIfPipelineChanged(const gl::Context *context,
 
 angle::Result ContextMtl::checkCommandBufferError()
 {
-    ANGLE_CHECK_GL_ALLOC(
-        this, mCmdBuffer.cmdQueue().popCmdBufferError() != MTLCommandBufferErrorOutOfMemory);
-    return angle::Result::Continue;
+    switch (mCmdBuffer.cmdQueue().popCmdBufferError())
+    {
+        case MTLCommandBufferErrorNone:
+            return angle::Result::Continue;
+        case MTLCommandBufferErrorOutOfMemory:
+            ANGLE_CHECK_GL_ALLOC(this, false);
+            return angle::Result::Stop;
+        default:
+            mContextLost = true;
+            ANGLE_CHECK(this, false, "Metal command buffer execution failed.",
+                        GL_INVALID_OPERATION);
+            return angle::Result::Stop;
+    }
 }
 
 }  // namespace rx

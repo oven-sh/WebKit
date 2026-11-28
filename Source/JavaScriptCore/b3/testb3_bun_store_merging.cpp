@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3EliminateCommonSubexpressions.h"
 #include "B3MergeAdjacentConstantStores.h"
 #include <array>
 
@@ -266,6 +267,71 @@ static void testMergeZeroStoresWritesExactHeaps()
     CHECK(patchpoint->runsWithoutFrame());
 }
 
+static void testDeadStoreAcrossIterations()
+{
+    for (bool advances : { true, false }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* latch = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        auto arguments = cCallArgumentValues<int32_t*, int32_t*>(proc, root);
+        Value* start = arguments[0];
+        Value* lastIndexAddress = arguments[1];
+        Value* pointer = graph.phi(body, Int64);
+        Value* counter = graph.phi(body, Int32);
+        Value* address = advances ? pointer : start;
+
+        graph.upsilon(root, start, pointer);
+        graph.upsilon(root, graph.int32(root, 0), counter);
+        graph.jump(root, body);
+
+        graph.store(body, graph.int32(body, 1), address, 0, firstHeap);
+        Value* lastIndex = graph.load(body, Int32, lastIndexAddress, 0, firstHeap);
+        graph.store(body, graph.int32(body, 2), address, 0, firstHeap);
+        graph.branch(body, graph.make(body, Equal, counter, lastIndex), exit, latch);
+
+        graph.upsilon(latch, graph.make(latch, Add, pointer, graph.int64(latch, sizeof(int32_t))), pointer);
+        graph.upsilon(latch, graph.make(latch, Add, counter, graph.int32(latch, 1)), counter);
+        graph.jump(latch, body);
+
+        graph.store(exit, graph.int32(exit, 3), address, 0, firstHeap);
+        graph.ret(exit, graph.int32(exit, 0));
+        resetAndValidate(proc);
+
+        eliminateCommonSubexpressions(proc);
+        validate(proc);
+        CHECK_EQ(numberOfValues(proc, Store), advances ? 3u : 2u);
+
+        std::array<int32_t, 4> memory { };
+        int32_t lastIndexInMemory = 3;
+        compileAndRun<int32_t>(proc, memory.data(), &lastIndexInMemory);
+        CHECK(memory == (advances ? std::array { 2, 2, 2, 3 } : std::array { 3, 0, 0, 0 }));
+    }
+}
+
+static void testDeadStoreBeforeTrap()
+{
+    for (Type type : { Int32, Int64 }) {
+        for (bool traps : { true, false }) {
+            Procedure proc;
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            Value* pointer = cCallArgumentValues<int64_t*>(proc, root)[0];
+            graph.store(root, graph.int32(root, 1), pointer, 0, firstHeap);
+            Value* value = root->appendIntConstant(proc, Origin(), type, 2);
+            root->appendNew<MemoryValue>(proc, traps ? trapping(Store) : B3::Kind(Store), Origin(), value, pointer, 0, firstHeap);
+            graph.ret(root, graph.int32(root, 0));
+            resetAndValidate(proc);
+
+            eliminateCommonSubexpressions(proc);
+            validate(proc);
+            CHECK_EQ(numberOfValues(proc, Store), traps && type == Int64 ? 2u : 1u);
+        }
+    }
+}
+
 void addBunStoreMergingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testMergeAdjacentConstantStores());
@@ -274,6 +340,8 @@ void addBunStoreMergingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testMergeZeroStoresIntoVectors());
     RUN(testMergeZeroStoresKeepsOtherStores());
     RUN(testMergeZeroStoresWritesExactHeaps());
+    RUN(testDeadStoreAcrossIterations());
+    RUN(testDeadStoreBeforeTrap());
 }
 
 #endif // ENABLE(B3_JIT)

@@ -26,8 +26,7 @@
 
 #include "StyleRuleFunction.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // CustomFunction registration represents @function after things like @media and cascade layers have
 // been resolved.
@@ -59,13 +58,11 @@ class CustomFunctionRegistry : public CanMakeCheckedPtr<CustomFunctionRegistry> 
 public:
     CustomFunctionRegistry() = default;
 
-    const CustomFunction* LEGACY_NODELETE functionForName(const AtomString&) const;
+    NODELETE const CustomFunction* functionForName(const AtomString&) const;
     void registerFunction(const StyleRuleFunction&, CustomFunction::DeclarationsBlocks&&);
 
 private:
     HashMap<AtomString, UniqueRef<const CustomFunction>> m_functions;
 };
-
-}
 
 }

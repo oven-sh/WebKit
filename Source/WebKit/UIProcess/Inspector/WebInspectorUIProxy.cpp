@@ -88,12 +88,8 @@ WebInspectorUIProxy::~WebInspectorUIProxy() = default;
 
 void WebInspectorUIProxy::setInspectorClient(std::unique_ptr<API::InspectorClient>&& inspectorClient)
 {
-    if (!inspectorClient) {
-        m_inspectorClient = nullptr;
-        return;
-    }
-
     m_inspectorClient = WTF::move(inspectorClient);
+    updateSiteIsolationDisablingAvailable();
 }
 
 unsigned WebInspectorUIProxy::inspectionLevel() const
@@ -663,6 +659,8 @@ void WebInspectorUIProxy::frontendLoaded()
 
     if (m_inspectorClient)
         m_inspectorClient->frontendLoaded(*this);
+
+    updateSiteIsolationDisablingAvailable();
 }
 
 void WebInspectorUIProxy::bringToFront()
@@ -725,6 +723,18 @@ void WebInspectorUIProxy::revealFileExternally(const String& path)
     platformRevealFileExternally(path);
 }
 
+void WebInspectorUIProxy::requestDisableSiteIsolation()
+{
+    // Ignore requests that the client didn't offer or that no longer apply, without treating them as invalid
+    // messages: the frontend may have sent one before learning that the client or the preference changed.
+    RefPtr inspectedPage = m_inspectedPage;
+    if (!inspectedPage || !protect(inspectedPage->preferences())->siteIsolationEnabled())
+        return;
+
+    if (m_inspectorClient && m_inspectorClient->supportsDisablingSiteIsolation())
+        m_inspectorClient->requestDisableSiteIsolation(*this);
+}
+
 void WebInspectorUIProxy::inspectedURLChanged(const String& urlString)
 {
     platformInspectedURLChanged(urlString);
@@ -773,6 +783,20 @@ void WebInspectorUIProxy::elementSelectionChanged(bool active)
 void WebInspectorUIProxy::timelineRecordingChanged(bool active)
 {
     m_isProfilingPage = active;
+
+    if (RefPtr inspectedPage = m_inspectedPage)
+        inspectedPage->inspectorController().timelineRecordingChanged(active);
+}
+
+void WebInspectorUIProxy::takeTimelineScreenshot(const WebCore::IntRect& rect, double timestamp, CompletionHandler<void()>&& completionHandler)
+{
+    RefPtr inspectedPage = m_inspectedPage;
+    if (!inspectedPage) {
+        completionHandler();
+        return;
+    }
+
+    inspectedPage->inspectorController().takeTimelineScreenshot(rect, timestamp, WTF::move(completionHandler));
 }
 
 void WebInspectorUIProxy::showPaintRectsChanged(bool show)
@@ -829,6 +853,16 @@ void WebInspectorUIProxy::setDiagnosticLoggingAvailable(bool available)
 #else
     UNUSED_PARAM(available);
 #endif
+}
+
+void WebInspectorUIProxy::updateSiteIsolationDisablingAvailable()
+{
+    RefPtr inspectorPage = m_inspectorPage;
+    if (!inspectorPage)
+        return;
+
+    bool available = m_inspectorClient && m_inspectorClient->supportsDisablingSiteIsolation();
+    protect(inspectorPage->legacyMainFrameProcess())->send(Messages::WebInspectorUI::SetSiteIsolationDisablingAvailable(available), inspectorPage->webPageIDInMainFrameProcess());
 }
 
 void WebInspectorUIProxy::systemAppearanceDidChange()

@@ -30,7 +30,6 @@
 
 #include "RemoteGPUProxy.h"
 #include "RemoteXRProjectionLayerMessages.h"
-#include "WebGPUConvertToBackingContext.h"
 #include <WebCore/PlatformXR.h>
 #include <WebCore/WebGPUCppAPI.h>
 #include <wtf/MachSendRight.h>
@@ -39,9 +38,8 @@ namespace WebKit::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteXRProjectionLayerProxy);
 
-RemoteXRProjectionLayerProxy::RemoteXRProjectionLayerProxy(Ref<RemoteGPUProxy>&& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+RemoteXRProjectionLayerProxy::RemoteXRProjectionLayerProxy(Ref<RemoteGPUProxy>&& parent, WebGPUXRProjectionLayerIdentifier identifier)
     : m_backing(identifier)
-    , m_convertToBackingContext(convertToBackingContext)
     , m_parent(WTF::move(parent))
 {
 }
@@ -55,7 +53,7 @@ RemoteXRProjectionLayerProxy::~RemoteXRProjectionLayerProxy()
 #if PLATFORM(COCOA)
 void RemoteXRProjectionLayerProxy::startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples)
 {
-#if PLATFORM(VISION)
+#if ENABLE(WEBXR) && HAVE(COMPOSITOR_SERVICES)
     PlatformXR::RateMapDescription rateMapDescription {
         .screenSize = { static_cast<int>(screenWidth), static_cast<int>(screenHeight) },
         .horizontalSamplesLeft = WTF::move(horizontalSamplesLeft),
@@ -82,6 +80,12 @@ void RemoteXRProjectionLayerProxy::startFrame(size_t frameIndex, MachSendRight&&
 void RemoteXRProjectionLayerProxy::endFrame()
 {
     auto sendResult = send(Messages::RemoteXRProjectionLayer::EndFrame());
+    UNUSED_VARIABLE(sendResult);
+}
+
+void RemoteXRProjectionLayerProxy::destroy()
+{
+    auto sendResult = send(Messages::RemoteXRProjectionLayer::Destroy());
     UNUSED_VARIABLE(sendResult);
 }
 

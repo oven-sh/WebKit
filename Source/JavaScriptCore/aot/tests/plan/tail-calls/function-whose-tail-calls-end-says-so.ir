@@ -1,0 +1,76 @@
+# a function whose calls in tail position lead to functions that return ends its tail calls: whoever calls it in tail position may keep his frame for the price of one more
+# function leaf(v) { return v.x }  function a(v) { return leaf(v) }  function ring(v) { return ring(v) }  function byValue(f, v) { return f(v) }  function c(f, v) { return byValue(f, v) }
+# a ring never ends, nobody follows a call of a value that Link does not list, and whoever jumps to one of these does not end either
+# function forwards(f, t, list) { return Reflect.apply(f, t, list) }  function native(v) { return Math.abs(v) }
+# a built-in that returns what an operand returns gives its place to the call of the operand, which nobody follows. Any other built-in is native code that comes back
+# f1 = leaf, f2 = a, f3 = ring, f4 = byValue, f5 = c, f6 = forwards, f7 = native. All but leaf are handed to sink
+# RUN: plan units mechanisms=none+DirectCalls
+# CHECK: unit f1:Body {{*}}ends-its-tail-calls
+# CHECK: unit f2:Body {{*}}ends-its-tail-calls
+# CHECK: unit f7:Body {{*}}ends-its-tail-calls
+# RUN(NEVER): plan units mechanisms=none+DirectCalls
+# NEVER-NOT: unit f3:Body {{*}}ends-its-tail-calls
+# NEVER-NOT: unit f4:Body {{*}}ends-its-tail-calls
+# NEVER-NOT: unit f5:Body {{*}}ends-its-tail-calls
+# NEVER-NOT: unit f6:Body {{*}}ends-its-tail-calls
+# RUN(WITHHELD): plan units mechanisms=none
+# WITHHELD-NOT: ends-its-tail-calls
+
+variable g0 name="leaf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="ring" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g2 name="byValue" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = GetModuleVariable variable=g1
+    v4 = GetModuleVariable variable=g2
+    v5 = NewClosure function=f5
+    v6 = NewClosure function=f6
+    v7 = NewClosure function=f7
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="leaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="a" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="leaf"
+    ReturnCall v2
+}
+function f3 name="ring" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="ring"
+    ReturnCall v2
+}
+function f4 name="byValue" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="f"
+    ReturnCall v2
+}
+function f5 name="c" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g2
+    v3 = Call v2, -, v0, v1 calleeName="byValue"
+    ReturnCall v3
+}
+function f6 name="forwards" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=ReflectApply
+    v4 = Call v3, -, v0, v1, v2 calleeName="apply"
+    ReturnCall v4
+}
+function f7 name="native" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=MathAbs
+    v2 = Call v1, -, v0 calleeName="abs"
+    ReturnCall v2
+}

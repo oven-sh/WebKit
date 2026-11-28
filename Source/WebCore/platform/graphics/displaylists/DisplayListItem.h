@@ -50,7 +50,8 @@ class ClipOut;
 class ClipOutRoundedRect;
 class ClipOutToPath;
 class ClipPath;
-class ClipToImageBuffer;
+class ClipTransformedPath;
+class ClipToNativeImage;
 class ConcatenateCTM;
 class DrawControlPart;
 class DrawDotsForDocumentMarker;
@@ -58,13 +59,16 @@ class DrawEllipse;
 class DrawFilteredImageBuffer;
 class DrawFocusRingPath;
 class DrawFocusRingRects;
+class DrawFreeformGradient;
 class DrawGlyphs;
 class DrawDisplayList;
 class DrawPlaceholder;
 class DrawImageBuffer;
 class DrawLine;
 class DrawLinesForText;
+class DrawMeshGradient;
 class DrawNativeImage;
+class DrawPDFPage;
 class DrawPath;
 class DrawPatternNativeImage;
 class DrawPatternImageBuffer;
@@ -82,8 +86,10 @@ class FillRectWithRoundedHole;
 class FillRoundedRect;
 class ResetClip;
 class Restore;
+class RestoreTransform;
 class Rotate;
 class Save;
+class SaveTransform;
 class Scale;
 class SetCTM;
 class SetInlineFillColor;
@@ -97,10 +103,6 @@ class StrokeEllipse;
 class StrokePath;
 class StrokeRect;
 class Translate;
-#if USE(CG)
-class ApplyFillPattern;
-class ApplyStrokePattern;
-#endif
 class BeginPage;
 class EndPage;
 class SetURLForRect;
@@ -119,7 +121,8 @@ using Item = Variant
     , ClipOutRoundedRect
     , ClipOutToPath
     , ClipPath
-    , ClipToImageBuffer
+    , ClipTransformedPath
+    , ClipToNativeImage
     , ConcatenateCTM
     , DrawControlPart
     , DrawDotsForDocumentMarker
@@ -127,13 +130,16 @@ using Item = Variant
     , DrawFilteredImageBuffer
     , DrawFocusRingPath
     , DrawFocusRingRects
+    , DrawFreeformGradient
     , DrawGlyphs
     , DrawDisplayList
     , DrawPlaceholder
     , DrawImageBuffer
     , DrawLine
     , DrawLinesForText
+    , DrawMeshGradient
     , DrawNativeImage
+    , DrawPDFPage
     , DrawPath
     , DrawPatternNativeImage
     , DrawPatternImageBuffer
@@ -151,8 +157,10 @@ using Item = Variant
     , FillRoundedRect
     , ResetClip
     , Restore
+    , RestoreTransform
     , Rotate
     , Save
+    , SaveTransform
     , Scale
     , SetCTM
     , SetInlineFillColor
@@ -166,10 +174,6 @@ using Item = Variant
     , StrokePath
     , StrokeRect
     , Translate
-#if USE(CG)
-    , ApplyFillPattern
-    , ApplyStrokePattern
-#endif
     , BeginPage
     , EndPage
     , SetURLForRect
@@ -186,6 +190,8 @@ enum class AsTextFlag : uint8_t {
 void applyItem(GraphicsContext&, const AffineTransform& baseTransform, ControlFactory&, const Item&);
 
 bool shouldDumpItem(const Item&, OptionSet<AsTextFlag>);
+
+WEBCORE_EXPORT bool isResolved(const Item&);
 
 WEBCORE_EXPORT void dumpItem(TextStream&, const Item&, OptionSet<AsTextFlag>);
 

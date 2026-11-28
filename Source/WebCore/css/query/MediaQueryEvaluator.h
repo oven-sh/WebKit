@@ -27,23 +27,22 @@
 #include "GenericMediaQueryEvaluator.h"
 #include "MediaQuery.h"
 
-namespace WebCore {
-namespace MQ {
+namespace WebCore::MQ {
 
 class MediaQueryEvaluator : public GenericMediaQueryEvaluator<MediaQueryEvaluator> {
 public:
-    MediaQueryEvaluator(const AtomString& mediaType, const Document&);
-    MediaQueryEvaluator(const AtomString& mediaType = nullAtom(), EvaluationResult mediaConditionResult = EvaluationResult::False);
+    NODELETE MediaQueryEvaluator(const AtomString& mediaType, const Document&);
+    NODELETE MediaQueryEvaluator(const AtomString& mediaType = nullAtom(), EvaluationResult mediaConditionResult = EvaluationResult::False);
 
     bool evaluate(const MediaQueryList&) const;
     bool evaluate(const MediaQuery&) const;
 
-    bool LEGACY_NODELETE evaluateMediaType(const MediaQuery&) const;
+    NODELETE bool evaluateMediaType(const MediaQuery&) const;
 
     OptionSet<MediaQueryDynamicDependency> collectDynamicDependencies(const MediaQueryList&) const;
     OptionSet<MediaQueryDynamicDependency> collectDynamicDependencies(const MediaQuery&) const;
 
-    bool LEGACY_NODELETE isPrintMedia() const;
+    NODELETE bool isPrintMedia() const;
 
 private:
     AtomString m_mediaType;
@@ -51,5 +50,4 @@ private:
     EvaluationResult m_staticMediaConditionResult { EvaluationResult::Unknown };
 };
 
-} // namespace MQ
-} // namespace WebCore
+} // namespace WebCore::MQ

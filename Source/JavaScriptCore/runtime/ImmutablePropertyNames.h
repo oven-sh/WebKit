@@ -30,6 +30,10 @@ public:
     public:
         virtual ~OutsideNames() = default;
         virtual bool contains(UniquedStringImpl*) const = 0;
+        // Whether a write to this property is refused. It may refuse more than contains() lists, depending on who writes. Code that relies on a property never changing must ask contains(): a property refused to one writer may still be written by another.
+        virtual bool refusesWrite(UniquedStringImpl* uid) const { return contains(uid); }
+        // True if refusesWrite() depends on who writes, so the answer must not be cached.
+        virtual bool refusalDependsOnWriter(UniquedStringImpl*) const { return false; }
         // Error messages that name the object and the property. Null: the caller uses its generic message.
         virtual String storeErrorMessage(UniquedStringImpl*) const { return { }; }
         virtual String deleteErrorMessage(UniquedStringImpl*) const { return { }; }
@@ -53,6 +57,8 @@ public:
             return true;
         return m_outsideNames && m_outsideNames->contains(uid);
     }
+    bool refusesWrite(UniquedStringImpl* uid) const { return contains(uid) || (m_outsideNames && m_outsideNames->refusesWrite(uid)); }
+    bool refusalDependsOnWriter(UniquedStringImpl* uid) const { return m_outsideNames && m_outsideNames->refusalDependsOnWriter(uid); }
     String storeErrorMessage(UniquedStringImpl* uid) const { return m_outsideNames ? m_outsideNames->storeErrorMessage(uid) : String(); }
     String deleteErrorMessage(UniquedStringImpl* uid) const { return m_outsideNames ? m_outsideNames->deleteErrorMessage(uid) : String(); }
     String setPrototypeErrorMessage() const { return m_outsideNames ? m_outsideNames->setPrototypeErrorMessage() : String(); }

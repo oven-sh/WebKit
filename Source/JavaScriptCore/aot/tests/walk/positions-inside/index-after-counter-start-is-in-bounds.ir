@@ -1,0 +1,71 @@
+# function best(l: number[], w: number) { let s = 0; for (let i = w; i < l.length; i++) s = (s + l[i] - l[i - w]) | 0; return s; }
+# The counter starts at w and only rises: i - w never lies below zero, and it lies below the length where i does and w is not negative.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Sub {{*}}form=Integers
+# CHECK-NEXT: = GetArrayElement {{*}}isInBounds
+module m0 path="main.ts" displayPath="main.ts" body=f0
+data d0 root=Array{contents=number elements=[Number{value=3}, Number{value=1}, Number{value=4}, Number{value=1}, Number{value=5}, Number{value=9}, Number{value=2}, Number{value=6}]} module=m0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Integer @147
+    v3 = Convert v2 declared={type=number} @147
+    v4 = Integer @163
+    v5 = Convert v4 declared={type=number} @163
+    Jump -> next b1(v3, v5) @159
+  b1(v6: number, v7: number):
+    LoopHint @159
+    v9 = Integer integer=8 @170
+    v10 = Less v7, v9 @166
+    Branch v10 -> taken b2(), notTaken b3() @166
+  b2():
+    v11 = Data data=d0 @188
+    v12 = Integer integer=2 @214
+    v13 = Integer integer=3 @223
+    v14 = BitAnd v7, v13 @219
+    v15 = Add v12, v14 @214
+    v16 = Call v1, -, v11, v15 calleeName="best" @183
+    v17 = Add v6, v16 @183
+    v18 = Convert v17 declared={type=number} @178
+    v19 = Increment v7 @173
+    v20 = Convert v19 declared={type=number} @173
+    Jump -> next b1(v18, v20) @173
+  b3():
+    v21 = Builtin builtin=GlobalThis @229
+    v22 = PropGet v21 key="globalThis" [isFreeName] @229
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]} @229
+    v24 = PropGet v23 key="sink" @229
+    v25 = Call v24, v23, v6 calleeKey="sink" calleeName="globalThis.sink" @248
+    v26 = Undefined @228
+    Return v26 @228
+}
+function f1 name="best" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = Integer @56
+    v3 = Convert v2 declared={type=number} @56
+    v4 = Convert v1 declared={type=number} @72
+    Jump -> next b1(v3, v4) @68
+  b1(v5: number, v6: number):
+    LoopHint @68
+    v8 = PropGet v0 key="length" @79
+    v9 = Less v6, v8 @75
+    Branch v9 -> taken b2(), notTaken b3() @75
+  b2():
+    v10 = ElemGet v0, v6 @103
+    v11 = Add v5, v10 @99
+    v12 = Sub v6, v1 @113
+    v13 = ElemGet v0, v12 @111
+    v14 = Sub v11, v13 @99
+    v15 = Integer @124
+    v16 = BitOr v14, v15 @98
+    v17 = Convert v16 declared={type=number} @94
+    v18 = Increment v6 @89
+    v19 = Convert v18 declared={type=number} @89
+    Jump -> next b1(v17, v19) @89
+  b3():
+    v20 = Convert v5 declared={type=number} @134
+    Return v20 @134
+}

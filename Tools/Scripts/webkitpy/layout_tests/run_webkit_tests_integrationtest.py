@@ -1,6 +1,6 @@
 # Copyright (C) 2010 Google Inc. All rights reserved.
 # Copyright (C) 2010 Gabor Rapcsanyi (rgabor@inf.u-szeged.hu), University of Szeged
-# Copyright (C) 2011, 2013 Apple Inc. All rights reserved.
+# Copyright (C) 2011, 2013-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -43,6 +43,7 @@ from webkitpy.common.host import Host
 from webkitpy.common.host_mock import MockHost
 from webkitpy.layout_tests import run_webkit_tests
 from webkitpy.layout_tests.controllers.manager import Manager
+from webkitpy.layout_tests.models import test_expectations
 from webkitpy.layout_tests.models.test_run_results import INTERRUPTED_EXIT_STATUS, RunDetails
 from webkitpy.layout_tests.views import printing
 from webkitpy.port import test
@@ -182,6 +183,104 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         # properly on cygwin (bug 63846).
         self.should_test_processes = not self._platform.is_win()
 
+    def test_disabled_keys_skip_annotated_tests_named_on_the_command_line(self):
+        tests = ['corner-cases/skip-if-disabled/text.html', 'corner-cases/skip-if-disabled/other-key.html', 'corner-cases/skip-if-disabled/reftest.html']
+        self.assertEqual(get_tests_run(tests), [
+            'corner-cases/skip-if-disabled/other-key.html',
+            'corner-cases/skip-if-disabled/reftest.html',
+            'corner-cases/skip-if-disabled/text.html',
+        ])
+        self.assertEqual(get_tests_run(['--disabled-keys=TestKey'] + tests), ['corner-cases/skip-if-disabled/other-key.html'])
+
+    def test_disabled_key_skip_is_an_expected_skip(self):
+        details, _, _ = logging_run(['--disabled-keys=TestKey', 'corner-cases/skip-if-disabled/text.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        result = details.initial_results.results_by_name['corner-cases/skip-if-disabled/text.html']
+        self.assertEqual(result.type, test_expectations.SKIP)
+        self.assertEqual(result.skipped_by_disabled_key, 'TestKey')
+        self.assertEqual(details.initial_results.unexpected_results_by_name, {})
+
+    def test_disabled_keys_summary_and_skip_list(self):
+        host = MockHost()
+        details, err, _ = logging_run(['--disabled-keys=TestKey', 'corner-cases/skip-if-disabled'], tests_included=True, host=host)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, '2 tests skipped by --disabled-keys=TestKey\n')
+        self.assertEqual(host.filesystem.read_text_file('/tmp/layout-test-results/skipped-by-disabled-keys.txt'),
+                         'corner-cases/skip-if-disabled/reftest.html\tTestKey\n'
+                         'corner-cases/skip-if-disabled/text.html\tTestKey\n')
+
+    def test_disabled_keys_summary_counts_each_driver(self):
+        host = MockHost()
+        details, err, _ = logging_run(['--disabled-keys=TestKey', '--dump-render-tree', '--webkit-test-runner', 'corner-cases/skip-if-disabled'], tests_included=True, host=host, shared_port=False)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, '4 tests skipped by --disabled-keys=TestKey\n')
+        skip_list = 'corner-cases/skip-if-disabled/reftest.html\tTestKey\ncorner-cases/skip-if-disabled/text.html\tTestKey\n'
+        self.assertEqual(host.filesystem.read_text_file('/tmp/layout-test-results/skipped-by-disabled-keys.txt'), skip_list)
+        self.assertEqual(host.filesystem.read_text_file('/tmp/layout-test-results/wk1/skipped-by-disabled-keys.txt'), skip_list)
+
+    def test_disabled_keys_matching_nothing_report_zero(self):
+        host = MockHost()
+        details, err, _ = logging_run(['--disabled-keys=NoSuchKey', 'corner-cases/skip-if-disabled'], tests_included=True, host=host)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, '0 tests skipped by --disabled-keys=NoSuchKey\n')
+        self.assertEqual(host.filesystem.read_text_file('/tmp/layout-test-results/skipped-by-disabled-keys.txt'), '')
+
+    def test_only_skip_if_disabled_driver_warnings_are_logged(self):
+        details, err, _ = logging_run(['corner-cases/driver-warning/text.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, "WARNING: skipIfDisabled key 'TsetKey' is close to --disabled-keys key 'TestKey' in test file: /text.html\n")
+        self.assertNotIn('ThreadSanitizer', err.getvalue())
+
+    def test_disabled_key_in_a_reference_is_ignored_with_a_warning(self):
+        details, err, _ = logging_run(['--disabled-keys=TestKey', 'corner-cases/skip-if-disabled-reference/reftest.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        self.assertEqual(details.initial_results.skipped_by_disabled_keys(), {})
+        self.assertEqual(details.initial_results.expected_skips, 0)
+        self.assertContains(err, 'WARNING: Ignoring skipIfDisabled in reference file: ')
+        self.assertContains(err, 'corner-cases/skip-if-disabled-reference/reftest-expected.html')
+
+    def test_disabled_keys_skipping_the_only_test_reports_it_skipped(self):
+        details, err, _ = logging_run(['--disabled-keys=TestKey', 'corner-cases/skip-if-disabled/text.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, 'The test was skipped by --disabled-keys=TestKey.\n')
+        self.assertNotIn('ran as expected', err.getvalue())
+
+    def test_disabled_keys_skipping_every_test_reports_all_skipped(self):
+        details, err, _ = logging_run(['--disabled-keys=TestKey', 'corner-cases/skip-if-disabled/text.html', 'corner-cases/skip-if-disabled/reftest.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, 'All 2 tests were skipped by --disabled-keys=TestKey.\n')
+        self.assertNotIn('ran as expected', err.getvalue())
+
+    def test_disabled_keys_with_expectation_skips_reports_the_skip_count(self):
+        details, err, _ = logging_run(['--disabled-keys=TestKey', 'corner-cases/skip-if-disabled/text.html', 'passes/skipped'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, '1 test skipped by --disabled-keys=TestKey\n')
+        self.assertNotIn('was skipped by', err.getvalue())
+
+    def test_disabled_keys_dry_run_reports_no_skip_count(self):
+        _, err, _ = logging_run(['--dry-run', '--disabled-keys=TestKey', 'corner-cases/skip-if-disabled'], tests_included=True)
+        self.assertNotIn('skipped by --disabled-keys', err.getvalue())
+
+    def test_default_run_has_no_disabled_keys_output(self):
+        host = MockHost()
+        details, err, _ = logging_run(['corner-cases/skip-if-disabled'], tests_included=True, host=host)
+        self.assertEqual(details.exit_code, 0)
+        self.assertNotIn('skipped by --disabled-keys', err.getvalue())
+        self.assertFalse(host.filesystem.exists('/tmp/layout-test-results/skipped-by-disabled-keys.txt'))
+
+    def test_default_run_removes_a_stale_skip_list(self):
+        host = MockHost()
+        host.filesystem.write_text_file('/tmp/layout-test-results/skipped-by-disabled-keys.txt', 'corner-cases/skip-if-disabled/text.html\tTestKey\n')
+        details, _, _ = logging_run(['corner-cases/skip-if-disabled'], tests_included=True, host=host)
+        self.assertEqual(details.exit_code, 0)
+        self.assertFalse(host.filesystem.exists('/tmp/layout-test-results/skipped-by-disabled-keys.txt'))
+
+    def test_disabled_keys_appear_in_logged_driver_command_line(self):
+        _, err, _ = logging_run(['--disabled-keys=TestKey', 'passes/text.html'], tests_included=True)
+        self.assertContains(err, '--disabled-keys TestKey')
+        _, err, _ = logging_run(['passes/text.html'], tests_included=True)
+        self.assertNotIn('--disabled-keys', err.getvalue())
+
     def serial_test_basic(self):
         options, args = parse_args(['--show-results'], tests_included=True)
         logging_stream = StringIO()
@@ -256,6 +355,47 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
             self.assertRaises(BaseException, logging_run,
                 ['--child-processes', '2', '--force', 'failures/expected/exception.html', 'passes/text.html'], tests_included=True, shared_port=False)
 
+    def test_disabled_keys_option_is_repeatable(self):
+        options, _ = run_webkit_tests.parse_args(['--disabled-keys=TestKey,OtherKey', '--disabled-keys', 'ThirdKey'])
+        self.assertEqual(options.disabled_keys, ['TestKey,OtherKey', 'ThirdKey'])
+
+    def test_disabled_keys_option_default_is_empty(self):
+        options, _ = run_webkit_tests.parse_args([])
+        self.assertEqual(options.disabled_keys, [])
+
+    def test_invalid_disabled_key_warns_and_the_run_continues(self):
+        details, err, _ = logging_run(['--disabled-keys=Bad"Key,TestKey', 'passes/text.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        self.assertContains(err, "Ignoring invalid --disabled-keys key 'Bad\"Key': keys must not contain whitespace or quotes\n")
+        self.assertNotIn('Traceback', err.getvalue())
+        self.assertEqual(details.initial_results.total, 1)
+
+    def test_derived_options_strip_whitespace_around_disabled_keys(self):
+        options, _ = run_webkit_tests.parse_args(['--disabled-keys=KeyA, KeyB'])
+        port = MockHost().port_factory.get('test', options)
+        with OutputCapture() as captured:
+            run_webkit_tests._set_up_derived_options(port, options)
+        self.assertNotIn('Ignoring invalid', captured.root.log.getvalue())
+        self.assertEqual(port.disabled_keys(), ['KeyA', 'KeyB'])
+
+    def test_derived_options_warn_once_per_invalid_key_in_sorted_order(self):
+        options, _ = run_webkit_tests.parse_args(["--disabled-keys=Key 5,Bad'Key,,KeyA", "--disabled-keys=Bad'Key"])
+        port = MockHost().port_factory.get('test', options)
+        with OutputCapture() as captured:
+            run_webkit_tests._set_up_derived_options(port, options)
+        self.assertEqual(captured.root.log.getvalue(),
+                         "Ignoring invalid --disabled-keys key 'Bad'Key': keys must not contain whitespace or quotes\n"
+                         "Ignoring invalid --disabled-keys key 'Key 5': keys must not contain whitespace or quotes\n")
+        self.assertEqual(port.disabled_keys(), ['KeyA'])
+
+    def test_derived_options_accept_macro_like_disabled_keys(self):
+        options, _ = run_webkit_tests.parse_args(['--disabled-keys=3SAR,RC_REMOVE_FOO(3),Key-5'])
+        port = MockHost().port_factory.get('test', options)
+        with OutputCapture() as captured:
+            run_webkit_tests._set_up_derived_options(port, options)
+        self.assertNotIn('Ignoring invalid', captured.root.log.getvalue())
+        self.assertEqual(port.disabled_keys(), ['3SAR', 'Key-5', 'RC_REMOVE_FOO(3)'])
+
     def serial_test_full_results_html(self):
         # FIXME: verify html?
         details, _, _ = logging_run(['--full-results-html'])
@@ -275,6 +415,13 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         details, err, _ = logging_run(['foo'], tests_included=True)
         self.assertEqual(details.exit_code, 0)
         self.assertContains(err, 'All tests skipped.\n')
+
+    def test_ignored_sanitizer_options_warning_logged_once_per_run(self):
+        with patch.dict('os.environ', {'ASAN_OPTIONS': 'log_path=/tmp/shell'}):
+            details, err, _ = logging_run(['-1', '-2', 'passes/text.html', 'passes/image.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        warnings = [line for line in err.getvalue().splitlines() if line.startswith('ASAN_OPTIONS is set')]
+        self.assertEqual(['ASAN_OPTIONS is set in the environment but is ignored; pass it with --additional-env-var=ASAN_OPTIONS=... instead.'], warnings)
 
     def test_target_host_available_when_capturing_upload_configuration(self):
         # Regression for 314080@main: capture configuration_for_upload(target_host(0))
@@ -313,6 +460,22 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         # refactor moves upload prep behind a different option.
         self.assertTrue(mock_upload.called)
         self.assertIsNotNone(details.initial_results)
+
+    def test_report_uploads_failure_output(self):
+        uploads = []
+
+        def capture_upload(upload, hostname, log_line_func=None):
+            uploads.append(upload)
+            return False
+
+        extra_args = ['--report', 'http://example.invalid/', 'failures/unexpected/text.html', 'failures/unexpected/crash-with-stderr.html', 'passes/text.html']
+        with patch.object(Upload, 'upload', autospec=True, side_effect=capture_upload):
+            logging_run(extra_args=extra_args, tests_included=True)
+
+        results = uploads[0].results
+        self.assertEqual('@@ -1 +1 @@\n-text-txt\n No newline at end of file\n+text_fail-txt\n No newline at end of file\n', results['failures']['unexpected']['text.html']['log'])
+        self.assertEqual('mock-std-error-output', results['failures']['unexpected']['crash-with-stderr.html']['log'])
+        self.assertNotIn('log', results['passes']['text.html'])
 
     def test_natural_order(self):
         tests_to_run = ['passes/audio.html', 'failures/expected/text.html', 'failures/expected/missing_text.html', 'passes/args.html']
@@ -901,6 +1064,12 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         # FIXME: This log message is confusing; tests that were skipped should be called out separately.
         self.assertTrue('0 tests ran as expected, 2 didn\'t:\n' in regular_output.getvalue())
 
+    def test_results_are_unchanged_by_expected_failure_time_out(self):
+        tests = ['failures/expected', 'failures/unexpected/timeout.html', 'failures/unexpected/text-image-checksum.html', 'corner-cases/ews', 'passes/text.html']
+        results = {(result.test_name, result.type) for result in get_test_results(['--time-out-ms', '30000'] + tests)}
+        short_results = {(result.test_name, result.type) for result in get_test_results(['--time-out-ms', '30000', '--expected-failure-time-out-ms', '6000'] + tests)}
+        self.assertEqual(results, short_results)
+
     def test_exit_after_n_failures(self):
         # Unexpected failures should result in tests stopping.
         tests_run = get_tests_run(['failures/unexpected/text-image-checksum.html', 'passes/text.html', '--exit-after-n-failures', '1'])
@@ -1429,6 +1598,69 @@ class PortTest(unittest.TestCase):
 
     def disabled_test_mac_lion(self):
         self.assert_mock_port_works('mac-lion')
+
+
+class FlavorOptionsTest(unittest.TestCase):
+    def set_up_flavor_options(self, port_name, args, **option_values):
+        options, _ = run_webkit_tests.parse_args(args)
+        for name, value in option_values.items():
+            setattr(options, name, value)
+        port = MockHost().port_factory.get(port_name, options)
+        run_webkit_tests.set_up_flavor_options(port, options, checkout_root='/checkout')
+        return options
+
+    def test_mac_site_isolation(self):
+        options = self.set_up_flavor_options('mac', ['--site-isolation-enabled-by-default'])
+        self.assertEqual(options.additional_expectations, ['/checkout/LayoutTests/platform/mac-site-isolation/TestExpectations'])
+        self.assertEqual(options.additional_platform_directory, ['/checkout/LayoutTests/platform/mac-site-isolation'])
+        self.assertEqual(options.result_report_flavor, 'site-isolation')
+
+    def test_ios_site_isolation(self):
+        options = self.set_up_flavor_options('iphone-simulator', ['--site-isolation'])
+        self.assertEqual(options.additional_expectations, ['/checkout/LayoutTests/platform/ios-site-isolation/TestExpectations'])
+        self.assertEqual(options.additional_platform_directory, ['/checkout/LayoutTests/platform/ios-site-isolation'])
+        self.assertEqual(options.result_report_flavor, 'site-isolation')
+
+    def test_site_isolation_on_other_ports(self):
+        options = self.set_up_flavor_options('visionos-simulator', ['--site-isolation-enabled-by-default'])
+        self.assertEqual(options.additional_expectations, [])
+        self.assertIsNone(options.result_report_flavor)
+
+    def test_accessibility_isolated_tree(self):
+        options = self.set_up_flavor_options('mac', ['--accessibility-isolated-tree', '--additional-expectations', '/user/TestExpectations'])
+        self.assertEqual(options.additional_expectations, ['/checkout/LayoutTests/accessibility-isolated-tree/TestExpectations', '/user/TestExpectations'])
+        self.assertEqual(options.additional_platform_directory, [])
+        self.assertEqual(options.result_report_flavor, 'accessibility-isolated-tree')
+
+    def test_gpu_process_and_site_isolation(self):
+        options = self.set_up_flavor_options('mac', ['--remote-layer-tree', '--site-isolation-enabled-by-default'], use_gpu_process=True)
+        self.assertEqual(options.additional_expectations, [
+            '/checkout/LayoutTests/platform/mac-site-isolation/TestExpectations',
+            '/checkout/LayoutTests/platform/mac-gpup/TestExpectations',
+        ])
+        self.assertEqual(options.additional_platform_directory, [
+            '/checkout/LayoutTests/platform/mac-site-isolation',
+            '/checkout/LayoutTests/platform/mac-gpup',
+        ])
+
+    def test_flavor_cannot_be_overridden(self):
+        with self.assertRaisesRegex(RuntimeError, '--site-isolation-enabled-by-default implicitly sets the result flavor'):
+            self.set_up_flavor_options('mac', ['--site-isolation-enabled-by-default', '--result-report-flavor', 'other'])
+
+    def test_checkout_root_defaults_to_current_checkout(self):
+        options, _ = run_webkit_tests.parse_args(['--site-isolation-enabled-by-default'])
+        port = MockHost().port_factory.get('mac', options)
+        with patch('webkitpy.layout_tests.run_webkit_tests.Host', MockHost):
+            run_webkit_tests.set_up_flavor_options(port, options)
+        self.assertEqual(options.additional_expectations, ['/mock-checkout/LayoutTests/platform/mac-site-isolation/TestExpectations'])
+
+    def test_no_flavor_needs_no_checkout(self):
+        options, _ = run_webkit_tests.parse_args([])
+        port = MockHost().port_factory.get('mac', options)
+        with patch('webkitpy.layout_tests.run_webkit_tests.Host') as host:
+            run_webkit_tests.set_up_flavor_options(port, options)
+        host.assert_not_called()
+        self.assertEqual(options.additional_expectations, [])
 
 
 class MainTest(unittest.TestCase):

@@ -37,10 +37,10 @@ class RenderVideo final : public RenderMedia {
     WTF_MAKE_TZONE_ALLOCATED(RenderVideo);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderVideo);
 public:
-    RenderVideo(HTMLVideoElement&, Style::ComputedStyle&&);
+    RenderVideo(HTMLVideoElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderVideo();
 
-    WEBCORE_EXPORT HTMLVideoElement& LEGACY_NODELETE videoElement() const;
+    NODELETE WEBCORE_EXPORT HTMLVideoElement& videoElement() const;
 
     IntRect videoBox() const;
     WEBCORE_EXPORT IntRect videoBoxInMainFrameView() const;
@@ -54,7 +54,7 @@ public:
     // bypass is active.
     bool isBypassingObjectViewBoxForPictureInPicture() const;
 
-    static IntSize LEGACY_NODELETE defaultSize();
+    NODELETE static IntSize defaultSize();
 
     bool supportsAcceleratedRendering() const;
     void acceleratedRenderingStateChanged();

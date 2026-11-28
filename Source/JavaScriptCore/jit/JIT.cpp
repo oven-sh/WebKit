@@ -285,6 +285,7 @@ void JIT::privateCompileMainPass()
         DEFINE_OP(op_tail_call)
         DEFINE_OP(op_call_direct_eval)
         DEFINE_OP(op_call_varargs)
+        DEFINE_OP(op_call_varargs_with_spread)
         DEFINE_OP(op_tail_call_varargs)
         DEFINE_OP(op_construct_varargs)
         DEFINE_OP(op_super_construct_varargs)
@@ -749,10 +750,10 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
     }
     if (m_vm->m_perBytecodeProfiler) [[unlikely]] {
         // FIXME: build profiler disassembler off UnlinkedCodeBlock.
-        m_compilation = adoptRef(
-            new Profiler::Compilation(
+        lazyInitialize(m_compilation, adoptRef(
+            *new Profiler::Compilation(
                 m_vm->m_perBytecodeProfiler->ensureBytecodesFor(m_profiledCodeBlock),
-                Profiler::Baseline));
+                Profiler::Baseline)));
         m_compilation->addProfiledBytecodes(*m_vm->m_perBytecodeProfiler, m_profiledCodeBlock);
     }
     
@@ -1080,9 +1081,9 @@ int JIT::stackPointerOffsetFor(CodeBlock* codeBlock)
     return stackPointerOffsetFor(codeBlock->unlinkedCodeBlock());
 }
 
-UncheckedKeyHashMap<ASCIICString, Seconds> JIT::compileTimeStats()
+HashMap<ASCIICString, Seconds> JIT::compileTimeStats()
 {
-    UncheckedKeyHashMap<ASCIICString, Seconds> result;
+    HashMap<ASCIICString, Seconds> result;
     if (Options::reportTotalCompileTimes()) {
         result.add("Total Compile Time"_s, totalCompileTime());
         result.add("Baseline Compile Time"_s, totalBaselineCompileTime);

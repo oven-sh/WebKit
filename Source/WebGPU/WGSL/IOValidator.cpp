@@ -30,6 +30,7 @@
 #include "ASTScopedVisitorInlines.h"
 #include "Constraints.h"
 #include "WGSLShaderModule.h"
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MathExtras.h>
 #include <wtf/text/MakeString.h>
@@ -62,8 +63,8 @@ public:
     void visit(AST::CallExpression&) override;
 
 private:
-    using Builtins = HashSet<Builtin, WTF::IntHash<Builtin>, WTF::StrongEnumHashTraits<Builtin>>;
-    using Locations = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using Builtins = HashSet<Builtin, WTF::IntHash<Builtin>>;
+    using Locations = HashSet<uint64_t>;
 
     void collectGlobals();
     void validateResources(const CallGraph::EntryPoint&);
@@ -134,7 +135,7 @@ void IOValidator::visit(AST::Function& function)
     for (auto& callee : m_shaderModule.callGraph().callees(function)) {
         if (!callee.usedGlobals.isEmpty()) {
             usedGlobals.addAll(callee.usedGlobals);
-            for (auto& pair : callee.textureSamplerPairs)
+            for (auto& pair : borrow(callee.textureSamplerPairs))
                 textureSamplerPairs.appendIfNotContains(pair);
             continue;
         }
@@ -143,28 +144,28 @@ void IOValidator::visit(AST::Function& function)
         const_cast<CallGraph::Callee&>(callee).usedGlobals.addAll(m_usedGlobals);
         const_cast<CallGraph::Callee&>(callee).textureSamplerPairs = m_textureSamplerPairs;
         usedGlobals.addAll(m_usedGlobals);
-        for (auto& pair : m_textureSamplerPairs)
+        for (auto& pair : borrow(m_textureSamplerPairs))
             textureSamplerPairs.appendIfNotContains(pair);
         m_usedGlobals.clear();
         m_textureSamplerPairs.clear();
     }
 
     m_usedGlobals.addAll(usedGlobals);
-    for (auto& pair : textureSamplerPairs)
+    for (auto& pair : borrow(textureSamplerPairs))
         m_textureSamplerPairs.appendIfNotContains(pair);
     AST::Visitor::visit(function);
 }
 
 void IOValidator::visit(AST::VariableStatement& statement)
 {
-    introduceVariable(statement.variable().name(), nullptr);
     AST::Visitor::visit(statement);
+    introduceVariable(statement.variable().name(), nullptr);
 }
 
 void IOValidator::visit(AST::Parameter& parameter)
 {
-    introduceVariable(parameter.name(), nullptr);
     AST::Visitor::visit(parameter);
+    introduceVariable(parameter.name(), nullptr);
 }
 
 void IOValidator::visit(AST::IdentifierExpression& identifier)
@@ -516,6 +517,23 @@ void IOValidator::validateStructIO(ShaderStage stage, const Types::Struct& struc
         }
 
         if (auto location = member.location()) {
+            if (auto blendSrc = member.blendSrc()) {
+                if (stage != ShaderStage::Fragment || direction != Direction::Output) [[unlikely]] {
+                    error(span, "@blend_src can only be used for fragment shader output"_s);
+                    return;
+                }
+
+                // The @blend_src(0) and @blend_src(1) members share @location(0), so only
+                // count the location once.
+                if (*blendSrc) {
+                    Locations blendSrcLocations;
+                    validateLocationIO(span, type, stage, *location, blendSrcLocations);
+                    if (hasError()) [[unlikely]]
+                        return;
+                    continue;
+                }
+            }
+
             validateLocationIO(span, type, stage, *location, locations);
             if (hasError()) [[unlikely]]
                 return;

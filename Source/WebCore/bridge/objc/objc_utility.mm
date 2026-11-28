@@ -63,8 +63,7 @@
 #define _C_GCINVISIBLE '!'
 #endif
 
-namespace JSC {
-namespace Bindings {
+namespace JSC::Bindings {
 
 /*
 
@@ -78,7 +77,7 @@ namespace Bindings {
 
 */
 
-static long long LEGACY_NODELETE convertDoubleToLongLong(double d)
+NODELETE static long long convertDoubleToLongLong(double d)
 {
     // Ensure that non-x86_64 ports will match x86_64 semantics which allows for overflow.
     long long potentiallyOverflowed = (unsigned long long)d;
@@ -334,5 +333,4 @@ Exception *throwError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, NS
     return throwException(lexicalGlobalObject, scope, JSC::createError(lexicalGlobalObject, String(message)));
 }
 
-}
 }

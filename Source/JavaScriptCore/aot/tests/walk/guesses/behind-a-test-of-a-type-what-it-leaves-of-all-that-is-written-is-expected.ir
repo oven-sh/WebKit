@@ -1,0 +1,35 @@
+# what is expected of `string | number[]` is the list: the objects are what has members to find. Behind the program's own test for lists that has failed, a list is the one thing that the value is not:
+# each arm expects its part of ALL that is written, so the failing arm guesses a text, tests for it once, and reads the length off the cell
+# function size(value: string | number[]) { return Array.isArray(value) ? value.length : value.length * 2; }, the test of the cell alone
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: [[isList]]: boolean {{*}} = TypeTest [[value]] testedType=Array
+# CHECK: = GetArrayLength
+# CHECK: [[isText]]: boolean {{*}} = TypeTest {{*}} testedType=string
+# CHECK: = GetStringLength
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|string|Array<number>):
+    v1 = TypeTest v0 testedType=Array
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = NarrowByTest v0, v2
+    v4 = PropGet v3 key="length"
+    Return v4
+  b2(v5):
+    v6 = NarrowByTest v0, v5
+    v7 = PropGet v6 key="length"
+    v8 = Integer integer=2
+    v9 = Mul v7, v8
+    Return v9
+}

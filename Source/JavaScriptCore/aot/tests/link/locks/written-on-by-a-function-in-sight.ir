@@ -1,0 +1,30 @@
+# the program hands a built-in object to a function of its own, which writes on it under a key that nobody knows: Link follows it there, and its members stay open. What goes nowhere keeps its locks
+# The twins: let-go-by-the-program.ir, handed-to-a-function-in-sight-that-writes-nothing.ir
+# function put(given, name, laid) { given[name] = laid; } put(Date, globalThis.name, globalThis.laid); Date.now(); Math.random();
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
+# RUN: locks
+# CHECK-NOT: DateNow
+# CHECK: locked MathRandom constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = Builtin builtin=Math
+    v5 = PropGet v4 key="random"
+    v6 = Call v5, v4
+    v7 = NewClosure function=f1
+    v8 = PropGet v0 key="name"
+    v9 = PropGet v0 key="laid"
+    v10 = Call v7, -, v1, v8, v9
+    Return v6
+}
+function f1 name="put" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    ElemSet v0, v1, v2
+    Return v2
+}

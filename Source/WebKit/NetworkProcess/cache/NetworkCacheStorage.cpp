@@ -80,15 +80,15 @@ public:
         ASSERT(m_completionHandler);
     }
 
-    Storage::ReadOperationIdentifier LEGACY_NODELETE identifier() const { return m_identifier; }
-    const Key& LEGACY_NODELETE key() const { return m_key; }
-    unsigned LEGACY_NODELETE priority() const { return m_priority; }
-    bool LEGACY_NODELETE isCanceled() const { return m_isCanceled; }
-    bool LEGACY_NODELETE canFinish() const { return !m_waitsForRecord && !m_waitsForBlob; }
+    NODELETE Storage::ReadOperationIdentifier identifier() const { return m_identifier; }
+    NODELETE const Key& key() const { return m_key; }
+    NODELETE unsigned priority() const { return m_priority; }
+    NODELETE bool isCanceled() const { return m_isCanceled; }
+    NODELETE bool canFinish() const { return !m_waitsForRecord && !m_waitsForBlob; }
 
     void updateForStart(size_t readOperationDispatchCount);
     void updateForDispatch(bool synchronizationInProgress, bool shrinkInProgress, size_t readOperationDispatchCount);
-    void LEGACY_NODELETE setWaitsForBlob() { m_waitsForBlob = true; }
+    NODELETE void setWaitsForBlob() { m_waitsForBlob = true; }
     void finishReadRecord(Record&&, MonotonicTime recordIOStartTime, MonotonicTime recordIOEndTime);
     void finishReadBlob(BlobStorage::Blob&&, MonotonicTime blobIOStartTime, MonotonicTime blobIOEndTime);
     void cancel();
@@ -138,7 +138,7 @@ void Storage::ReadOperation::updateForDispatch(bool synchronizationInProgress, b
 
 void Storage::ReadOperation::cancel()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (m_isCanceled)
         return;
@@ -153,7 +153,7 @@ void Storage::ReadOperation::cancel()
 
 bool Storage::ReadOperation::finish()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     ASSERT(canFinish());
 
     if (!m_completionHandler)
@@ -177,7 +177,7 @@ bool Storage::ReadOperation::finish()
 
 void Storage::ReadOperation::finishReadRecord(Record&& record, MonotonicTime recordIOStartTime, MonotonicTime recordIOEndTime)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     m_waitsForRecord = false;
     // Body is already read from blob storage, and it is not null.
@@ -193,7 +193,7 @@ void Storage::ReadOperation::finishReadRecord(Record&& record, MonotonicTime rec
 
 void Storage::ReadOperation::finishReadBlob(BlobStorage::Blob&& blob, MonotonicTime blobIOStartTime, MonotonicTime blobIOEndTime)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     m_waitsForBlob = false;
     if (blob.data.isNull())
@@ -219,13 +219,13 @@ public:
 
     ~WriteOperation()
     {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
     }
 
-    Storage::WriteOperationIdentifier LEGACY_NODELETE identifier() const { return m_identifier; }
-    const Record& LEGACY_NODELETE record() const WTF_REQUIRES_CAPABILITY(mainThread) { return m_record; }
+    NODELETE Storage::WriteOperationIdentifier identifier() const { return m_identifier; }
+    NODELETE const Record& record() const WTF_REQUIRES_CAPABILITY(mainThread) { return m_record; }
     void invokeMappedBodyHandler(const Data&);
-    bool LEGACY_NODELETE storeBlobInMemoryCache() const { return m_storeBlobInMemoryCache; }
+    NODELETE bool storeBlobInMemoryCache() const { return m_storeBlobInMemoryCache; }
 
 private:
     Storage::WriteOperationIdentifier m_identifier;
@@ -252,7 +252,7 @@ public:
 
     void invokeHandler(const Storage::Record* record, const Storage::RecordInfo& info)
     {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
         m_handler(record, info);
     }
 
@@ -289,7 +289,7 @@ public:
     };
     HashMap<String, PartitionEntry>& ensurePartitionMap()
     {
-        ASSERT(!isMainRunLoop());
+        RELEASE_ASSERT(!isMainRunLoop());
         return m_partitionMap;
     }
 
@@ -491,11 +491,16 @@ size_t Storage::estimateRecordsSize(unsigned recordCount, unsigned blobCount) co
 
 void Storage::synchronize()
 {
-    ASSERT(RunLoop::isMain());
+    assertIsMainThread();
 
     if (m_synchronizationInProgress || m_shrinkInProgress)
         return;
     m_synchronizationInProgress = true;
+
+    for (auto& operation : m_pendingWriteOperations)
+        m_recordFilterHashesAddedDuringSynchronization.append(operation->record().key.hash());
+    for (auto& operation : m_activeWriteOperations.values())
+        m_recordFilterHashesAddedDuringSynchronization.append(operation->record().key.hash());
 
     LOG(NetworkCacheStorage, "(NetworkProcess) synchronizing cache");
 
@@ -559,7 +564,7 @@ void Storage::synchronize()
 
 void Storage::addToRecordFilter(const Key& key)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (m_recordFilter)
         m_recordFilter->add(key.hash());
@@ -571,13 +576,13 @@ void Storage::addToRecordFilter(const Key& key)
 
 bool Storage::mayContain(const Key& key) const
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     return !m_recordFilter || m_recordFilter->mayContain(key.hash());
 }
 
 bool Storage::mayContainBlob(const Key& key) const
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     return !m_blobFilter || m_blobFilter->mayContain(key.hash());
 }
 
@@ -822,9 +827,22 @@ void Storage::removeFromPendingWriteOperations(const Key& key)
     }
 }
 
+Vector<Key> Storage::pendingWriteKeys(const String& type, const std::optional<String>& partition) const
+{
+    assertIsMainThread();
+
+    Vector<Key> keys;
+    for (auto& operation : m_pendingWriteOperations) {
+        auto& key = operation->record().key;
+        if (key.type() == type && (!partition || equalIgnoringNullity(key.partition(), *partition)))
+            keys.append(key);
+    }
+    return keys;
+}
+
 void Storage::remove(const Key& key)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (!mayContain(key))
         return;
@@ -844,7 +862,7 @@ void Storage::remove(const Key& key)
 
 void Storage::remove(const Vector<Key>& keys, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     auto keysToRemove = WTF::compactMap(keys, [&](auto& key) -> std::optional<Key> {
         if (!mayContain(key))
@@ -878,7 +896,7 @@ void Storage::updateFileModificationTime(String&& path)
 
 void Storage::dispatchReadOperation(std::unique_ptr<ReadOperation> readOperationPtr)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     auto& readOperation = *readOperationPtr;
     auto identifier = readOperation.identifier();
@@ -943,7 +961,7 @@ void Storage::readBlobIfNecessary(Storage::ReadOperationIdentifier identifier, c
 
 void Storage::finishReadOperation(Storage::ReadOperationIdentifier identifier)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     auto readOperation = m_activeReadOperations.take(identifier);
     RELEASE_ASSERT(readOperation);
@@ -964,7 +982,7 @@ void Storage::finishReadOperation(Storage::ReadOperationIdentifier identifier)
 
 void Storage::cancelAllReadOperations()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     for (auto& readOperation : m_activeReadOperations.values())
         readOperation->cancel();
@@ -980,7 +998,7 @@ void Storage::cancelAllReadOperations()
 
 void Storage::dispatchPendingReadOperations()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     const int maximumActiveReadOperationCount = 5;
 
@@ -1011,7 +1029,7 @@ template <class T> bool retrieveFromMemory(const T& operations, const Key& key, 
 
 void Storage::dispatchPendingWriteOperations()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     const int maximumActiveWriteOperationCount { 1 };
 
@@ -1054,7 +1072,7 @@ void Storage::dispatchWriteOperation(std::unique_ptr<WriteOperation> writeOperat
         auto recordSize = recordData.size();
 
         if (!FileSystem::overwriteEntireFile(recordPath, recordData.span()))
-            RELEASE_LOG_ERROR(NetworkCacheStorage, "Failed to write %zu bytes of network cache record data to %" PUBLIC_LOG_STRING, recordSize, recordPath.utf8());
+            RELEASE_LOG_ERROR(NetworkCacheStorage, "Failed to write %zu bytes of network cache record data to %" PUBLIC_LOG_STRING, recordSize, makeUTF8CString(recordPath));
 
         RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }, identifier, recordSize]() mutable {
             m_approximateRecordsSize += recordSize;
@@ -1078,7 +1096,7 @@ bool Storage::removeWriteOperationActivity(WriteOperationIdentifier identifier)
 
 void Storage::finishWriteOperationActivity(WriteOperationIdentifier identifier)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (!removeWriteOperationActivity(identifier))
         return;
 
@@ -1092,7 +1110,7 @@ void Storage::finishWriteOperationActivity(WriteOperationIdentifier identifier)
 
 void Storage::retrieve(const Key& key, unsigned priority, RetrieveCompletionHandler&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     ASSERT(!key.isNull());
 
     if (!m_capacity) {
@@ -1120,7 +1138,7 @@ void Storage::retrieve(const Key& key, unsigned priority, RetrieveCompletionHand
 
 void Storage::store(const Record& record, MappedBodyHandler&& mappedBodyHandler, bool storeBlobInMemoryCache)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     ASSERT(!record.key.isNull());
 
     if (!m_capacity)
@@ -1264,7 +1282,7 @@ void Storage::setCapacity(size_t capacity)
 
 void Storage::clear(String&& type, WallTime modifiedSinceTime, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     LOG(NetworkCacheStorage, "(NetworkProcess) clearing cache");
 
     if (m_recordFilter)
@@ -1272,6 +1290,12 @@ void Storage::clear(String&& type, WallTime modifiedSinceTime, CompletionHandler
     if (m_blobFilter)
         m_blobFilter->clear();
     m_approximateRecordsSize = 0;
+
+    m_pendingWriteOperations.removeAllMatching([&type, modifiedSinceTime](auto& operation) {
+        assertIsMainThread();
+
+        return (type.isEmpty() || operation->record().key.type() == type) && operation->record().timeStamp >= modifiedSinceTime;
+    });
 
     ioQueue().dispatch([this, protectedThis = Ref { *this }, modifiedSinceTime, completionHandler = WTF::move(completionHandler), type = WTF::move(type).isolatedCopy()] () mutable {
         auto recordsPath = this->recordsPathIsolatedCopy();

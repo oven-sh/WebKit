@@ -1,0 +1,33 @@
+# the typed run calls a number, which throws, so it never comes to the rejoin. What the closed arm has built is read there under its own names, without a parameter
+# function row(n: number) { return [n * n, n(), n * n]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=number
+# CHECK: never {{*}}= Call
+# CHECK-NEXT: Unreachable
+# CHECK: [[first]]: {{*}}= Mul {{*}}form=Generic
+# CHECK-NEXT: [[called]]: {{*}}= Call
+# CHECK-NEXT: [[second]]: {{*}}= Mul {{*}}form=Generic
+# CHECK-NEXT: Jump -> next [[join]]()
+# CHECK-NEXT: [[join]]():
+# CHECK-NEXT: = NewArray [[first]], [[called]], [[second]]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="row" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    v2 = Mul v1, v1
+    v3 = Call v1, -
+    v4 = Mul v1, v1
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+}

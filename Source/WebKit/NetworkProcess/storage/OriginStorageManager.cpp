@@ -69,20 +69,20 @@ public:
     std::optional<StorageType> toStorageType(WebsiteDataType) const;
     String toStorageIdentifier(StorageType) const;
     StorageBucket(const String& rootPath, const String& identifier, const String& localStoragePath, const String& idbStoragePath, const String& cacheStoragePath, UnifiedOriginStorageLevel);
-    StorageBucketMode LEGACY_NODELETE mode() const { return m_mode; }
-    void LEGACY_NODELETE setMode(StorageBucketMode mode) { m_mode = mode; }
+    NODELETE StorageBucketMode mode() const { return m_mode; }
+    NODELETE void setMode(StorageBucketMode mode) { m_mode = mode; }
     void connectionClosed(IPC::Connection::UniqueID);
     String typeStoragePath(StorageType) const;
-    FileSystemStorageManager& fileSystemStorageManager(FileSystemStorageHandleRegistry&, const WebCore::ClientOrigin&, FileSystemStorageManager::QuotaCheckFunction&&);
-    FileSystemStorageManager* LEGACY_NODELETE existingFileSystemStorageManager() { return m_fileSystemStorageManager.get(); }
+    FileSystemStorageManager& fileSystemStorageManager(WorkQueue&, FileSystemStorageHandleRegistry&, const WebCore::ClientOrigin&, FileSystemStorageManager::QuotaCheckFunction&&);
+    NODELETE FileSystemStorageManager* existingFileSystemStorageManager() { return m_fileSystemStorageManager.get(); }
     LocalStorageManager& localStorageManager(StorageAreaRegistry&);
-    LocalStorageManager* LEGACY_NODELETE existingLocalStorageManager() { return m_localStorageManager.get(); }
+    NODELETE LocalStorageManager* existingLocalStorageManager() { return m_localStorageManager.get(); }
     SessionStorageManager& sessionStorageManager(StorageAreaRegistry&);
-    SessionStorageManager* LEGACY_NODELETE existingSessionStorageManager() { return m_sessionStorageManager.get(); }
-    IDBStorageManager& idbStorageManager(IDBStorageRegistry&, IDBStorageManager::QuotaCheckFunction&&, bool useSQLiteMemoryBackingStore);
-    IDBStorageManager* LEGACY_NODELETE existingIDBStorageManager() { return m_idbStorageManager.get(); }
+    NODELETE SessionStorageManager* existingSessionStorageManager() { return m_sessionStorageManager.get(); }
+    IDBStorageManager& idbStorageManager(WorkQueue&, IDBStorageRegistry&, IDBStorageManager::QuotaCheckFunction&&, bool useSQLiteMemoryBackingStore);
+    NODELETE IDBStorageManager* existingIDBStorageManager() { return m_idbStorageManager.get(); }
     CacheStorageManager& cacheStorageManager(CacheStorageRegistry&, const WebCore::ClientOrigin&, CacheStorageManager::QuotaCheckFunction&&, Ref<WorkQueue>&&);
-    CacheStorageManager* LEGACY_NODELETE existingCacheStorageManager() { return m_cacheStorageManager.get(); }
+    NODELETE CacheStorageManager* existingCacheStorageManager() { return m_cacheStorageManager.get(); }
     BackgroundFetchStoreManager& backgroundFetchManager(Ref<WorkQueue>&&, BackgroundFetchStoreManager::QuotaCheckFunction&&);
     ServiceWorkerStorageManager& serviceWorkerStorageManager();
     uint64_t cacheStorageSize();
@@ -127,6 +127,7 @@ private:
     const RefPtr<BackgroundFetchStoreManager> m_backgroundFetchManager;
     String m_resolvedBackgroundFetchStoragePath;
     const std::unique_ptr<ServiceWorkerStorageManager> m_serviceWorkerStorageManager;
+    NO_UNIQUE_ADDRESS ThreadLikeAssertion m_ownerQueue;
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(OriginStorageManager::StorageBucket);
@@ -156,7 +157,7 @@ void OriginStorageManager::StorageBucket::connectionClosed(IPC::Connection::Uniq
         manager->connectionClosed(connection);
 }
 
-std::optional<OriginStorageManager::StorageBucket::StorageType> LEGACY_NODELETE OriginStorageManager::StorageBucket::toStorageType(WebsiteDataType websiteDataType) const
+NODELETE std::optional<OriginStorageManager::StorageBucket::StorageType> OriginStorageManager::StorageBucket::toStorageType(WebsiteDataType websiteDataType) const
 {
     switch (websiteDataType) {
     case WebsiteDataType::FileSystem:
@@ -214,10 +215,10 @@ String OriginStorageManager::StorageBucket::typeStoragePath(StorageType type) co
     return FileSystem::pathByAppendingComponent(m_rootPath, storageIdentifier);
 }
 
-FileSystemStorageManager& OriginStorageManager::StorageBucket::fileSystemStorageManager(FileSystemStorageHandleRegistry& registry, const WebCore::ClientOrigin& origin, FileSystemStorageManager::QuotaCheckFunction&& quotaCheckFunction)
+FileSystemStorageManager& OriginStorageManager::StorageBucket::fileSystemStorageManager(WorkQueue& queue, FileSystemStorageHandleRegistry& registry, const WebCore::ClientOrigin& origin, FileSystemStorageManager::QuotaCheckFunction&& quotaCheckFunction)
 {
     if (!m_fileSystemStorageManager)
-        m_fileSystemStorageManager = FileSystemStorageManager::create(typeStoragePath(StorageType::FileSystem), registry, origin, WTF::move(quotaCheckFunction));
+        m_fileSystemStorageManager = FileSystemStorageManager::create(queue, typeStoragePath(StorageType::FileSystem), registry, origin, WTF::move(quotaCheckFunction));
 
     return *m_fileSystemStorageManager;
 }
@@ -238,10 +239,10 @@ SessionStorageManager& OriginStorageManager::StorageBucket::sessionStorageManage
     return *m_sessionStorageManager;
 }
 
-IDBStorageManager& OriginStorageManager::StorageBucket::idbStorageManager(IDBStorageRegistry& registry, IDBStorageManager::QuotaCheckFunction&& quotaCheckFunction, bool useSQLiteMemoryBackingStore)
+IDBStorageManager& OriginStorageManager::StorageBucket::idbStorageManager(WorkQueue& queue, IDBStorageRegistry& registry, IDBStorageManager::QuotaCheckFunction&& quotaCheckFunction, bool useSQLiteMemoryBackingStore)
 {
     if (!m_idbStorageManager)
-        lazyInitialize(m_idbStorageManager, makeUnique<IDBStorageManager>(resolvedIDBStoragePath(), registry, WTF::move(quotaCheckFunction), useSQLiteMemoryBackingStore));
+        lazyInitialize(m_idbStorageManager, makeUnique<IDBStorageManager>(queue, resolvedIDBStoragePath(), registry, WTF::move(quotaCheckFunction), useSQLiteMemoryBackingStore));
     return *m_idbStorageManager;
 }
 
@@ -295,7 +296,7 @@ bool OriginStorageManager::StorageBucket::hasDataInMemory() const
 
 bool OriginStorageManager::StorageBucket::isEmpty()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     auto files = FileSystem::listDirectory(m_rootPath);
     auto hasValidFile = std::ranges::any_of(files, [&](auto file) {
@@ -429,7 +430,7 @@ void OriginStorageManager::StorageBucket::deleteLocalStorageData(WallTime time)
         if (m_localStorageManager)
             m_localStorageManager->clearDataOnDisk();
 
-        RELEASE_LOG(Storage, "OriginStorageManager::StorageBucket::deleteLocalStorageData deletes database file %" PRIVATE_LOG_STRING, currentLocalStoragePath.utf8());
+        RELEASE_LOG(Storage, "OriginStorageManager::StorageBucket::deleteLocalStorageData deletes database file %" PRIVATE_LOG_STRING, makeUTF8CString(currentLocalStoragePath));
         WebCore::SQLiteFileSystem::deleteDatabaseFile(currentLocalStoragePath);
     }
 
@@ -528,7 +529,7 @@ String OriginStorageManager::StorageBucket::resolvedLocalStoragePath()
         auto localStorageDirectory = typeStoragePath(StorageType::LocalStorage);
         auto localStoragePath = LocalStorageManager::localStorageFilePath(localStorageDirectory);
         if (!m_customLocalStoragePath.isEmpty() && !FileSystem::fileExists(localStoragePath) && FileSystem::fileExists(m_customLocalStoragePath)) {
-            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedLocalStoragePath New path '%" PUBLIC_LOG_STRING "'", this, localStoragePath.utf8());
+            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedLocalStoragePath New path '%" PUBLIC_LOG_STRING "'", this, makeUTF8CString(localStoragePath));
             FileSystem::makeAllDirectories(localStorageDirectory);
             auto moved = WebCore::SQLiteFileSystem::moveDatabaseFile(m_customLocalStoragePath, localStoragePath);
             if (!moved && !FileSystem::fileExists(localStoragePath))
@@ -544,7 +545,7 @@ String OriginStorageManager::StorageBucket::resolvedLocalStoragePath()
 
 String OriginStorageManager::StorageBucket::resolvedIDBStoragePath()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     if (!m_resolvedIDBStoragePath.isNull())
         return m_resolvedIDBStoragePath;
@@ -580,7 +581,7 @@ String OriginStorageManager::StorageBucket::resolvedCacheStoragePath()
     case UnifiedOriginStorageLevel::Standard:
         m_resolvedCacheStoragePath = typeStoragePath(StorageType::CacheStorage);
         if (!m_resolvedCacheStoragePath.isEmpty() && !m_customCacheStoragePath.isEmpty() && !FileSystem::fileExists(m_resolvedCacheStoragePath) && FileSystem::fileExists(m_customCacheStoragePath)) {
-            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedCacheStoragePath New path '%" PUBLIC_LOG_STRING "'", this, m_resolvedCacheStoragePath.utf8());
+            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedCacheStoragePath New path '%" PUBLIC_LOG_STRING "'", this, makeUTF8CString(m_resolvedCacheStoragePath));
             FileSystem::moveFile(m_customCacheStoragePath, m_resolvedCacheStoragePath);
         }
     }
@@ -684,9 +685,9 @@ OriginQuotaManager& OriginStorageManager::quotaManager()
     return m_quotaManager.get();
 }
 
-FileSystemStorageManager& OriginStorageManager::fileSystemStorageManager(FileSystemStorageHandleRegistry& registry, const WebCore::ClientOrigin& origin)
+FileSystemStorageManager& OriginStorageManager::fileSystemStorageManager(WorkQueue& queue, FileSystemStorageHandleRegistry& registry, const WebCore::ClientOrigin& origin)
 {
-    return defaultBucket().fileSystemStorageManager(registry, origin, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
+    return defaultBucket().fileSystemStorageManager(queue, registry, origin, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
         auto strongReference = quotaManager.get();
         if (!strongReference)
             return completionHandler(false);
@@ -722,9 +723,9 @@ SessionStorageManager* OriginStorageManager::existingSessionStorageManager()
     return defaultBucket().existingSessionStorageManager();
 }
 
-IDBStorageManager& OriginStorageManager::idbStorageManager(IDBStorageRegistry& registry, bool useSQLiteMemoryBackingStore)
+IDBStorageManager& OriginStorageManager::idbStorageManager(WorkQueue& queue, IDBStorageRegistry& registry, bool useSQLiteMemoryBackingStore)
 {
-    return defaultBucket().idbStorageManager(registry, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
+    return defaultBucket().idbStorageManager(queue, registry, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
         auto strongReference = quotaManager.get();
         if (!strongReference)
             return completionHandler(false);
@@ -798,7 +799,7 @@ bool OriginStorageManager::isEmpty()
 
 WebCore::StorageEstimate OriginStorageManager::estimate()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     Ref quotaManager = this->quotaManager();
     return WebCore::StorageEstimate { quotaManager->usage(), quotaManager->reportedQuota() };
@@ -806,28 +807,28 @@ WebCore::StorageEstimate OriginStorageManager::estimate()
 
 OriginStorageManager::DataTypeSizeMap OriginStorageManager::fetchDataTypesInList(OptionSet<WebsiteDataType> types, bool shouldComputeSize)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     return defaultBucket().fetchDataTypesInList(types, shouldComputeSize);
 }
 
 void OriginStorageManager::deleteData(OptionSet<WebsiteDataType> types, WallTime modifiedSince)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     defaultBucket().deleteData(types, modifiedSince);
 }
 
 void OriginStorageManager::moveData(OptionSet<WebsiteDataType> types, const String& localStoragePath, const String& idbStoragePath)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     defaultBucket().moveData(types, localStoragePath, idbStoragePath);
 }
 
 void OriginStorageManager::deleteEmptyDirectory()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_ownerQueue);
 
     if (m_path.isEmpty())
         return;

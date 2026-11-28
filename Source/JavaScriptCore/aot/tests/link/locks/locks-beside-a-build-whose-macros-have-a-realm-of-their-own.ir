@@ -1,0 +1,21 @@
+# Bun.build() runs the program's own plugins in the realm of its caller, and the macros of the files that it bundles in a VM and a global object of their own: nobody writes on the caller's built-ins out of sight
+# so beside a call of it the program lays its locks as any other program does
+# Bun's test/aot/engine-tests/link/locks/no-lock-beside-code-that-counts-as-the-programs.ir: the control, with Bun.plugin()
+# f0: Bun.build(options); Date.now();
+# RUN: locks
+# CHECK: locked DateNow constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="build"
+    v3 = PropGet v0 key="options" [isFreeName]
+    v4 = Call v2, v1, v3 calleeKey="build"
+    v5 = PropGet v0 key="Date" [isFreeName]
+    v6 = PropGet v5 key="now"
+    v7 = Call v6, v5 calleeKey="now"
+    Return v7
+}

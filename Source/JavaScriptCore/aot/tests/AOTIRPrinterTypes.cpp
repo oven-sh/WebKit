@@ -9,24 +9,20 @@
 
 #include "AOTIRPrinter.h"
 
-#include "AOTBuiltinTable.h"
-#include "AOTSort.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <climits>
-#include <tuple>
 #include <wtf/ASCIICType.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct CodePoint {
+struct CodePointInIRText {
     char32_t character;
     unsigned length;
 };
 
-static std::optional<CodePoint> decodeCodePoint(std::span<const uint8_t> bytes)
+static std::optional<CodePointInIRText> decodeCodePointForIRText(std::span<const uint8_t> bytes)
 {
     static constexpr char32_t minCodePointForLength[] = { 0, 0, 0x80, 0x800, 0x10000 };
     uint8_t lead = bytes[0];
@@ -43,47 +39,67 @@ static std::optional<CodePoint> decodeCodePoint(std::span<const uint8_t> bytes)
     }
     if (character < minCodePointForLength[length] || character > 0x10ffff)
         return std::nullopt;
-    return CodePoint { character, length };
-}
-
-static bool isInTable(const StringTable& strings, StringID id)
-{
-    return StringTable::isProvisional(id) ? strings.hasOpenPhase() : id.index() < strings.size();
+    return CodePointInIRText { character, length };
 }
 
 template<typename IDType>
-static bool isInTable(const TypeTable& types, IDType id, unsigned numberOfRecords)
+static bool isReadThroughArenaForIRText(const std::optional<TypeReader>& typesOfCode, IDType id)
 {
-    return TypeTable::isProvisional(id) ? types.hasOpenPhase() : id.index() < numberOfRecords;
+    return typesOfCode && positionOf(id) <= largestIDPosition;
 }
 
-static std::span<const uint8_t> bytesOf(const StringTable& strings, StringID id)
+static bool isCanonicalTypeWithinIDForIRText(TypeID id)
 {
-    return isInTable(strings, id) ? strings[id] : std::span<const uint8_t>();
+    if (homeOf(id) == IDHome::SmallRange)
+        return !integersInID(id).isEmpty();
+    if ((id.bits() >> maximumLandmarkShift & 7) >= maximumLandmarks.size())
+        return false;
+    return tryMakeTypeOfPrimitives(primitivesInID(id), integersInID(id)) == id;
 }
 
-static bool isPrintedBefore(const StringTable& strings, StringID a, StringID b)
+static bool canBeReadForIRText(const TypeTable& table, const std::optional<TypeReader>& typesOfCode, TypeID id)
 {
-    return compareSpans(bytesOf(strings, a), bytesOf(strings, b)) < 0;
+    switch (homeOf(id)) {
+    case IDHome::Value:
+    case IDHome::SmallRange:
+        return isCanonicalTypeWithinIDForIRText(id);
+    case IDHome::Program:
+        return positionOf(id) < table.numberOfTypes();
+    case IDHome::Thread:
+        return isReadThroughArenaForIRText(typesOfCode, id);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isPrintedBefore(const StringTable& strings, const PropertyKey& a, const PropertyKey& b)
+static bool canBeReadForIRText(const TypeTable& table, const std::optional<TypeReader>& typesOfCode, PropertyKeyID id)
 {
-    if (a.kind != b.kind)
-        return a.kind < b.kind;
-    if (auto order = compareSpans(bytesOf(strings, a.text), bytesOf(strings, b.text)); order != 0)
-        return order < 0;
-    return std::tie(a.symbol, a.module, a.callNumber) < std::tie(b.symbol, b.module, b.callNumber);
+    switch (homeOf(id)) {
+    case IDHome::Value:
+        return positionOf(id) < table.numberOfPropertyKeys();
+    case IDHome::SmallRange:
+    case IDHome::Program:
+        return false;
+    case IDHome::Thread:
+        return isReadThroughArenaForIRText(typesOfCode, id);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isPrintedBefore(const StringTable& strings, RegExpLiteralInType a, RegExpLiteralInType b)
+static bool canBeReadForIRText(const std::optional<TypeReader>& typesOfCode, LayoutSetID id)
 {
-    if (auto order = compareSpans(bytesOf(strings, a.pattern), bytesOf(strings, b.pattern)); order != 0)
-        return order < 0;
-    return a.rawFlags < b.rawFlags;
+    switch (homeOf(id)) {
+    case IDHome::Value:
+    case IDHome::Program:
+        return true;
+    case IDHome::SmallRange:
+        return false;
+    case IDHome::Thread:
+        return isReadThroughArenaForIRText(typesOfCode, id);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isBuiltinOrNamespaceLayout(const Program& program, LayoutID id)
+static bool isBuiltinOrNamespaceLayoutForIRText(const Program& program, LayoutID id)
 {
     if (id.index() >= program.layouts.size())
         return false;
@@ -91,53 +107,14 @@ static bool isBuiltinOrNamespaceLayout(const Program& program, LayoutID id)
     return kind == LayoutKind::BuiltinResult || kind == LayoutKind::ModuleNamespace;
 }
 
-static void visitInPrintedOrder(const Program& program, std::span<const LayoutID> layouts, NOESCAPE const Invocable<void(LayoutID)> auto& functor)
+static void visitInOrderOfIRText(const Program& program, SetView<LayoutID, LayoutSetID> layouts, NOESCAPE const Invocable<void(LayoutID)> auto& functor)
 {
     for (bool visitsBuiltinAndNamespaceLayouts : { false, true }) {
-        for (LayoutID layout : layouts) {
-            if (isBuiltinOrNamespaceLayout(program, layout) == visitsBuiltinAndNamespaceLayouts)
+        layouts.forEach([&](LayoutID layout) {
+            if (isBuiltinOrNamespaceLayoutForIRText(program, layout) == visitsBuiltinAndNamespaceLayouts)
                 functor(layout);
-        }
+        });
     }
-}
-
-// The reader of a text of wire fields takes a name for its whole family. A declared type can hold the layout of a constructor without all of its tagged layouts:
-// naming that layout would bring them in, so it is left to another name that brings it. The reader numbers the layouts that it derives by the order of the strings,
-// which is another in the text, so one of those is named only where no other name brings it.
-static Vector<LayoutID> findNamesOf(const Program& program, const Vector<LayoutID>& members)
-{
-    auto isDerived = [&](LayoutID layout) {
-        return layout.index() < program.layouts.size() && program.at(layout).isDerived();
-    };
-    Vector<LayoutID> names;
-    Vector<LayoutID> named;
-    for (LayoutID member : members) {
-        if (isDerived(member))
-            continue;
-        LayoutSetID family = program.hasDeclaredMembers(member) ? program.declaredMembersOf(member) : LayoutSetID();
-        if (!family || !isInTable(program.types, family, program.types.numberOfLayoutSets())) {
-            names.append(member);
-            named.append(member);
-            continue;
-        }
-        const Vector<LayoutID>& membersOfFamily = program.at(family).written();
-        if (!std::ranges::includes(members, membersOfFamily))
-            continue;
-        names.append(member);
-        named.appendVector(membersOfFamily);
-    }
-    AOT::sort(named);
-    removeRepeatedElements(named);
-    Vector<LayoutID> derivedNames;
-    for (LayoutID member : members) {
-        if (isDerived(member) && !std::ranges::binary_search(named, member))
-            derivedNames.append(member);
-    }
-    if (named.size() + derivedNames.size() != members.size())
-        return members;
-    names.appendVector(derivedNames);
-    AOT::sort(names);
-    return names;
 }
 
 void IRPrinter::print(StringID id)
@@ -146,7 +123,12 @@ void IRPrinter::print(StringID id)
         m_out.print("-"_s);
         return;
     }
-    if (!isInTable(m_program.strings, id)) {
+    if (liesInThread(id) && isReadThroughArenaForIRText(m_typesOfCode, id)) {
+        m_out.print("made "_s);
+        printQuoted(m_typesOfCode->bytesOf(id));
+        return;
+    }
+    if (id.index() >= m_program.strings.size()) {
         printInvalid("string"_s, id.index());
         return;
     }
@@ -168,7 +150,7 @@ void IRPrinter::printQuoted(std::span<const uint8_t> bytes)
             m_out.print("\\\\"_s);
         else if (byte == '\n')
             m_out.print("\\n"_s);
-        else if (auto codePoint = decodeCodePoint(bytes)) {
+        else if (auto codePoint = decodeCodePointForIRText(bytes)) {
             m_out.printf("\\u{%x}", static_cast<unsigned>(codePoint->character));
             length = codePoint->length;
         } else
@@ -184,12 +166,12 @@ void IRPrinter::print(PropertyKeyID id)
         m_out.print("-"_s);
         return;
     }
-    if (!isInTable(m_program.types, id, m_program.types.numberOfPropertyKeys())) {
+    if (!canBeReadForIRText(m_program.types, m_typesOfCode, id)) {
         printInvalid("key"_s, id.index());
         return;
     }
 
-    const PropertyKey& key = m_program.at(id);
+    const PropertyKey& key = m_typesOfCode ? m_typesOfCode->at(id) : m_program.at(id);
     switch (key.kind) {
     case PropertyKeyKind::Text:
         print(key.text);
@@ -246,203 +228,19 @@ void IRPrinter::print(TypeID id)
         m_out.print("-"_s);
         return;
     }
-    if (!isInTable(m_program.types, id, m_program.types.size())) {
+    if (!canBeReadForIRText(m_program.types, m_typesOfCode, id)) {
         printInvalid("type"_s, id.index());
         return;
     }
-    printType(m_program.at(id));
-}
-
-void IRPrinter::printType(const Type& type)
-{
-    CommaPrinter bar("|"_s);
-    if (type.isAnything())
-        m_out.print(bar, "anything"_s);
-    else {
-        printPrimitives(type, bar);
-        if (type.anyObject)
-            m_out.print(bar, "object"_s);
-        else if (type.anyFunction)
-            m_out.print(bar, "function"_s);
-    }
-    if (type.primitives & Primitive::Absent)
-        m_out.print(bar, "absent"_s);
-    if (type.primitives & Primitive::Unspecified)
-        m_out.print(bar, "unspecified"_s);
-
-    printStringLiterals(type, bar);
-    printSymbolLiterals(type, bar);
-    printObjectParts(type, bar);
-    for (const ClassPart& part : type.classes) {
-        m_out.print(bar);
-        printClassPart(type, part);
-    }
-    if (type.opaque) {
-        m_out.print(bar);
-        auto kindNumber = static_cast<unsigned>(*type.opaque);
-        if (kindNumber >= numberOfEnumerators<OpaqueKind>)
-            printInvalid("opaque"_s, kindNumber);
-        else {
-            for (char character : nameOf(*type.opaque).span())
-                m_out.print(toASCIILower(character));
-        }
-    }
-
-    if (!bar.didPrint())
-        m_out.print("never"_s);
-}
-
-void IRPrinter::printPrimitives(const Type& type, CommaPrinter& bar)
-{
-    uint16_t primitives = type.primitives;
-    if (primitives & Primitive::Undefined)
-        m_out.print(bar, "undefined"_s);
-    if (primitives & Primitive::Null)
-        m_out.print(bar, "null"_s);
-    if ((primitives & Primitive::Boolean) == Primitive::Boolean)
-        m_out.print(bar, "boolean"_s);
-    else if (primitives & Primitive::True)
-        m_out.print(bar, "true"_s);
-    else if (primitives & Primitive::False)
-        m_out.print(bar, "false"_s);
-
-    bool isEveryNumber = (primitives & Primitive::Number) == Primitive::Number && type.integers == Range::full();
-    if (isEveryNumber || (!printsEngineFields() && primitives & Primitive::Double))
-        m_out.print(bar, "number"_s);
-    else {
-        if (primitives & Primitive::Integer) {
-            if (type.integers == Range::full())
-                m_out.print(bar, "int"_s);
-            else if (type.integers == Range::int32())
-                m_out.print(bar, "i32"_s);
-            else if (type.integers.minimum == type.integers.maximum)
-                m_out.print(bar, type.integers.minimum);
-            else
-                m_out.print(bar, "int["_s, type.integers.minimum, ", "_s, type.integers.maximum, "]"_s);
-        }
-        if ((primitives & Primitive::Double) == Primitive::Double)
-            m_out.print(bar, "double"_s);
-        else if (primitives & Primitive::WholeNumber)
-            m_out.print(bar, "whole"_s);
-        else if (primitives & Primitive::FractionalNumber)
-            m_out.print(bar, "fractional"_s);
-    }
-
-    if (primitives & Primitive::String)
-        m_out.print(bar, "string"_s);
-    if (primitives & Primitive::Symbol)
-        m_out.print(bar, "symbol"_s);
-    if (primitives & Primitive::BigInt)
-        m_out.print(bar, "bigint"_s);
-}
-
-void IRPrinter::printStringLiterals(const Type& type, CommaPrinter& bar)
-{
-    Vector<StringID, 8> literals(type.stringLiterals.span());
-    AOT::sort(literals, [&](StringID a, StringID b) {
-        return isPrintedBefore(m_program.strings, a, b);
-    });
-    for (StringID literal : literals) {
-        m_out.print(bar);
-        print(literal);
-    }
-}
-
-void IRPrinter::printSymbolLiterals(const Type& type, CommaPrinter& bar)
-{
-    if (!printsEngineFields())
+    if (m_typesOfCode) {
+        printType(m_out, *m_typesOfCode, id, TypeTextOptions { });
         return;
+    }
 
-    const TypeTable& types = m_program.types;
-    Vector<PropertyKeyID, 8> literals(type.symbolLiterals.span());
-    bool areAllInTable = std::ranges::all_of(literals, [&](PropertyKeyID literal) {
-        return isInTable(types, literal, types.numberOfPropertyKeys());
-    });
-    if (areAllInTable) {
-        AOT::sort(literals, [&](PropertyKeyID a, PropertyKeyID b) {
-            return isPrintedBefore(m_program.strings, types.at(a), types.at(b));
-        });
-    }
-    for (PropertyKeyID literal : literals) {
-        m_out.print(bar);
-        print(literal);
-    }
-}
-
-void IRPrinter::printObjectParts(const Type& type, CommaPrinter& bar)
-{
-    const TypeTable& types = m_program.types;
-    if (type.layouts && !isInTable(types, type.layouts, types.numberOfLayoutSets())) {
-        m_out.print(bar);
-        printInvalid("layoutset"_s, type.layouts.index());
-    } else if (type.layouts) {
-        const LayoutSet& set = types.at(type.layouts);
-        Vector<LayoutID> layouts = printsEngineFields() ? set.written() : findNamesOf(m_program, set.written());
-        visitInPrintedOrder(m_program, layouts.span(), [&](LayoutID layout) {
-            m_out.print(bar);
-            print(layout);
-        });
-    }
-    if (type.environment) {
-        m_out.print(bar, "env "_s);
-        print(type.environment);
-    }
-    for (FunctionID function : type.functions) {
-        m_out.print(bar);
-        print(function);
-    }
-    for (BuiltinID builtin : type.builtins) {
-        m_out.print(bar, "builtin("_s);
-        print(builtin);
-        m_out.print(")"_s);
-    }
-}
-
-void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
-{
-    print(part.builtinClass);
-
-    const BuiltinTable& builtins = m_program.builtins();
-    unsigned numberOfContents = builtins.contains(part.builtinClass) ? builtins.numberOfSlotsInType(part.builtinClass) : 0;
-    bool hasKnownContents = false;
-    for (unsigned index = 0; index < numberOfContents; ++index)
-        hasKnownContents |= part.writtenContentsAt(index) != TypeTable::anything;
-
-    Vector<RegExpLiteralInType, 4> literals;
-    if (part.builtinClass == BuiltinClasses::RegExp)
-        literals.append(type.regExpLiterals());
-    bool hasEngineParts = part.contentsAreProven || part.arrayStorage != ArrayStorage::Other || !part.provenPristine.isEmpty() || !literals.isEmpty();
-    bool printsEngineParts = printsEngineFields() && hasEngineParts;
-    if (!hasKnownContents && !printsEngineParts)
-        return;
-
-    m_out.print("<"_s);
-    CommaPrinter comma;
-    for (unsigned index = 0; index < numberOfContents; ++index) {
-        m_out.print(comma);
-        print(part.writtenContentsAt(index));
-    }
-    if (printsEngineParts) {
-        AOT::sort(literals, [&](RegExpLiteralInType a, RegExpLiteralInType b) {
-            return isPrintedBefore(m_program.strings, a, b);
-        });
-        for (RegExpLiteralInType literal : literals) {
-            m_out.print(comma);
-            print(literal.pattern);
-            print(literal.flags());
-        }
-        if (part.contentsAreProven)
-            m_out.print(comma, "proven"_s);
-        if (part.arrayStorage != ArrayStorage::Other) {
-            m_out.print(comma);
-            print(part.arrayStorage);
-        }
-        if (!part.provenPristine.isEmpty()) {
-            m_out.print(comma, "pristine"_s);
-            print(part.provenPristine);
-        }
-    }
-    m_out.print(">"_s);
+    TypeTextOptions options;
+    options.printsSeeds = printsEngineFields();
+    options.namesFamiliesOfLayouts = true;
+    printType(m_out, TypeReader(m_program), id, options);
 }
 
 void IRPrinter::print(LayoutSetID id)
@@ -451,48 +249,21 @@ void IRPrinter::print(LayoutSetID id)
         m_out.print("-"_s);
         return;
     }
-    if (!isInTable(m_program.types, id, m_program.types.numberOfLayoutSets())) {
+    if (!canBeReadForIRText(m_typesOfCode, id)) {
         printInvalid("layoutset"_s, id.index());
         return;
     }
+    if (m_typesOfCode) {
+        printLayoutSet(m_out, *m_typesOfCode, id);
+        return;
+    }
 
-    const LayoutSet& set = m_program.at(id);
     m_out.print("["_s);
     CommaPrinter comma;
-    visitInPrintedOrder(m_program, set.written().span(), [&](LayoutID member) {
+    visitInOrderOfIRText(m_program, m_program.at(id), [&](LayoutID member) {
         m_out.print(comma);
         print(member);
     });
-    if (!set.listsEveryLayout())
-        m_out.print(comma, ".."_s);
-    m_out.print("]"_s);
-}
-
-void IRPrinter::print(CalleeSetID id)
-{
-    if (!id) {
-        m_out.print("-"_s);
-        return;
-    }
-    if (!isInTable(m_program.types, id, m_program.types.numberOfCalleeSets())) {
-        printInvalid("calleeset"_s, id.index());
-        return;
-    }
-
-    const CalleeSet& set = m_program.at(id);
-    m_out.print("["_s);
-    CommaPrinter comma;
-    for (FunctionID function : set.written().functions) {
-        m_out.print(comma);
-        print(function);
-    }
-    for (BuiltinID builtin : set.written().builtins) {
-        m_out.print(comma, "builtin("_s);
-        print(builtin);
-        m_out.print(")"_s);
-    }
-    if (!set.listsEveryCallee())
-        m_out.print(comma, ".."_s);
     m_out.print("]"_s);
 }
 

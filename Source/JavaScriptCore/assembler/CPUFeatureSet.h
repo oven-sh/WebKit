@@ -65,6 +65,12 @@
 #define JSC_BUILD_TARGET_HAS_BMI1 0
 #endif
 
+#if defined(__F16C__)
+#define JSC_BUILD_TARGET_HAS_F16C 1
+#else
+#define JSC_BUILD_TARGET_HAS_F16C 0
+#endif
+
 #define FOR_EACH_CPU_FEATURE(macro) \
     macro(SSE3, JSC_BUILD_TARGET_HAS_SSE3) \
     macro(SupplementalSSE3, JSC_BUILD_TARGET_HAS_SUPPLEMENTAL_SSE3) \
@@ -74,7 +80,8 @@
     macro(AVX, JSC_BUILD_TARGET_HAS_AVX) \
     macro(AVX2, JSC_BUILD_TARGET_HAS_AVX2) \
     macro(LZCNT, JSC_BUILD_TARGET_HAS_LZCNT) \
-    macro(BMI1, JSC_BUILD_TARGET_HAS_BMI1)
+    macro(BMI1, JSC_BUILD_TARGET_HAS_BMI1) \
+    macro(F16C, JSC_BUILD_TARGET_HAS_F16C)
 
 #elif CPU(ARM64)
 

@@ -15,14 +15,16 @@ class PromiseIntrinsicEmitter final : public OperationEmitter {
 public:
     explicit PromiseIntrinsicEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    void generateNewPromise(const ValueContext& value) { define(value, newPromise(value)); }
+    void generateNewPromise(const ValueContext&);
+    bool isPromiseOfReactionChain(ValueID);
     void generateCreatePromise(const ValueContext&);
     void generateResolvePromise(const ValueContext&);
     void generateRejectPromise(const ValueContext& value) { callVoidOperation(value, RuntimeOperation::RejectPromise, { in<CellPointer>(value->promiseOperand()), in<Boxed>(value->valueOperand()) }); }
+    void generateFulfillFreshPromise(const ValueContext&);
 
     CellPointer newPromise(const OperationContext&);
     Condition hasPromiseStructure(CellPointer);
-    void fulfillWithoutBarrier(CellPointer promise, Boxed value);
+    void fulfillWithoutBarrier(CellPointer promise, Boxed value, bool mayStoreCell);
     void fulfillAtStore(const ValueContext& store, CellPointer promise, Boxed value, const Type& valueType);
 };
 

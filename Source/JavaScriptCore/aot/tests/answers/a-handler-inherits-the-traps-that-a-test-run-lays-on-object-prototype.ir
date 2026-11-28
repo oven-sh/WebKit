@@ -1,0 +1,100 @@
+# let defined = 0, described = 0;
+# const target = { width: 1 }, proxy = new Proxy(target, { label: "plain" });
+# proxy.width = 2;  print(defined, described, target.width);                                  nothing lies on Object.prototype yet
+# Object.prototype.defineProperty = function (t, k, d) { defined++; return Reflect.defineProperty(t, k, d); };
+# proxy.width = 3;  proxy.width = 4;  print(defined, described, target.width);
+# delete Object.prototype.defineProperty;
+# Object.prototype.getOwnPropertyDescriptor = function (t, k) { described++; return Reflect.getOwnPropertyDescriptor(t, k); };
+# proxy.width = 5;  print(defined, described, target.width);
+# delete Object.prototype.getOwnPropertyDescriptor;
+# proxy.width = 6;  print(defined, described, target.width);
+# A store through a proxy without a `set` trap ends in a definition on the proxy, which asks the handler for two traps. The handler is a literal of the program that has neither.
+# In an executable Object.prototype takes no name, so neither can be inherited. A test run has opened both names there: the handler is asked, each time.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell
+# CHECK: 0 0 2
+# CHECK-NEXT: 2 0 4
+# CHECK-NEXT: 2 1 5
+# CHECK-NEXT: 2 1 6
+
+variable g0 name="defined" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="described" module=m0 declared={type=anything} initialization=Undefined
+layout L0 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = String string="plain"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Builtin builtin=Proxy
+    v10 = Construct v9, -, v5, v8 calleeName="Proxy"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="print" [isFreeName]
+    v13 = Builtin builtin=ObjectPrototype
+    v14 = Integer integer=2
+    PropSet v10, v14 key="width"
+    v16 = GetModuleVariable variable=g0
+    v17 = GetModuleVariable variable=g1
+    v18 = PropGet v5 key="width"
+    v19 = Call v12, -, v16, v17, v18 calleeName="print"
+    v20 = NewClosure function=f1
+    PropSet v13, v20 key="defineProperty"
+    v22 = Integer integer=3
+    PropSet v10, v22 key="width"
+    v24 = Integer integer=4
+    PropSet v10, v24 key="width"
+    v26 = GetModuleVariable variable=g0
+    v27 = GetModuleVariable variable=g1
+    v28 = PropGet v5 key="width"
+    v29 = Call v12, -, v26, v27, v28 calleeName="print"
+    v30 = PropDelete v13 key="defineProperty"
+    v31 = NewClosure function=f2
+    PropSet v13, v31 key="getOwnPropertyDescriptor"
+    v33 = Integer integer=5
+    PropSet v10, v33 key="width"
+    v35 = GetModuleVariable variable=g0
+    v36 = GetModuleVariable variable=g1
+    v37 = PropGet v5 key="width"
+    v38 = Call v12, -, v35, v36, v37 calleeName="print"
+    v39 = PropDelete v13 key="getOwnPropertyDescriptor"
+    v40 = Integer integer=6
+    PropSet v10, v40 key="width"
+    v42 = GetModuleVariable variable=g0
+    v43 = GetModuleVariable variable=g1
+    v44 = PropGet v5 key="width"
+    v45 = Call v12, -, v42, v43, v44 calleeName="print"
+    v46 = Undefined
+    Return v46
+}
+function f1 name="defineProperty" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g0
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    PutModuleVariable v5 variable=g0
+    v7 = Builtin builtin=Reflect
+    v8 = Builtin builtin=ReflectDefineProperty
+    v9 = Call v8, v7, v0, v1, v2 calleeName="Reflect.defineProperty"
+    Return v9
+}
+function f2 name="getOwnPropertyDescriptor" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=Reflect
+    v7 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v8 = Call v7, v6, v0, v1 calleeName="Reflect.getOwnPropertyDescriptor"
+    Return v8
+}
+openedname holder=ObjectPrototype name="defineProperty"
+openedname holder=ObjectPrototype name="getOwnPropertyDescriptor"

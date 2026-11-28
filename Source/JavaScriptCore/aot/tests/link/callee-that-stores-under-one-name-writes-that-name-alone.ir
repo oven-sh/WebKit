@@ -1,0 +1,33 @@
+# the effects of a callee name the key that it stores under and the layout of the objects that arrive, so a caller keeps what it knows of every other name and of every other object
+# function bump(c) { c.n = 1; }  bump({ n: 0, m: 0 });
+# bump is called from the body of the module alone, so Link knows what arrives at c
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}fields-written-on-return=1 fields-written=1 layouts-written=1
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 {{*}}mayCallUnknownCode
+# NEVER-NOT: function f1 {{*}}fields-written=all
+# RUN(SUMMARY): summary f1
+# SUMMARY: summary f1 {{*}}MayThrow
+# SUMMARY: access {{*}}Store Parameter 0 "n"
+# RUN(OWN): summary f1
+# OWN-NOT: summary f1 {{*}}mayWriteObservableState
+
+layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="m" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2
+    Return v4
+}
+function f1 name="bump" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="n"
+    v3 = Undefined
+    Return v3
+}

@@ -201,7 +201,7 @@ bool JSDOMWindow::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexicalGl
 
     auto* thisObject = downcast<JSDOMWindow>(object);
 
-    ASSERT(lexicalGlobalObject->vm().currentThreadIsHoldingAPILock());
+    ASSERT_WITH_SECURITY_IMPLICATION(lexicalGlobalObject->vm().currentThreadIsHoldingAPILock());
 
     // Hand off all cross-domain access to jsDOMWindowGetOwnPropertySlotRestrictedAccess.
     Ref window = thisObject->wrapped();
@@ -241,7 +241,7 @@ bool JSDOMWindow::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* le
     // Indexed getters take precendence over regular properties, so caching would be invalid.
     slot.disableCaching();
 
-    ASSERT(lexicalGlobalObject->vm().currentThreadIsHoldingAPILock());
+    ASSERT_WITH_SECURITY_IMPLICATION(lexicalGlobalObject->vm().currentThreadIsHoldingAPILock());
     // These are also allowed cross-origin, so come before the access check.
     if (RefPtr frame = window->frame()) {
         // FIXME: scopedChild/scopedChildCount and RemoteFrame need to work together well. We're using using child/childCount until then.
@@ -462,7 +462,7 @@ JSValue JSDOMWindow::getPrototype(JSObject* object, JSGlobalObject* lexicalGloba
     return Base::getPrototype(object, lexicalGlobalObject);
 }
 
-bool LEGACY_NODELETE JSDOMWindow::preventExtensions(JSObject*, JSGlobalObject*)
+NODELETE bool JSDOMWindow::preventExtensions(JSObject*, JSGlobalObject*)
 {
     return false;
 }
@@ -612,7 +612,7 @@ JSValue JSDOMWindow::queueMicrotask(JSGlobalObject& lexicalGlobalObject, CallFra
     return jsUndefined();
 }
 
-DOMWindow* LEGACY_NODELETE JSDOMWindow::toWrapped(VM&, JSValue value)
+NODELETE DOMWindow* JSDOMWindow::toWrapped(VM&, JSValue value)
 {
     if (!value.isObject())
         return nullptr;
@@ -641,17 +641,17 @@ void JSDOMWindow::setOpener(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSVal
     createDataProperty(&lexicalGlobalObject, builtinNames(lexicalGlobalObject.vm()).openerPublicName(), value, shouldThrow);
 }
 
-JSValue LEGACY_NODELETE JSDOMWindow::self(JSC::JSGlobalObject&) const
+NODELETE JSValue JSDOMWindow::self(JSC::JSGlobalObject&) const
 {
     return globalThis();
 }
 
-JSValue LEGACY_NODELETE JSDOMWindow::window(JSC::JSGlobalObject&) const
+NODELETE JSValue JSDOMWindow::window(JSC::JSGlobalObject&) const
 {
     return globalThis();
 }
 
-JSValue LEGACY_NODELETE JSDOMWindow::frames(JSC::JSGlobalObject&) const
+NODELETE JSValue JSDOMWindow::frames(JSC::JSGlobalObject&) const
 {
     return globalThis();
 }

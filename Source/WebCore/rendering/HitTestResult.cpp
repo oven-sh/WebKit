@@ -43,6 +43,7 @@
 #include "HTMLTextAreaElement.h"
 #include "HTMLVideoElement.h"
 #include "ImageOverlay.h"
+#include "ImageTypes.h"
 #include "InlineIteratorLineBox.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
@@ -159,7 +160,7 @@ HitTestResult& HitTestResult::operator=(const HitTestResult& other)
 
 HitTestResult& HitTestResult::operator=(HitTestResult&&) = default;
 
-static Node* LEGACY_NODELETE moveOutOfUserAgentShadowTree(Node& node)
+NODELETE static Node* moveOutOfUserAgentShadowTree(Node& node)
 {
     if (node.isInShadowTree()) {
         if (ShadowRoot* root = node.containingShadowRoot()) {
@@ -258,7 +259,7 @@ bool HitTestResult::isSelected() const
     if (!frame)
         return false;
 
-    return frame->selection().contains(m_hitTestLocation.point());
+    return protect(frame->selection())->contains(m_hitTestLocation.point());
 }
 
 bool HitTestResult::allowsFollowingLink() const
@@ -381,7 +382,7 @@ String HitTestResult::innerTextIfTruncated(TextDirection& dir) const
         if (!element)
             continue;
 
-        if (auto* block = dynamicDowncast<RenderBlockFlow>(element->renderer())) {
+        if (CheckedPtr block = dynamicDowncast<RenderBlockFlow>(element->renderer())) {
             if (block->style().textOverflow().isEllipsis()) {
                 if (std::ranges::any_of(InlineIterator::lineBoxesFor(*block), &InlineIterator::LineBox::hasEllipsis)) {
                     dir = block->writingMode().computedTextDirection();
@@ -419,18 +420,19 @@ String HitTestResult::altDisplayString() const
 
 RefPtr<Node> HitTestResult::nodeForImageData() const
 {
-    if (!m_innerNonSharedNode)
+    RefPtr innerNonSharedNode = m_innerNonSharedNode;
+    if (!innerNonSharedNode)
         return nullptr;
 
-    if (ImageOverlay::isInsideOverlay(*m_innerNonSharedNode))
-        return m_innerNonSharedNode->shadowHost();
-    
+    if (ImageOverlay::isInsideOverlay(*innerNonSharedNode))
+        return innerNonSharedNode->shadowHost();
+
 #if ENABLE(SERVICE_CONTROLS)
-    if (ImageControlsMac::isInsideImageControls(*m_innerNonSharedNode))
-        return m_innerNonSharedNode->shadowHost();
+    if (ImageControlsMac::isInsideImageControls(*innerNonSharedNode))
+        return innerNonSharedNode->shadowHost();
 #endif
 
-    return m_innerNonSharedNode;
+    return innerNonSharedNode;
 }
 
 RenderImage* HitTestResult::renderImage() const
@@ -464,7 +466,7 @@ IntRect HitTestResult::imageRect() const
     if (!imageNode)
         return { };
 
-    return imageNode->renderBox()->absoluteContentQuad().enclosingBoundingBox();
+    return protect(imageNode->renderBox())->absoluteContentQuad().enclosingBoundingBox();
 }
 
 bool HitTestResult::hasEntireImage() const
@@ -489,7 +491,7 @@ URL HitTestResult::absoluteImageURL() const
     if (!imageNode)
         return { };
 
-    auto renderer = imageNode->renderer();
+    CheckedPtr renderer = imageNode->renderer();
     if (!renderer || !renderer->isImage())
         return { };
 
@@ -513,7 +515,7 @@ URL HitTestResult::absolutePDFURL() const
     if (!element)
         return URL();
 
-    auto url = m_innerNonSharedNode->document().encodingParseURL(element->url());
+    auto url = protect(m_innerNonSharedNode->document())->encodingParseURL(element->url());
     if (!url.isValid())
         return URL();
 
@@ -617,7 +619,7 @@ void HitTestResult::toggleMediaFullscreenState() const
 #if ENABLE(VIDEO)
     if (RefPtr mediaElement = this->mediaElement()) {
         if (mediaElement->isVideo() && mediaElement->supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenModeStandard)) {
-            UserGestureIndicator indicator(IsProcessingUserGesture::Yes, &mediaElement->document());
+            UserGestureIndicator indicator(IsProcessingUserGesture::Yes, protect(mediaElement->document()).ptr());
             mediaElement->toggleStandardFullscreenState();
         }
     }
@@ -630,7 +632,7 @@ void HitTestResult::enterFullscreenForVideo() const
     RefPtr mediaElement(this->mediaElement());
     if (RefPtr videoElement = dynamicDowncast<HTMLVideoElement>(mediaElement)) {
         if (!videoElement->isFullscreen() && mediaElement->supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenModeStandard)) {
-            UserGestureIndicator indicator(IsProcessingUserGesture::Yes, &mediaElement->document());
+            UserGestureIndicator indicator(IsProcessingUserGesture::Yes, protect(mediaElement->document()).ptr());
             videoElement->webkitEnterFullscreen();
         }
     }
@@ -654,7 +656,7 @@ void HitTestResult::toggleVideoViewer() const
     if (!videoElement || !mediaElement->supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenModeInWindow))
         return;
 
-    UserGestureIndicator indicator(IsProcessingUserGesture::Yes, &mediaElement->document());
+    UserGestureIndicator indicator(IsProcessingUserGesture::Yes, protect(mediaElement->document()).ptr());
     auto newMode = videoElement->webkitPresentationMode() == HTMLVideoElement::VideoPresentationMode::InWindow ? HTMLVideoElement::VideoPresentationMode::Inline : HTMLVideoElement::VideoPresentationMode::InWindow;
 
     videoElement->webkitSetPresentationMode(newMode);
@@ -977,7 +979,7 @@ void HitTestResult::togglePictureInPictureForVideo() const
     if (!mediaElement || !videoElement || !mediaElement->supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture))
         return;
 
-    UserGestureIndicator indicator(IsProcessingUserGesture::Yes, &mediaElement->document());
+    UserGestureIndicator indicator(IsProcessingUserGesture::Yes, protect(mediaElement->document()).ptr());
     if (videoElement->webkitPresentationMode() == HTMLVideoElement::VideoPresentationMode::PictureInPicture)
         videoElement->webkitSetPresentationMode(HTMLVideoElement::VideoPresentationMode::Inline);
     else
@@ -1002,19 +1004,19 @@ bool HitTestResult::isAnimating() const
 
 void HitTestResult::playAnimation() const
 {
-    setAllowsAnimation(true);
+    setAnimationOverride(ImageAnimationOverride::Play);
 }
 
 void HitTestResult::pauseAnimation() const
 {
-    setAllowsAnimation(false);
+    setAnimationOverride(ImageAnimationOverride::Pause);
 }
 
-void HitTestResult::setAllowsAnimation(bool allowAnimation) const
+void HitTestResult::setAnimationOverride(ImageAnimationOverride animationOverride) const
 {
     if (RefPtr imageElement = this->imageElement()) {
-        imageElement->setAllowsAnimation(allowAnimation);
-        if (auto* renderer = m_innerNonSharedNode->renderer())
+        imageElement->setAnimationOverride(animationOverride);
+        if (CheckedPtr renderer = m_innerNonSharedNode->renderer())
             renderer->repaint();
     }
 }

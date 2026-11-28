@@ -1,0 +1,40 @@
+# export function one(v) { return v.x; }  export function caller(v) { return one(v) + one(v); }   a spy may replace `one`
+# Nothing is proven of what the variable holds. The program lays one function there, so the call is tested for it: the function is entered directly, and whatever a test laid is called as written.
+# The second call reads and tests anew: what the first one ran may have laid a spy.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[first]]: {{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: [[test]]: boolean @Boolean = TypeTest [[first]] testedType=f1
+# CHECK-NEXT: Branch [[test]] -> taken [[laid]](), notTaken [[other]]()
+# CHECK: PropGet v0 key="x"
+# CHECK: [[other]]() frequency=Rare
+# CHECK-NEXT: Call [[first]], -, v0 calleeName="one"
+# CHECK: [[second]]: {{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: boolean @Boolean = TypeTest [[second]] testedType=f1
+
+variable g0 name="one" module=m0 declared={type=anything} initialization=Function function=f1 flags=[IsReplaceable]
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="one" variable=g0}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="caller" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="one"
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0 calleeName="one"
+    v5 = Add v2, v4
+    Return v5
+}

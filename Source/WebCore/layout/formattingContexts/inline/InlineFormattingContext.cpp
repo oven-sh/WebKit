@@ -60,14 +60,13 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineContentCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineFormattingContext);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineLayoutResult);
 
-static std::optional<InlineItemRange> LEGACY_NODELETE partialRangeForDamage(const InlineItemList& inlineItemList, const InlineDamage& lineDamage)
+NODELETE static std::optional<InlineItemRange> partialRangeForDamage(const InlineItemList& inlineItemList, const InlineDamage& lineDamage)
 {
     auto layoutStartPosition = lineDamage.layoutStartPosition()->inlineItemPosition;
     if (layoutStartPosition.index >= inlineItemList.size()) {
@@ -82,7 +81,7 @@ static std::optional<InlineItemRange> LEGACY_NODELETE partialRangeForDamage(cons
     return InlineItemRange { layoutStartPosition, { inlineItemList.size(), 0 } };
 }
 
-static bool LEGACY_NODELETE isEmptyInlineContent(const InlineItemList& inlineItemList)
+NODELETE static bool isEmptyInlineContent(const InlineItemList& inlineItemList)
 {
     if (inlineItemList.isEmpty())
         return true;
@@ -98,13 +97,15 @@ static bool LEGACY_NODELETE isEmptyInlineContent(const InlineItemList& inlineIte
 InlineFormattingContext::InlineFormattingContext(const ElementBox& rootBlockContainer, LayoutState& globalLayoutState, BlockLayoutState& parentBlockLayoutState)
     : m_rootBlockContainer(rootBlockContainer)
     , m_globalLayoutState(globalLayoutState)
-    , m_floatingContext(rootBlockContainer, globalLayoutState, parentBlockLayoutState.placedFloats())
+    , m_floatingContext(rootBlockContainer, parentBlockLayoutState.placedFloats(), { }, { })
     , m_inlineFormattingUtils(*this)
     , m_inlineQuirks(*this)
     , m_integrationUtils(globalLayoutState)
     , m_inlineContentCache(globalLayoutState.inlineContentCache(rootBlockContainer))
     , m_inlineLayoutState(parentBlockLayoutState)
 {
+    // The placed floats are the root's own, so the root's top-left is their origin, and the inline directions match.
+    ASSERT(&parentBlockLayoutState.placedFloats().blockFormattingContextRoot() == &rootBlockContainer);
     initializeInlineLayoutState(globalLayoutState);
 }
 
@@ -118,8 +119,8 @@ std::unique_ptr<InlineLayoutResult> InlineFormattingContext::layout(const Constr
         return { };
     }
 
-    auto hasExcludedMarker = !layoutState().excludedMarkerLayoutBounds().isEmpty();
-    if (!root().hasInFlowChild() && !root().hasOutOfFlowChild() && !hasExcludedMarker) {
+    auto hasOutsideMarker = !layoutState().outsideMarkerLayoutBounds().isEmpty();
+    if (!root().hasInFlowChild() && !root().hasOutOfFlowChild() && !hasOutsideMarker) {
         // Float only content does not support partial layout.
         ASSERT(!InlineInvalidation::mayOnlyNeedPartialLayout(lineDamage));
         layoutFloatContentOnly(constraints);
@@ -128,7 +129,7 @@ std::unique_ptr<InlineLayoutResult> InlineFormattingContext::layout(const Constr
 
     auto& inlineItems = inlineContentCache().inlineItems();
     auto& inlineItemList = inlineItems.content();
-    if (inlineItemList.isEmpty() && hasExcludedMarker) {
+    if (inlineItemList.isEmpty() && hasOutsideMarker) {
         auto layoutResult = makeUniqueRef<InlineLayoutResult>();
         createDisplayContentForEmptyInlineContent(constraints, inlineItemList, layoutResult.get());
         layoutResult->range = InlineLayoutResult::Range::Full;
@@ -175,15 +176,16 @@ std::unique_ptr<InlineLayoutResult> InlineFormattingContext::layout(const Constr
     auto isStableTextWrap = lineClamp && lineClamp->isStableTextWrap;
     if (!isStableTextWrap && InlineContentConstrainer::constrainsContent(root().style())) {
         auto constrainer = InlineContentConstrainer { *this, inlineItemList, constraints.horizontal() };
-        auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle());
-        if (constrainedLineWidths)
-            inlineLayoutState.setAvailableLineWidthOverride({ *constrainedLineWidths });
+        if (auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle())) {
+            inlineLayoutState.setAvailableLineWidthOverride({ WTF::move(*constrainedLineWidths) });
+            inlineLayoutState.setContentFitsWithinMaximumLinesWithoutLineWidthOverride(constrainer.contentFitsWithinMaximumLines());
+        }
     }
 
     if (TextOnlySimpleLineBuilder::isEligibleForSimplifiedTextOnlyInlineLayoutByContent(inlineItems, inlineLayoutState) && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(root())) {
         auto simplifiedLineBuilder = makeUniqueRef<TextOnlySimpleLineBuilder>(*this, root(), constraints.horizontal(), inlineItemList);
         auto shouldUseSimplifiedDisplayContentBuild = [&] {
-            if (lineDamage || !m_globalLayoutState.inStandardsMode() || inlineLayoutState.parentBlockLayoutState().lineClamp())
+            if (lineDamage || !m_globalLayoutState->inStandardsMode() || inlineLayoutState.parentBlockLayoutState().lineClamp())
                 return false;
             return TextOnlySimpleLineBuilder::isEligibleForSimplifiedDisplayBuild(root());
         };
@@ -286,7 +288,7 @@ LayoutUnit InlineFormattingContext::maximumContentSize(InlineDamage* lineDamage)
     return ceiledLayoutUnit(maximumContentSize);
 }
 
-static bool LEGACY_NODELETE mayExitFromPartialLayout(const InlineDamage& lineDamage, size_t lineIndex, const InlineDisplay::Boxes& newContent)
+NODELETE static bool mayExitFromPartialLayout(const InlineDamage& lineDamage, size_t lineIndex, const InlineDisplay::Boxes& newContent)
 {
     if (lineDamage.layoutStartPosition()->lineIndex == lineIndex) {
         // Never stop at the damaged line. Adding trailing overflowing content could easily produce the
@@ -297,7 +299,7 @@ static bool LEGACY_NODELETE mayExitFromPartialLayout(const InlineDamage& lineDam
     return trailingContentFromPreviousLayout ? (!newContent.isEmpty() && *trailingContentFromPreviousLayout == newContent.last()) : false;
 }
 
-static inline void LEGACY_NODELETE handleAfterSideMargin(BlockLayoutState::MarginState& marginState, InlineDisplay::Content& displayContent)
+NODELETE static inline void handleAfterSideMargin(BlockLayoutState::MarginState& marginState, InlineDisplay::Content& displayContent)
 {
     if (!InlineDisplayLineBuilder::hasTrailingLineWithBlockContent(displayContent.lines))
         marginState.canCollapseMarginAfterWithChildren = false;
@@ -334,7 +336,7 @@ UniqueRef<InlineLayoutResult> InlineFormattingContext::lineLayout(AbstractLineBu
         auto lineLayoutResult = lineBuilder.layoutInlineContent(lineInput, previousLine, isFirstFormattedLineCandidate);
         // Either this line is the clamped line (it has the block ellipsis) or we are coming back from a block (block-in-inline) that took the clamp point.
         if (lineLayoutResult.blockEllipsis || (lineLayoutResult.isBlockContent() && formattingUtils().shouldDiscardRemainingContentInBlockDirection()))
-            layoutResult->lineClamp.contentFitsWithinMaximumLines = lineLayoutResult.isLastLineWithoutBlockEllipsis;
+            layoutResult->lineClamp.contentFitsWithinMaximumLines = lineLayoutResult.isLastLineWithoutBlockEllipsis || layoutState().contentFitsWithinMaximumLinesWithoutLineWidthOverride();
         auto hasContentfulInFlowContent = lineLayoutResult.hasContentfulInFlowContent();
 
         auto canUseSimplifiedDisplayContentBuild = mayUseSimplifiedDisplayContentBuild && hasContentfulInFlowContent;
@@ -388,7 +390,7 @@ void InlineFormattingContext::layoutFloatContentOnly(const ConstraintsForInlineC
     auto floatingContext = this->floatingContext();
     auto& placedFloats = layoutState().placedFloats();
 
-    InlineItemsBuilder { inlineContentCache, root(), m_globalLayoutState.securityOrigin() }.build({ });
+    InlineItemsBuilder { inlineContentCache, root(), m_globalLayoutState->securityOrigin() }.build({ });
 
     for (auto& inlineItem : inlineContentCache.inlineItems().content()) {
         if (inlineItem.isFloat()) {
@@ -401,9 +403,10 @@ void InlineFormattingContext::layoutFloatContentOnly(const ConstraintsForInlineC
             staticPosition.move(floatBoxGeometry.marginStart(), floatBoxGeometry.marginBefore());
             floatBoxGeometry.setTopLeft(staticPosition);
 
-            auto floatBoxTopLeft = floatingContext.positionForFloat(floatBox, floatBoxGeometry, constraints.horizontal());
+            auto containingBlock = FloatingContext::ContainingBlock { { }, constraints.horizontal() };
+            auto floatBoxTopLeft = floatingContext.positionForFloat(floatBox, floatBoxGeometry, containingBlock);
             floatBoxGeometry.setTopLeft(floatBoxTopLeft);
-            placedFloats.add(floatingContext.makeFloatItem(floatBox, floatBoxGeometry));
+            placedFloats.add(floatingContext.makeFloatItem(floatBox, floatBoxGeometry, containingBlock));
             continue;
         }
         ASSERT_NOT_REACHED();
@@ -435,7 +438,7 @@ void InlineFormattingContext::updateBoxGeometryForPlacedFloats(const LineLayoutR
             // We should not be placing intrusive floats coming from parent BFC.
             continue;
         }
-        auto& boxGeometry = geometryForBox(*floatItem.layoutBox());
+        auto& boxGeometry = geometryForBox(*protect(floatItem.layoutBox()));
         auto usedGeometry = floatItem.boxGeometry();
         boxGeometry.setTopLeft(BoxGeometry::borderBoxTopLeft(usedGeometry));
         // Adopt trimmed inline direction margin.
@@ -475,7 +478,7 @@ InlineRect InlineFormattingContext::createDisplayContentForInlineContent(const L
         auto isLegacyLineClamp = lineClamp && lineClamp->isLegacy;
         CheckedRef styleForTruncation = root().isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(root()) : root().style();
         auto truncationPolicy = InlineFormattingUtils::lineEndingTruncationPolicy(styleForTruncation, numberOfLinesWithInlineContent, numberOfVisibleLinesAllowed, lineLayoutResult.hasContentfulInFlowContent());
-        ellipsis = InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(truncationPolicy, lineLayoutResult.blockEllipsis, displayLine, boxes.mutableSpan(), isLegacyLineClamp);
+        ellipsis = InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(truncationPolicy, styleForTruncation, lineLayoutResult.blockEllipsis, displayLine, boxes.mutableSpan(), isLegacyLineClamp);
         if (ellipsis) {
             displayLine.setHasEllipsis();
             auto lineHasLegacyLineClamp = isLegacyLineClamp && truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInBlockDirection;
@@ -508,12 +511,12 @@ void InlineFormattingContext::resetBoxGeometriesForDiscardedContent(const Inline
         auto hasBoxGeometry = inlineItem.isAtomicInlineBox() || inlineItem.isFloat() || inlineItem.isHardLineBreak() || inlineItem.isInlineBoxStart() || inlineItem.isOutOfFlow();
         if (!hasBoxGeometry)
             continue;
-        geometryForBox(inlineItem.layoutBox()).reset();
+        geometryForBox(protect(inlineItem.layoutBox())).reset();
         // Floats, atomic inline-level boxes and inline boxes that start after the clamp point are invisible boxes, and so is "any absolutely
         // positioned box which has an invisible box within its containing block chain" (see LineClampUpdater::setIsForcedHidden).
         // https://drafts.csswg.org/css-overflow-4/#line-clamp-containers
         if (inlineItem.isFloat() || inlineItem.isAtomicInlineBox() || inlineItem.isInlineBoxStart())
-            setIsForcedHidden(inlineItem.layoutBox());
+            setIsForcedHidden(protect(inlineItem.layoutBox()).get());
     }
 
     for (CheckedPtr floatBox : suspendedFloats) {
@@ -570,7 +573,7 @@ bool InlineFormattingContext::createDisplayContentForLineFromCachedContent(const
     lineContent.lineGeometry.logicalTopLeft = logicalTopLeft;
     lineContent.lineGeometry.logicalWidth = constraints.horizontal().logicalWidth;
     lineContent.lineGeometry.initialLogicalTopLeft = logicalTopLeft;
-    lineContent.contentGeometry.logicalLeft = InlineFormattingUtils::horizontalAlignmentOffset(root().style(), lineContent.contentGeometry.logicalWidth, lineContent.lineGeometry.logicalWidth, lineContent.hangingContent.logicalWidth, true);
+    lineContent.contentGeometry.logicalLeft = InlineFormattingUtils::horizontalAlignmentOffset(protect(root().style()), lineContent.contentGeometry.logicalWidth, lineContent.lineGeometry.logicalWidth, lineContent.hangingContent.logicalWidth, true);
 
     auto canUseSimplifiedDisplayContentBuild = mayUseSimplifiedDisplayContentBuild && lineContent.hasContentfulInFlowContent();
     auto lineBox = canUseSimplifiedDisplayContentBuild ? LineBoxBuilder { *this, lineContent }.buildForRootInlineBoxOnly({ }) : LineBoxBuilder { *this, lineContent }.build({ });
@@ -602,8 +605,12 @@ void InlineFormattingContext::initializeInlineLayoutState(const LayoutState& glo
     inlineLayoutState.setShouldNotSynthesizeInlineBlockBaseline();
     if (globalLayoutState.inStandardsMode())
         inlineLayoutState.setInStandardsMode();
+    if (globalLayoutState.inQuirksMode())
+        inlineLayoutState.setInQuirksMode();
     if (globalLayoutState.isTextShapingAcrossInlineBoxesEnabled())
         inlineLayoutState.setShouldShapeTextAcrossInlineBoxes();
+    if (globalLayoutState.isAlignmentBaselineOnInlineBoxesEnabled())
+        inlineLayoutState.setShouldUseAlignmentBaseline();
 }
 
 #if ASSERT_ENABLED
@@ -629,13 +636,13 @@ static inline bool isOkToAccessBoxGeometry(const Box& layoutBox, const ElementBo
 const BoxGeometry& InlineFormattingContext::geometryForBox(const Box& layoutBox, std::optional<EscapeReason> escapeReason) const
 {
     ASSERT_UNUSED(escapeReason, isOkToAccessBoxGeometry(layoutBox, root(), escapeReason));
-    return m_globalLayoutState.geometryForBox(layoutBox);
+    return m_globalLayoutState->geometryForBox(layoutBox);
 }
 
 BoxGeometry& InlineFormattingContext::geometryForBox(const Box& layoutBox)
 {
     ASSERT(isOkToAccessBoxGeometry(layoutBox, root(), { }));
-    return m_globalLayoutState.ensureGeometryForBox(layoutBox);
+    return m_globalLayoutState->ensureGeometryForBox(layoutBox);
 }
 
 void InlineFormattingContext::rebuildInlineItemListIfNeeded(InlineDamage* lineDamage)
@@ -665,12 +672,10 @@ void InlineFormattingContext::rebuildInlineItemListIfNeeded(InlineDamage* lineDa
         // Unsupported damage. Need to run full build/layout.
         return { };
     };
-    InlineItemsBuilder { inlineContentCache, root(), m_globalLayoutState.securityOrigin() }.build(startPositionForInlineItemsBuilding());
+    InlineItemsBuilder { inlineContentCache, root(), m_globalLayoutState->securityOrigin() }.build(startPositionForInlineItemsBuilding());
     if (lineDamage)
         lineDamage->setInlineItemListClean();
     inlineContentCache.clearMaximumIntrinsicWidthLineContent();
 }
 
 }
-}
-

@@ -1,0 +1,38 @@
+# what stands between the call and its await is walked in front of both. For the first read of a member that its holder makes then, the walk builds more than the row of the Builtin says: an InitializeBuiltin, which the order of the holder's keys shows
+# in front of the call the body of the callee would find `has` among the keys of Reflect, which plain finds only behind it. So the call keeps its promise
+# async function load(x) { const keys = Reflect.ownKeys(Reflect); await x; return keys; }  async function run(x) { const p = load(x); const has = Reflect.has; return [has, await p]; }
+# RUN: walk f2:CoroutineBody mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = CallDirect
+# CHECK: InitializeBuiltin builtin=ReflectHas
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=none+DirectCalls
+# NEVER-NOT: = AwaitCallBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Reflect
+    v2 = Builtin builtin=ReflectOwnKeys
+    v3 = Call v2, v1, v1 calleeName="Reflect.ownKeys"
+    v4 = Await v0
+    Return v3
+}
+function f2 name="run" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="load"
+    v3 = Builtin builtin=ReflectHas
+    v4 = Await v2
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}

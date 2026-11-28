@@ -25,6 +25,7 @@
 #include "SVGGraphicsElement.h"
 #include "SVGURIReference.h"
 #include "SharedStringHash.h"
+#include "URLDecomposition.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -34,7 +35,7 @@ class DOMTokenList;
 enum class ReferrerPolicy : uint8_t;
 enum class Relation : uint8_t;
 
-class SVGAElement final : public SVGGraphicsElement, public SVGURIReference {
+class SVGAElement final : public SVGGraphicsElement, public SVGURIReference, public URLDecomposition {
     WTF_MAKE_TZONE_ALLOCATED(SVGAElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGAElement);
 public:
@@ -43,8 +44,6 @@ public:
 
     AtomString target() const final { return AtomString { m_target->currentValue() }; }
     SVGAnimatedString& targetAnimated() { return m_target; }
-
-    URL hrefURL() const;
 
     SharedStringHash visitedLinkHash() const;
 
@@ -61,7 +60,7 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void svgAttributeChanged(const QualifiedName&) final;
 
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool childShouldCreateRenderer(const Node&) const final;
 
     bool isValid() const final { return SVGTests::isValid(); }
@@ -71,11 +70,14 @@ private:
     bool supportsFocus() const final;
     bool isMouseFocusable() const final;
     bool isKeyboardFocusable(const FocusEventData&) const final;
-    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    NODELETE bool isURLAttribute(const Attribute&) const final;
     bool canStartSelection() const final;
     int defaultTabIndex() const final;
 
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
+
+    URL fullURL() const final;
+    void setFullURL(const URL&) final;
 
     const Ref<SVGAnimatedString> m_target { SVGAnimatedString::create(this) };
 

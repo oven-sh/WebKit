@@ -44,6 +44,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
 #include "UnlinkedCodeBlock.h"
+#include "WeakImpl.h"
 
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyInstance.h"
@@ -174,8 +175,8 @@ void AssemblyHelpers::jitAssertIsJSDouble(GPRReg gpr)
     if (!Options::useJITAsserts())
         return;
     JIT_COMMENT(*this, "ASSERT is JS boxed double (non-int32 number)");
-    Jump checkJSInt32 = branchIfInt32(gpr);
-    Jump checkJSNumber = branchIfNumber(gpr);
+    Jump checkJSInt32 = branchIfInt32(gpr, DoNotHaveTagRegisters);
+    Jump checkJSNumber = branchIfNumber(gpr, DoNotHaveTagRegisters);
     checkJSInt32.link(this);
     abortWithReason(AHIsNotJSDouble);
     checkJSNumber.link(this);
@@ -562,6 +563,21 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
     moveTrustedValue(jsUndefined(), resultGPR);
 
     done.link(this);
+
+    return slowCases;
+}
+
+AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicPrivateProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+{
+    using Entry = MegamorphicCache::LoadEntry;
+    JumpList slowCases = findMegamorphicCacheEntry<
+        MegamorphicCache::loadCachePrimaryMask, MegamorphicCache::offsetOfLoadCachePrimaryEntries(),
+        MegamorphicCache::loadCacheSecondaryMask, MegamorphicCache::offsetOfLoadCacheSecondaryEntries()>(
+            vm, baseGPR, uidGPR, uid, scratch1GPR, scratch2GPR, scratch3GPR);
+
+    slowCases.append(branchPtr(NotEqual, Address(scratch3GPR, Entry::offsetOfHolder()), TrustedImmPtr(JSCell::seenMultipleCalleeObjects())));
+    load16(Address(scratch3GPR, Entry::offsetOfOffset()), scratch2GPR);
+    loadProperty(baseGPR, scratch2GPR, resultGPR);
 
     return slowCases;
 }
@@ -1112,10 +1128,10 @@ AssemblyHelpers::FreeListRefill AssemblyHelpers::emitAllocateFromFreeList(GPRReg
     refill.isExhausted = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()));
     refill.hasRoom = label();
     // The stores that fill cells wait for one line of memory after the other. Small cells share a line, and each would ask for the same next one.
-    constexpr int32_t cacheLineSize = 64;
+    constexpr int32_t distanceToPrefetch = 512;
     constexpr unsigned minCellSizeToPrefetchBehind = 48;
     if (constantCellSize && *constantCellSize >= minCellSizeToPrefetchBehind)
-        prefetch(Address(resultGPR, cacheLineSize));
+        prefetch(Address(resultGPR, distanceToPrefetch));
     if (constantCellSize)
         add64(TrustedImm32(*constantCellSize), Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
     else {
@@ -1929,6 +1945,21 @@ void AssemblyHelpers::getArityPadding(VM& vm, unsigned numberOfParameters, GPRRe
     stackOverflow.append(branchPtr(GreaterThan, AbsoluteAddress(vm.addressOfSoftStackLimit()), scratchGPR1));
 }
 
+AssemblyHelpers::JumpList AssemblyHelpers::loadTypedArrayBufferWrapper(GPRReg baseGPR, GPRReg resultGPR)
+{
+    JumpList slowCases;
+
+    slowCases.append(branchTest8(Zero, Address(baseGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isWastefulTypedArrayMode)));
+    loadPtr(Address(baseGPR, JSObject::butterflyOffset()), resultGPR);
+    loadPtr(Address(resultGPR, Butterfly::offsetOfArrayBuffer()), resultGPR);
+    loadPtr(Address(resultGPR, ArrayBuffer::offsetOfWrapper()), resultGPR);
+    slowCases.append(branchTestPtr(Zero, resultGPR));
+    slowCases.append(branchTestPtr(NonZero, Address(resultGPR, WeakImpl::offsetOfWeakHandleOwner()), TrustedImm32(WeakImpl::StateMask)));
+    loadPtr(Address(resultGPR, WeakImpl::offsetOfJSValue()), resultGPR);
+
+    return slowCases;
+}
+
 AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedTypedArrayIsOutOfBounds(GPRReg baseGPR, GPRReg scratchGPR, GPRReg scratch2GPR, std::optional<TypedArrayType> typedArrayType)
 {
     ASSERT(scratchGPR != scratch2GPR);
@@ -2175,11 +2206,10 @@ AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanc
     overflow.append(branchPtr(LessThan, framePointerGPR, memoryTempRegister));
     return overflow;
 #elif CPU(X86_64)
-    loadPtr(Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit()), scratchRegister());
     JumpList overflow;
-    // Because address is within 48bit, this addition never causes overflow.
-    addPtr(checkSize, scratchRegister());
-    overflow.append(branchPtr(LessThan, framePointerGPR, scratchRegister()));
+    // Because address is within 48bit, this subtraction never causes overflow.
+    addPtr(TrustedImm32(-checkSize.m_value), framePointerGPR, scratchRegister());
+    overflow.append(branchPtr(LessThan, scratchRegister(), Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit())));
     return overflow;
 #elif CPU(RISCV64)
     loadPtr(Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit()), memoryTempRegister);

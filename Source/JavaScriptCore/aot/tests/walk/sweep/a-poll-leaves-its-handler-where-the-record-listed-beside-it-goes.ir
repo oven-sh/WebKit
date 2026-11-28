@@ -1,0 +1,40 @@
+# try { for (..) { make a text that nobody reads } } catch { .. }   the walk has listed the text beside the poll of the head: the poll leaves its handler unless the text is kept
+# v6 may collect, so a likely turn might come to owe an error; nobody reads it, so it goes, nothing comes to be owed in a turn, and the poll of the head leaves the error owed: the head has no handler edge
+# RUN: sweep-code
+# CHECK: b2(
+# CHECK: dropped handler
+# CHECK: = LoopHint {{*}}LeavesOwedError
+# CHECK: b3()
+# CHECK: dropped handler, v6
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     Jump -> next b1()
+#   b1() handler=b5():
+#     v2 @Void = LoopHint [throwsOwedError] traits=[mayThrow, mayCollect, mayBeTerminated, mayTouchMemory]
+#     Jump -> next b2(v0)
+#   b2(v3: anything @JSValue) isLoopHead=true handler=b5():
+#     v4 @Void = LoopHint traits=[mayThrow, mayCollect, mayBeTerminated, mayTouchMemory]
+#     v5: boolean @Boolean = TypeTest v3 testedType=number
+#     Branch v5 -> taken b3(), notTaken b4()
+#   b3() handler=b5():
+#     v6: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
+#     Jump -> next b2(v1)
+#   b4():
+#     Return
+#   b5() role=CatchHandler:
+#     v7: anything @JSValue = CatchValue traits=[mayCollect, mayTouchMemory]
+#     v8: anything @JSValue = Call v1, -, v7 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b4()
+#   poll v4 fate=LeavesHandler
+#   poll v4 fate=LeavesHandler unlessKept=v6
+# }
+# -- end of code

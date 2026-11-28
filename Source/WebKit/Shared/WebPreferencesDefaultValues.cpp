@@ -29,6 +29,10 @@
 #include <WebCore/SettingsBase.h>
 #include <wtf/text/WTFString.h>
 
+#if PLATFORM(APPLETV)
+#include <pal/system/ios/Device.h>
+#endif
+
 #if PLATFORM(COCOA)
 #include "DefaultWebBrowserChecks.h"
 #include "NetworkSoftLink.h"
@@ -79,8 +83,8 @@ bool defaultShouldPrintBackgrounds()
 
 SUPPRESS_NODELETE bool defaultVideoFullscreenRequiresElementFullscreen()
 {
-#if USE(APPLE_INTERNAL_SDK)
-    if (videoFullscreenRequiresElementFullscreenFromAdditions())
+#if PLATFORM(APPLETV)
+    if (PAL::deviceClassIsHomeView())
         return true;
 #endif
 
@@ -242,6 +246,16 @@ bool defaultShowModalDialogEnabled()
 #endif
 }
 
+bool defaultUnloadEventEnabled()
+{
+#if PLATFORM(COCOA)
+    static bool newSDK = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NoUnloadEvent);
+    return !newSDK;
+#else
+    return true;
+#endif
+}
+
 #if ENABLE(GAMEPAD)
 bool defaultGamepadVibrationActuatorEnabled()
 {
@@ -323,10 +337,6 @@ bool defaultPopoverAttributeEnabled()
 
 bool defaultUseGPUProcessForDOMRenderingEnabled()
 {
-#if ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)
-    return true;
-#endif
-
 #if USE(GRAPHICS_LAYER_WC)
     return true;
 #endif
@@ -345,15 +355,10 @@ SUPPRESS_NODELETE bool defaultDeviceOrientationPermissionAPIEnabled()
 }
 #endif
 
-#if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+#if PLATFORM(APPLETV)
 bool defaultRequiresPageVisibilityForVideoToBeNowPlaying()
 {
-#if USE(APPLE_INTERNAL_SDK)
-    if (requiresPageVisibilityForVideoToBeNowPlayingFromAdditions())
-        return true;
-#endif
-
-    return false;
+    return PAL::deviceClassIsHomeView();
 }
 #endif
 
@@ -370,6 +375,17 @@ bool defaultCookieStoreAPIEnabled()
     return false;
 #endif
 }
+
+#if !PLATFORM(COCOA)
+bool defaultCompressionDictionaryEnabled()
+{
+#if HAVE(SOUP_COMPRESSION_DICTIONARY_SUPPORT)
+    return true;
+#else
+    return false;
+#endif
+}
+#endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
 bool defaultIFrameResourceMonitoringEnabled()
@@ -388,6 +404,22 @@ bool defaultSearchInputResultsAttributeEnabled()
     static bool result = !isFullWebBrowserOrRunningTest()
         && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DisableNonStandardSearchInputResultsAttribute);
     return result;
+#else
+    return false;
+#endif
+}
+
+bool defaultSiteIsolationEnabled()
+{
+#if ENABLE(SITE_ISOLATION_BY_DEFAULT)
+#if PLATFORM(MAC)
+    if (WTF::MacApplication::isSafariWebApp())
+        return true;
+#elif PLATFORM(IOS_FAMILY)
+    if (WTF::IOSApplication::isAppleWebApp())
+        return true;
+#endif
+    return isFullWebBrowserOrRunningTest();
 #else
     return false;
 #endif

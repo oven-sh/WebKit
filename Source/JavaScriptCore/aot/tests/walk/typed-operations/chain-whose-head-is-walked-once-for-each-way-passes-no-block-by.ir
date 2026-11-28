@@ -1,0 +1,82 @@
+# the head of the chain is a join, and one way brings it a constant that decides the first comparison. The join is walked once for each way (the loop in front, which is built twice, has made the walk find what is live): the way that is decided enters the block of the second comparison, so the other way may not pass that block by: its edges would be led twice, and the last block, which one edge of the body enters, would be entered alone twice
+# function classify(flag, given, list) { let found = -1; for (let i = 0; i < list.length; i++) { if (list[i] === "ipc") { found = i; break; } } const code = flag ? given.code : undefined; if (code === "a" || code === "b" || code === "c" || code === "d" || code === "e") return found + 1; throw given; }
+# RUN: walk f1
+# CHECK-LABEL: code f1:Body
+# CHECK: Return
+# RUN(UNGUARDED): walk f1 mechanisms=all-ParameterGuards-Inlining
+# UNGUARDED-LABEL: code f1:Body
+# UNGUARDED: Return
+# RUN(SHELL): run-in-shell globalThis.sink = classify => { const tell = (flag, given, list) => { try { return classify(flag, given, list); } catch (thrown) { return "thrown " + thrown.code; } }; print([tell(true, { code: "c" }, ["x", "ipc"]), tell(true, { code: "a" }, []), tell(true, { code: "e" }, ["ipc"]), tell(true, { code: "f" }, ["x"]), tell(false, { code: "c" }, ["x"]), tell(true, { code: 5 }, "ipc"), tell(0, { code: "a" }, [])].join()); };
+# SHELL: 2,0,1,thrown f,thrown c,thrown 5,thrown a
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="classify" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: undefined|null|string|Array):
+    v3 = Integer integer=-1
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v4, v6)
+  b1(v7, v8):
+    LoopHint
+    v10 = PropGet v2 key="length"
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(), notTaken b5(v7)
+  b2():
+    v12 = ElemGet v2, v8
+    v13 = String string="ipc"
+    v14 = StrictEq v12, v13
+    Branch v14 -> taken b3(), notTaken b4()
+  b3():
+    v15 = Convert v8 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v15)
+  b4():
+    v16 = Increment v8
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v7, v17)
+  b5(v18):
+    v19 = ToBoolean v0
+    Branch v19 -> taken b6(), notTaken b7()
+  b6():
+    v20 = PropGet v1 key="code"
+    Jump -> next b8(v20)
+  b7():
+    v21 = Undefined
+    Jump -> next b8(v21)
+  b8(v22):
+    v23 = String string="a"
+    v24 = StrictEq v22, v23
+    Branch v24 -> taken b13(), notTaken b9()
+  b9():
+    v25 = String string="b"
+    v26 = StrictEq v22, v25
+    Branch v26 -> taken b13(), notTaken b10()
+  b10():
+    v27 = String string="c"
+    v28 = StrictEq v22, v27
+    Branch v28 -> taken b13(), notTaken b11()
+  b11():
+    v29 = String string="d"
+    v30 = StrictEq v22, v29
+    Branch v30 -> taken b13(), notTaken b12()
+  b12():
+    v31 = String string="e"
+    v32 = StrictEq v22, v31
+    Branch v32 -> taken b13(), notTaken b14()
+  b13():
+    v33 = Integer integer=1
+    v34 = Add v18, v33
+    Return v34
+  b14():
+    Throw v1
+}

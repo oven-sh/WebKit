@@ -32,12 +32,14 @@
 #include "JSInternalFieldObjectImplInlines.h"
 #include "ObjectConstructor.h"
 #include "VMInlines.h"
-#include <algorithm>
 #include <wtf/NoTailCalls.h>
 #include <wtf/text/MakeString.h>
 
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTPropertyCaches.h"
+#include "AOTRuntimeReporter.h"
+#include "AOTState.h"
 
 // Note that we use NO_TAIL_CALLS() throughout this file because we rely on the machine stack
 // growing larger for throwing OOM errors for when we have an effectively cyclic prototype chain.
@@ -53,8 +55,6 @@ const ClassInfo ProxyObject::s_info = { "ProxyObject"_s, &Base::s_info, nullptr,
 static JSC_DECLARE_HOST_FUNCTION(performProxyCall);
 static JSC_DECLARE_HOST_FUNCTION(performProxyConstruct);
 
-static constexpr PropertyOffset emptyHandlerTrapCache = INT_MIN;
-
 // No trap sees a private name. One that passes through proxies is an ordinary property of the target that nothing lists; a proxy has no other private name.
 enum class Dispatch : uint8_t { ToHandler, ToTarget, Ignore };
 
@@ -68,7 +68,6 @@ static ALWAYS_INLINE Dispatch dispatchFor(PropertyName propertyName)
 ProxyObject::ProxyObject(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-    clearHandlerTrapsOffsetsCache();
 }
 
 Structure* ProxyObject::structureForTarget(JSGlobalObject* globalObject, JSValue target)
@@ -102,51 +101,45 @@ void ProxyObject::finishCreation(VM& vm, JSGlobalObject* globalObject, JSValue t
     internalField(Field::Handler).set(vm, this, handler);
 }
 
+// Returns null if there is no trap, and throws if it is not callable.
+static JSObject* callableTrap(JSGlobalObject* globalObject, JSValue value, CallData& callData, const Identifier& ident)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isUndefinedOrNull())
+        return nullptr;
+
+    callData = JSC::getCallDataInline(value);
+    if (callData.type == CallData::Type::None) {
+        throwTypeError(globalObject, scope, makeString('\'', String(ident.impl()), "' property of a Proxy's handler should be callable"_s));
+        return nullptr;
+    }
+
+    return asObject(value);
+}
+
 JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* handler, CallData& callData, const Identifier& ident, HandlerTrap trap)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto ensureIsCallable = [&](JSValue value) -> JSObject* {
-        if (value.isUndefinedOrNull())
-            return nullptr;
+#if ENABLE(AOT)
+    if (handler->type() == CompiledObjectType) [[unlikely]]
+        RELEASE_AND_RETURN(scope, getTrapOfCompiledHandler(globalObject, handler, callData, ident, trap));
+#endif
 
-        callData = JSC::getCallDataInline(value);
-        if (callData.type == CallData::Type::None) {
-            throwTypeError(globalObject, scope, makeString('\'', String(ident.impl()), "' property of a Proxy's handler should be callable"_s));
+    bool isCacheValid = isHandlerTrapsCacheValid(handler);
+    if (isCacheValid) {
+        ProxyHandlerOffset offset = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)];
+        switch (offset.state()) {
+        case ProxyHandlerOffset::State::HasCachedOffset:
+            RELEASE_AND_RETURN(scope, callableTrap(globalObject, handler->getDirect(offset.offset()), callData, ident));
+        case ProxyHandlerOffset::State::HasNoTrap:
             return nullptr;
+        case ProxyHandlerOffset::State::NeedsFullLookup:
+            break;
         }
-
-        return asObject(value);
-    };
-
-#if ENABLE(AOT)
-    // For a compiled object the cache holds the number of the field, below invalidOffset where nothing was found while its slot was empty.
-    // It speaks only of an object that has its fields in their slots and nothing else.
-    AOT::Object* compiledHandler = handler->type() == CompiledObjectType ? uncheckedDowncast<AOT::Object>(handler) : nullptr;
-    bool mayUseCache = !compiledHandler || !compiledHandler->hasFlagsInOrderWord();
-#else
-    constexpr bool mayUseCache = true;
-#endif
-
-    if (isHandlerTrapsCacheValid(handler)) {
-        PropertyOffset offset = mayUseCache ? m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] : emptyHandlerTrapCache;
-        if (offset == invalidOffset)
-            return nullptr;
-#if ENABLE(AOT)
-        if (compiledHandler) {
-            if (offset != emptyHandlerTrapCache) {
-                bool foundNothingWhileEmpty = offset < invalidOffset;
-                const AOT::FieldData& field = compiledHandler->layout().fields()[foundNothingWhileEmpty ? invalidOffset - 1 - offset : offset];
-                if (compiledHandler->isInSlot(field))
-                    return ensureIsCallable(compiledHandler->read(field));
-                if (foundNothingWhileEmpty)
-                    return nullptr;
-            }
-        } else
-#endif
-        if (offset != emptyHandlerTrapCache)
-            return ensureIsCallable(handler->getDirect(offset));
     } else if (m_handlerStructureID)
         clearHandlerTrapsOffsetsCache();
 
@@ -155,27 +148,6 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
     RETURN_IF_EXCEPTION(scope, { });
 
     bool isSlotCacheable = slot.isUnset() || (slot.isCacheableValue() && slot.slotBase() == handler);
-#if ENABLE(AOT)
-    if (compiledHandler) {
-        isSlotCacheable = false;
-        JSValue handlerPrototype = handler->getPrototypeDirect();
-        if (mayUseCache && handlerPrototype.inherits<ObjectPrototype>() && !asObject(handlerPrototype)->structure()->isDictionary()) {
-            const AOT::FieldData* field = compiledHandler->fieldNamed(compiledHandler->state(), ident);
-            PropertyOffset number = emptyHandlerTrapCache;
-            if (!field && slot.isUnset())
-                number = invalidOffset;
-            else if (field && !field->isAccessor() && compiledHandler->isInSlot(*field))
-                number = compiledHandler->indexOf(*field);
-            else if (field && !field->isAccessor() && slot.isUnset())
-                number = invalidOffset - 1 - compiledHandler->indexOf(*field);
-            if (number != emptyHandlerTrapCache) {
-                m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] = number;
-                m_handlerStructureID.set(vm, this, handler->structure());
-                m_handlerPrototypeStructureID.set(vm, this, asObject(handlerPrototype)->structure());
-            }
-        }
-    }
-#endif
     if (isSlotCacheable) {
         JSValue handlerPrototype = handler->getPrototypeDirect();
         // isHandlerTrapsCacheValid treats a matching handler StructureID as proof that the prototype is
@@ -183,42 +155,134 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
         bool isHandlerPrototypeChainCacheable = handler->type() == FinalObjectType && handler->structure()->hasMonoProto() && !handler->structure()->isDictionary()
             && handlerPrototype.inherits<ObjectPrototype>() && !asObject(handlerPrototype)->structure()->isDictionary();
         if (isHandlerPrototypeChainCacheable) {
-            ASSERT(slot.cachedOffset() != emptyHandlerTrapCache);
-            m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] = slot.cachedOffset();
-            m_handlerStructureID.set(vm, this, handler->structure());
-            m_handlerPrototypeStructureID.set(vm, this, asObject(handlerPrototype)->structure());
+            m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] = ProxyHandlerOffset(slot.cachedOffset());
+            if (!isCacheValid) {
+                m_handlerStructureID.set(vm, this, handler->structure());
+                m_handlerPrototypeStructureID.set(vm, this, asObject(handlerPrototype)->structure());
+            }
         }
     }
 
     if (hasProperty) {
         JSValue trapValue = slot.getValue(globalObject, ident);
         RETURN_IF_EXCEPTION(scope, { });
-        return ensureIsCallable(trapValue);
+        RELEASE_AND_RETURN(scope, callableTrap(globalObject, trapValue, callData, ident));
     }
 
     return nullptr;
 }
 
 #if ENABLE(AOT)
-bool ProxyObject::isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached)
+NEVER_INLINE JSObject* ProxyObject::getTrapOfCompiledHandler(JSGlobalObject* globalObject, JSObject* handler, CallData& callData, const Identifier& ident, HandlerTrap trap)
 {
-    ASSERT(cached < invalidOffset);
-    if (cached == emptyHandlerTrapCache || handler->type() != CompiledObjectType)
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The cache is valid only for an object whose properties are exactly its fields, each in its own slot.
+    auto* compiledHandler = uncheckedDowncast<AOT::Object>(handler);
+    bool mayUseCache = !compiledHandler->hasFlagsInOrderWord();
+    bool isCacheValid = isHandlerTrapsCacheValid(handler) || (mayUseCache && tryCopyCachedTraps(vm, handler));
+    if (isCacheValid) {
+        ProxyHandlerOffset offset = mayUseCache ? m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] : ProxyHandlerOffset();
+        switch (offset.state()) {
+        case ProxyHandlerOffset::State::HasCachedOffset: {
+            const AOT::FieldData& field = compiledHandler->layout().fields()[offset.fieldOfCompiledHandler()];
+            if (compiledHandler->isInSlot(field))
+                RELEASE_AND_RETURN(scope, callableTrap(globalObject, compiledHandler->read(field), callData, ident));
+            if (offset.missedWithEmptyHandlerField())
+                return nullptr;
+            break;
+        }
+        case ProxyHandlerOffset::State::HasNoTrap:
+            return nullptr;
+        case ProxyHandlerOffset::State::NeedsFullLookup:
+            break;
+        }
+    } else if (m_handlerStructureID)
+        clearHandlerTrapsOffsetsCache();
+
+    PropertySlot slot(handler, PropertySlot::InternalMethodType::Get);
+    bool hasProperty = handler->getPropertySlot(globalObject, ident, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSValue handlerPrototype = handler->getPrototypeDirect();
+    if (mayUseCache && handlerPrototype.inherits<ObjectPrototype>() && !asObject(handlerPrototype)->structure()->isDictionary()) {
+        const AOT::FieldData* field = compiledHandler->fieldNamed(compiledHandler->state(), ident);
+        ProxyHandlerOffset offset;
+        if (!field && slot.isUnset())
+            offset = ProxyHandlerOffset(invalidOffset);
+        else if (field && !field->isAccessor() && compiledHandler->isInSlot(*field))
+            offset = ProxyHandlerOffset::forFieldOfCompiledHandler(compiledHandler->indexOf(*field), false);
+        else if (field && !field->isAccessor() && slot.isUnset())
+            offset = ProxyHandlerOffset::forFieldOfCompiledHandler(compiledHandler->indexOf(*field), true);
+        if (offset.state() != ProxyHandlerOffset::State::NeedsFullLookup) {
+            m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] = offset;
+            if (!isCacheValid) {
+                m_handlerStructureID.set(vm, this, handler->structure());
+                m_handlerPrototypeStructureID.set(vm, this, asObject(handlerPrototype)->structure());
+            }
+            cacheTrapForStructure(handler, trap);
+        }
+    }
+
+    if (hasProperty) {
+        JSValue trapValue = slot.getValue(globalObject, ident);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, callableTrap(globalObject, trapValue, callData, ident));
+    }
+
+    return nullptr;
+}
+
+// Handlers with the same Structure keep their traps in the same fields and have the same prototype, so they share what was found. Each collection clears it.
+bool ProxyObject::tryCopyCachedTraps(VM& vm, JSObject* handler)
+{
+    static_assert(sizeof(m_handlerTrapsOffsetsCache) == sizeof(AOT::ProxyHandlerTraps::offsets));
+    const AOT::ProxyHandlerTraps& found = uncheckedDowncast<AOT::Object>(handler)->state().propertyCaches->proxyHandlerTraps(handler->structureID());
+    if (found.handlerStructureID != handler->structureID().bits())
+        return false;
+    JSValue prototype = handler->getPrototypeDirect();
+    if (!prototype.isObject() || found.prototypeStructureID != asObject(prototype)->structureID().bits())
+        return false;
+    m_handlerTrapsOffsetsCache = std::bit_cast<decltype(m_handlerTrapsOffsetsCache)>(found.offsets);
+    m_handlerStructureID.set(vm, this, handler->structure());
+    m_handlerPrototypeStructureID.set(vm, this, asObject(prototype)->structure());
+    AOT::countEvent(vm, AOT::RuntimeCounterID::ProxyHandlerTrapsCopied);
+    return true;
+}
+
+void ProxyObject::cacheTrapForStructure(JSObject* handler, HandlerTrap trap)
+{
+    AOT::ProxyHandlerTraps& found = uncheckedDowncast<AOT::Object>(handler)->state().propertyCaches->proxyHandlerTraps(handler->structureID());
+    auto offsets = std::bit_cast<decltype(found.offsets)>(m_handlerTrapsOffsetsCache);
+    uint32_t prototypeStructureID = asObject(handler->getPrototypeDirect())->structureID().bits();
+    if (found.handlerStructureID == handler->structureID().bits() && found.prototypeStructureID == prototypeStructureID)
+        found.offsets[static_cast<uint8_t>(trap)] = offsets[static_cast<uint8_t>(trap)];
+    else
+        found = { handler->structureID().bits(), prototypeStructureID, offsets };
+}
+
+bool ProxyObject::isCachedTrapFieldEmpty(JSObject* handler, HandlerTrap trap)
+{
+    if (handler->type() != CompiledObjectType || !isHandlerTrapsCacheValid(handler))
+        return false;
+    ProxyHandlerOffset cached = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)];
+    if (cached.state() != ProxyHandlerOffset::State::HasCachedOffset || !cached.missedWithEmptyHandlerField())
         return false;
     AOT::Object* compiledHandler = uncheckedDowncast<AOT::Object>(handler);
-    return !compiledHandler->hasFlagsInOrderWord() && !compiledHandler->isInSlot(compiledHandler->layout().fields()[invalidOffset - 1 - cached]);
+    return !compiledHandler->hasFlagsInOrderWord() && !compiledHandler->isInSlot(compiledHandler->layout().fields()[cached.fieldOfCompiledHandler()]);
 }
 #endif
 
 void ProxyObject::clearHandlerTrapsOffsetsCache()
 {
-    std::fill_n(m_handlerTrapsOffsetsCache, numberOfCachedHandlerTrapsOffsets, emptyHandlerTrapCache);
+    m_handlerTrapsOffsetsCache.fill(ProxyHandlerOffset());
 }
 
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
 
 #if ENABLE(AOT)
-// The Structure of a compiled object says of all of them that they may be anything. What was done to one object stands in the object, and what its fields are born with in the layout.
+// Compiled objects of a layout share one Structure, so changes to one object are recorded in the object.
 static bool isExtensibleCompiledObjectWithConfigurablePropertiesOnly(JSObject* target)
 {
     constexpr size_t maxFieldsLookedAt = 32;
@@ -229,13 +293,13 @@ static bool isExtensibleCompiledObjectWithConfigurablePropertiesOnly(JSObject* t
     if (object->hasFlagsInOrderWord() || fields.size() > maxFieldsLookedAt)
         return false;
     auto* structure = uncheckedDowncast<AOT::CompiledStructure>(target->structure());
-    if (structure->isKnownThatEveryFieldIsBornConfigurable())
+    if (structure->hasOnlyConfigurableFields())
         return true;
     bool hasFieldThatBinds = std::ranges::any_of(fields, [](const AOT::FieldData& field) {
         return field.attributes() & PropertyAttribute::DontDelete;
     });
     if (!hasFieldThatBinds)
-        structure->didFindEveryFieldBornConfigurable();
+        structure->setHasOnlyConfigurableFields();
     return !hasFieldThatBinds;
 }
 #endif
@@ -433,7 +497,7 @@ void ProxyObject::finishSet(JSGlobalObject* globalObject, JSValue trapResult, JS
     RETURN_IF_EXCEPTION(scope, void());
     if (!trapResultAsBool) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, makeString("Proxy object's 'set' trap returned falsy value for property '"_s, key.isSymbol() ? asSymbol(key)->tryGetDescriptiveString().value_or(String()) : String(name.impl()), '\''));
+            throwTypeError(globalObject, scope, makeString("Proxy object's 'set' trap returned falsy value for property '"_s, StringView(name.impl()), '\''));
         return;
     }
     RELEASE_AND_RETURN(scope, validatePositiveSetTrapResult(globalObject, target, name, putValue));
@@ -938,10 +1002,11 @@ JSC_DEFINE_HOST_FUNCTION(performProxyConstruct, (JSGlobalObject* globalObject, C
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue constructMethod = handler->getMethod(globalObject, callData, makeIdentifier(vm, "construct"_s), "'construct' property of a Proxy's handler should be callable"_s);
+    JSObject* constructMethod = proxy->getHandlerTrap(globalObject, handler, callData, vm.propertyNames->construct, ProxyObject::HandlerTrap::Construct);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
     JSObject* target = proxy->target();
-    if (constructMethod.isUndefined()) {
+    if (!constructMethod) {
         auto constructData = JSC::getConstructDataInline(target);
         RELEASE_ASSERT(constructData.type != CallData::Type::None);
         RELEASE_AND_RETURN(scope, JSValue::encode(constructAllowingPrimitiveResult(globalObject, target, constructData, ArgList(callFrame), callFrame->newTarget())));
@@ -1004,10 +1069,10 @@ bool ProxyObject::performDelete(JSGlobalObject* globalObject, PropertyName prope
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue deletePropertyMethod = handler->getMethod(globalObject, callData, makeIdentifier(vm, "deleteProperty"_s), "'deleteProperty' property of a Proxy's handler should be callable"_s);
+    JSObject* deletePropertyMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->deleteProperty, HandlerTrap::DeleteProperty);
     RETURN_IF_EXCEPTION(scope, false);
     JSObject* target = this->target();
-    if (deletePropertyMethod.isUndefined())
+    if (!deletePropertyMethod)
         RELEASE_AND_RETURN(scope, performDefaultDelete());
 
     auto arguments = WTF::toArray<EncodedJSValue>({
@@ -1108,10 +1173,10 @@ bool ProxyObject::performPreventExtensions(JSGlobalObject* globalObject)
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue preventExtensionsMethod = handler->getMethod(globalObject, callData, makeIdentifier(vm, "preventExtensions"_s), "'preventExtensions' property of a Proxy's handler should be callable"_s);
+    JSObject* preventExtensionsMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->preventExtensions, HandlerTrap::PreventExtensions);
     RETURN_IF_EXCEPTION(scope, false);
     JSObject* target = this->target();
-    if (preventExtensionsMethod.isUndefined())
+    if (!preventExtensionsMethod)
         RELEASE_AND_RETURN(scope, target->methodTable()->preventExtensions(target, globalObject));
 
     auto arguments = WTF::toArray<EncodedJSValue>({
@@ -1159,11 +1224,11 @@ bool ProxyObject::performIsExtensible(JSGlobalObject* globalObject)
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue isExtensibleMethod = handler->getMethod(globalObject, callData, makeIdentifier(vm, "isExtensible"_s), "'isExtensible' property of a Proxy's handler should be callable"_s);
+    JSObject* isExtensibleMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->isExtensible, HandlerTrap::IsExtensible);
     RETURN_IF_EXCEPTION(scope, false);
 
     JSObject* target = this->target();
-    if (isExtensibleMethod.isUndefined())
+    if (!isExtensibleMethod)
         RELEASE_AND_RETURN(scope, target->isExtensible(globalObject));
 
     auto arguments = WTF::toArray<EncodedJSValue>({
@@ -1228,10 +1293,10 @@ bool ProxyObject::performDefineOwnProperty(JSGlobalObject* globalObject, Propert
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue definePropertyMethod = handler->getMethod(globalObject, callData, vm.propertyNames->defineProperty, "'defineProperty' property of a Proxy's handler should be callable"_s);
+    JSObject* definePropertyMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->defineProperty, HandlerTrap::DefineProperty);
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (definePropertyMethod.isUndefined())
+    if (!definePropertyMethod)
         return performDefaultDefineOwnProperty();
 
     JSObject* descriptorObject = constructObjectFromPropertyDescriptor(globalObject, descriptor);
@@ -1311,22 +1376,9 @@ bool ProxyObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObje
 
 bool ProxyObject::forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode dontEnumPropertiesMode)
 {
-    JSValue handler = this->handler();
-    if (handler.isNull())
-        return false;
-
-    if (!isHandlerTrapsCacheValid(asObject(handler)))
-        return false;
-
-    if (m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::OwnKeys)] != invalidOffset)
-        return false;
-
-    if (dontEnumPropertiesMode == DontEnumPropertiesMode::Exclude) {
-        if (m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::GetOwnPropertyDescriptor)] != invalidOffset)
-            return false;
-    }
-
-    return true;
+    if (dontEnumPropertiesMode == DontEnumPropertiesMode::Exclude)
+        return isKnownToHaveNoHandlerTraps(HandlerTrap::OwnKeys, HandlerTrap::GetOwnPropertyDescriptor);
+    return isKnownToHaveNoHandlerTraps(HandlerTrap::OwnKeys);
 }
 
 // An 'ownKeys' trap cannot name them, so a caller that lists private names gets them from the object behind the proxies.
@@ -1390,7 +1442,7 @@ void ProxyObject::performGetOwnPropertyNames(JSGlobalObject* globalObject, Prope
         return;
     }
 
-    UncheckedKeyHashSet<UniquedStringImpl*> uncheckedResultKeys;
+    HashSet<UniquedStringImpl*> uncheckedResultKeys;
     forEachInArrayLike(globalObject, asObject(trapResult), [&] (JSValue value) -> bool {
         if (!value.isString() && !value.isSymbol()) {
             throwTypeError(globalObject, scope, "Proxy handler's 'ownKeys' method must return an array-like object containing only Strings and Symbols"_s);
@@ -1424,8 +1476,8 @@ void ProxyObject::performGetOwnPropertyNames(JSGlobalObject* globalObject, Prope
     PropertyNameArrayBuilder targetKeys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     target->methodTable()->getOwnPropertyNames(target, globalObject, targetKeys, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, void());
-    UncheckedKeyHashSet<UniquedStringImpl*> targetNonConfigurableKeys;
-    UncheckedKeyHashSet<UniquedStringImpl*> targetConfigurableKeys;
+    HashSet<UniquedStringImpl*> targetNonConfigurableKeys;
+    HashSet<UniquedStringImpl*> targetConfigurableKeys;
     for (const Identifier& ident : targetKeys) {
         PropertyDescriptor descriptor;
         bool isPropertyDefined = target->getOwnPropertyDescriptor(globalObject, ident.impl(), descriptor); 
@@ -1509,11 +1561,11 @@ bool ProxyObject::performSetPrototype(JSGlobalObject* globalObject, JSValue prot
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue setPrototypeOfMethod = handler->getMethod(globalObject, callData, makeIdentifier(vm, "setPrototypeOf"_s), "'setPrototypeOf' property of a Proxy's handler should be callable"_s);
+    JSObject* setPrototypeOfMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->setPrototypeOf, HandlerTrap::SetPrototypeOf);
     RETURN_IF_EXCEPTION(scope, false);
 
     JSObject* target = this->target();
-    if (setPrototypeOfMethod.isUndefined())
+    if (!setPrototypeOfMethod)
         RELEASE_AND_RETURN(scope, target->setPrototype(vm, globalObject, prototype, shouldThrowIfCantSet));
 
     auto arguments = WTF::toArray<EncodedJSValue>({
@@ -1573,11 +1625,11 @@ JSValue ProxyObject::performGetPrototype(JSGlobalObject* globalObject)
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
-    JSValue getPrototypeOfMethod = handler->getMethod(globalObject, callData, makeIdentifier(vm, "getPrototypeOf"_s), "'getPrototypeOf' property of a Proxy's handler should be callable"_s);
+    JSObject* getPrototypeOfMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->getPrototypeOf, HandlerTrap::GetPrototypeOf);
     RETURN_IF_EXCEPTION(scope, { });
 
     JSObject* target = this->target();
-    if (getPrototypeOfMethod.isUndefined()) 
+    if (!getPrototypeOfMethod)
         RELEASE_AND_RETURN(scope, target->getPrototype(globalObject));
 
     auto arguments = WTF::toArray<EncodedJSValue>({

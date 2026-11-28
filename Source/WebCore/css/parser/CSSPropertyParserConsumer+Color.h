@@ -54,7 +54,7 @@ struct CSSColorParsingOptions {
 };
 
 // MARK: Mode specific color settings.
-bool LEGACY_NODELETE isColorKeywordAllowed(CSSValueID, const CSSParserContext&);
+NODELETE bool isColorKeywordAllowed(CSSValueID, const CSSParserContext&);
 
 // MARK: <color> consuming (unresolved)
 std::optional<CSS::Color> consumeUnresolvedColor(CSSParserTokenRange&, CSS::PropertyParserState&, const CSSColorParsingOptions& = { });
@@ -62,10 +62,9 @@ std::optional<CSS::Color> consumeUnresolvedColor(CSSParserTokenRange&, CSS::Prop
 // MARK: <color> consuming (CSSValue)
 RefPtr<CSSValue> consumeColor(CSSParserTokenRange&, CSS::PropertyParserState&, const CSSColorParsingOptions& = { });
 
-// MARK: <color> consuming (raw)
-WebCore::Color consumeColorRaw(CSSParserTokenRange&, CSS::PropertyParserState&, const CSSColorParsingOptions&, CSS::PlatformColorResolutionState&);
-
 // MARK: <color> parsing (raw)
+
+std::optional<CSS::Color> parseUnresolvedColor(StringView, CSS::PropertyParserState&, const CSSColorParsingOptions& = { });
 
 // Parse with default options.
 // NOTE: Callers must include CSSPropertyParserConsumer+ColorInlines.h to use this.

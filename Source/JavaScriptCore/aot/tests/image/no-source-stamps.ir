@@ -1,0 +1,11 @@
+# A program without stamps, as every executable is, has no row of them
+# RUN: image ProgramTables
+# CHECK-LABEL: ProgramTables:
+# CHECK-NOT: sourceStamp
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}

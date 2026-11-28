@@ -37,18 +37,17 @@
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageSet);
 
-Ref<ImageSet> ImageSet::create(Vector<ImageWithScale>&& images, Vector<size_t>&& sortedIndices)
+Ref<ImageSet> ImageSet::create(Vector<ImageWithResolution>&& images, Vector<size_t>&& sortedIndices)
 {
     ASSERT(images.size() == sortedIndices.size());
     return adoptRef(*new ImageSet(WTF::move(images), WTF::move(sortedIndices)));
 }
 
-ImageSet::ImageSet(Vector<ImageWithScale>&& images, Vector<size_t>&& sortedIndices)
+ImageSet::ImageSet(Vector<ImageWithResolution>&& images, Vector<size_t>&& sortedIndices)
     : MultiImage { Type::ImageSet }
     , m_images { WTF::move(images) }
     , m_sortedIndices { WTF::move(sortedIndices) }
@@ -73,7 +72,7 @@ Ref<CSSValue> ImageSet::computedStyleValue(const Style::ComputedStyle& style) co
     auto builder = WTF::map<CSSValueListBuilderInlineCapacity>(m_images, [&](auto& image) -> Ref<CSSValue> {
         return CSSImageSetOptionValue::create(
             protect(image.image)->computedStyleValue(style),
-            toCSS(image.scaleFactor, style),
+            toCSS(image.resolution, style),
             toCSS(image.mimeType, style)
         );
     });
@@ -85,7 +84,7 @@ Ref<DeprecatedCSSOMValue> ImageSet::computedStyleDeprecatedCSSOMValue(CSSValuePo
     return computedStyleValue(style)->createDeprecatedCSSOMWrapper(owner);
 }
 
-ImageWithScale ImageSet::selectBestFitImage(const Document& document)
+ImageWithResolution ImageSet::selectBestFitImage(const Document& document)
 {
     updateDeviceScaleFactor(document);
 
@@ -97,24 +96,24 @@ ImageWithScale ImageSet::selectBestFitImage(const Document& document)
     return m_bestFitImage;
 }
 
-ImageWithScale ImageSet::bestImageForScaleFactor()
+ImageWithResolution ImageSet::bestImageForScaleFactor()
 {
-    ImageWithScale result;
+    ImageWithResolution result;
     for (auto index : m_sortedIndices) {
         const auto& image = m_images[index];
         if (image.mimeType && !MIMETypeRegistry::isSupportedImageMIMEType(image.mimeType->parameters.value))
             continue;
-        if (!result.image->isInvalidImage() && result.scaleFactor == image.scaleFactor)
+        if (!result.image->isInvalidImage() && result.resolution == image.resolution)
             continue;
-        if (image.scaleFactor >= m_deviceScaleFactor)
+        if (image.resolution >= m_deviceScaleFactor)
             return image;
 
         result = image;
     }
 
-    ASSERT(result.scaleFactor >= 0);
-    if (result.image->isInvalidImage() || !result.scaleFactor.value)
-        result = ImageWithScale { InvalidImage::create(), 1, std::nullopt };
+    ASSERT(result.resolution >= 0);
+    if (result.image->isInvalidImage() || !result.resolution.value)
+        result = ImageWithResolution { InvalidImage::create(), 1, std::nullopt };
 
     return result;
 }
@@ -131,5 +130,4 @@ void ImageSet::updateDeviceScaleFactor(const Document& document)
     m_accessedBestFitImage = false;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -1,0 +1,44 @@
+# the call names its callee, the callee writes what it returns, and Link has not established it: what is written is a guess, as it is of a parameter. Once nothing was expected of such a result
+# function pick(box): Point { return box.point; }  function sum(box) { const p = pick(box); return [p.x, p.y]; }
+# RUN: walk f2 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f2:Body
+# CHECK: [[result]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK: = ShapeTest [[result]] layouts=[L0]
+# CHECK: = GetSlot {{*}}key="x"
+# CHECK: = GetSlot {{*}}key="y"
+# The closed arm stands beside them
+# RUN(CLOSED): walk f2 mechanisms=none+TypedOperations+Guesses
+# CLOSED-COUNT-1: = PropGet {{*}}key="x"
+# CLOSED-COUNT-1: = PropGet {{*}}key="y"
+# RUN(VERIFIED): same-bytes-alone f2:Body
+# VERIFIED: f2:Body same:
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="x"
+    PropDefine v2, v1 key="y"
+    v5 = FinishObject v2
+    v6 = NewClosure function=f2
+    v7 = Call v1, -, v5, v6
+    Return v7
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="point"
+    v2 = Convert v1 declared={type=L0}
+    Return v2
+}
+function f2 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = PropGet v1 key="x"
+    v3 = PropGet v1 key="y"
+    v4 = NewArray v2, v3
+    Return v4
+}

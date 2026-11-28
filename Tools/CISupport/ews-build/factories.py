@@ -24,6 +24,7 @@
 from buildbot.process import factory
 from buildbot.steps import trigger
 
+from . import relevance
 from .steps import *
 from Shared.steps import *
 
@@ -35,15 +36,17 @@ class Factory(factory.BuildFactory):
     skipBuildIfNoResult = True
     branches = None
     excluded_branches = [r'webkitglib/\d+\.\d+']
+    excludeFeatureBranches = True
     requiresUserValidation = False
+    changeRelevance = None
 
-    def __init__(self, platform, configuration=None, architectures=None, buildOnly=True, triggers=None, triggered_by=None, remotes=None, additionalArguments=None, checkRelevance=False, rebuild_without_change_on_builder=False, deployment_target=None, **kwargs):
+    def __init__(self, platform, configuration=None, architectures=None, buildOnly=True, triggers=None, triggered_by=None, remotes=None, additionalArguments=None, rebuild_without_change_on_builder=False, deployment_target=None, **kwargs):
         factory.BuildFactory.__init__(self)
         self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architectures=architectures, buildOnly=buildOnly, triggers=triggers, triggered_by=triggered_by, remotes=remotes, additionalArguments=additionalArguments, rebuild_without_change_on_builder=rebuild_without_change_on_builder, deployment_target=deployment_target))
-        if checkRelevance:
-            self.addStep(CheckChangeRelevance())
+        if self.changeRelevance:
+            self.addStep(CheckChangeRelevance(self.changeRelevance))
         excluded = [] if platform in LINUX_PLATFORMS else self.excluded_branches
-        self.addStep(ValidateChange(branches=self.branches, excluded_branches=excluded))
+        self.addStep(ValidateChange(branches=self.branches, excluded_branches=excluded, excludeFeatureBranches=self.excludeFeatureBranches))
         self.addStep(PrintConfiguration())
         self.addStep(CleanGitRepo())
         self.addStep(CleanWebKitBuildIfBaseChanged())
@@ -72,7 +75,7 @@ class StyleFactory(factory.BuildFactory):
     def __init__(self, platform, configuration=None, architectures=None, triggers=None, remotes=None, additionalArguments=None, **kwargs):
         factory.BuildFactory.__init__(self)
         self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=triggers, remotes=remotes, additionalArguments=additionalArguments))
-        self.addStep(ValidateChange())
+        self.addStep(ValidateChange(excludeFeatureBranches=False))
         self.addStep(PrintConfiguration())
         self.addStep(CleanGitRepo())
         self.addStep(SetCredentialHelper())
@@ -89,11 +92,12 @@ class StyleFactory(factory.BuildFactory):
 class SaferCPPStaticAnalyzerFactory(factory.BuildFactory):
     findModifiedLayoutTests = False
     excluded_branches = [r'webkitglib/\d+\.\d+']
+    changeRelevance = relevance.SAFER_CPP
 
-    def __init__(self, platform, configuration=None, architectures=None, buildOnly=True, triggers=None, triggered_by=None, remotes=None, additionalArguments=None, checkRelevance=False, **kwargs):
+    def __init__(self, platform, configuration=None, architectures=None, buildOnly=True, triggers=None, triggered_by=None, remotes=None, additionalArguments=None, **kwargs):
         factory.BuildFactory.__init__(self)
         self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architectures=architectures, buildOnly=buildOnly, triggers=triggers, triggered_by=triggered_by, remotes=remotes, additionalArguments=additionalArguments))
-        self.addStep(CheckChangeRelevance())
+        self.addStep(CheckChangeRelevance(self.changeRelevance))
         excluded = [] if platform in LINUX_PLATFORMS else self.excluded_branches
         self.addStep(ValidateChange(excluded_branches=excluded))
         self.addStep(PrintConfiguration())
@@ -121,37 +125,43 @@ class SaferCPPStaticAnalyzerFactory(factory.BuildFactory):
 
 class BindingsFactory(Factory):
     excluded_branches = []
+    excludeFeatureBranches = False
+    changeRelevance = relevance.BINDINGS_TESTS
 
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArguments=additionalArguments, checkRelevance=True)
-        self.addStep(ValidateChange(addURLs=False))
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArguments=additionalArguments)
+        self.addStep(ValidateChange(addURLs=False, excludeFeatureBranches=self.excludeFeatureBranches))
         self.addStep(RunBindingsTests())
 
 
 class WebKitPerlFactory(Factory):
     excluded_branches = []
+    excludeFeatureBranches = False
 
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, **kwargs):
         Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArguments=additionalArguments)
-        self.addStep(ValidateChange(addURLs=False))
+        self.addStep(ValidateChange(addURLs=False, excludeFeatureBranches=self.excludeFeatureBranches))
         self.addStep(RunWebKitPerlTests())
 
 
 class WebKitPyFactory(Factory):
     excluded_branches = []
+    excludeFeatureBranches = False
+    changeRelevance = relevance.WEBKITPY_TESTS
 
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArgument=additionalArguments, checkRelevance=True)
-        self.addStep(ValidateChange(addURLs=False))
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArgument=additionalArguments)
+        self.addStep(ValidateChange(addURLs=False, excludeFeatureBranches=self.excludeFeatureBranches))
         self.addStep(RunWebKitPyTests())
         self.addStep(SetBuildSummary())
 
 
 class BuildFactory(Factory):
     skipUpload = False
+    changeRelevance = relevance.BUILD
 
-    def __init__(self, platform, configuration=None, architectures=None, triggers=None, additionalArguments=None, checkRelevance=False, rebuild_without_change_on_builder=False, deployment_target=None, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=triggers, additionalArguments=additionalArguments, checkRelevance=checkRelevance, rebuild_without_change_on_builder=rebuild_without_change_on_builder, deployment_target=deployment_target)
+    def __init__(self, platform, configuration=None, architectures=None, triggers=None, additionalArguments=None, rebuild_without_change_on_builder=False, deployment_target=None, **kwargs):
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=triggers, additionalArguments=additionalArguments, rebuild_without_change_on_builder=rebuild_without_change_on_builder, deployment_target=deployment_target)
         self.addStep(KillOldProcesses())
         if platform == 'gtk':
             self.addStep(InstallGtkDependencies())
@@ -176,8 +186,8 @@ class TestFactory(Factory):
         self.addStep(DownloadBuiltProduct())
         self.addStep(ExtractBuiltProduct())
 
-    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, checkRelevance=False, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments, checkRelevance=checkRelevance)
+    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, **kwargs):
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments)
         if platform == 'gtk':
             self.addStep(InstallGtkDependencies())
         elif platform == 'wpe':
@@ -190,6 +200,9 @@ class TestFactory(Factory):
             self.addStep(RunWebKitTestsInStressMode(num_iterations=10, layout_test_class=self.LayoutTestClass))
             self.addStep(self.LayoutTestClass())
         if self.APITestClass:
+            if platform in ['gtk', 'wpe']:
+                self.addStep(FindChangedAPITests())
+                self.addStep(RunAPITestsInStressMode())
             self.addStep(self.APITestClass())
         if self.willTriggerCrashLogSubmission:
             self.addStep(TriggerCrashLogSubmission())
@@ -201,8 +214,8 @@ class StressTestFactory(TestFactory):
     findModifiedLayoutTests = True
     skipBuildIfNoResult = True
 
-    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, checkRelevance=False, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments, checkRelevance=checkRelevance)
+    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, **kwargs):
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments)
         self.addStep(KillOldProcesses())
         self.getProduct()
         self.addStep(WaitForCrashCollection())
@@ -213,16 +226,20 @@ class StressTestFactory(TestFactory):
 
 
 class JSCBuildFactory(Factory):
+    changeRelevance = relevance.JSC
+
     def __init__(self, platform, configuration='release', architectures=None, triggers=None, remotes=None, additionalArguments=None, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=triggers, remotes=remotes, additionalArguments=additionalArguments, checkRelevance=True)
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=triggers, remotes=remotes, additionalArguments=additionalArguments)
         self.addStep(KillOldProcesses())
         self.addStep(ValidateChange(addURLs=False))
         self.addStep(CompileJSC())
 
 
 class JSCBuildAndTestsFactory(Factory):
+    changeRelevance = relevance.JSC
+
     def __init__(self, platform, configuration='release', architectures=None, remotes=None, additionalArguments=None, runTests='true', **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments, checkRelevance=True)
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments)
         self.addStep(KillOldProcesses())
         self.addStep(ValidateChange(addURLs=False))
         self.addStep(CompileJSC(skipUpload=True))
@@ -231,9 +248,14 @@ class JSCBuildAndTestsFactory(Factory):
 
 
 class JSCBuildO3AndTestsFactory(Factory):
+    changeRelevance = relevance.JSC
+
     def __init__(self, platform, configuration='debug', architectures=None, remotes=None, additionalArguments=None, runTests='true', **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments, checkRelevance=True)
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments)
         self.addStep(KillOldProcesses())
+        if '--cmake' in (additionalArguments or []):
+            self.addStep(InstallCMake())
+            self.addStep(InstallNinja())
         self.addStep(ValidateChange(addURLs=False))
         self.addStep(SetO3OptimizationLevel())
         self.addStep(CompileJSC(skipUpload=True))
@@ -241,8 +263,10 @@ class JSCBuildO3AndTestsFactory(Factory):
 
 
 class JSCTestsFactory(Factory):
+    changeRelevance = relevance.JSC
+
     def __init__(self, platform, configuration='release', architectures=None, remotes=None, additionalArguments=None, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments, checkRelevance=True)
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments)
         self.addStep(KillOldProcesses())
         self.addStep(DownloadBuiltProduct())
         self.addStep(ExtractBuiltProduct())
@@ -251,6 +275,17 @@ class JSCTestsFactory(Factory):
 
 class APITestsFactory(TestFactory):
     APITestClass = RunAPITests
+
+
+class WebDriverTestsFactory(TestFactory):
+    changeRelevance = relevance.WEBDRIVER_TESTS
+
+    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, **kwargs):
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments)
+        self.addStep(KillOldProcesses())
+        self.getProduct()
+        self.addStep(RunWebDriverTests())
+        self.addStep(SetBuildSummary())
 
 
 class iOSBuildFactory(BuildFactory):
@@ -288,9 +323,6 @@ class macOSBuildFactory(BuildFactory):
 class macOSBuildOnlyFactory(BuildFactory):
     skipUpload = True
 
-    def __init__(self, platform, configuration=None, architectures=None, triggers=None, additionalArguments=None, checkRelevance=True, **kwargs):
-        super().__init__(platform=platform, configuration=configuration, architectures=architectures, triggers=triggers, additionalArguments=additionalArguments, checkRelevance=checkRelevance, **kwargs)
-
 
 class watchOSBuildFactory(BuildFactory):
     skipUpload = True
@@ -304,9 +336,7 @@ class macOSWK1Factory(TestFactory):
     LayoutTestClass = RunWebKit1Tests
     findModifiedLayoutTests = True
     willTriggerCrashLogSubmission = True
-
-    def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, checkRelevance=False, **kwargs):
-        super(macOSWK1Factory, self).__init__(platform=platform, configuration=configuration, architectures=architectures, additionalArguments=additionalArguments, checkRelevance=True, **kwargs)
+    changeRelevance = relevance.WK1_TESTS
 
 
 class macOSWK2Factory(TestFactory):
@@ -319,8 +349,8 @@ class macOSSiteIsolationFactory(TestFactory):
     findModifiedLayoutTests = True
     willTriggerCrashLogSubmission = True
 
-    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, checkRelevance=False, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments, checkRelevance=checkRelevance)
+    def __init__(self, platform, configuration=None, architectures=None, triggered_by=None, additionalArguments=None, **kwargs):
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggered_by=triggered_by, additionalArguments=additionalArguments)
         self.addStep(KillOldProcesses())
         self.getProduct()
         self.addStep(WaitForCrashCollection())
@@ -366,9 +396,11 @@ class WPETestsFactory(TestFactory):
 
 
 class ServicesFactory(Factory):
+    changeRelevance = relevance.SERVICES
+
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, **kwargs):
-        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArguments=additionalArguments, checkRelevance=True)
-        self.addStep(ValidateChange(verifyBugClosed=False, addURLs=False))
+        Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArguments=additionalArguments)
+        self.addStep(ValidateChange(verifyPRClosed=False, addURLs=False))
         self.addStep(RunBuildWebKitOrgUnitTests())
         self.addStep(RunBuildbotCheckConfigForBuildWebKit())
         self.addStep(RunEWSUnitTests())
@@ -378,10 +410,12 @@ class ServicesFactory(Factory):
 
 
 class MergeQueueFactoryBase(factory.BuildFactory):
+    excludeFeatureBranches = True
+
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, deployment_target=None, **kwargs):
         super(MergeQueueFactoryBase, self).__init__()
         self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=None, remotes=None, additionalArguments=additionalArguments, deployment_target=deployment_target))
-        self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, enableSkipEWSLabel=False))
+        self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, enableSkipEWSLabel=False, excludeFeatureBranches=self.excludeFeatureBranches))
         self.addStep(DetermineLabelOwner())
         self.addStep(ValidateCommitterAndReviewer())
         self.addStep(PrintConfiguration())
@@ -415,6 +449,7 @@ class MergeQueueFactory(MergeQueueFactoryBase):
         self.addStep(CheckStatusOnEWSQueues())
         self.addStep(RunWebKitTests())
 
+        self.addStep(AcquireLandingLock())
         self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, enableSkipEWSLabel=False))
         self.addStep(Canonicalize())
         self.addStep(PushPullRequestBranch())
@@ -424,11 +459,14 @@ class MergeQueueFactory(MergeQueueFactoryBase):
 
 
 class UnsafeMergeQueueFactory(MergeQueueFactoryBase):
+    excludeFeatureBranches = False
+
     def __init__(self, platform, **kwargs):
         super(UnsafeMergeQueueFactory, self).__init__(platform, **kwargs)
 
+        self.addStep(AcquireLandingLock())
         self.addStep(Canonicalize())
-        self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, enableSkipEWSLabel=False))
+        self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, enableSkipEWSLabel=False, excludeFeatureBranches=self.excludeFeatureBranches))
         self.addStep(PushPullRequestBranch())
         self.addStep(UpdatePullRequest())
         self.addStep(PushCommitToWebKitRepo())

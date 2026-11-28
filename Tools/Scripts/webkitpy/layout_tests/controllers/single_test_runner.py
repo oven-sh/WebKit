@@ -32,6 +32,7 @@ import os
 import re
 from collections import deque
 
+import attr
 from webkitcorepy import string_utils
 
 from webkitpy.common import read_checksum_from_png
@@ -51,6 +52,19 @@ _testharness_result_line_pattern = re.compile(r"^(PASS|FAIL|TIMEOUT|NOTRUN|PRECO
 
 # Only imported WPT tests get order-insensitive comparison (see _compare_text).
 _imported_wpt_dir = "imported/w3c/web-platform-tests/"
+
+# testharnessreport.js times a test out at this fraction of the timeout it is given.
+_testharness_timeout_fraction = 0.9
+
+# Log the drivers' skipIfDisabled warnings, since the console shows no other driver stderr.
+_driver_warning_prefix = 'WARNING: '
+_driver_warning_topics = ('skipIfDisabled', '--disabled-keys')
+
+
+class _SkippedByDisabledKey(Exception):
+    def __init__(self, key):
+        super().__init__(key)
+        self.key = key
 
 
 def run_single_test(port, options, results_directory, worker_name, driver, test_input, stop_when_done):
@@ -162,7 +176,63 @@ class SingleTestRunner(object):
 
         return DriverInput(self._test_name, self._timeout, image_hash, self._should_run_pixel_test, self._should_dump_jsconsolelog_in_stderr, self._options.additional_header)
 
+    def _should_try_short_timeout(self, short_timeout, expected_results):
+        if not short_timeout or int(self._timeout) <= short_timeout:
+            return False
+        if self._port.get_option('no_timeout') or self._port.get_option('reset_results') or self._port.get_option('site_isolation'):
+            return False
+        test = self._test_input.test
+        if self._port.get_option('new_test_results') and not test.reference_files and (not test.expected_text_path or (self._should_run_pixel_test and not test.expected_image_path)):
+            return False
+        if test_expectations.PASS not in expected_results:
+            return True
+        if expected_results != {test_expectations.PASS}:
+            return False
+        return bool(test.expected_text_path) and b'Harness Error (TIMEOUT)' in self._filesystem.read_binary_file(test.expected_text_path)
+
+    def _move_results(self, source, destination):
+        for path in self._filesystem.files_under(source):
+            target = self._filesystem.join(destination, self._filesystem.relpath(path, source))
+            self._filesystem.maybe_make_directory(self._filesystem.dirname(target))
+            self._filesystem.move(path, target)
+
     def run(self):
+        short_timeout = self._port.get_option('expected_failure_time_out_ms')
+        expected_results = self._test_input.expected_results or {test_expectations.PASS}
+        if not self._should_try_short_timeout(short_timeout, expected_results):
+            return self._run()
+
+        test_input, results_directory = self._test_input, self._results_directory
+        with self._filesystem.mkdtemp() as short_results_directory:
+            self._test_input = attr.evolve(test_input, timeout=str(short_timeout))
+            self._results_directory = short_results_directory
+            try:
+                short_result = self._run()
+            finally:
+                self._test_input, self._results_directory = test_input, results_directory
+
+            cut_short = short_result.type == test_expectations.TIMEOUT or (short_result.type != test_expectations.CRASH and short_result.test_run_time >= _testharness_timeout_fraction * short_timeout / 1000)
+            if not cut_short or test_expectations.TestExpectations.result_was_expected(short_result.type, expected_results, False, False):
+                self._move_results(short_results_directory, results_directory)
+                return short_result
+
+        if any(failure.driver_needs_restart() for failure in short_result.failures):
+            self._driver.stop()
+        _log.debug('{} had an unexpected result with a {}ms timeout, running it again with {}ms'.format(self._test_name, short_timeout, self._timeout))
+        result = self._run()
+        result.test_run_time += short_result.test_run_time
+        return result
+
+    def _run(self):
+        try:
+            return self._run_by_test_kind()
+        except _SkippedByDisabledKey as skipped:
+            result = TestResult(self._test_input)
+            result.type = test_expectations.SKIP
+            result.skipped_by_disabled_key = skipped.key
+            return result
+
+    def _run_by_test_kind(self):
         self_comparison_header = self._port.get_option('self_compare_with_header')
         if self_comparison_header:
             return self._run_self_comparison_test(self_comparison_header)
@@ -186,8 +256,18 @@ class SingleTestRunner(object):
             return self._run_rebaseline()
         return self._run_compare_test()
 
+    def _run_driver(self, driver_input):
+        driver_output = self._driver.run_test(driver_input, self._stop_when_done)
+        if driver_output.error and any(topic in driver_output.error for topic in _driver_warning_topics):
+            for line in driver_output.error.splitlines():
+                if line.startswith(_driver_warning_prefix) and any(topic in line for topic in _driver_warning_topics):
+                    _log.warning(line)
+        if driver_output.skipped and not driver_output.crash and not driver_output.timeout:
+            raise _SkippedByDisabledKey(driver_output.skipped_key)
+        return driver_output
+
     def _run_compare_test(self):
-        driver_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
+        driver_output = self._run_driver(self._driver_input())
         expected_driver_output = self._expected_driver_output()
 
         if self._options.ignore_metrics:
@@ -213,7 +293,7 @@ class SingleTestRunner(object):
         if additional_header is not None:
             driver_input.additional_header = additional_header
 
-        driver_output = self._driver.run_test(driver_input, self._stop_when_done)
+        driver_output = self._run_driver(driver_input)
         if self._options.ignore_metrics:
             driver_output.strip_metrics()
 
@@ -230,7 +310,7 @@ class SingleTestRunner(object):
         return TestResult(self._test_input, failures, driver_output.test_time, driver_output.has_stderr(), pid=driver_output.pid)
 
     def _run_rebaseline(self):
-        driver_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
+        driver_output = self._run_driver(self._driver_input())
         failures = self._handle_error(driver_output)
         test_result_writer.write_test_result(self._filesystem, self._port, self._results_directory, self._test_name, driver_output, None, failures)
         # FIXME: It the test crashed or timed out, it might be better to avoid
@@ -474,7 +554,7 @@ class SingleTestRunner(object):
         return failures
 
     def _run_reftest(self):
-        test_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
+        test_output = self._run_driver(self._driver_input())
         test_output.strip_patterns(self._port.logging_patterns_to_strip())
         test_output.strip_text_start_if_needed(self._port.logging_detectors_to_strip_text_start(self._driver_input().test_name))
         test_output.strip_stderror_patterns(self._port.stderr_patterns_to_strip())
@@ -507,7 +587,7 @@ class SingleTestRunner(object):
         for expectation, reference_filename in putAllMismatchBeforeMatch(self._reference_files):
             reference_test_name = self._port.relative_test_filename(reference_filename)
             reference_test_names.append(reference_test_name)
-            reference_output = self._driver.run_test(DriverInput(reference_test_name, self._timeout, None, should_run_pixel_test=True), self._stop_when_done)
+            reference_output = self._run_driver(DriverInput(reference_test_name, self._timeout, None, should_run_pixel_test=True, is_reference=True))
             reference_output.strip_patterns(self._port.logging_patterns_to_strip())
             reference_output.strip_text_start_if_needed(self._port.logging_detectors_to_strip_text_start(self._driver_input().test_name))
             reference_output.strip_stderror_patterns(self._port.stderr_patterns_to_strip())
@@ -532,9 +612,9 @@ class SingleTestRunner(object):
         driver_input.should_run_pixel_test = True
         driver_input.force_dump_pixels = True
 
-        reference_output = self._driver.run_test(driver_input, self._stop_when_done)
+        reference_output = self._run_driver(driver_input)
         driver_input.self_comparison_header = header
-        test_output = self._driver.run_test(driver_input, self._stop_when_done)
+        test_output = self._run_driver(driver_input)
 
         test_full_path = self._port.abspath_for_test(self._test_name)
         test_result = self._compare_output_with_reference(reference_output, test_output, test_full_path, False, allow_fuzzy_tolerance=False)
@@ -545,9 +625,9 @@ class SingleTestRunner(object):
 
     def _run_self_comparison_without_reference_test(self, header):
         driver_input = self._driver_input()
-        expected_driver_output = self._driver.run_test(driver_input, self._stop_when_done)
+        expected_driver_output = self._run_driver(driver_input)
         driver_input.self_comparison_header = header
-        driver_output = self._driver.run_test(driver_input, self._stop_when_done)
+        driver_output = self._run_driver(driver_input)
 
         for output in (expected_driver_output, driver_output):
             if self._options.ignore_metrics:

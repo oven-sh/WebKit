@@ -143,12 +143,15 @@ final class WebBackForwardList {
             return nil
         }
 
-        // FIXME(rdar://162357139): We can't use == here
-        assert(
-            WebKit.WebBackForwardListItem.itemForID(identifier) == nil
-                || contentsMatch(WebKit.WebBackForwardListItem.itemForID(identifier).pageID(), page.identifier())
-        )
-        return WebKit.WebBackForwardListItem.itemForID(identifier)
+        guard let item = WebKit.WebBackForwardListItem.itemForID(identifier) else {
+            return nil
+        }
+        // The disable switch falls back to resolving against the process-global map without regard for
+        // which page owns the item.
+        if WebKit.SecurityFlags.radar183491061() && !contentsMatch(item.pageID(), page.identifier()) {
+            return nil
+        }
+        return item
     }
 
     @used
@@ -1014,14 +1017,18 @@ final class WebBackForwardList {
         return result
     }
 
-    private func addChildItem(parentFrameID: WebCore.FrameIdentifier, frameState: WebKit.RefFrameState) {
+    private func addChildItem(
+        parentFrameID: WebCore.FrameIdentifier,
+        frameState: WebKit.RefFrameState
+    ) -> WebCore.BackForwardItemIdentifier? {
         guard let currentItem = currentEntry() else {
-            return
+            return nil
         }
         guard let parentItem = currentItem.mainFrameItem().childItemForFrameID(parentFrameID) else {
-            return
+            return nil
         }
         parentItem.setChild(consuming: frameState)
+        return currentItem.identifier()
     }
 
     func setBackForwardItemIdentifier(frameState: WebKit.FrameState, itemID: WebCore.BackForwardItemIdentifier) {
@@ -1095,7 +1102,6 @@ final class WebBackForwardList {
     func backForwardAddItemShared(
         connection: IPC.Connection,
         navigatedFrameState: WebKit.RefFrameState,
-        loadedWebArchive: WebKit.LoadedWebArchive,
         browsingContextGroup: WebKit.BrowsingContextGroup
     ) {
         // Also reached from C++ (WebPageProxy::backForwardAddItemShared), so this rather than
@@ -1104,7 +1110,6 @@ final class WebBackForwardList {
             try addItemInternal(
                 connection: connection,
                 navigatedFrameState: navigatedFrameState,
-                loadedWebArchive: loadedWebArchive,
                 browsingContextGroup: browsingContextGroup
             )
         }
@@ -1113,7 +1118,6 @@ final class WebBackForwardList {
     private func addItemInternal(
         connection: IPC.Connection,
         navigatedFrameState: WebKit.RefFrameState,
-        loadedWebArchive: WebKit.LoadedWebArchive,
         browsingContextGroup: WebKit.BrowsingContextGroup
     ) throws(InvalidMessage) {
         let process = WebKit.WebProcessProxy.fromConnection(connection)
@@ -1162,7 +1166,11 @@ final class WebBackForwardList {
         if targetFrame.isPendingInitialHistoryItem() {
             targetFrame.setIsPendingInitialHistoryItem(false)
             if let parent = targetFrame.parentFrame() {
-                addChildItem(parentFrameID: parent.frameID(), frameState: navigatedFrameState)
+                // The child now has the identifier of the item it was added to. Updates from the frame's process have to
+                // carry it to find the child.
+                if let itemID = addChildItem(parentFrameID: parent.frameID(), frameState: navigatedFrameState) {
+                    sendDidAddHistoryItemToBackForwardItem(process.ptr(), targetFrame.frameID(), navigatedFrameState.ptr(), itemID)
+                }
             }
             return
         }
@@ -1180,10 +1188,13 @@ final class WebBackForwardList {
             )
             .ptr()
         item.setResourceDirectoryURL(consuming: webPageProxy.currentResourceDirectoryURL())
-        item.setEnhancedSecurity(process.ptr().enhancedSecurity())
-        if loadedWebArchive == WebKit.LoadedWebArchive.Yes {
-            item.setDataStoreForWebArchive(process.ptr().websiteDataStore())
+        var enhancedSecurity = process.ptr().enhancedSecurity()
+        if !targetFrame.isMainFrame() && webPageProxy.preferences().siteIsolationSharedProcessEnhancedSecurityEnabled(),
+            let mainFrame = webPageProxy.mainFrame()
+        {
+            enhancedSecurity = frameProcessEnhancedSecurity(mainFrame)
         }
+        item.setEnhancedSecurity(enhancedSecurity)
         addItem(newItem: item)
     }
 
@@ -1203,7 +1214,6 @@ final class WebBackForwardList {
             try addItemInternal(
                 connection: connection,
                 navigatedFrameState: navigatedFrameState,
-                loadedWebArchive: page.didLoadWebArchive() ? .Yes : .No,
                 browsingContextGroup: page.browsingContextGroup()
             )
         }
@@ -1315,9 +1325,13 @@ final class WebBackForwardList {
     func backForwardGoToItem(connection: IPC.Connection, itemID: WebCore.BackForwardItemIdentifier) throws(InvalidMessage) {
         // On process swap, we tell the previous process to ignore the load, which causes it to restore its current back forward item to its previous
         // value. Since the load is really going on in a new provisional process, we want to ignore such requests from the committed process.
-        // Any real new load in the committed process would have cleared m_provisionalPage.
-        if let webPageProxy = page.get(), webPageProxy.hasProvisionalPage() {
-            return
+        // The first message naming the target of a main frame traversal the UI process dispatched to the sender is
+        // that traversal's answer, not such a restore, so accept it even with a provisional page.
+        if let webPageProxy = page.get() {
+            let answersDispatchedTraversal = webPageProxy.takeCursorMoveForDispatchedTraversal(connection, itemID)
+            if webPageProxy.hasProvisionalPage() && !answersDispatchedTraversal {
+                return
+            }
         }
 
         try goToItemInternal(itemID: itemID)
@@ -1380,13 +1394,15 @@ final class WebBackForwardList {
         connection: IPC.Connection,
         frameID: WebCore.FrameIdentifier
     ) -> WebKit.VectorRefFrameState {
-        guard frameOnPage(frameID) != nil else {
+        guard let webPageProxy = page.get(), frameOnPage(frameID) != nil else {
             return WebKit.VectorRefFrameState(array: [])
         }
+
+        let process = WebKit.WebProcessProxy.fromConnection(connection)
         var frameStates: [WebKit.FrameState] = []
         for item in entries {
             if let frameItem = item.mainFrameItem().childItemForFrameID(frameID) {
-                frameStates.append(frameItem.copyFrameStateWithChildren().ptr())
+                frameStates.append(frameItem.copyFrameStateWithChildrenForProcess(webPageProxy, process.ptr()).ptr())
             }
         }
         return WebKit.VectorRefFrameState(array: frameStates)
@@ -1398,16 +1414,17 @@ final class WebBackForwardList {
         delta: Int32,
         frameID: WebCore.FrameIdentifier
     ) throws(InvalidMessage) -> WebKit.RefPtrFrameState {
-        try itemAtIndexForWebContent(delta: delta, frameID: frameID)
+        try itemAtIndexForWebContent(connection: connection, delta: delta, frameID: frameID)
     }
 
     private func itemAtIndexForWebContent(
+        connection: IPC.Connection,
         delta: Int32,
         frameID: WebCore.FrameIdentifier
     ) throws(InvalidMessage) -> WebKit.RefPtrFrameState {
         try messageCheck { delta != Int32.min }
 
-        guard let frame = frameOnPage(frameID) else {
+        guard let webPageProxy = page.get(), let frame = frameOnPage(frameID) else {
             return WebKit.RefPtrFrameState()
         }
 
@@ -1415,14 +1432,15 @@ final class WebBackForwardList {
         guard let item = entryAtDeltaFromCurrentIndex(delta: delta, allowSkipping: false) else {
             return WebKit.RefPtrFrameState()
         }
+        let process = WebKit.WebProcessProxy.fromConnection(connection)
         guard let frameItem = item.mainFrameItem().childItemForFrameID(frameID) else {
             // Entries can lack the main frame's current ID (after session restore or a process swap).
             guard frame.isMainFrame() else {
                 return WebKit.RefPtrFrameState()
             }
-            return WebKit.RefPtrFrameState(item.copyMainFrameStateWithChildren().ptr())
+            return WebKit.RefPtrFrameState(item.mainFrameItem().copyFrameStateWithChildrenForProcess(webPageProxy, process.ptr()).ptr())
         }
-        return WebKit.RefPtrFrameState(frameItem.copyFrameStateWithChildren().ptr())
+        return WebKit.RefPtrFrameState(frameItem.copyFrameStateWithChildrenForProcess(webPageProxy, process.ptr()).ptr())
     }
 
     @MainActor

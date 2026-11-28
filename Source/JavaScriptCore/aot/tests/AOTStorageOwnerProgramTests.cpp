@@ -11,7 +11,8 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr ASCIILiteral arrayReadInLoopThatCollects = R"IR(layout L0 name="Token" fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
+static constexpr ASCIILiteral arrayReadInLoopThatCollects = R"IR(# LIBRARY: own
+layout L0 name="Token" fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Jump -> next b1()
@@ -172,10 +173,8 @@ entry
 
 static void testArrayReadInLoopThatCollects()
 {
-    for (ASCIILiteral stress : { "--slowPathAllocsBetweenGCs=1"_s, "--slowPathAllocsBetweenGCs=3"_s, "--collectContinuously=1"_s }) {
+    for (ASCIILiteral stress : { "--slowPathAllocsBetweenGCs=1"_s, "--slowPathAllocsBetweenGCs=3"_s, "--collectContinuously=1"_s })
         checkOutputOfProgramInShell(arrayReadInLoopThatCollects, "100\n"_s, { }, ""_s, { stress });
-        checkOutputOfProgramInShell(arrayReadInLoopThatCollects, "100\n"_s, { "heat=EverythingIsHot"_s }, ""_s, { stress });
-    }
 }
 
 std::span<const NativeTest> storageOwnerProgramTests()

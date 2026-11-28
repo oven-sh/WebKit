@@ -29,8 +29,7 @@
 #include <WebCore/FontSelectionAlgorithm.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'font-style'> = normal | italic | oblique <angle [-90deg,90deg]>?
 // https://drafts.csswg.org/css-fonts-4/#propdef-font-style
@@ -87,16 +86,15 @@ private:
 
 template<> struct CSSValueConversion<FontStyle> { FontStyle operator()(BuilderState&, const CSSValue&); };
 // `FontStyle` is special-cased to return a `CSSFontStyleWithAngleValue`.
-template<> struct CSSValueCreation<FontStyle> { Ref<CSSValue> LEGACY_NODELETE operator()(CSSValuePool&, const Style::ComputedStyle&, const FontStyle&); };
+template<> struct CSSValueCreation<FontStyle> { NODELETE Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const FontStyle&); };
 
 // MARK: - Blending
 
 template<> struct Blending<FontStyle> {
-    bool LEGACY_NODELETE canBlend(const FontStyle&, const FontStyle&);
-    FontStyle LEGACY_NODELETE blend(const FontStyle&, const FontStyle&, const BlendingContext&);
+    NODELETE bool canBlend(const FontStyle&, const FontStyle&);
+    NODELETE FontStyle blend(const FontStyle&, const FontStyle&, const BlendingContext&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::FontStyle)

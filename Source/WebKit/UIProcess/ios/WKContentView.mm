@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "APIPageConfiguration.h"
+#import "BrowsingContextGroup.h"
 #import "Connection.h"
 #import "FrameProcess.h"
 #import "FullscreenClient.h"
@@ -82,6 +83,7 @@
 #import <WebCore/ViewportSegments.h>
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/Condition.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/UUID.h>
@@ -108,18 +110,20 @@
 
 @interface _WKPrintFormattingAttributes : NSObject
 @property (nonatomic, readonly) size_t pageCount;
+@property (nonatomic, readonly) WebCore::FloatBoxExtent computedPageMargin;
 @property (nonatomic, readonly) Markable<WebCore::FrameIdentifier> frameID;
 @property (nonatomic, readonly) WebKit::PrintInfo printInfo;
 @end
 
 @implementation _WKPrintFormattingAttributes
 
-- (instancetype)initWithPageCount:(size_t)pageCount frameID:(WebCore::FrameIdentifier)frameID printInfo:(WebKit::PrintInfo)printInfo
+- (instancetype)initWithPageCount:(size_t)pageCount computedPageMargin:(WebCore::FloatBoxExtent)computedPageMargin frameID:(WebCore::FrameIdentifier)frameID printInfo:(WebKit::PrintInfo)printInfo
 {
     if (!(self = [super init]))
         return nil;
 
     _pageCount = pageCount;
+    _computedPageMargin = computedPageMargin;
     _frameID = frameID;
     _printInfo = printInfo;
 
@@ -388,8 +392,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     CGFloat viewWidth = self.bounds.size.width;
     CGFloat viewHeight = self.bounds.size.height;
 
-    Vector<std::pair<CGFloat, CGFloat>> columnRanges;
-    columnRanges.reserveInitialCapacity(columns);
+    Vector<std::pair<CGFloat, CGFloat>> columnRanges(ReserveCapacityTag { }, columns);
     CGFloat xStart = 0;
     for (NSValue *value in verticalFolds.get()) {
         CGRect fold = value.CGRectValue;
@@ -398,8 +401,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     }
     columnRanges.append({ xStart, viewWidth });
 
-    Vector<std::pair<CGFloat, CGFloat>> rowRanges;
-    rowRanges.reserveInitialCapacity(rows);
+    Vector<std::pair<CGFloat, CGFloat>> rowRanges(ReserveCapacityTag { }, rows);
     CGFloat yStart = 0;
     for (NSValue *value in horizontalFolds.get()) {
         CGRect fold = value.CGRectValue;
@@ -429,7 +431,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
 
 - (void)_setupVisibilityPropagationForWebProcess:(WebKit::WebProcessProxy&)process contextID:(WebKit::LayerHostingContextID)contextID
 {
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView propagateVisibilityToProcess:process contextID:contextID];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -439,7 +441,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
 
 - (void)_removeVisibilityPropagationForWebProcess:(WebKit::WebProcessProxy&)process
 {
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView stopPropagatingVisibilityToProcess:process];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -459,9 +461,9 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     Ref mainFrameProcess = page->siteIsolatedProcess();
     [self _setupVisibilityPropagationForWebProcess:mainFrameProcess contextID:page->contextIDForVisibilityPropagationInWebProcess()];
 
-    auto remotePages = mainFrameProcess->remotePages();
-    for (auto& remotePage : remotePages)
-        [self _setupVisibilityPropagationForWebProcess:remotePage->process() contextID:remotePage->contextIDForVisibilityPropagationInWebProcess()];
+    protect(page->browsingContextGroup())->forEachRemotePage(*page, [&](auto& remotePage) {
+        [self _setupVisibilityPropagationForWebProcess:protect(remotePage.process()) contextID:remotePage.contextIDForVisibilityPropagationInWebProcess()];
+    });
 }
 
 #if ENABLE(GPU_PROCESS)
@@ -475,7 +477,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     if (!gpuProcess)
         return;
 
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView propagateVisibilityToProcess:*gpuProcess contextID:page->contextIDForVisibilityPropagationInGPUProcess()];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -495,7 +497,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     if (!modelProcess)
         return;
 
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView propagateVisibilityToProcess:*modelProcess contextID:page->contextIDForVisibilityPropagationInModelProcess()];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -513,9 +515,9 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     Ref mainFrameProcess = page->siteIsolatedProcess();
     [self _removeVisibilityPropagationForWebProcess:mainFrameProcess];
 
-    auto remotePages = mainFrameProcess->remotePages();
-    for (auto& remotePage : remotePages)
-        [self _removeVisibilityPropagationForWebProcess:remotePage->process()];
+    protect(page->browsingContextGroup())->forEachRemotePage(*page, [&](auto& remotePage) {
+        [self _removeVisibilityPropagationForWebProcess:protect(remotePage.process())];
+    });
 }
 
 - (void)_removeVisibilityPropagationViewForGPUProcess
@@ -528,7 +530,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     if (!gpuProcess)
         return;
 
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView stopPropagatingVisibilityToProcess:*gpuProcess];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -547,7 +549,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     if (!modelProcess)
         return;
 
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView stopPropagatingVisibilityToProcess:*modelProcess];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -595,7 +597,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
         ASSERT(!RunLoop::isMain());
         auto manager = adoptNS([[NSFileManager alloc] init]);
         auto coordinator = adoptNS([[NSFileCoordinator alloc] init]);
-        for (auto& url : urls) {
+        for (auto& url : borrow(urls)) {
             if (![manager fileExistsAtPath:[url path]])
                 continue;
             NSError *error = nil;
@@ -741,13 +743,23 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     return [_fixedClippingView bounds];
 }
 
+- (NSArray<NSNumber *> *)_processIdentifiersWithVisibilityPropagationForTesting
+{
+    RetainPtr processIdentifiers = adoptNS([[NSMutableOrderedSet alloc] init]);
+#if HAVE(VISIBILITY_PROPAGATION_VIEW)
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
+        [processIdentifiers addObjectsFromArray:[visibilityPropagationView processIdentifiersForTesting]];
+#endif
+    return [processIdentifiers array];
+}
+
 - (void)_didExitStableState
 {
     _needsDeferredEndScrollingSelectionUpdate = self.shouldHideSelectionInFixedPositionWhenScrolling;
     if (!_needsDeferredEndScrollingSelectionUpdate)
         return;
 
-    [_textInteractionWrapper deactivateSelection];
+    [protect(_textInteractionWrapper) deactivateSelection];
 }
 
 - (CGRect)_computeUnobscuredContentRectRespectingInputViewBounds:(CGRect)unobscuredContentRect inputViewBounds:(CGRect)inputViewBounds
@@ -935,7 +947,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     _printRenderingCallbackID = std::nullopt;
 
     Locker locker { _pendingBackgroundPrintFormattersLock };
-    for (_WKWebViewPrintFormatter *printFormatter in _pendingBackgroundPrintFormatters.get())
+    for (RetainPtr printFormatter : makeVector<RetainPtr<_WKWebViewPrintFormatter>>([_pendingBackgroundPrintFormatters allObjects]))
         [printFormatter _invalidatePrintRenderingState];
     [_pendingBackgroundPrintFormatters removeAllObjects];
 }
@@ -991,7 +1003,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
 - (void)_resetVisibilityPropagation
 {
-    for (WKVisibilityPropagationView *visibilityPropagationView in _visibilityPropagationViews.get())
+    for (RetainPtr visibilityPropagationView : makeVector<RetainPtr<WKVisibilityPropagationView>>([_visibilityPropagationViews allObjects]))
         [visibilityPropagationView clear];
 #if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
     for (auto& propagator : _layerHostingVisibilityPropagators)
@@ -1268,8 +1280,18 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
 #if HAVE(UIKIT_PRINTING)
 
-@interface WKContentView (_WKWebViewPrintFormatter) <_WKWebViewPrintProvider>
-@end
+static std::optional<UIEdgeInsets> explicitPageMarginForPrinting(_WKPrintFormattingAttributes *attributes)
+{
+    auto printInfo = attributes.printInfo;
+    if (printInfo.snapshotFirstPage || attributes.computedPageMargin == printInfo.margin)
+        return std::nullopt;
+    return WebKit::uiEdgeInsets(attributes.computedPageMargin);
+}
+
+static UIEdgeInsets edgeInsetsBetween(CGRect outerRect, CGRect innerRect)
+{
+    return UIEdgeInsetsMake(CGRectGetMinY(innerRect) - CGRectGetMinY(outerRect), CGRectGetMinX(innerRect) - CGRectGetMinX(outerRect), CGRectGetMaxY(outerRect) - CGRectGetMaxY(innerRect), CGRectGetMaxX(outerRect) - CGRectGetMaxX(innerRect));
+}
 
 @implementation WKContentView (_WKWebViewPrintFormatter)
 
@@ -1285,11 +1307,6 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
     ASSERT_NOT_REACHED();
     return std::nullopt;
-}
-
-- (BOOL)_wk_printFormatterRequiresMainThread
-{
-    return NO;
 }
 
 - (RetainPtr<_WKPrintFormattingAttributes>)_attributesForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
@@ -1317,18 +1334,30 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
         CGSize contentSize = self.bounds.size;
         printingRect = (CGRect) { CGPointZero, { contentSize.width, std::min(contentSize.height, maximumPDFHeight) } };
         [printFormatter _setSnapshotPaperRect:printingRect];
+    } else if (UIPrintPageRenderer *printPageRenderer = printFormatter.printPageRenderer; !CGRectIsEmpty(printPageRenderer.paperRect)) {
+        // Explicit @page margins replace this gap between the paper and the content rect.
+        CGRect paperRect = printPageRenderer.paperRect;
+        printInfo.margin = WebKit::floatBoxExtent(edgeInsetsBetween(paperRect, printingRect));
+
+        // UIKit draws the header and footer inside the printable rect.
+        CGRect printableRect = printPageRenderer.printableRect;
+        if (CGFloat headerHeight = printPageRenderer.headerHeight; headerHeight > 0)
+            printInfo.minimumTopMargin = CGRectGetMinY(printableRect) - CGRectGetMinY(paperRect) + headerHeight;
+        if (CGFloat footerHeight = printPageRenderer.footerHeight; footerHeight > 0)
+            printInfo.minimumBottomMargin = CGRectGetMaxY(paperRect) - CGRectGetMaxY(printableRect) + footerHeight;
     }
     printInfo.availablePaperWidth = CGRectGetWidth(printingRect);
     printInfo.availablePaperHeight = CGRectGetHeight(printingRect);
 
     Markable<WebCore::FrameIdentifier> frameID;
     size_t pageCount = printInfo.snapshotFirstPage ? 1 : 0;
+    auto computedPageMargin = printInfo.margin;
 
     if (isPrintingOnBackgroundThread) {
         BinarySemaphore computePagesSemaphore;
         // Silencing lambda capture warnings here since the lambda actually runs synchronously thanks
         // to the BinarySemaphore.
-        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE callOnMainRunLoop([self, printFormatter, printInfo, &frameID, &pageCount, &computePagesSemaphore]() mutable {
+        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE callOnMainRunLoop([self, printFormatter, printInfo, &frameID, &pageCount, &computedPageMargin, &computePagesSemaphore] mutable {
             auto identifier = [self _frameIdentifierForPrintFormatter:printFormatter];
             if (!identifier) {
                 computePagesSemaphore.signal();
@@ -1343,9 +1372,10 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
             // This has the side effect of calling `WebPage::beginPrinting`. It is important that all calls
             // of `WebPage::beginPrinting` are matched with a corresponding call to `WebPage::endPrinting`.
-            protect(_page)->computePagesForPrinting(*frameID, printInfo, [&pageCount, &computePagesSemaphore](const Vector<WebCore::IntRect>& pageRects, double /* totalScaleFactorForPrinting */, const WebCore::FloatBoxExtent& /* computedPageMargin */) mutable {
+            protect(_page)->computePagesForPrinting(*frameID, printInfo, [&pageCount, &computedPageMargin, &computePagesSemaphore](const Vector<WebCore::IntRect>& pageRects, double /* totalScaleFactorForPrinting */, const WebCore::FloatBoxExtent& margin) mutable {
                 ASSERT(pageRects.size() >= 1);
                 pageCount = pageRects.size();
+                computedPageMargin = margin;
                 RELEASE_LOG(Printing, "Computed pages for printing on background thread. Page count = %zu", pageCount);
                 computePagesSemaphore.signal();
             });
@@ -1358,14 +1388,17 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
         frameID = *identifier;
 
-        if (!pageCount)
-            pageCount = protect(_page)->computePagesForPrintingiOS(*frameID, printInfo);
+        if (!pageCount) {
+            auto pageInfo = protect(_page)->computePageInfoForPrintingiOS(*frameID, printInfo);
+            pageCount = pageInfo.count;
+            computedPageMargin = pageInfo.margin;
+        }
     }
 
     if (!pageCount)
         return nil;
 
-    auto attributes = adoptNS([[_WKPrintFormattingAttributes alloc] initWithPageCount:pageCount frameID:*frameID printInfo:printInfo]);
+    RetainPtr attributes = adoptNS([[_WKPrintFormattingAttributes alloc] initWithPageCount:pageCount computedPageMargin:computedPageMargin frameID:*frameID printInfo:printInfo]);
 
     RELEASE_LOG(Printing, "Computed attributes for print formatter. Computed page count = %zu", pageCount);
 
@@ -1377,6 +1410,9 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     auto attributes = [self _attributesForPrintFormatter:printFormatter];
     if (!attributes)
         return 0;
+
+    // rectForPageAtIndex: needs the margin before the document is drawn.
+    [printFormatter _setExplicitPageMargin:explicitPageMarginForPrinting(attributes.get())];
 
     return [attributes pageCount];
 }
@@ -1424,8 +1460,10 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     bool isPrintingOnBackgroundThread = !isMainRunLoop();
 
     ensureOnMainRunLoop([formatterAttributes = retainPtr(formatterAttributes), isPrintingOnBackgroundThread, printFormatter = retainPtr(printFormatter), retainedSelf = retainPtr(self)] {
+        auto explicitPageMargin = explicitPageMarginForPrinting(formatterAttributes.get());
+
         // Begin generating the PDF in expectation of a (eventual) request for the drawn data.
-        auto callbackID = protect(retainedSelf->_page)->drawToPDFiOS(*[formatterAttributes frameID], [formatterAttributes printInfo], [formatterAttributes pageCount], [isPrintingOnBackgroundThread, printFormatter, retainedSelf](RefPtr<WebCore::SharedBuffer>&& pdfData) mutable {
+        auto callbackID = protect(retainedSelf->_page)->drawToPDFiOS(*[formatterAttributes frameID], [formatterAttributes printInfo], [formatterAttributes pageCount], [isPrintingOnBackgroundThread, printFormatter, retainedSelf, explicitPageMargin](RefPtr<WebCore::SharedBuffer>&& pdfData) mutable {
             if (!isPrintingOnBackgroundThread)
                 retainedSelf->_printRenderingCallbackID = std::nullopt;
             else {
@@ -1433,6 +1471,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
                 [retainedSelf->_pendingBackgroundPrintFormatters removeObject:printFormatter.get()];
             }
 
+            [printFormatter _setExplicitPageMargin:explicitPageMargin];
             if (!pdfData || pdfData->isEmpty())
                 [printFormatter _setPrintedDocument:nullptr];
             else {

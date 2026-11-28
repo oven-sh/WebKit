@@ -41,12 +41,18 @@
 
 - (void)authorization:(SOAuthorization *)authorization presentViewController:(SOAuthorizationViewController)viewController withCompletion:(void (^)(BOOL success, NSError *error))completion
 {
-    ASSERT(RunLoop::isMain() && completion);
+    RELEASE_ASSERT(RunLoop::isMain() && completion);
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization (authorization = %p, _session = %p)", authorization, _session.get());
     RefPtr session = _session;
     if (!session) {
         WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization: No session, so completing with NO as success state.");
         ASSERT_NOT_REACHED();
+        completion(NO, nil);
+        return;
+    }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization: Authorization does not belong to the current session, so completing with NO as success state.");
         completion(NO, nil);
         return;
     }
@@ -63,7 +69,7 @@
 
 - (void)authorizationDidNotHandle:(SOAuthorization *)authorization
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidNotHandle: (authorization = %p, _session = %p)", authorization, _session.get());
     LOG_ERROR("Could not handle AppSSO.");
     RefPtr session = _session;
@@ -72,18 +78,28 @@
         ASSERT_NOT_REACHED();
         return;
     }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidNotHandle: Authorization does not belong to the current session, so returning early.");
+        return;
+    }
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidNotHandle: Falling back to web path.");
     session->fallBackToWebPath();
 }
 
 - (void)authorizationDidCancel:(SOAuthorization *)authorization
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidCancel: (authorization = %p, _session = %p)", authorization, _session.get());
     RefPtr session = _session;
     if (!session) {
         WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidCancel: No session, so returning early.");
         ASSERT_NOT_REACHED();
+        return;
+    }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidCancel: Authorization does not belong to the current session, so returning early.");
         return;
     }
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidCancel: Aborting session.");
@@ -92,7 +108,7 @@
 
 - (void)authorizationDidComplete:(SOAuthorization *)authorization
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidComplete: (authorization = %p, _session = %p)", authorization, _session.get());
     LOG_ERROR("Complete AppSSO without any data.");
     RefPtr session = _session;
@@ -101,13 +117,18 @@
         ASSERT_NOT_REACHED();
         return;
     }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidComplete: Authorization does not belong to the current session, so returning early.");
+        return;
+    }
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorizationDidComplete: Falling back to web path.");
     session->fallBackToWebPath();
 }
 
 - (void)authorization:(SOAuthorization *)authorization didCompleteWithHTTPAuthorizationHeaders:(NSDictionary *)httpAuthorizationHeaders
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPAuthorizationHeaders: (authorization = %p, _session = %p)", authorization, _session.get());
     LOG_ERROR("Complete AppSSO with unexpected callback.");
     RefPtr session = _session;
@@ -116,18 +137,28 @@
         ASSERT_NOT_REACHED();
         return;
     }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPAuthorizationHeaders: Authorization does not belong to the current session, so returning early.");
+        return;
+    }
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPAuthorizationHeaders: Falling back to web path.");
     session->fallBackToWebPath();
 }
 
 - (void)authorization:(SOAuthorization *)authorization didCompleteWithHTTPResponse:(NSHTTPURLResponse *)httpResponse httpBody:(NSData *)httpBody
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPResponse: (authorization = %p, _session = %p)", authorization, _session.get());
     RefPtr session = _session;
     if (!session) {
         WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPResponse: No session, so returning early.");
         ASSERT_NOT_REACHED();
+        return;
+    }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPResponse: Authorization does not belong to the current session, so returning early.");
         return;
     }
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithHTTPResponse: Completing.");
@@ -136,7 +167,7 @@
 
 - (void)authorization:(SOAuthorization *)authorization didCompleteWithError:(NSError *)error
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithError: (authorization = %p, _session = %p)", authorization, _session.get());
     if (error.code)
         LOG_ERROR("Could not complete AppSSO operation. Error: %zd", error.code);
@@ -144,6 +175,11 @@
     if (!session) {
         WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithError: No session, so returning early.");
         ASSERT_NOT_REACHED();
+        return;
+    }
+
+    if (!session->isForAuthorization(authorization)) {
+        WKSOAUTHORIZATIONDELEGATE_RELEASE_LOG("authorization:didCompleteWithError: Authorization does not belong to the current session, so returning early.");
         return;
     }
 

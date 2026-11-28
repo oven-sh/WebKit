@@ -220,7 +220,7 @@ void TestRunner::waitUntilDone()
         [[maybe_unused]] WTF::String testURL = "(unknown test)"_s;
         if (WKURLRef url = m_testURL.get())
             testURL = toWTFString(adoptWK(WKURLCopyString(url)));
-        LOG_ERROR("(%s) testRunner.waitUntilDone() called after test has terminated. Possibly an async handler was not awaited.", testURL.utf8());
+        LOG_ERROR("(%s) testRunner.waitUntilDone() called after test has terminated. Possibly an async handler was not awaited.", makeUTF8CString(testURL));
         return;
     }
 
@@ -1073,6 +1073,11 @@ void TestRunner::setStatisticsCrossSiteLoadWithLinkDecoration(JSStringRef fromHo
     }));
 }
 
+void TestRunner::setStatisticsLinkDecorationFilteringData(JSStringRef queryParameter)
+{
+    postSynchronousMessage("SetStatisticsLinkDecorationFilteringData", toWK(queryParameter));
+}
+
 void TestRunner::setStatisticsTimeToLiveUserInteraction(double seconds)
 {
     postSynchronousMessage("SetStatisticsTimeToLiveUserInteraction", seconds);
@@ -1584,6 +1589,11 @@ bool TestRunner::didLoadNonAppInitiatedRequest()
     return postSynchronousPageMessageReturningBoolean("DidLoadNonAppInitiatedRequest");
 }
 
+bool TestRunner::isDisplayCaptureCapabilityActive()
+{
+    return postSynchronousPageMessageReturningBoolean("IsDisplayCaptureCapabilityActive");
+}
+
 void TestRunner::setIsSpeechRecognitionPermissionGranted(bool granted)
 {
     postSynchronousPageMessage("SetIsSpeechRecognitionPermissionGranted", granted);
@@ -1605,11 +1615,6 @@ void TestRunner::dumpBackForwardList()
     postSynchronousPageMessage("DumpBackForwardList");
 }
 
-bool TestRunner::shouldDumpBackForwardListsForAllWindows() const
-{
-    return postSynchronousPageMessageReturningBoolean("ShouldDumpBackForwardListsForAllWindows");
-}
-
 void TestRunner::dumpChildFrameScrollPositions()
 {
     postSynchronousPageMessage("DumpChildFrameScrollPositions");
@@ -1623,6 +1628,11 @@ bool TestRunner::shouldDumpAllFrameScrollPositions() const
 void TestRunner::setHasMouseDeviceForTesting(bool hasMouseDevice)
 {
     postSynchronousPageMessage("SetHasMouseDeviceForTesting", hasMouseDevice);
+}
+
+void TestRunner::setHasFakePaymentUIForTesting(bool hasFakePaymentUI)
+{
+    postSynchronousPageMessage("SetHasFakePaymentUIForTesting", hasFakePaymentUI);
 }
 
 void TestRunner::exitImmersive()

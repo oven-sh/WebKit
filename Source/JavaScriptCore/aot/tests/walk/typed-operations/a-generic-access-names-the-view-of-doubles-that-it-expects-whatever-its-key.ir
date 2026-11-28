@@ -1,0 +1,30 @@
+# function at(row, key) { return row[key]; }  function lay(row, key, value) { row[key] = value; }  sink(at, lay);
+# a view of doubles is expected of `row`; of `key` nothing is known: no typed form: the access stays generic and names what it expects, so that its stub asks for that kind of view first
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet {{*}} expectedElements=Float64Array
+# CHECK-LABEL: code f2:Body
+# CHECK: ElemSet {{*}} expectedElements=Float64Array
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1 calleeName="sink"
+    Return v4
+}
+function f1 name="at" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Float64Array, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="lay" module=m0 length=3 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Float64Array, v1: anything, v2: anything):
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}

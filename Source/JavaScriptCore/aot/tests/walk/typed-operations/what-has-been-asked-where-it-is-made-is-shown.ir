@@ -1,0 +1,252 @@
+# declare function id(value: any): any;
+# declare function print(value: any): void;
+# declare const which: number;
+# class Other { a = "text"; b = 2.5; c = [1]; }
+# class Label { text: string | undefined; constructor(first?: string) { this.text = first; } }
+# function spell(label: Label): string { return label.text === undefined ? "none" : String(label.text.length) + label.text; }
+# const kept: any[] = ["fits"];
+# function keep(value: any): void { kept.push(id(value)); }
+# function storeTwice(first: Label, second: Label, at: number): void { const got = kept[at]; first.text = got; second.text = got; }
+# const labels = [new Label("first"), new Label(undefined), new Label(undefined)];
+# const first = labels[which > 0 ? 0 : 1]!;
+# const second = labels[2]!;
+# storeTwice(first, second, 0);
+# print(spell(first) + spell(second));
+# if (which === 1) { keep(new Other()); storeTwice(first, second, 1); }
+# print(spell(first) + spell(second));
+# print("went on");
+# A type that has been checked counts as shown.
+# A check that is built in the block of the operation that it checks dominates every use that is built from there on. So the type that it has tested counts as shown for the value:
+# a typed store of the value, once or twice, checks nothing more. Without that rule the array's element was checked three times for one type: after the read, and before each store.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so the array is assumed to hold `undefined | string`, and an Other is read from it.
+# The one check that is left crashes with a named error.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(ONCE): walk f3 mechanisms=all-Inlining
+# ONCE-LABEL: code f3:Body
+# ONCE: [[got]]: undefined|string @JSValue = GetArrayElement
+# ONCE: CheckProof [[got]] checkedType=undefined|string {{*}}source=Contents
+# ONCE-NOT: CheckProof [[got]]
+# ONCE: PutSlot {{*}}[[got]] key="text"
+# ONCE-NOT: CheckProof [[got]]
+# ONCE: PutSlot {{*}}[[got]] key="text"
+# RUN(TRUE): run-in-shell mechanisms=-Inlining globalThis.which = 0;
+# TRUE: went on
+# RUN(LIE): run-in-shell mechanisms=-Inlining globalThis.which = 1;
+# LIE: bun: internal AOT error: type check failed
+# LIE-NEXT: found object in
+# LIE-NOT: went on
+# LIE: crashed with
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Other" module=m0 position=115 constructor=f4 fields=[{key="a" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 kind=Instance name="Label" module=m0 position=161 constructor=f5 fields=[{key="text" declared={type=undefined|null|string flags=[OmitsNull]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything elements=[String{value="fits"}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+variable g0 name="kept" module=m0 declared={type=undefined|null|absent|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @109
+    v7 = NewClass v6 layout=L0 @109
+    PutModuleVariable v7 variable=g1 @109
+    v9 = FinishClass v7 layout=L0 @109
+    v10 = Convert v9 declared={type=f4 flags=[IsFromCompiler]} @109
+    v11 = Convert v9 declared={type=f4 flags=[IsFromCompiler]} @109
+    v12 = NewClosure function=f5 @155
+    v13 = NewClass v12 layout=L1 @155
+    PutModuleVariable v13 variable=g2 @155
+    v15 = FinishClass v13 layout=L1 @155
+    v16 = Convert v15 declared={type=f5 flags=[IsFromCompiler]} @155
+    v17 = Convert v15 declared={type=f5 flags=[IsFromCompiler]} @155
+    v18 = Data data=d0 @392
+    v19 = Convert v18 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @392
+    PutModuleVariable v19 variable=g0 @378
+    v21 = String string="first" @616
+    v22 = Construct v17, -, v21 calleeName="Label" @610
+    v23 = Undefined @636
+    v24 = Construct v17, -, v23 calleeName="Label" @630
+    v25 = Undefined @658
+    v26 = Construct v17, -, v25 calleeName="Label" @652
+    v27 = NewArray v22, v24, v26 contents=anything @605
+    v28 = Builtin builtin=GlobalThis @692
+    v29 = PropGet v28 key="which" [isFreeName] @692
+    v30 = Integer @700
+    v31 = Greater v29, v30 @700
+    Branch v31 -> taken b1(), notTaken b2() @700
+  b1():
+    v32 = Integer @704
+    Jump -> next b3(v32) @704
+  b2():
+    v33 = Integer integer=1 @708
+    Jump -> next b3(v33) @708
+  b3(v34):
+    v35 = ElemGet v27, v34 @685
+    v36 = Integer integer=2 @728
+    v37 = ElemGet v27, v36 @728
+    v38 = Integer @766
+    v39 = Call v5, -, v35, v37, v38 calleeName="storeTwice" @740
+    v40 = Builtin builtin=GlobalThis @770
+    v41 = PropGet v40 key="print" [isFreeName] @770
+    v42 = Call v1, -, v35 calleeName="spell" @776
+    v43 = Call v1, -, v37 calleeName="spell" @791
+    v44 = Add v42, v43 @791
+    v45 = Call v41, -, v44 calleeName="print" @770
+    v46 = Builtin builtin=GlobalThis @811
+    v47 = PropGet v46 key="which" [isFreeName] @811
+    v48 = Integer integer=1 @821
+    v49 = StrictEq v47, v48 @821
+    Branch v49 -> taken b4(), notTaken b5() @821
+  b4():
+    v50 = Construct v11 calleeName="Other" @835
+    v51 = Convert v50 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @831
+    v52 = Call v3, -, v51 calleeName="keep" @826
+    v53 = Integer integer=1 @871
+    v54 = Call v5, -, v35, v37, v53 calleeName="storeTwice" @845
+    Jump -> next b5() @845
+  b5():
+    v55 = Builtin builtin=GlobalThis @877
+    v56 = PropGet v55 key="print" [isFreeName] @877
+    v57 = Call v1, -, v35 calleeName="spell" @883
+    v58 = Call v1, -, v37 calleeName="spell" @898
+    v59 = Add v57, v58 @898
+    v60 = Call v56, -, v59 calleeName="print" @877
+    v61 = Builtin builtin=GlobalThis @914
+    v62 = PropGet v61 key="print" [isFreeName] @914
+    v63 = String string="went on" @920
+    v64 = Call v62, -, v63 calleeName="print" @914
+    v65 = Undefined @914
+    Return v65 @914
+}
+function f1 name="spell" module=m0 position=248 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="text" @294
+    v2 = TypeTest v1 testedType=undefined @294
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @294
+  b1(v3):
+    v4 = String string="none" @321
+    Jump -> next b3(v4) @321
+  b2(v5):
+    v6 = Builtin builtin=String @330
+    v7 = PropGet v0 key="text" @337
+    v8 = PropGet v7 key="length" @343
+    v9 = Call v6, -, v8 calleeName="String" @330
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @330
+    v11 = PropGet v0 key="text" @358
+    v12 = Add v10, v11 @358
+    Jump -> next b3(v12) @358
+  b3(v13):
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @358
+    Return v14 @358
+}
+function f2 name="keep" module=m0 position=402 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @436
+    v2 = CheckInitialized v1 name="kept" @436
+    v3 = PropGet v2 key="push" @436
+    v4 = Builtin builtin=GlobalThis @446
+    v5 = PropGet v4 key="id" [isFreeName] @446
+    v6 = Call v5, -, v0 calleeName="id" @446
+    v7 = Call v3, v2, v6 calleeKey="push" calleeName="kept.push" @441
+    v8 = Convert v7 declared={type=number} illTypedCause=DeclarationWithoutBody @436
+    v9 = Undefined @436
+    Return v9 @436
+}
+function f3 name="storeTwice" module=m0 position=460 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: undefined|null|L1, v2: number):
+    v3 = GetModuleVariable variable=g0 @541
+    v4 = CheckInitialized v3 name="kept" @541
+    v5 = ElemGet v4, v2 @541
+    PropSet v0, v5 key="text" @551
+    PropSet v1, v5 key="text" @569
+    v8 = Undefined @569
+    Return v8 @569
+}
+function f4 name="Other" module=m0 position=115 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @115
+    v2 = NewObject v1 layout=L0 @115
+    v3 = Convert v2 declared={type=L0} @115
+    v4 = CallDirect v3 function=f6 @115
+    Return v3 @115
+}
+function f5 name="Label" module=m0 position=206 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = GetConstructPrototype v0 layout=L1 @206
+    v3 = NewObject v2 layout=L1 @206
+    v4 = Convert v3 declared={type=L1} @206
+    v5 = CallDirect v4 function=f7 @206
+    PropSet v4, v1 key="text" @225
+    v7 = Undefined @225
+    v8 = TypeTest v7 testedType=object @225
+    Branch v8 -> taken b1(| 0), notTaken b2(v4) @225
+  b1(v9):
+    Jump -> next b2(v9) @225
+  b2(v10):
+    Return v10 @225
+}
+function f6 module=m0 position=115 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @115
+    v2 = String string="text" @127
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @127
+    PropDefine v1, v3 key="a" @123
+    v5 = Double number=2.5 @139
+    v6 = Convert v5 declared={type=number} @139
+    PropDefine v1, v6 key="b" @135
+    v8 = Data data=d1 @148
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @148
+    PropDefine v1, v9 key="c" @144
+    v11 = Undefined @115
+    Return v11 @115
+}
+function f7 module=m0 position=161 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @161
+    v2 = Undefined @161
+    PropDefine v1, v2 key="text" @169
+    v4 = Undefined @161
+    Return v4 @161
+}
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f9 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f9
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private

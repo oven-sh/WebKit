@@ -1,0 +1,25 @@
+# a flat string is read in front of the suspension, and behind it the text is made flat anew
+# RUN: verify-code
+# CHECK: verified
+# -- code
+# code f0:CoroutineBody {
+#   v2: 0 @Int32 = Integer
+#   v3: "abcdefgh" @Cell = String string="abcdefgh"
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v4: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
+#     v5: int[0, 65535] @Int32 = GetStringCodeUnit v4, v2 traits=[mayTouchMemory]
+#     v6: anything?UndescribedNativeResult @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v7: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
+#     v8: int[0, 65535] @Int32 = GetStringCodeUnit v7, v2 traits=[mayTouchMemory]
+#     Return v6
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abcdefgh"
+    v2 = Await v0
+    Return v2
+}
+entry module=m0

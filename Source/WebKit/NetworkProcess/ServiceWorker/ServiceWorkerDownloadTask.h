@@ -65,7 +65,7 @@ public:
     void start();
     void stop() { cancel(); }
 
-    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess(const IPC::Connection&) const;
+    NODELETE std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const;
 
 private:
     ServiceWorkerDownloadTask(NetworkSession&, NetworkDataTaskClient&, WebSWServerToContextConnection&, WebCore::ServiceWorkerIdentifier, WebCore::SWServerConnectionIdentifier, WebCore::FetchIdentifier, const WebCore::ResourceRequest&, const WebCore::ResourceResponse& response, DownloadID);
@@ -99,7 +99,6 @@ private:
     WebCore::SWServerConnectionIdentifier m_serverConnectionIdentifier;
     WebCore::FetchIdentifier m_fetchIdentifier;
     DownloadID m_downloadID;
-    const Ref<NetworkProcess> m_networkProcess;
     RefPtr<SandboxExtension> m_sandboxExtension;
     FileSystem::FileHandle m_downloadFile;
     uint64_t m_downloadBytesWritten { 0 };

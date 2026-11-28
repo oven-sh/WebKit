@@ -36,7 +36,7 @@
 #include "ModelProcessProxyMessages.h"
 #include "ProcessTerminationReason.h"
 #include "ProvisionalPageProxy.h"
-#include "SecurityFlagsController.h"
+#include "SecurityFlags.h"
 #include "WebPageGroup.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
@@ -67,7 +67,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ModelProcessProxy);
 
 Ref<ModelProcessProxy> ModelProcessProxy::getOrCreate()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (auto& existingModelProcess = singleton()) {
         ASSERT(existingModelProcess->state() != State::Terminated);
         return *existingModelProcess;
@@ -89,7 +89,7 @@ ModelProcessProxy::ModelProcessProxy()
 
     ModelProcessCreationParameters parameters;
     parameters.auxiliaryProcessParameters = auxiliaryProcessParameters();
-    parameters.securityFlags.replaceWith(SecurityFlagsController::singleton().securityFlags());
+    parameters.securityFlags.replaceWith(securityFlags());
     parameters.parentPID = getCurrentProcessID();
 
 #if PLATFORM(COCOA)
@@ -174,7 +174,7 @@ void ModelProcessProxy::sharedPreferencesForWebProcessDidChange(WebProcessProxy&
     sendWithAsyncReply(Messages::ModelProcess::SharedPreferencesForWebProcessDidChange { webProcessProxy.coreProcessIdentifier(), WTF::move(sharedPreferencesForWebProcess) }, WTF::move(completionHandler));
 }
 
-void ModelProcessProxy::securityFlagsDidChange(const SecurityFlags& securityFlags)
+void ModelProcessProxy::securityFlagsDidChange(const SecurityFlags::Storage& securityFlags)
 {
     send(Messages::ModelProcess::SecurityFlagsDidChange { securityFlags }, 0);
 }

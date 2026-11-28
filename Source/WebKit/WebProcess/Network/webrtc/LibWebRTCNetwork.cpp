@@ -107,7 +107,7 @@ void LibWebRTCNetwork::dispatch(Function<void()>&& callback)
     WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread(WTF::move(callback));
 }
 
-static webrtc::EcnMarking LEGACY_NODELETE convertToWebRTCEcnMarking(WebRTCNetwork::EcnMarking ecn)
+NODELETE static webrtc::EcnMarking convertToWebRTCEcnMarking(WebRTCNetwork::EcnMarking ecn)
 {
     switch (ecn) {
     case WebRTCNetwork::EcnMarking::kNotEct:
@@ -126,42 +126,42 @@ static webrtc::EcnMarking LEGACY_NODELETE convertToWebRTCEcnMarking(WebRTCNetwor
 
 void LibWebRTCNetwork::signalAddressReady(WebCore::LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& address)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalAddressReady(address.rtcAddress());
 }
 
 void LibWebRTCNetwork::signalReadPacket(WebCore::LibWebRTCSocketIdentifier identifier, std::span<const uint8_t> data, const RTCNetwork::SocketAddress& address, int64_t timestamp, WebRTCNetwork::EcnMarking ecn)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalReadPacket(data, address.rtcAddress(), timestamp, convertToWebRTCEcnMarking(ecn));
 }
 
 void LibWebRTCNetwork::signalSentPacket(WebCore::LibWebRTCSocketIdentifier identifier, int64_t rtcPacketID, int64_t sendTimeMs)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalSentPacket(rtcPacketID, sendTimeMs);
 }
 
 void LibWebRTCNetwork::signalConnect(WebCore::LibWebRTCSocketIdentifier identifier)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalConnect();
 }
 
 void LibWebRTCNetwork::signalClose(WebCore::LibWebRTCSocketIdentifier identifier, int error)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalClose(error);
 }
 
 void LibWebRTCNetwork::signalUsedInterface(WebCore::LibWebRTCSocketIdentifier identifier, String&& interfaceName)
 {
-    ASSERT(!WTF::isMainRunLoop());
+    RELEASE_ASSERT(!WTF::isMainRunLoop());
     if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalUsedInterface(WTF::move(interfaceName));
 }

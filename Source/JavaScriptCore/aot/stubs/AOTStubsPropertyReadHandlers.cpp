@@ -9,19 +9,23 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTClosureWord.h"
 #include "AOTCompiledStructure.h"
+#include "AOTProgramTables.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsCalls.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyAccessors.h"
-#include "AOTStubsCalls.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "Butterfly.h"
 #include "JSArrayBufferView.h"
 #include "JSObject.h"
 #include "JSString.h"
 #include "ProxyObject.h"
+#include "RegExpObject.h"
 #include "VM.h"
 #include <algorithm>
 #include <limits>
@@ -31,11 +35,9 @@
 namespace JSC { namespace AOT {
 
 static constexpr unsigned nameOperandOfExit = 1;
-static constexpr unsigned siteOperandOfExit = 2;
 
 static_assert(!JSValue::ValueEmpty);
 
-// The row has a stub frame variant of every form, and only by-id reads have a table for it. Every handler is in every image.
 static bool isInHandlerTable(StubKey handler)
 {
     return std::ranges::any_of(allSlotHandlerTables, [&](SlotHandlerTable table) {
@@ -48,16 +50,12 @@ StubSignature signatureOfReadSlot(StubKey key)
     return signatureOfSlotHandler(handlerTableOf(isInHandlerTable(key) ? key : key.withCallerFrame(CallerFrame::HasFrame)));
 }
 
-// No StructureID is compared at a free-name site, so its tables have an arm only for the kinds that are filed there.
 static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
 {
     const bool isPacked = traits.form == SlotForm::PackedSlot;
-    const bool isFreeName = traits.origin == SlotOrigin::FreeName || traits.origin == SlotOrigin::FreeNameForTypeOf;
     switch (kind) {
     case Slot::Kind::Setter:
     case Slot::Kind::CustomSetter:
-    case Slot::Kind::FieldCreation:
-    case Slot::Kind::FieldOrInheritedSetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
     case Slot::Kind::Transition:
@@ -66,23 +64,21 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::FieldRemoval:
     case Slot::Kind::NothingToRemove:
         return false;
-    case Slot::Kind::Value:
-    case Slot::Kind::Getter:
-    case Slot::Kind::Uncacheable:
-        return true;
     case Slot::Kind::Empty:
         return isPacked;
-    case Slot::Kind::Constant:
-        return !isPacked;
-    case Slot::Kind::Absent:
-        return traits.origin != SlotOrigin::FreeName;
     case Slot::Kind::FarValue:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::FieldOrInheritedField:
-        return !isPacked && !isFreeName;
+    case Slot::Kind::FieldOrInheritedAccessor:
+    case Slot::Kind::Constant:
+        return !isPacked;
+    case Slot::Kind::Value:
+    case Slot::Kind::Absent:
+    case Slot::Kind::Getter:
     case Slot::Kind::CustomGetter:
     case Slot::Kind::Field:
     case Slot::Kind::FieldGetter:
+    case Slot::fieldOfGetter:
     case Slot::Kind::InheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraProperty:
@@ -92,7 +88,8 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::StringLength:
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
-        return !isFreeName;
+    case Slot::Kind::Uncacheable:
+        return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -134,8 +131,6 @@ void generateReadSlot(StubAssembler& jit)
         switch (origin) {
         case SlotOrigin::ById:
         case SlotOrigin::ByIdInStubFrame:
-        case SlotOrigin::FreeName:
-        case SlotOrigin::FreeNameForTypeOf:
             loadIdentifier(jit, operands.identifierNumber, uid, miss);
             return;
         case SlotOrigin::ByVal:
@@ -145,9 +140,9 @@ void generateReadSlot(StubAssembler& jit)
         RELEASE_ASSERT_NOT_REACHED();
     };
     auto callGetter = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, miss);
         const StubSignature finisher = signatureOfSlotCannot(slotCannot(SlotFinisher::CallGetter, origin));
         RELEASE_ASSERT(finisher.operands[finisher.numberOfOperands - 1] == Reg(getterSetter));
-        // Whoever jumps to a handler has written the two registers of the slot itself, and the number of the name is an immediate of the call: no caller keeps a value in them.
         RegisterSet lostToEveryCaller;
         for (GPRReg reg : { operands.header, operands.payload, operands.identifierNumber }) {
             if (reg != InvalidGPRReg)
@@ -167,7 +162,6 @@ void generateReadSlot(StubAssembler& jit)
             .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
         };
     };
-    // Goes on where the slot of the field is empty.
     auto useFieldAndReturn = [&](const FieldAddressRegisters& field, JumpList& isAbsent, auto useAddressAndReturn) {
         Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
         computeFieldAddress(jit, field, false, isAbsent);
@@ -184,7 +178,6 @@ void generateReadSlot(StubAssembler& jit)
 
         isAbsent.link(&jit);
     };
-    // The value of a data property does not depend on the receiver, so the holder takes the receiver's place and the lookup tables answer for its own Structure.
     auto readFromHolder = [&] {
         slot.loadHolder(jit, R0);
         switch (origin) {
@@ -200,7 +193,6 @@ void generateReadSlot(StubAssembler& jit)
             return;
         }
         case SlotOrigin::ByVal: {
-            // The probe by key clobbers like a call, and a handler does not.
             const GPRReg uid = T10;
             const GPRReg structureID = T11;
             const GPRReg header = jit.clobberOperand(headerOperand);
@@ -211,9 +203,6 @@ void generateReadSlot(StubAssembler& jit)
             jumpToSlotHandler(jit, table, header, uid);
             return;
         }
-        case SlotOrigin::FreeName:
-        case SlotOrigin::FreeNameForTypeOf:
-            break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     };
@@ -225,7 +214,6 @@ void generateReadSlot(StubAssembler& jit)
         }
         switch (slot.kind()) {
         case Slot::Kind::Empty: {
-            // A cell of the front that is only reserved for its name has no slot, and a slot that does not pack is in the hashed table.
             const StubKey hashedProbe = getByIdHashed().withCallerFrame(callerFrameOf(origin));
             const StubSignature signature = signatureOfGetByIdHashed(hashedProbe);
             RELEASE_ASSERT(signature.operands[receiverOperand] == Reg(R0) && signature.immediate == operands.identifierNumber);
@@ -252,6 +240,28 @@ void generateReadSlot(StubAssembler& jit)
             returnUndefined();
             return;
         case Slot::Kind::Getter:
+            if (origin != SlotOrigin::ByVal) {
+                Jump isAbove = slot.branchUnlessFlag(jit, Slot::isOwn);
+                Jump isInCell = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+                slot.loadOwnWordIndex(jit, T10);
+                makeAnswerOfGetterInOwnStorage(jit, T10);
+                fileOwnValueInStorageInAccessTable(jit, { R0, operands.identifierNumber, T11, T14 }, T10);
+                isAbove.link(&jit);
+                isInCell.link(&jit);
+            } else {
+                Jump isAbove = slot.branchUnlessFlag(jit, Slot::isOwn);
+                slot.loadOwnWordIndex(jit, T10);
+                rememberOwnGetterOfKey(jit, operands.keyCell, slot.header(), T10, T11, T14);
+                Jump isRemembered = jit.jump();
+                isAbove.link(&jit);
+                Jump liesOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+                slot.loadHolder(jit, T10);
+                slot.loadInheritedWordIndex(jit, T11);
+                jit.getEffectiveAddress(BaseIndex(T10, T11, CCallHelpers::TimesEight), T10);
+                rememberGetterAboveOfKey(jit, operands.keyCell, slot.header(), T10, T11, T14);
+                liesOutOfLine.link(&jit);
+                isRemembered.link(&jit);
+            }
             loadValueBySlot(jit, slot, R0, T10, T11, T10);
             callGetter(T10);
             return;
@@ -279,27 +289,58 @@ void generateReadSlot(StubAssembler& jit)
                 Jump isGetter = slot.branchIfFlag(jit, Slot::inheritsGetter);
                 Jump isAbsentWhereEmpty = slot.branchUnlessFlag(jit, Slot::emptySlotMayBeUndefined);
                 uncached.append(jit.branchIfNotUndefined(inherited));
+                Jump filesNothing = jit.jump();
                 isAbsentWhereEmpty.link(&jit);
+                if (origin != SlotOrigin::ByVal) {
+                    const GPRReg answer = T11;
+                    const GPRReg holder = T14;
+                    Jump isInCellOfHolder = slot.branchUnlessFlag(jit, Slot::inheritedIsOutOfLine);
+                    slot.loadSecondPayloadWord(jit, answer);
+                    slot.loadInheritedWordIndex(jit, holder);
+                    jit.lshift64(TrustedImm32(AccessTable::answerShift), answer);
+                    jit.lshift64(TrustedImm32(AccessTable::wordIndexShiftBehindHolder), holder);
+                    jit.or64(holder, answer);
+                    jit.or64(TrustedImm32(AccessTable::valueIsInStorageOfHolder | AccessTable::answerHasForm), answer);
+                    slot.loadHolder(jit, holder);
+                    Jump hasAnswer = jit.jump();
+                    isInCellOfHolder.link(&jit);
+                    slot.loadHolder(jit, holder);
+                    slot.loadInheritedWordIndex(jit, answer);
+                    jit.getEffectiveAddress(BaseIndex(holder, answer, CCallHelpers::TimesEight), answer);
+                    hasAnswer.link(&jit);
+                    fileValueAboveFieldLeftOutInAccessTable(jit, { R0, operands.identifierNumber, jit.clobberOperand(headerOperand), clobberPayloadRegister() }, holder, answer);
+                }
+                filesNothing.link(&jit);
                 jit.move(inherited, R0);
                 jit.returnToCaller();
 
                 isGetter.link(&jit);
                 callGetter(inherited);
             } else {
-                // No cell of the front table has room for the second flag.
                 Jump isUndefinedEitherWay;
                 if (slot.form() == SlotForm::Slot)
                     isUndefinedEitherWay = slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined);
                 uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
                 if (isUndefinedEitherWay.isSet())
                     isUndefinedEitherWay.link(&jit);
+                if (origin != SlotOrigin::ByVal)
+                    fileAbsenceAboveFieldLeftOutInAccessTable(jit, { R0, operands.identifierNumber, T11, T14 }, T10);
                 returnUndefined();
             }
             linkToSlotCannot(jit, exits.cannot, table, SlotFinisher::ReadField, slot);
             return;
         }
+        case Slot::fieldOfGetter: {
+            const FieldReadRegisters registers = allocateFieldReadRegisters(R0, slot.registerOfFirstPayloadWord());
+            FieldReadExits exits;
+            useFieldAndReturn(registers.field, exits.isAbsent, [&] {
+                readFieldAndReturn(jit, registers, exits);
+            });
+            uncached.append(jit.jump());
+            linkToSlotCannot(jit, exits.cannot, table, SlotFinisher::ReadField, slot);
+            return;
+        }
         case Slot::Kind::FieldGetter: {
-            // The slot of an accessor field holds the GetterSetter. Many an object of the same Structure has it empty: the accessor is defined on some objects of the layout only.
             const FieldAddressRegisters field { .object = R0, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T14 };
             const GPRReg getterSetter = T10;
             JumpList isAbsent;
@@ -312,6 +353,14 @@ void generateReadSlot(StubAssembler& jit)
             returnUndefined();
             return;
         }
+        case Slot::Kind::FieldOrInheritedAccessor:
+            slot.loadFirstPayloadWord(jit, T10);
+            jit.load32(Address(R0, offsetOfOrderWord), T11);
+            jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask | orderWordHasFieldOutsideSlot)), T11);
+            uncached.append(jit.branch32(CCallHelpers::NotEqual, T11, T10));
+            loadInheritedValueBySlot(jit, slot, T10, T11, T10);
+            callGetter(T10);
+            return;
         case Slot::Kind::InheritedField: {
             if (slot.form() == SlotForm::Slot) {
                 const GPRReg word = jit.clobberOperand(headerOperand);
@@ -336,11 +385,11 @@ void generateReadSlot(StubAssembler& jit)
             return;
         }
         case Slot::Kind::Variable: {
-            const GPRReg statics = jit.clobberOperand(headerOperand);
-            FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
+            const GPRReg base = jit.clobberOperand(headerOperand);
+            const FieldReadRegisters registers = allocateFieldReadRegisters(base, T10);
             FieldReadExits exits;
             slot.loadFirstPayloadWord(jit, registers.field.slotData);
-            loadStaticsBaseOfVariable(jit, slot, statics, T11, registers);
+            slot.loadVariableBase(jit, R0, base, T11);
             computeFieldAddress(jit, registers.field, false, exits.isAbsent);
             readFieldAndReturn(jit, registers, exits);
 
@@ -356,18 +405,24 @@ void generateReadSlot(StubAssembler& jit)
             jit.load64(BaseIndex(extraPropertyRegisters.extraProperties, extraPropertyRegisters.wordIndex, CCallHelpers::TimesEight), T10);
             callGetter(T10);
             return;
-        case Slot::Kind::ArrayLength:
+        case Slot::Kind::ArrayLength: {
+            Jump isLastIndex = slot.branchIfFlag(jit, Slot::isLastIndexOfRegExp);
             jit.loadPtr(Address(R0, JSObject::butterflyOffset()), T10);
             jit.load32(Address(T10, Butterfly::offsetOfPublicLength()), T10);
             uncached.append(jit.branch32(CCallHelpers::LessThan, T10, TrustedImm32(0)));
             returnInt32(T10);
+
+            isLastIndex.link(&jit);
+            jit.load64(Address(R0, RegExpObject::offsetOfLastIndex()), R0);
+            jit.returnToCaller();
             return;
+        }
         case Slot::Kind::TypedArrayLength: {
             uncached.append(jit.branchTest8(CCallHelpers::NonZero, Address(R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
             Jump readsByteOffset = slot.branchIfFlag(jit, Slot::readsByteOffset);
             jit.load64(Address(R0, JSArrayBufferView::offsetOfLength()), T10);
             Label hasWord = jit.label();
-            uncached.append(jit.branch64(CCallHelpers::Above, T10, TrustedImm64(std::numeric_limits<int32_t>::max())));
+            uncached.append(jit.branch64(CCallHelpers::Above, T10, TrustedImm32(std::numeric_limits<int32_t>::max())));
             returnInt32(T10);
 
             readsByteOffset.link(&jit);
@@ -386,25 +441,61 @@ void generateReadSlot(StubAssembler& jit)
             returnInt32(T11);
             return;
         }
-        case Slot::Kind::ClosureLength:
-            readClosureLengthAndReturn(jit, R0, miss);
+        case Slot::Kind::ClosureLength: {
+            const GPRReg number = T11;
+            Jump isSlim = jit.branch8(CCallHelpers::Equal, Address(R0, JSCell::typeInfoTypeOffset()), TrustedImm32(SlimClosureType));
+            jit.load64(Address(R0, offsetOfClosureEntry), number);
+            Jump hasWord = jit.jump();
+
+            isSlim.link(&jit);
+            jit.load64(Address(R0, offsetOfSlimClosureWord), number);
+
+            hasWord.link(&jit);
+            extractBits(jit, number, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, number);
+            loadAddressOfClosureFacts(jit, number, T10);
+            jit.load8(Address(T10, OBJECT_OFFSETOF(ClosureFacts, length)), T10);
+            miss.append(jit.branch32(CCallHelpers::Equal, T10, TrustedImm32(countsAreListed)));
+            returnInt32(T10);
             return;
+        }
         case Slot::Kind::ClosureName:
-            readClosureNameAndReturn(jit, R0, miss);
+            if (!jit.options().useWideReferences) {
+                static_assert(hasOneBitSet(ConstantCellWords::numberOfCachedFunctionNames));
+                const GPRReg number = T11;
+                const GPRReg cached = T10;
+                Jump isSlim = jit.branch8(CCallHelpers::Equal, Address(R0, JSCell::typeInfoTypeOffset()), TrustedImm32(SlimClosureType));
+                jit.load64(Address(R0, offsetOfClosureEntry), number);
+                Jump hasWord = jit.jump();
+                isSlim.link(&jit);
+                jit.load64(Address(R0, offsetOfSlimClosureWord), number);
+                hasWord.link(&jit);
+                extractBits(jit, number, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, number);
+                jit.and32(TrustedImm32(ConstantCellWords::numberOfCachedFunctionNames - 1), number, T14);
+                jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.functionNameCache)), cached);
+                jit.load64(BaseIndex(cached, T14, CCallHelpers::TimesEight), cached);
+                jit.add32(TrustedImm32(1), number);
+                miss.append(jit.branch32(CCallHelpers::NotEqual, cached, number));
+                jit.urshift64(TrustedImm32(32), cached);
+                decodeCell32(jit, cached, R0);
+                jit.returnToCaller();
+                return;
+            }
+            miss.append(jit.jump());
             return;
         case Slot::Kind::Constant:
             slot.loadPayloadBits(jit, R0);
             jit.returnToCaller();
             return;
-        case Slot::Kind::Uncacheable:
-            if (jit.options().callsTrapsOfProxies.predicted() && slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
-                jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get));
-            uncached.append(jit.jump());
+        case Slot::Kind::Uncacheable: {
+            if (origin == SlotOrigin::ByIdInStubFrame)
+                uncached.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
+            const GPRReg key = slot.form() == SlotForm::Slot ? operands.payload : jit.allocateScratch(slotPayloadRegister);
+            loadProxySlotKey(jit, slot.form(), operands.header, key, uncached);
+            jit.jumpToStub(throughProxy(TrapOfProxy::Get).withCallerFrame(callerFrameOf(origin)));
             return;
+        }
         case Slot::Kind::Setter:
         case Slot::Kind::CustomSetter:
-        case Slot::Kind::FieldCreation:
-        case Slot::Kind::FieldOrInheritedSetter:
         case Slot::Kind::ExtraSetter:
         case Slot::Kind::ExtraPropertyAddition:
         case Slot::Kind::Transition:
@@ -428,10 +519,10 @@ StubSignature signatureOfThroughProxy(StubKey key)
     return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(slotHeaderRegister) });
 }
 
-// As ProxyObject.cpp performProxyGet(), performHasProperty() and performPut(). The trap is read off the handler and called as compiled code reads and calls.
 void generateThroughProxy(StubAssembler& jit)
 {
     static_assert(numberOfArgumentGPRs >= 4 && !(sizeof(ProxyAccessWords) % stackAlignmentBytes()));
+    constexpr GPRReg stackPointer = CCallHelpers::stackPointerRegister;
     const TrapOfProxy trap = static_cast<TrapOfProxy>(jit.key().form());
     const bool isStore = trap == TrapOfProxy::Set;
     const GPRReg R0 = jit.operand(0);
@@ -464,10 +555,9 @@ void generateThroughProxy(StubAssembler& jit)
         return Address(R0, ProxyObject::offsetOfInternalField(static_cast<unsigned>(field)));
     };
     auto kept = [&](ptrdiff_t offset) {
-        return Address(sp, static_cast<int32_t>(offset));
+        return Address(stackPointer, static_cast<int32_t>(offset));
     };
 
-    // Without a trap the question is the same question about the target: it has no receiver. The answers are zero and one, and a target is neither.
     auto emitQuestionAboutTarget = [&] {
         RELEASE_ASSERT(signatureOf(inById(PresenceQuestion::In)).operands[0] == Reg(R0) && signatureOf(inById(PresenceQuestion::In)).immediate == name);
         Jump isAnswered = jit.branch64(CCallHelpers::BelowOrEqual, R0, TrustedImm32(1));
@@ -476,9 +566,9 @@ void generateThroughProxy(StubAssembler& jit)
     };
     const ScopedLambda<void()> askTarget = emitQuestionAboutTarget;
 
-    // Whoever comes here has probed a table, which leaves the slot in these two. So no caller of theirs has anything in them.
     jit.recordClobbers(RegisterSet(gprOf(slotHeaderRegister), gprOf(slotPayloadRegister)));
-    jit.checkStackBeforeEntering();
+    if (jit.key().callerFrame() != CallerFrame::StubFrame)
+        jit.checkStackBeforeEntering();
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = !isStore, .checksException = true, .emitBeforeReturn = trap == TrapOfProxy::Has ? &askTarget : nullptr }, [&] {
         JumpList isDone;
         JumpList isNoFunction;
@@ -490,11 +580,11 @@ void generateThroughProxy(StubAssembler& jit)
         };
         auto callWithWords = [&](Entry operation) {
             jit.move(R0, operationArgumentGPR(2));
-            jit.move(sp, operationArgumentGPR(1));
+            jit.move(stackPointer, operationArgumentGPR(1));
             callOperation(operation);
         };
 
-        jit.subPtr(TrustedImm32(sizeof(ProxyAccessWords)), sp);
+        jit.subPtr(TrustedImm32(sizeof(ProxyAccessWords)), stackPointer);
         jit.storePtr(R0, kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)));
         jit.storePtr(key, kept(OBJECT_OFFSETOF(ProxyAccessWords, key)));
         if (isStore) {
@@ -507,38 +597,82 @@ void generateThroughProxy(StubAssembler& jit)
         jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.numbersOfNamesOfTraps) + static_cast<int32_t>(static_cast<unsigned>(trap) * sizeof(uint32_t))), name);
         jit.storePtr(target, kept(OBJECT_OFFSETOF(ProxyAccessWords, target)));
         jit.storePtr(handler, kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)));
-        // It is revoked.
         runTimeDoesAll.append(jit.branchIfNotCell(handler));
         runTimeDoesAll.append(jit.branchTest32(CCallHelpers::Zero, name));
         jit.move(handler, R0);
-        jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
+        jit.callStub(getByIdOfCell().withCallerFrame(CallerFrame::StubFrame));
         isNoFunction.append(jit.branchIfNotCell(R0));
+        auto loadOperandsOfTrap = [&] {
+            jit.move(R0, calleeGPR);
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)), thisGPR);
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), argumentGPR(0));
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), argumentGPR(1));
+            if (isStore)
+                jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), argumentGPR(2));
+            if (trap != TrapOfProxy::Has)
+                jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
+        };
+        const bool entersClosure = isX86_64() && jit.options().hasOneInstance;
+        auto branchIfClosureTakesArguments = [&](CCallHelpers::RelationalCondition condition, ptrdiff_t offsetOfWord) {
+            return jit.branch8(condition, Address(R0, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(entersClosure ? operations.numberOfArguments : ClosureWord::maxNumberOfParameters)));
+        };
+        auto enterClosure = [&](ptrdiff_t offsetOfWord) {
+            static_assert(!isX86_64() || (ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32));
+            const GPRReg code = target;
+            RELEASE_ASSERT(noOverlap(code, calleeGPR, thisGPR, countGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
+            jit.move(TrustedImm32(operations.numberOfArguments), countGPR);
+            jit.load32(Address(calleeGPR, offsetOfWord), code);
+            jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), code);
+            jit.call(code, JSEntryPtrTag);
+        };
+        Jump isClosure = branchIfClosureTakesArguments(CCallHelpers::GreaterThanOrEqual, offsetOfSlimClosureWord);
+        JumpList hasCalled;
+        if (entersClosure) {
+            jit.load32(Address(R0, JSCell::structureIDOffset()), scratch);
+            Jump isOtherCallee = jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
+            Jump refusesArguments = branchIfClosureTakesArguments(CCallHelpers::LessThan, offsetOfClosureEntry);
+            loadOperandsOfTrap();
+            enterClosure(offsetOfClosureEntry);
+            hasCalled.append(jit.jump());
+            isOtherCallee.link(&jit);
+            refusesArguments.link(&jit);
+        }
         isNoFunction.append(branchIfNotFunctionType(jit, R0, scratch));
-
-        jit.move(R0, calleeGPR);
-        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)), thisGPR);
-        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), argumentGPR(0));
-        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), argumentGPR(1));
-        if (isStore)
-            jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), argumentGPR(2));
-        if (trap != TrapOfProxy::Has)
-            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
-        jit.callStub(callValueCell(operations.numberOfArguments));
+        if (entersClosure) {
+            loadOperandsOfTrap();
+            jit.callStub(callValueCell(operations.numberOfArguments));
+            hasCalled.append(jit.jump());
+        }
+        isClosure.link(&jit);
+        loadOperandsOfTrap();
+        if (entersClosure) {
+            enterClosure(offsetOfSlimClosureWord);
+            hasCalled.link(&jit);
+        } else
+            jit.callStub(callValueCell(operations.numberOfArguments));
         Jump saysYes;
         if (trap == TrapOfProxy::Has) {
             saysYes = jit.branch64(CCallHelpers::Equal, R0, TrustedImm64(JSValue::ValueTrue));
             runTimeFinishes.append(jit.branch64(CCallHelpers::NotEqual, R0, TrustedImm64(JSValue::ValueFalse)));
         } else if (isStore)
             runTimeFinishes.append(jit.branch64(CCallHelpers::NotEqual, R0, TrustedImm64(JSValue::ValueTrue)));
-        // Only a target that is not extensible or has a property that is not configurable binds what the trap may answer.
         JumpList bindsNothing;
         jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), target);
         loadStructure(jit, target, scratch);
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(operations.bitsOfTargetThatMayBind)));
-        // The Structure of a compiled object says yes for all of them. What was done to one object stands in the object, and what its fields are born with in the layout.
-        Jump isCompiledObject = branchIfCompiledObjectOfThisImage(jit, target);
+        JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, target);
+        runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyConfigurableFields))));
+        bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
+        runTimeFinishes.append(jit.branchTest32(CCallHelpers::NonZero, Address(target, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits))));
+        const GPRReg extraProperties = name;
+        loadExtraPropertiesByStructure(jit, target, scratch, handler, extraProperties, runTimeFinishes);
+        runTimeFinishes.append(jit.branchIfNotType(extraProperties, FinalObjectType));
+        loadStructure(jit, extraProperties, scratch);
+        bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasNonConfigurablePropertiesBits)));
+        runTimeFinishes.append(jit.jump());
+
+        isNotCompiledObject.link(&jit);
         if (trap == TrapOfProxy::Has) {
-            // Whoever hands over no slot asks for the text of an index. The elements of an extensible array in plain storage are configurable.
             static_assert(Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && UndecidedShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
             runTimeFinishes.append(jit.branchIfNotType(target, ArrayType));
             runTimeFinishes.append(jit.branchTest64(CCallHelpers::NonZero, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot))));
@@ -547,10 +681,6 @@ void generateThroughProxy(StubAssembler& jit)
             jit.and32(TrustedImm32(IndexingShapeMask), scratch);
             bindsNothing.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, TrustedImm32(ContiguousShape)));
         }
-        runTimeFinishes.append(jit.jump());
-        isCompiledObject.link(&jit);
-        runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable))));
-        bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
         // What the trap has thrown is seen in front of the return. Until then nothing looks at the answer but the tests above, and only the operation must not run.
         runTimeFinishes.link(&jit);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
@@ -570,7 +700,6 @@ void generateThroughProxy(StubAssembler& jit)
 
         isNoFunction.link(&jit);
         if (trap == TrapOfProxy::Get) {
-            // Without a trap the target answers. A data property is the same for every receiver, so what is filed for the target says it.
             const StubSignature probe = signatureOfTryGetSuperById(tryGetSuperById());
             RELEASE_ASSERT(probe.immediate && probe.operands[0] == Reg(R0) && *probe.immediate != R0);
             const GPRReg column = *probe.immediate;
@@ -606,7 +735,7 @@ void generateThroughProxy(StubAssembler& jit)
         callOperation(operations.whole);
 
         isDone.link(&jit);
-        jit.addPtr(TrustedImm32(sizeof(ProxyAccessWords)), sp);
+        jit.addPtr(TrustedImm32(sizeof(ProxyAccessWords)), stackPointer);
     });
 }
 
@@ -642,7 +771,7 @@ StubSignature signatureOfReadSlotExit(StubKey key)
     return signature;
 }
 
-static OperationCall createExitCall(GPRReg second, GPRReg third, std::optional<GPRReg> fourth = std::nullopt)
+static OperationCall createReadExitCall(GPRReg second, GPRReg third, std::optional<GPRReg> fourth = std::nullopt)
 {
     return { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = second, .thirdArgumentIn = third, .fourthArgumentIn = fourth };
 }
@@ -665,27 +794,12 @@ static void emitUncachedReadById(StubAssembler& jit, GPRReg receiver, GPRReg ide
     JumpList needsOperation;
     needsOperation.append(jit.branchIfNotCell(receiver));
     needsOperation.append(jit.branchIfNotObject(receiver));
-    // Its handler answers, and only the operation asks it.
     needsOperation.append(jit.branchIfType(receiver, ProxyObjectType));
-    loadIdentifier(jit, identifierNumber, uid, needsOperation);
-    // No slot says what the read finds, as where a getter lies in a field of an object above the receiver. The objects themselves say it.
-    JumpList objectsDoNotSay;
-    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, {
-        .receiver = receiver,
-        .name = identifierNumber,
-        .uid = uid,
-        .object = jit.allocateScratch(StubRegister::T12),
-        .structure = jit.allocateScratch(StubRegister::T11),
-        .size = jit.allocateScratch(StubRegister::T13),
-        .vector = jit.allocateScratch(StubRegister::T14),
-        .index = indexRegisterOfObjectLookup(jit),
-    }, ObjectLookupName::IsGivenByNumber, objectsDoNotSay);
-    objectsDoNotSay.link(&jit);
     loadIdentifier(jit, identifierNumber, uid, needsOperation);
     tryLeafLookup(jit, Entry::operationAOTGetGeneric, uid);
 
     needsOperation.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTGetById, createExitCall(receiver, identifierNumber));
+    jit.callOperationAndReturn(Entry::operationAOTGetById, createReadExitCall(receiver, identifierNumber));
 }
 
 void generateReadSlotExit(StubAssembler& jit)
@@ -699,9 +813,9 @@ void generateReadSlotExit(StubAssembler& jit)
     case SlotOrigin::ByIdInStubFrame:
         switch (traits.exit) {
         case SlotExit::Miss: {
-            const GPRReg noSite = jit.allocateScratch(StubRegister::T10);
-            jit.move(CCallHelpers::TrustedImmPtr(nullptr), noSite);
-            jit.exitOnMiss(Entry::operationAOTGetByIdAndCache, createExitCall(receiver, name, noSite));
+            const GPRReg isInStubFrame = jit.allocateScratch(StubRegister::T10);
+            jit.move(TrustedImm32(origin == SlotOrigin::ByIdInStubFrame), isInStubFrame);
+            jit.exitOnMiss(Entry::operationAOTGetByIdAndCache, createReadExitCall(receiver, name, isInStubFrame));
             return;
         }
         case SlotExit::Uncached:
@@ -712,28 +826,14 @@ void generateReadSlotExit(StubAssembler& jit)
     case SlotOrigin::ByVal:
         switch (traits.exit) {
         case SlotExit::Miss:
-            jit.exitOnMiss(Entry::operationAOTGetByValAndCache, createExitCall(receiver, name));
+            jit.exitOnMiss(Entry::operationAOTGetByValAndCache, createReadExitCall(receiver, name));
             return;
         case SlotExit::Uncached:
             tryLeafLookup(jit, Entry::operationAOTGetByValGeneric, name);
-            jit.callOperationAndReturn(Entry::operationAOTGetByVal, createExitCall(receiver, name));
+            jit.callOperationAndReturn(Entry::operationAOTGetByVal, createReadExitCall(receiver, name));
             return;
         }
         break;
-    case SlotOrigin::FreeName:
-    case SlotOrigin::FreeNameForTypeOf: {
-        const Entry operation = origin == SlotOrigin::FreeName ? Entry::operationAOTGetFreeName : Entry::operationAOTGetFreeNameForTypeOf;
-        const OperationCall call = createExitCall(name, jit.operand(siteOperandOfExit));
-        switch (traits.exit) {
-        case SlotExit::Miss:
-            jit.exitOnMiss(operation, call);
-            return;
-        case SlotExit::Uncached:
-            jit.callOperationAndReturn(operation, call);
-            return;
-        }
-        break;
-    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

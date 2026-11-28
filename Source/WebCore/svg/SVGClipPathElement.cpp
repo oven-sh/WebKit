@@ -106,7 +106,7 @@ void SVGClipPathElement::childrenChanged(const ChildChange& change)
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGClipPathElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGClipPathElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourceClipper>(*this, WTF::move(style));
@@ -171,7 +171,7 @@ RefPtr<SVGGraphicsElement> SVGClipPathElement::shouldApplyPathClipping() const
 FloatRect SVGClipPathElement::calculateClipContentRepaintRect(RepaintRectCalculation repaintRectCalculation)
 {
     ASSERT(renderer());
-    auto transformationMatrixFromChild = [&](const RenderLayerModelObject& child) -> std::optional<AffineTransform> {
+    auto transformFromChild = [&](const RenderLayerModelObject& child) -> std::optional<AffineTransform> {
         if (!document().settings().layerBasedSVGEngineEnabled())
             return std::nullopt;
 
@@ -205,7 +205,7 @@ FloatRect SVGClipPathElement::calculateClipContentRepaintRect(RepaintRectCalcula
         }
 
         auto r = renderer->repaintRectInLocalCoordinates(repaintRectCalculation);
-        if (auto transform = transformationMatrixFromChild(downcast<RenderLayerModelObject>(*renderer)))
+        if (auto transform = transformFromChild(downcast<RenderLayerModelObject>(*renderer)))
             r = transform->mapRect(r);
         clipContentRepaintRect.unite(r);
     }

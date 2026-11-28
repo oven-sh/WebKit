@@ -26,10 +26,13 @@
 #include "config.h"
 #include "GPUAdapter.h"
 
+#include "EventLoop.h"
 #include "Exception.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUAdapterInfo.h"
 #include "JSGPUDevice.h"
+#include "ScriptExecutionContext.h"
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 
 #include <wtf/HashSet.h>
@@ -112,8 +115,8 @@ static GPUFeatureName convertFeatureNameToEnum(const String& stringValue)
 
 static bool isSubset(const Vector<GPUFeatureName>& expectedSubset, const Vector<String>& expectedSuperset)
 {
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> expectedSupersetHashSet;
-    for (auto& featureName : expectedSuperset)
+    HashSet<uint32_t> expectedSupersetHashSet;
+    for (auto& featureName : borrow(expectedSuperset))
         expectedSupersetHashSet.add(static_cast<uint32_t>(convertFeatureNameToEnum(featureName)));
 
     for (auto& featureName : expectedSubset) {
@@ -124,7 +127,7 @@ static bool isSubset(const Vector<GPUFeatureName>& expectedSubset, const Vector<
     return true;
 }
 
-static bool LEGACY_NODELETE setMaxIntegerValue(uint32_t& limitValue, uint64_t i)
+NODELETE static bool setMaxIntegerValue(uint32_t& limitValue, uint64_t i)
 {
     CheckedUint32 narrowed = i;
     if (narrowed.hasOverflowed())
@@ -136,7 +139,7 @@ static bool LEGACY_NODELETE setMaxIntegerValue(uint32_t& limitValue, uint64_t i)
     return true;
 }
 
-static bool LEGACY_NODELETE setMaxIntegerValue(uint64_t& limitValue, uint64_t i)
+NODELETE static bool setMaxIntegerValue(uint64_t& limitValue, uint64_t i)
 {
     if (i > limitValue)
         limitValue = i;
@@ -144,7 +147,7 @@ static bool LEGACY_NODELETE setMaxIntegerValue(uint64_t& limitValue, uint64_t i)
     return true;
 }
 
-static bool LEGACY_NODELETE setAlignmentIntegerValue(uint32_t& limitValue, uint64_t i, uint32_t supportedAlignment)
+NODELETE static bool setAlignmentIntegerValue(uint32_t& limitValue, uint64_t i, uint32_t supportedAlignment)
 {
     CheckedUint32 narrowed = i;
     if (narrowed.hasOverflowed())
@@ -166,7 +169,7 @@ static std::optional<::WebGPU::Limits> requiredLimits(const WebGPUDeviceDescript
 {
     auto limits = ::WebGPU::defaultLimits();
 
-    for (const auto& pair : descriptor.requiredLimits) {
+    for (const auto& pair : borrow(descriptor.requiredLimits)) {
 #define SET_MAX_VALUE(LIMIT) \
         else if (pair.key == #LIMIT ""_s) { \
             if (pair.value > supportedLimits.LIMIT || !setMaxIntegerValue(limits.LIMIT, pair.value)) { \
@@ -273,27 +276,33 @@ void GPUAdapter::requestDevice(ScriptExecutionContext& scriptExecutionContext, c
 {
     auto& existingFeatures = m_features->backing().features();
     if (deviceDescriptor && !isSubset(deviceDescriptor->requiredFeatures, existingFeatures)) {
-        promise.reject(Exception(ExceptionCode::TypeError));
+        protect(scriptExecutionContext.eventLoop())->queueTask(TaskSource::WebGPU, [promise = WTF::move(promise)] mutable {
+            promise.reject(Exception(ExceptionCode::TypeError));
+        });
         return;
     }
 
     auto descriptor = convertToBacking(deviceDescriptor);
     auto limits = requiredLimits(descriptor, m_backing->limits());
     if (!limits) {
-        promise.reject(Exception(ExceptionCode::OperationError));
+        protect(scriptExecutionContext.eventLoop())->queueTask(TaskSource::WebGPU, [promise = WTF::move(promise)] mutable {
+            promise.reject(Exception(ExceptionCode::OperationError));
+        });
         return;
     }
 
     auto features = requiredFeatures(descriptor);
-    m_backing->requestDevice({ .label = descriptor.label, .requiredFeatures = features.span(), .requiredLimits = *limits }, [protectedThis = protect(*this), label = descriptor.label, deviceDescriptor, promise = WTF::move(promise), scriptExecutionContextRef = protect(scriptExecutionContext)](RefPtr<WebGPU::Device>&& device) mutable {
-        if (!device)
-            promise.reject(Exception(ExceptionCode::OperationError));
-        else {
-            auto queueLabel = deviceDescriptor->defaultQueue.label;
-            Ref<GPUDevice> gpuDevice = GPUDevice::create(scriptExecutionContextRef.ptr(), device.releaseNonNull(), protectedThis->m_gpu.copyRef(), WTF::move(label), deviceDescriptor ? WTF::move(queueLabel) : ""_s, GPUAdapterInfo::create(protectedThis->name(), protectedThis->m_info->subgroupMinSize(), protectedThis->m_info->subgroupMaxSize()));
-            gpuDevice->suspendIfNeeded();
-            promise.resolve(WTF::move(gpuDevice));
-        }
+    m_backing->requestDevice({ .label = descriptor.label, .requiredFeatures = features.span(), .requiredLimits = *limits }, [protectedThis = protect(*this), label = descriptor.label, deviceDescriptor, promise = WTF::move(promise), scriptExecutionContextRef = protect(scriptExecutionContext)](std::expected<Ref<WebGPU::Device>, String>&& device) mutable {
+        protect(scriptExecutionContextRef->eventLoop())->queueTask(TaskSource::WebGPU, [protectedThis = WTF::move(protectedThis), label = WTF::move(label), deviceDescriptor, promise = WTF::move(promise), scriptExecutionContextRef, device = WTF::move(device)] mutable {
+            if (!device)
+                promise.reject(Exception(ExceptionCode::OperationError));
+            else {
+                auto queueLabel = deviceDescriptor->defaultQueue.label;
+                Ref<GPUDevice> gpuDevice = GPUDevice::create(scriptExecutionContextRef.ptr(), WTF::move(*device), protectedThis->m_gpu.copyRef(), WTF::move(label), deviceDescriptor ? WTF::move(queueLabel) : ""_s, GPUAdapterInfo::create(protectedThis->name(), protectedThis->m_info->subgroupMinSize(), protectedThis->m_info->subgroupMaxSize()));
+                gpuDevice->suspendIfNeeded();
+                promise.resolve(WTF::move(gpuDevice));
+            }
+        });
     });
 }
 

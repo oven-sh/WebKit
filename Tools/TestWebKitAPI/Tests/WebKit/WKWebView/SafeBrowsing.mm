@@ -69,6 +69,12 @@ static bool confirmShown;
 static bool promptShown;
 static size_t modalCount;
 
+static void resetSafeBrowsingFlags()
+{
+    warningShown = false;
+    didCloseCalled = false;
+}
+
 @interface SafeBrowsingNavigationDelegate : NSObject <WKNavigationDelegate, WKUIDelegatePrivate>
 @end
 
@@ -172,6 +178,8 @@ TEST(SafeBrowsing, Preference)
 
 static RetainPtr<WKWebView> safeBrowsingView()
 {
+    resetSafeBrowsingFlags();
+
     ClassMethodSwizzler swizzler(getSSBLookupContextClassSingleton(), @selector(sharedLookupContext), [TestLookupContext methodForSelector:@selector(sharedLookupContext)]);
 
     static RetainPtr delegate = adoptNS([SafeBrowsingNavigationDelegate new]);
@@ -227,6 +235,8 @@ TEST(SafeBrowsing, GoBack)
 
 TEST(SafeBrowsing, GoBackAfterRestoreFromSessionState)
 {
+    resetSafeBrowsingFlags();
+
     RetainPtr webView1 = adoptNS([WKWebView new]);
     [webView1 loadRequest:[NSURLRequest requestWithURL:[NSBundle.test_resourcesBundle URLForResource:@"simple" withExtension:@"html"]]];
     [webView1 _test_waitForDidFinishNavigation];
@@ -456,9 +466,12 @@ TEST(SafeBrowsing, WKWebViewGoBack)
     [webView loadRequest:[NSURLRequest requestWithURL:resourceURL(@"simple3")]];
     while (![webView _safeBrowsingWarning])
         TestWebKitAPI::Util::spinRunLoop();
+    TestWebKitAPI::Util::run(&navigationFinished);
+
+    navigationFinished = false;
     [webView goBack];
     TestWebKitAPI::Util::run(&navigationFinished);
-    EXPECT_TRUE([[webView URL] isEqual:resourceURL(@"simple2")]);
+    EXPECT_WK_STREQ([[webView URL] absoluteString], [resourceURL(@"simple2") absoluteString]);
 }
 
 TEST(SafeBrowsing, WKWebViewGoBackIFrame)
@@ -1358,8 +1371,7 @@ TEST(SafeBrowsing, NavigationFromWarningPage)
         [task didFinish];
     }];
 
-    didCloseCalled = false;
-    warningShown = false;
+    resetSafeBrowsingFlags();
 
     [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"sb://host/phishing"]]];
 
@@ -1406,8 +1418,7 @@ TEST(SafeBrowsing, SetTimeoutNavigationFromWarningPage)
         [task didFinish];
     }];
 
-    didCloseCalled = false;
-    warningShown = false;
+    resetSafeBrowsingFlags();
 
     [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"sb://host/phishing"]]];
 

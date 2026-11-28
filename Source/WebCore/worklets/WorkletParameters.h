@@ -29,7 +29,9 @@
 #include "CanBeCrossOriginIsolated.h"
 #include "ContentSecurityPolicyResponseHeaders.h"
 #include "NetworkLoadPolicy.h"
+#include "ScriptExecutionContextIdentifier.h"
 #include "Settings.h"
+#include "TransferredMessagePort.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <pal/SessionID.h>
 #include <wtf/URL.h>
@@ -52,9 +54,11 @@ struct WorkletParameters {
     CanBeCrossOriginIsolated canBeCrossOriginIsolated { CanBeCrossOriginIsolated::No };
     ContentSecurityPolicyResponseHeaders contentSecurityPolicyResponseHeaders;
     NetworkLoadPolicy networkLoadPolicy;
+    TransferredMessagePort globalScopePort;
+    ScriptExecutionContextIdentifier documentIdentifier;
 
-    WorkletParameters isolatedCopy() const & { return { windowURL.isolatedCopy(), jsRuntimeFlags, sampleRate, currentFrame, identifier.isolatedCopy(), sessionID, settingsValues.isolatedCopy(), referrerPolicy, isAudioContextRealTime, advancedPrivacyProtections, noiseInjectionHashSalt, agentClusterID.isolatedCopy(), canBeCrossOriginIsolated, contentSecurityPolicyResponseHeaders.isolatedCopy(), networkLoadPolicy.isolatedCopy() }; }
-    WorkletParameters isolatedCopy() && { return { WTF::move(windowURL).isolatedCopy(), jsRuntimeFlags, sampleRate, currentFrame, WTF::move(identifier).isolatedCopy(), sessionID, WTF::move(settingsValues).isolatedCopy(), referrerPolicy, isAudioContextRealTime, advancedPrivacyProtections, WTF::move(noiseInjectionHashSalt), WTF::move(agentClusterID).isolatedCopy(), canBeCrossOriginIsolated, WTF::move(contentSecurityPolicyResponseHeaders).isolatedCopy(), networkLoadPolicy.isolatedCopy() }; }
+    WorkletParameters isolatedCopy() const & { return { windowURL.isolatedCopy(), jsRuntimeFlags, sampleRate, currentFrame, identifier.isolatedCopy(), sessionID, settingsValues.isolatedCopy(), referrerPolicy, isAudioContextRealTime, advancedPrivacyProtections, noiseInjectionHashSalt, agentClusterID.isolatedCopy(), canBeCrossOriginIsolated, contentSecurityPolicyResponseHeaders.isolatedCopy(), networkLoadPolicy.isolatedCopy(), globalScopePort, documentIdentifier }; }
+    WorkletParameters isolatedCopy() && { return { WTF::move(windowURL).isolatedCopy(), jsRuntimeFlags, sampleRate, currentFrame, WTF::move(identifier).isolatedCopy(), sessionID, WTF::move(settingsValues).isolatedCopy(), referrerPolicy, isAudioContextRealTime, advancedPrivacyProtections, WTF::move(noiseInjectionHashSalt), WTF::move(agentClusterID).isolatedCopy(), canBeCrossOriginIsolated, WTF::move(contentSecurityPolicyResponseHeaders).isolatedCopy(), networkLoadPolicy.isolatedCopy(), WTF::move(globalScopePort), documentIdentifier }; }
 };
 
 } // namespace WebCore

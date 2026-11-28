@@ -1,0 +1,75 @@
+# function configure(options) { var opts = options || {}; return opts.limit === opts.other }   function read(known) { return known.limit === known.other }   function orMade(given) { var one = given || { limit: 1, other: 1 }; return one.limit === one.other }
+# The join behind `||` has one way of which nothing is known and one that makes the function's own `{}`. The guess that `opts` is that literal is right whenever the caller gives nothing and fails whenever it gives options: the text
+# gives no reason that failing is rare. The failing side is built as ordinary code: its reads keep their sites' records (f1). A guess about a parameter, which no way into a join speaks against, keeps its rare failing side (f2).
+# So does a guess about a join whose known way makes what ANSWERS the names asked (f3; `cache[key] || (cache[key] = new Entry())`, `x !== null ? x : make()`): there the known way says what the unknown one most likely holds, and the passing way may not pay.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ShapeTest {{*}}layouts=[L0]
+# CHECK-NOT: frequency=Rare
+# CHECK: Return
+# RUN(PARAMETER): walk f2:Body mechanisms=all-ParameterGuards
+# PARAMETER-LABEL: code f2:Body
+# PARAMETER: ShapeTest {{*}}layouts=[L1]
+# PARAMETER: frequency=Rare
+# RUN(ANSWERS): walk f3:Body mechanisms=all
+# ANSWERS-LABEL: code f3:Body
+# ANSWERS: ShapeTest {{*}}layouts=[L1]
+# ANSWERS: frequency=Rare
+
+layout L0 module=m0 position=10
+layout L1 module=m0 position=20 fields=[{key="limit" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4, v4 layout=L1 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f3
+    v8 = Call v1, -, v2, v3, v6, v7
+    Return v8
+}
+function f1 name="configure" module=m0 length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v2 = NewObject layout=L0
+    v3 = FinishObject v2
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = PropGet v4 key="limit"
+    v6 = PropGet v4 key="other"
+    v7 = StrictEq v5, v6
+    Return v7
+}
+function f2 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="limit"
+    v2 = PropGet v0 key="other"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+function f3 name="orMade" module=m0 length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = PropGet v5 key="limit"
+    v7 = PropGet v5 key="other"
+    v8 = StrictEq v6, v7
+    Return v8
+}

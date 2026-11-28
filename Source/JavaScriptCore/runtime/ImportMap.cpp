@@ -423,8 +423,7 @@ static Vector<AtomString> findURLPrefixes(String specifier)
         position = specifier.find(slash, position);
     }
 
-    Vector<AtomString> result;
-    result.reserveInitialCapacity(positions.size());
+    Vector<AtomString> result(ReserveCapacityTag { }, positions.size());
     for (size_t& pos : positions)
         result.append(AtomString(specifier.substring(0, pos)));
 
@@ -456,11 +455,11 @@ void ImportMap::addModuleToResolvedModuleSet(String referringScriptURL, AtomStri
     Vector<AtomString> referringScriptPrefixes = findURLPrefixes(referringScriptURL);
     for (AtomString& referringScriptPrefix : referringScriptPrefixes) {
         const auto& currentSetIt = m_scopedResolvedModuleMap.find(referringScriptPrefix);
-        UncheckedKeyHashSet<AtomString>* currentSet = nullptr;
+        HashSet<AtomString>* currentSet = nullptr;
         if (currentSetIt != m_scopedResolvedModuleMap.end())
             currentSet = &currentSetIt->value;
         else
-            currentSet = &(m_scopedResolvedModuleMap.set(referringScriptPrefix, UncheckedKeyHashSet<AtomString>()).iterator->value);
+            currentSet = &(m_scopedResolvedModuleMap.set(referringScriptPrefix, HashSet<AtomString>()).iterator->value);
 
         currentSet->add(specifier);
         for (AtomString& specifierPrefix : specifierPrefixes)

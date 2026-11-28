@@ -1,0 +1,37 @@
+# the two are numbers, and either may be NaN. Where `a < b` has failed, `b <= a` may fail too: were it answered with true, NaN would count as at most every number
+# function f(a, b) { if (typeof a !== "number" || typeof b !== "number") return; if (a < b) return true; return b <= a; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = Less
+# CHECK: = LessEq
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="f" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b5()
+  b2(v5):
+    v6 = Less v3, v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Boolean boolean=true
+    Return v7
+  b4():
+    v8 = LessEq v5, v3
+    Return v8
+  b5():
+    v9 = Undefined
+    Return v9
+}

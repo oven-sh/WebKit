@@ -45,7 +45,7 @@ enum class DistanceModelType {
 class DistanceEffect final {
     WTF_MAKE_TZONE_ALLOCATED(DistanceEffect);
 public:
-    DistanceEffect();
+    NODELETE DistanceEffect();
 
     // Returns scalar gain for the given distance the current distance model is used
     double gain(double distance) const;
@@ -68,8 +68,8 @@ public:
     double rolloffFactor() const { return m_rolloffFactor; }
 
 protected:
-    double LEGACY_NODELETE linearGain(double distance) const;
-    double LEGACY_NODELETE inverseGain(double distance) const;
+    NODELETE double linearGain(double distance) const;
+    NODELETE double inverseGain(double distance) const;
     double exponentialGain(double distance) const;
 
     DistanceModelType m_model { DistanceModelType::Inverse };

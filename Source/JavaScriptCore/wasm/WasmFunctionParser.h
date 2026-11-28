@@ -3683,8 +3683,7 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
         for (auto& catchTarget : targets) {
             auto& target = resolveControlRef(catchTarget.target).controlData;
 
-            Stack results;
-            results.reserveInitialCapacity(target.branchTargetArity());
+            Stack results(ReserveCapacityTag { }, target.branchTargetArity());
             if (catchTarget.type == CatchKind::Catch || catchTarget.type == CatchKind::CatchRef) {
                 for (unsigned arg = 0; arg < catchTarget.exceptionSignature->argumentCount(); ++arg) {
                     ExpressionType exp;
@@ -4332,7 +4331,7 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
     case BrOnNull:
     case BrOnNonNull: {
         uint32_t target;
-        WASM_FAIL_IF_HELPER_FAILS(parseBranchTarget(target));
+        WASM_FAIL_IF_HELPER_FAILS(parseBranchTarget(target, m_unreachableBlocks));
         return { };
     }
 
@@ -4473,7 +4472,7 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
             bool hasNull2 = flags & 0x2;
 
             uint32_t unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseBranchTarget(unused));
+            WASM_FAIL_IF_HELPER_FAILS(parseBranchTarget(unused, m_unreachableBlocks));
 
             int32_t heapType1, heapType2;
             WASM_PARSER_FAIL_IF(!parseHeapType(m_info, heapType1), "can't get first heap type for "_s, opName);

@@ -1,0 +1,18 @@
+# an async generator yields what the shell hands in: a number, a promise, a thenable, a rejection; and the shell throws and returns into it where it stands at the yield
+# If the one suspension that stands for the await and the yield handed out what was not awaited, lost a rejection, or took a throw() or a return() for a step, these would differ
+# LIBRARY: own
+# RUN(SHELL): run-in-shell globalThis.sink = one => { const tell = (name, step) => { step.then(given => print(name, given.value, given.done), error => print(name, "fails", error)); drainMicrotasks(); }; const a = one(5); tell("a", a.next()); tell("a", a.next()); const b = one(Promise.resolve(6)); tell("b", b.next()); const c = one({ then(resolve) { resolve(7); } }); tell("c", c.next()); const d = one(Promise.reject("no")); tell("d", d.next()); tell("d", d.next()); const e = one(8); tell("e", e.next()); tell("e", e.throw("thrown")); tell("e", e.next()); const f = one(9); tell("f", f.next()); tell("f", f.return("returned")); tell("f", f.next()); };
+# SHELL: a 5 false
+# SHELL-NEXT: a undefined true
+# SHELL-NEXT: b 6 false
+# SHELL-NEXT: c 7 false
+# SHELL-NEXT: d fails no
+# SHELL-NEXT: d undefined true
+# SHELL-NEXT: e 8 false
+# SHELL-NEXT: e fails thrown
+# SHELL-NEXT: e undefined true
+# SHELL-NEXT: f 9 false
+# SHELL-NEXT: f returned true
+# SHELL-NEXT: f undefined true
+# SHELL-NEXT: exited with 0
+# PROGRAM-OF: ../walk/typed-operations/await-and-yield-of-an-async-generator-are-one-suspension.ir

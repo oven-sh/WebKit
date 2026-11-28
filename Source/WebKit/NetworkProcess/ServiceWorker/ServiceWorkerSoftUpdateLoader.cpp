@@ -130,6 +130,8 @@ void ServiceWorkerSoftUpdateLoader::loadFromNetwork(NetworkSession& session, Res
     parameters.contentEncodingSniffingPolicy = ContentEncodingSniffingPolicy::Default;
     parameters.needsCertificateInfo = true;
     parameters.request = WTF::move(request);
+    // We do not want to retry this load if it fails through private relay.
+    parameters.hadMainFrameMainResourcePrivateRelayed = true;
     Ref networkLoad = NetworkLoad::create(*this, WTF::move(parameters), session);
     m_networkLoad = networkLoad.copyRef();
     networkLoad->start();
@@ -176,7 +178,8 @@ ResourceError ServiceWorkerSoftUpdateLoader::processResponse(const ResourceRespo
 
     m_contentSecurityPolicy = ContentSecurityPolicyResponseHeaders { response };
     // Service workers are always secure contexts.
-    m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, nullptr);
+    // FIXME: A soft update has no web process whose preferences say whether credentialless policies are supported.
+    m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, CredentiallessSupport::No, nullptr);
     m_referrerPolicy = response.httpHeaderField(HTTPHeaderName::ReferrerPolicy);
     m_responseEncoding = response.textEncodingName();
 

@@ -1,0 +1,8 @@
+# the same program with direct calls withheld: the call in the loop is closed, and whoever it enters makes the promise
+# RUN: walk f2 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK: = Call
+# RUN(NEVER): walk f2 mechanisms=none
+# NEVER-NOT: = NewPromise
+# NEVER-NOT: role=CoroutineBody
+# PROGRAM-OF: ramp-of-an-async-function-is-built-at-its-call-in-a-loop.ir

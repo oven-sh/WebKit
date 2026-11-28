@@ -69,7 +69,7 @@ class ObjectHeap;
 class RemoteXRProjectionLayer final : public IPC::StreamMessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteXRProjectionLayer);
 public:
-    static Ref<RemoteXRProjectionLayer> create(::WebGPU::XRProjectionLayer& xrProjectionLayer, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
+    static Ref<RemoteXRProjectionLayer> create(::WebGPU::XRProjectionLayer& xrProjectionLayer, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUXRProjectionLayerIdentifier identifier)
     {
         return adoptRef(*new RemoteXRProjectionLayer(xrProjectionLayer, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
@@ -84,7 +84,7 @@ public:
 private:
     friend class WebGPU::ObjectHeap;
 
-    RemoteXRProjectionLayer(::WebGPU::XRProjectionLayer&, WebGPU::ObjectHeap&, Ref<IPC::StreamServerConnection>&&, RemoteGPU&, WebGPUIdentifier);
+    RemoteXRProjectionLayer(::WebGPU::XRProjectionLayer&, WebGPU::ObjectHeap&, Ref<IPC::StreamServerConnection>&&, RemoteGPU&, WebGPUXRProjectionLayerIdentifier);
 
     RemoteXRProjectionLayer(const RemoteXRProjectionLayer&) = delete;
     RemoteXRProjectionLayer(RemoteXRProjectionLayer&&) = delete;
@@ -96,12 +96,13 @@ private:
 #if PLATFORM(COCOA)
     void startFrame(uint64_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, uint64_t reusableTextureIndex, PlatformXR::RateMapDescription&&);
 #endif
-    void LEGACY_NODELETE endFrame();
+    NODELETE void endFrame();
+    void destroy();
 
     const Ref<::WebGPU::XRProjectionLayer> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
     const Ref<IPC::StreamServerConnection> m_streamConnection;
-    WebGPUIdentifier m_identifier;
+    WebGPUXRProjectionLayerIdentifier m_identifier;
     WeakRef<RemoteGPU> m_gpu;
 };
 

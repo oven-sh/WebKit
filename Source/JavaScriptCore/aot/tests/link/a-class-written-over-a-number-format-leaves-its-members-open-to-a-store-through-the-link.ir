@@ -1,0 +1,51 @@
+# class Money extends Intl.NumberFormat {} Money.prototype.__proto__[hidden] = () => {}; new Intl.NumberFormat("en-US").formatToParts(1)
+# The link that is read by its name off the heir's prototype answers a value that nobody follows, and tells no name. For the locks what stands above a class of the program
+# is carried out by the program, with its prototype, as it was while the look let it go: no member of either is taken for a constant.
+# If formatToParts were locked, the store would be refused in a right program, and Reflect.set would answer false and say nothing.
+# It stands beside a-class-written-over-set-brings-what-is-used-of-set-alone.ir.
+# RUN: locks
+# CHECK-NOT: locked IntlNumberFormatPrototypeFormatToParts
+
+layout L0 kind=Instance name="Money" module=m0 constructor=f1 flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Intl" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Intl) flags=[IsExpected]}
+    v3 = PropGet v2 key="NumberFormat"
+    v4 = Convert v3 declared={type=builtin(IntlNumberFormat) flags=[IsExpected]}
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f1
+    v7 = NewClass v6, v4, v5 layout=L0
+    v8 = FinishClass v7 layout=L0
+    v9 = PropGet v8 key="prototype"
+    v10 = PropGet v9 key="__proto__"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="hidden" [isFreeName]
+    v13 = NewClosure function=f2
+    ElemSet v10, v12, v13
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="Intl" [isFreeName]
+    v17 = Convert v16 declared={type=builtin(Intl) flags=[IsExpected]}
+    v18 = PropGet v17 key="NumberFormat"
+    v19 = Convert v18 declared={type=builtin(IntlNumberFormat) flags=[IsExpected]}
+    v20 = String string="en-US"
+    v21 = Construct v19, -, v20 calleeName="Intl.NumberFormat"
+    v22 = PropGet v21 key="formatToParts"
+    v23 = Integer integer=1
+    v24 = Call v22, v21, v23 calleeKey="formatToParts" calleeName="formatToParts"
+    Return v24
+}
+function f1 name="Money" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}
+function f2 module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

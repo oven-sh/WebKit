@@ -30,10 +30,12 @@
 #include "UIProcess/WebFrameProxy.h"
 #include <JavaScriptCore/InspectorAgentRegistry.h>
 #include <JavaScriptCore/InspectorTargetAgent.h>
+#include <WebCore/DebuggerPauseSessionIdentifier.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
@@ -53,6 +55,7 @@ class BrowsingContextGroup;
 class DebuggerPauseCoordinator;
 class InspectorBrowserAgent;
 class ProvisionalPageProxy;
+enum class ProvisionalLoadIsReplaced : bool;
 struct WebPageAgentContext;
 
 class WebPageInspectorController {
@@ -72,6 +75,10 @@ public:
     void frameDidContinueForDebugger(WebProcessProxy&, WebCore::FrameIdentifier);
     static void pageWasAddedToProcess(BrowsingContextGroup&, WebProcessProxy&, WebCore::PageIdentifier);
     void frameDidChangeProcess(WebCore::FrameIdentifier, WebCore::ProcessIdentifier newProcessID);
+    void mainFrameDidStartProvisionalLoad();
+    void mainFrameDidCommitLoad();
+    void mainFrameProvisionalLoadDidEnd(ProvisionalLoadIsReplaced);
+    bool isMainFrameNavigating() const { return m_isMainFrameNavigating; }
     void processDidTerminate(WebProcessProxy&);
 
     void connectFrontend(Inspector::FrontendChannel&, bool isAutomaticInspection = false, bool immediatelyPause = false);
@@ -100,7 +107,7 @@ public:
     void willDestroyProvisionalFrame(const ProvisionalFrameProxy&);
     void didCommitProvisionalFrame(WebFrameProxy&, WebCore::ProcessIdentifier oldProcessID, std::optional<WebCore::PageIdentifier> oldPageID, WebCore::ProcessIdentifier newProcessID);
 
-    InspectorBrowserAgent* LEGACY_NODELETE enabledBrowserAgent() const;
+    NODELETE InspectorBrowserAgent* enabledBrowserAgent() const;
     void setEnabledBrowserAgent(InspectorBrowserAgent*);
 
     void browserExtensionsEnabled(HashMap<String, String>&&);
@@ -111,18 +118,26 @@ public:
 
     void setShowPaintRects(bool);
 
+    void timelineRecordingChanged(bool active);
+    void takeTimelineScreenshot(const WebCore::IntRect&, double timestamp, CompletionHandler<void()>&&);
+
     void disconnectFrameTargetForTesting(WebCore::FrameIdentifier);
+
+    void debuggerPauseSessionDidChange(WebCore::DebuggerPauseSessionIdentifier, bool isPaused, const Vector<String>& stoppingTargetIDs);
 
 private:
     void browsingContextGroupPageWasAddedToProcess(WebProcessProxy&, WebCore::PageIdentifier);
 
-    WebPageAgentContext LEGACY_NODELETE webPageAgentContext();
+    NODELETE WebPageAgentContext webPageAgentContext();
     void createLazyAgents();
 
     void addTarget(std::unique_ptr<InspectorTargetProxy>&&);
     void removeTarget(const String& targetId);
 
     bool shouldManageFrameTargets() const;
+
+    void finishTimelineScreenshot();
+    void sendTimelineScreenshotRecord(double timestamp, const String& imageData);
 
     const Ref<Inspector::FrontendRouter> m_frontendRouter;
     const Ref<Inspector::BackendDispatcher> m_backendDispatcher;
@@ -139,6 +154,13 @@ private:
 
     bool m_didCreateLazyAgents { false };
     std::unique_ptr<DebuggerPauseCoordinator> m_debuggerPauseCoordinator;
+    bool m_isMainFrameNavigating { false };
+
+    bool m_isTimelineRecording { false };
+#if PLATFORM(COCOA)
+    uint64_t m_timelineScreenshotID { 0 };
+#endif
+    CompletionHandler<void()> m_timelineScreenshotCompletionHandler;
 };
 
 } // namespace WebKit

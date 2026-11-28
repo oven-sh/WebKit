@@ -61,11 +61,12 @@ public:
 
     CGRect bounds() const;
     CGRect sampleLayerBoundsForTesting() const;
-    void LEGACY_NODELETE setVideoFrameRotationForTesting(WebCore::VideoFrameRotation);
+    NODELETE void setVideoFrameRotationForTesting(WebCore::VideoFrameRotation);
 
-    PlatformLayer* LEGACY_NODELETE displayLayer();
+    NODELETE PlatformLayer* displayLayer();
 
-    void updateSampleLayerBoundsAndPosition(std::optional<CGRect>);
+    enum class UseRootLayerBounds : bool { No, Yes };
+    void updateSampleLayerBoundsAndPosition(std::optional<CGRect>, UseRootLayerBounds = UseRootLayerBounds::No);
 
     // SampleBufferDisplayLayer.
     PlatformLayer* rootLayer() final;
@@ -115,6 +116,7 @@ private:
 
     WebCore::VideoFrameRotation m_videoFrameRotation { WebCore::VideoFrameRotation::None };
     CGAffineTransform m_affineTransform { CGAffineTransformIdentity };
+    bool m_hasEnqueuedVideoFrame { false };
 
     bool m_paused { false };
     bool m_didFail { false };

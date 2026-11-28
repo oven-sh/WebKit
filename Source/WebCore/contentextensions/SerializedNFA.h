@@ -31,8 +31,7 @@
 #include <wtf/MappedFileData.h>
 #include <wtf/StdLibExtras.h>
 
-namespace WebCore {
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 struct NFA;
 
@@ -61,11 +60,11 @@ public:
         std::span<const T> m_span;
     };
 
-    const Range<ImmutableNFANode> LEGACY_NODELETE nodes() const;
-    const Range<ImmutableRange<char>> LEGACY_NODELETE transitions() const;
-    const Range<uint32_t> LEGACY_NODELETE targets() const;
-    const Range<uint32_t> LEGACY_NODELETE epsilonTransitionsTargets() const;
-    const Range<uint64_t> LEGACY_NODELETE actions() const;
+    NODELETE const Range<ImmutableNFANode> nodes() const;
+    NODELETE const Range<ImmutableRange<char>> transitions() const;
+    NODELETE const Range<uint32_t> targets() const;
+    NODELETE const Range<uint32_t> epsilonTransitionsTargets() const;
+    NODELETE const Range<uint64_t> actions() const;
 
     uint32_t root() const
     {
@@ -181,13 +180,12 @@ private:
     SerializedNFA(FileSystem::MappedFileData&&, Metadata&&);
 
     template<typename T>
-    std::span<const T> LEGACY_NODELETE spanAtOffsetInFile(size_t offset, size_t length) const;
+    NODELETE std::span<const T> spanAtOffsetInFile(size_t offset, size_t length) const;
     
     FileSystem::MappedFileData m_file;
     Metadata m_metadata;
 };
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

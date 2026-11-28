@@ -1,0 +1,57 @@
+# type Node = { left?: Node; right?: Node; name: string }
+# function link(node: Node, other: Node) { node.left = other; node.right = other; }
+# RUN(PLAIN): run-in-shell globalThis.show = (link, node, other) => { link(node, other); print(JSON.stringify(node)); };
+# PLAIN: {"name":"node","left":{"name":"other"},"right":{"name":"other"}}
+# PLAIN-NEXT: exited with 0
+# RUN(FROZEN): run-in-shell globalThis.show = (link, node, other) => { Object.freeze(node); try { link(node, other); } catch (error) { print(error.constructor.name); } print(JSON.stringify(node)); };
+# FROZEN: TypeError
+# FROZEN-NEXT: {"name":"node"}
+# FROZEN-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell globalThis.show = (link, node, other) => { Object.preventExtensions(node); try { link(node, other); } catch (error) { print(error.constructor.name); } print(JSON.stringify(node)); };
+# CLOSED: TypeError
+# CLOSED-NEXT: {"name":"node"}
+# CLOSED-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.show = (link, node, other) => { Object.defineProperty(node, "left", { set(value) { print("set " + value.name); }, enumerable: true, configurable: true }); link(node, other); print(Object.keys(node).join()); };
+# SETTER: set other
+# SETTER-NEXT: name,left,right
+# SETTER-NEXT: exited with 0
+# RUN(OTHER): run-in-shell globalThis.show = (link, node, other) => { node.left = 5; link(node, other); print(JSON.stringify(node)); };
+# OTHER: {"name":"node","left":{"name":"other"},"right":{"name":"other"}}
+# OTHER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f3
+layout L0 name="Node" fields=[{key="left" declared={type=undefined|null|L0}}, {key="right" declared={type=undefined|null|L0}}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="left" declared={type=undefined|null|L1}}, {key="name" declared={type=string} flags=[IsRequired]}]
+function f0 name="link" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+    PropSet v0, v1 key="left"
+    PropSet v0, v1 key="right"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="keep" parameters=[{type=L1}, {type=L1}] results=[{type=anything}] {
+    PropSet v0, v1 key="left"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="around" parameters=[{type=L0}, {type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="left"
+    v4 = Call v2, - calleeName="f"
+    PropSet v0, v1 key="right"
+    v6 = Undefined
+    Return v6
+}
+function f3 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = NewClosure function=f0
+    v3 = String string="node"
+    v4 = NewObject -, v3 layout=L0 fields=[2]
+    v5 = FinishObject v4
+    v6 = String string="other"
+    v7 = NewObject -, v6 layout=L0 fields=[2]
+    v8 = FinishObject v7
+    v9 = Call v1, -, v2, v5, v8 calleeName="show"
+    Return v9
+}
+function f4 name="types" role=Signature parameters=[{type=L0}, {type=L1}] results=[{type=undefined}]
+entry module=m0

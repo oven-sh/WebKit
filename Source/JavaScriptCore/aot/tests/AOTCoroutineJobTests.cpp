@@ -9,9 +9,11 @@
 
 #include "AOTImageTestSupport.h"
 #include "AOTInstance.h"
+#include "AOTNativeTest.h"
 #include "AOTObjectWords.h"
 #include "AOTRelocation.h"
-#include "AOTStubTestSupport.h"
+#include "AOTStubAssembler.h"
+#include "AOTStubCatalog.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTVector.h"
 #include "AsyncContextSwapScope.h"
@@ -44,9 +46,6 @@ using JobWords = std::array<uint64_t, 1 + QueuedTask::maxArguments>;
 
 static_assert(sizeof(QueuedTask) == sizeof(JobWords) && QueuedTask::maxArguments == 4);
 static_assert(!QueuedTask::offsetOfDispatcher() && QueuedTask::offsetOfArguments() == sizeof(uint64_t));
-
-static constexpr StubKey hostBody = newPromise();
-static_assert(bodyOf(hostBody) == hostBody);
 
 static constexpr uint8_t poisonByte = 0xab;
 static constexpr uint64_t poisonWord = 0xababababababababULL;
@@ -84,7 +83,6 @@ struct RingState {
     friend bool operator==(const RingState&, const RingState&) = default;
 };
 
-// The words of a MicrotaskQueue that the stubs read and write, at the offsets that the stubs use.
 class Ring {
 public:
     explicit Ring(MicrotaskQueue& queue)
@@ -150,7 +148,6 @@ static QueuedTask makeJob(JSGlobalObject* globalObject, InternalMicrotask task, 
 
 namespace {
 
-// A real VM, realm and queue, and an Instance that no program was loaded for. Every condition of the stubs holds until a test changes one.
 class JobTestRealm {
     WTF_MAKE_NONCOPYABLE(JobTestRealm);
 public:
@@ -186,7 +183,6 @@ public:
 
     VM& vm() { return *m_vm; }
     JSGlobalObject* globalObject() { return m_globalObject.get(); }
-    // Stands in for a SavedFrame of the instance: the stubs tell one by its Structure.
     JSObject* waiter() { return m_waiter.get(); }
     MicrotaskQueue& queue() { return *m_queue; }
     Ring ring() { return Ring(*m_queue); }
@@ -222,7 +218,7 @@ private:
 
 static const StubCatalog& catalogForThisCPU()
 {
-    static NeverDestroyed<StubCatalog> catalog(StubOptions { .targetFeatures = CPUFeatureSet::buildTarget() }, StubPolicy { });
+    static NeverDestroyed<StubCatalog> catalog(StubOptions { .targetFeatures = CPUFeatureSet::buildTarget() });
     return catalog.get();
 }
 
@@ -268,12 +264,11 @@ static void emitReturnToC(StubAssembler& jit, std::span<const GPRReg> calleeSave
     for (size_t i = 0; i < calleeSaves.size(); ++i)
         jit.loadPtr(calleeSaveSlot(i), calleeSaves[i]);
     jit.emitFunctionEpilogue();
-    jit.returnToCaller();
+    jit.ret();
 }
 
 namespace {
 
-// A function of C++ around code that falls through or jumps to a list. It says which, and stores the given registers on both paths.
 class Snippet {
 public:
     using Emitter = ScopedLambda<void(StubAssembler&, JumpList& leaves)>;
@@ -281,35 +276,33 @@ public:
     Snippet(std::initializer_list<StubRegister> registersStoredAfterwards, const Emitter& emit)
     {
         const StubCatalog& catalog = catalogForThisCPU();
-        AOT_TEST_CHECK(entriesOf(hostBody).size() == 1 && !signatureFor(hostBody).numberOfOperands);
         AOT_TEST_CHECK(registersStoredAfterwards.size() <= std::tuple_size_v<decltype(JobEnvironment::registersAfterwards)>);
 
         Vector<GPRReg> calleeSaves = calleeSavedGPRs();
-        StubAssembler assembler(catalog.options(), catalog);
-        StubRecording recording = assembler.generateForTesting(hostBody, [&](StubAssembler& jit) {
-            emitEntryFromC(jit, calleeSaves.span());
+        StubAssembler jit(catalog.options(), catalog);
+        Label entry = jit.label();
+        emitEntryFromC(jit, calleeSaves.span());
 
-            JumpList leaves;
-            emit(jit, leaves);
-            jit.move(TrustedImm32(static_cast<int32_t>(Path::FellThrough)), jit.result());
-            Jump done = jit.jump();
-            leaves.link(&jit);
-            jit.move(TrustedImm32(static_cast<int32_t>(Path::Left)), jit.result());
-            done.link(&jit);
+        JumpList leaves;
+        emit(jit, leaves);
+        jit.move(TrustedImm32(static_cast<int32_t>(Path::FellThrough)), GPRInfo::returnValueGPR);
+        Jump done = jit.jump();
+        leaves.link(&jit);
+        jit.move(TrustedImm32(static_cast<int32_t>(Path::Left)), GPRInfo::returnValueGPR);
+        done.link(&jit);
 
-            size_t index = 0;
-            for (StubRegister stored : registersStoredAfterwards)
-                jit.store64(gprOf(stored), registerAfterwardsSlot(index++));
-            emitReturnToC(jit, calleeSaves.span());
-        });
-        AOT_TEST_CHECK(recording.references.isEmpty() && recording.symbols.isEmpty());
-        AOT_TEST_CHECK(recording.entriesUsed.isEmpty() && !recording.leavesStubs && !recording.hasUnknownEffects);
+        size_t index = 0;
+        for (StubRegister stored : registersStoredAfterwards)
+            jit.store64(gprOf(stored), registerAfterwardsSlot(index++));
+        emitReturnToC(jit, calleeSaves.span());
 
-        ImageLinkBuffer buffer(assembler, LinkBuffer::Profile::Thunk);
+        jit.linkJumpsBetweenStubs();
+        ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
         AOT_TEST_CHECK(!buffer.didFailToAllocate());
+        AOT_TEST_CHECK(jit.linkCallsAndAddresses(buffer.linkBuffer()));
         buffer.finalize(false, "coroutine job snippet"_s);
-        AOT_TEST_CHECK(assembler.boundEntries().size() == 1 && !assembler.relocations().numberOfRelocations());
-        m_offsetOfEntry = buffer.linkBuffer().offsetOf(assembler.boundEntries()[0].label);
+        AOT_TEST_CHECK(!jit.relocations().numberOfRelocations());
+        m_offsetOfEntry = buffer.linkBuffer().offsetOf(entry);
         m_code.emplace(buffer.bytes());
     }
 
@@ -381,7 +374,6 @@ static Snippet assembleTake()
     });
 }
 
-// Whichever way the code goes, what comes next still needs the operands.
 static Path push(JobTestRealm& realm, const Snippet& snippet, JSValue resolution)
 {
     JobEnvironment& environment = realm.environment();
@@ -590,7 +582,6 @@ static void testJobsThatStayInTheQueue()
     checkNoJobIsTaken(realm, snippet);
     realm.instance().awaitMustSuspend = 0;
 
-    // Where async contexts are tracked a job runs under the one that it has captured. Another than the current one is put in place if whoever runs the jobs puts back afterwards what was there. Else the job stays for the job loop.
     realm.vm().m_asyncContextTrackingEnabled = true;
     enqueueAlone(makeJob(realm.globalObject(), InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, jsNumber(1), realm.waiter(), jsNumber(7)));
     checkNoJobIsTaken(realm, snippet);

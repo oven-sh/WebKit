@@ -44,7 +44,7 @@ enum class ClonedDocumentType : uint8_t;
 enum class ShadowRootAvailableToElementInternals : bool;
 enum class ShadowRootDelegatesFocus : bool;
 enum class ShadowRootSerializable : bool;
-enum class ShadowRootScopedCustomElementRegistry : bool;
+enum class ShadowRootKeepsCustomElementRegistryNull : bool;
 enum class SlotAssignmentMode : bool;
 
 struct SerializedNode {
@@ -54,8 +54,8 @@ struct SerializedNode {
         String localName;
         String namespaceURI;
 
-        QualifiedName(const WebCore::QualifiedName&);
-        WEBCORE_EXPORT QualifiedName(String&&, String&&, String&&);
+        NODELETE QualifiedName(const WebCore::QualifiedName&);
+        NODELETE WEBCORE_EXPORT QualifiedName(String&&, String&&, String&&);
         WebCore::QualifiedName qualifiedName() &&;
     };
     struct Attr {
@@ -69,7 +69,7 @@ struct SerializedNode {
         ClonedDocumentType type;
         URL url;
         URL baseURL;
-        URL baseURLOverride;
+        URL aboutBaseURL;
         Variant<String, URL> documentURI;
         String contentType;
     };
@@ -85,7 +85,8 @@ struct SerializedNode {
         ShadowRootDelegatesFocus delegatesFocus;
         ShadowRootSerializable serializable;
         ShadowRootAvailableToElementInternals availableToElementInternals;
-        ShadowRootScopedCustomElementRegistry hasScopedCustomElementRegistry;
+        bool usesNullCustomElementRegistry;
+        ShadowRootKeepsCustomElementRegistryNull keepsCustomElementRegistryNull;
     };
     struct Element : public ContainerNode {
         struct Attribute {

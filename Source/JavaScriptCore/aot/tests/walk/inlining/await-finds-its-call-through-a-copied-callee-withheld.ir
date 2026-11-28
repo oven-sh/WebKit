@@ -1,0 +1,8 @@
+# the same program with inlining withheld: the plain function is called, what it returns is a promise, and the await takes the promise
+# RUN: walk f3:CoroutineBody mechanisms=none+DirectCalls
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: = CallDirect
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f3:CoroutineBody mechanisms=none+DirectCalls
+# NEVER-NOT: = AwaitCallBySavingFrame
+# PROGRAM-OF: await-finds-its-call-through-a-copied-callee.ir

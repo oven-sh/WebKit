@@ -9,13 +9,17 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTCompiledStructure.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTLayoutData.h"
 #include "AOTObjectWords.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsArrays.h"
+#include "AOTStubsBarriers.h"
 #include "AOTStubsField.h"
 #include "AOTStubsObjectCreation.h"
 #include "CompleteSubspace.h"
@@ -25,7 +29,6 @@
 #include "MarkedSpace.h"
 #include <optional>
 #include <type_traits>
-#include <utility>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT {
@@ -65,7 +68,6 @@ static void storeChunk(StubAssembler& jit, GPRReg base, int32_t offset, std::opt
 }
 #endif
 
-// Only ARM64 uses the scratches.
 static void copyChunk(StubAssembler& jit, Address from, Address to, GPRReg firstScratch, GPRReg secondScratch)
 {
 #if CPU(X86_64)
@@ -79,9 +81,43 @@ static void copyChunk(StubAssembler& jit, Address from, Address to, GPRReg first
 #endif
 }
 
+static void copyHeaderAndWords(StubAssembler& jit, Address from, GPRReg cell, GPRReg firstScratch, GPRReg secondScratch)
+{
+#if CPU(ARM64)
+    static_assert(copyChunkBytes == 2 * sizeof(uint64_t));
+    jit.loadPair64(from.base, TrustedImm32(from.offset), firstScratch, secondScratch);
+    jit.store64(firstScratch, Address(cell));
+    jit.store64(secondScratch, Address(cell, sizeof(uint64_t)));
+#else
+    copyChunk(jit, from, Address(cell), firstScratch, secondScratch);
+#endif
+}
+
+static void copyWholeCell(StubAssembler& jit, GPRReg words, GPRReg cell, GPRReg size, GPRReg firstScratch, GPRReg secondScratch)
+{
+    static_assert(!(MarkedSpace::sizeStep % copyChunkBytes));
+#if CPU(X86_64)
+    UNUSED_PARAM(firstScratch);
+    UNUSED_PARAM(secondScratch);
+    Label loop = jit.label();
+    loadChunk(jit, words, -static_cast<int32_t>(copyChunkBytes), size);
+    storeChunk(jit, cell, -static_cast<int32_t>(copyChunkBytes), size);
+    jit.branchSub64(CCallHelpers::NonZero, TrustedImm32(copyChunkBytes), size).linkTo(loop, &jit);
+#else
+    const GPRReg end = size;
+    jit.add64(size, words);
+    jit.add64(cell, end);
+    Label loop = jit.label();
+    jit.sub64(TrustedImm32(copyChunkBytes), words);
+    jit.sub64(TrustedImm32(copyChunkBytes), end);
+    jit.loadPair64(words, TrustedImm32(0), firstScratch, secondScratch);
+    jit.storePair64(firstScratch, secondScratch, end, TrustedImm32(0));
+    jit.branchPtr(CCallHelpers::NotEqual, end, cell).linkTo(loop, &jit);
+#endif
+}
+
 static constexpr int32_t distanceToEmptyRecord = -static_cast<int32_t>(sizeof(AllocationSiteRecord));
 
-// ARM64 adds a register or a number to a register, not both at once. There the number is left to the offset of each access.
 #if CPU(ARM64)
 static constexpr int32_t distanceLeftToOffsets = distanceToEmptyRecord;
 #else
@@ -116,19 +152,17 @@ void loadAllocationSiteRecord(StubAssembler& jit, GPRReg allocation, GPRReg reco
 
 static AllocationSiteRegisters allocateSiteRegisters(StubAssembler& jit)
 {
-    return { jit.result(), jit.operand(0), jit.allocateScratch(StubRegister::T11), jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T13) };
+    return { jit.result(), jit.operand(0), jit.allocateScratch(StubRegister::T11), jit.allocateScratch(scratchBesideShortStubImmediate), jit.allocateScratch(StubRegister::T13) };
 }
 
-[[nodiscard]] static AssemblyHelpers::FreeListRefill allocateAtSite(StubAssembler& jit, const AllocationSiteRegisters& registers, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt)
+[[nodiscard]] static AssemblyHelpers::FreeListRefill allocateAtSite(StubAssembler& jit, const AllocationSiteRegisters& registers, JumpList& slowPath, std::optional<unsigned> cellSize)
 {
     const auto [cell, allocation, record, allocator, scratch] = registers;
-    countCellOfAllocation(jit, allocation, record);
     loadAllocationSiteRecordForOffsets(jit, allocation, record, allocator);
     jit.loadPtr(inRecordAtSite(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
-    return allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize, CountedUnder::Allocation);
+    return allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize);
 }
 
-// The first chunk is left to whoever stores the header.
 static void zeroBehindFirstChunk(StubAssembler& jit, const AllocationSiteRegisters& registers, std::optional<unsigned> cellSize)
 {
     const auto [cell, allocation, record, allocator, scratch] = registers;
@@ -161,10 +195,69 @@ static void zeroBehindFirstChunk(StubAssembler& jit, const AllocationSiteRegiste
     jit.branchSub64(CCallHelpers::PositiveOrZero, TrustedImm32(2 * copyChunkBytes), scratch).linkTo(loop, &jit);
 }
 
-StubSignature signatureOfAllocateCell(StubKey)
+static void allocateGrownCell(StubAssembler& jit, const AllocationSiteRegisters& registers, int32_t distanceToRecord, unsigned size, Label initialize)
 {
-    return StubSignature::withGPRResult({ gprOf(StubRegister::T9) });
+    const auto [cell, allocation, record, allocator, scratch] = registers;
+    JumpList cannot;
+    jit.loadPtr(Address(record, distanceToRecord + AllocationSiteRecord::offsetOfAllocator()), scratch);
+    jit.loadPtr(Address(scratch, GrownCells::offsetOfAllocatorAndMark()), allocator);
+    cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator, TrustedImm32(GrownCells::isArmed)));
+    jit.subPtr(TrustedImm32(GrownCells::isArmed), allocator);
+    jit.addPtr(TrustedImm32(GrownCells::offsetOfRecord() - distanceToRecord), scratch, record);
+    allocateCell(jit, cell, allocator, scratch, cannot);
+#if CPU(X86_64)
+    jit.moveZeroToDouble(CCallHelpers::fpTempRegister);
+    storeChunk(jit, cell, size);
+#else
+    jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, cell, TrustedImm32(size));
+#endif
+    jit.jump().linkTo(initialize, &jit);
+    cannot.link(&jit);
 }
+
+StubSignature signatureOfAllocateCell(StubKey key)
+{
+    return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) }).withResultIn(key.operandRegister()).fillingOperandInFront(0);
+}
+
+#if CPU(X86_64)
+static void generateAllocateCellOfKnownAllocator(StubAssembler& jit, const AllocationSiteRegisters& registers, unsigned steps)
+{
+    const auto [cell, allocation, record, allocator, scratch] = registers;
+    const GPRReg distance = cell;
+    const unsigned cellSize = steps * cellSizeStep;
+    RELEASE_ASSERT(steps < ObjectWords::numberOfCellAllocators && noOverlap(cell, allocation, record, allocator, scratch, instanceGPR));
+    const BaseIndex allocatorOfRecord(record, distance, CCallHelpers::TimesOne, distanceToEmptyRecord + static_cast<int32_t>(AllocationSiteRecord::offsetOfAllocator()));
+    auto loadHeaderAndWords = [&] {
+        loadChunk(jit, record, distanceToEmptyRecord + static_cast<int32_t>(AllocationSiteRecord::offsetOfHeader()), distance);
+    };
+    JumpList slowPath;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.cellAllocators) + steps * sizeof(void*)), allocator);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.distancesToAllocationSites)), record);
+    jit.load32SignedExtendTo64(BaseIndex(record, allocation, CCallHelpers::TimesFour), distance);
+    Jump hasOtherAllocator = jit.branch64(CCallHelpers::NotEqual, allocatorOfRecord, allocator);
+    loadHeaderAndWords();
+    Label allocate = jit.label();
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize);
+    storeChunk(jit, cell, 0);
+    jit.returnToCaller();
+
+    hasOtherAllocator.link(&jit);
+    jit.loadPtr(allocatorOfRecord, allocator);
+    loadHeaderAndWords();
+    jit.jump().linkTo(allocate, &jit);
+
+    Label initializeGrownCell = jit.label();
+    copyHeaderAndWords(jit, inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), cell, allocator, scratch);
+    jit.returnToCaller();
+
+    emitLateRefill(jit, refill, slowPath);
+    slowPath.link(&jit);
+    loadAllocationSiteRecordForOffsets(jit, allocation, record, allocator);
+    allocateGrownCell(jit, registers, distanceLeftToOffsets, cellSize, initializeGrownCell);
+    jit.callOperationAndReturn(Entry::operationAOTAllocateSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation });
+}
+#endif
 
 void generateAllocateCell(StubAssembler& jit)
 {
@@ -174,8 +267,15 @@ void generateAllocateCell(StubAssembler& jit)
     static_assert(cellSizeStep == MarkedSpace::sizeStep && maxCellSizeInKey == MarkedSpace::preciseCutoff);
     const unsigned steps = jit.key().count();
     const std::optional<unsigned> cellSize = steps ? std::optional<unsigned>(steps * cellSizeStep) : std::nullopt;
-    const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
     const auto initialization = static_cast<CellInitialization>(jit.key().form());
+#if CPU(X86_64)
+    if (steps && initialization == CellInitialization::HeaderAndWords) {
+        generateAllocateCellOfKnownAllocator(jit, registers, steps);
+        return;
+    }
+#endif
+    const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
+    Label initialize = jit.label();
     if (zeroesBody(initialization))
         zeroBehindFirstChunk(jit, registers, cellSize);
     if (!storesWords(initialization)) {
@@ -184,12 +284,52 @@ void generateAllocateCell(StubAssembler& jit)
         if (zeroesBody(initialization))
             jit.store64(TrustedImm32(0), Address(cell, sizeof(JSCell)));
     } else
-        copyChunk(jit, inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), Address(cell), allocator, scratch);
+        copyHeaderAndWords(jit, inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), cell, allocator, scratch);
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
+    if (storesWords(initialization) && cellSize)
+        allocateGrownCell(jit, registers, distanceLeftToOffsets, *cellSize, initialize);
     jit.callOperationAndReturn(Entry::operationAOTAllocateSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation });
+}
+
+StubSignature signatureOfAllocateCellFromTemplate(StubKey key)
+{
+    return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister), gprOf(StubRegister::T10) }).withResultIn(key.operandRegister());
+}
+
+void generateAllocateCellFromTemplate(StubAssembler& jit)
+{
+    const AllocationSiteRegisters registers = allocateSiteRegisters(jit);
+    const auto [cell, allocation, record, allocator, scratch] = registers;
+    const GPRReg body = jit.operand(1);
+    RELEASE_ASSERT(noOverlap(cell, allocation, body, record, allocator, scratch, instanceGPR));
+    static_assert(offsetOfTemplateInCell(CellInitialization::Header) == sizeof(JSCell) && offsetOfTemplateInCell(CellInitialization::HeaderAndWords) == offsetOfFirstField);
+    static_assert(offsetOfFirstEnvironmentVariable == sizeof(JSCell) && cellSizeStep == copyChunkBytes);
+    const auto initialization = static_cast<CellInitialization>(jit.key().form());
+    const unsigned size = jit.key().count() * copyChunkBytes;
+    const std::optional<unsigned> cellSize = size <= maxCellSizeInKey ? std::optional<unsigned>(size) : std::nullopt;
+    JumpList slowPath;
+    const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
+    Label initialize = jit.label();
+    for (unsigned offset = copyChunkBytes; offset < size; offset += copyChunkBytes)
+        copyChunk(jit, Address(body, offset - offsetOfTemplateInCell(initialization)), Address(cell, offset), allocator, scratch);
+    if (storesWords(initialization))
+        copyHeaderAndWords(jit, inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), cell, allocator, scratch);
+    else {
+        jit.load64(inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), scratch);
+        jit.store64(scratch, Address(cell));
+        jit.load64(Address(body), scratch);
+        jit.store64(scratch, Address(cell, sizeof(JSCell)));
+    }
+    jit.returnToCaller();
+
+    emitLateRefill(jit, refill, slowPath);
+    slowPath.link(&jit);
+    if (storesWords(initialization))
+        allocateGrownCell(jit, registers, distanceLeftToOffsets, size, initialize);
+    jit.callOperationAndReturn(Entry::operationAOTAllocateSlowFromTemplate, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation, .thirdArgumentIn = body });
 }
 
 StubSignature signatureOfInitializeObjectInFrame(StubKey)
@@ -220,7 +360,6 @@ void generateInitializeObjectInFrame(StubAssembler& jit)
     jit.returnToCaller();
 
     hasNoHeader.link(&jit);
-    // Sending the result to a scratch register makes the call restore every other register, including the cell's.
     auto initializeFromFilledRecord = [&] {
         loadRecord();
         initialize();
@@ -233,7 +372,7 @@ StubSignature signatureOfAllocateInstance(StubKey)
     StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T9), gprOf(StubRegister::A2) });
     signature.result = StubResult::TwoGPRs;
     signature.secondResult = gprOf(StubRegister::T11);
-    return signature;
+    return signature.fillingOperandInFront(1);
 }
 
 void generateAllocateInstance(StubAssembler& jit)
@@ -250,21 +389,24 @@ void generateAllocateInstance(StubAssembler& jit)
     const std::optional<unsigned> cellSize = steps ? std::optional<unsigned>(steps * cellSizeStep) : std::nullopt;
 
     JumpList isOutOfLine;
-    countCellOfAllocation(jit, allocation, record);
     loadAllocationSiteRecord(jit, allocation, record, allocator);
     isOutOfLine.append(jit.branchPtr(CCallHelpers::NotEqual, Address(record, AllocationSiteRecord::offsetOfPrototype()), prototype));
     jit.loadPtr(Address(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
-    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, isOutOfLine, cellSize, CountedUnder::Allocation);
+    JumpList slowPath;
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize);
+    Label initialize = jit.label();
     zeroBehindFirstChunk(jit, site, cellSize);
-    copyChunk(jit, Address(record, AllocationSiteRecord::offsetOfHeader()), Address(cell), allocator, scratch);
+    copyHeaderAndWords(jit, Address(record, AllocationSiteRecord::offsetOfHeader()), cell, allocator, scratch);
     jit.returnToCaller();
 
-    emitLateRefill(jit, refill, isOutOfLine);
+    emitLateRefill(jit, refill, slowPath);
+    slowPath.link(&jit);
+    if (cellSize)
+        allocateGrownCell(jit, site, 0, *cellSize, initialize);
     isOutOfLine.link(&jit);
     jit.jumpToStub(StubKey(StubFamily::AllocateInstanceOutOfLine));
 }
 
-// The third operand is the record of the allocation.
 StubSignature signatureOfAllocateInstanceOutOfLine(StubKey key)
 {
     StubSignature signature = signatureOfAllocateInstance(key);
@@ -278,89 +420,56 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     const GPRReg allocation = jit.clobberOperand(0);
     const GPRReg prototype = jit.operand(1);
     const GPRReg record = jit.clobberOperand(2);
-    const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
-    RELEASE_ASSERT(record == jit.secondResult() && noOverlap(cell, allocation, prototype, record, allocator, scratch, instanceGPR));
+    RELEASE_ASSERT(record == jit.secondResult() && noOverlap(cell, allocation, prototype, record, scratch, instanceGPR));
     static_assert(operationArgumentGPR(2) == gprOf(StubRegister::A2));
 
-    // The allocator of the record had no room. The record, which is not zero, stays in the register of the second result.
     JumpList allocatesSlowly;
     allocatesSlowly.append(jit.branchPtr(CCallHelpers::Equal, Address(record, AllocationSiteRecord::offsetOfPrototype()), prototype));
 
-    const GPRReg instance = record;
-    const GPRReg cellAtBirth = allocator;
-    const GPRReg offset = scratch;
-    JumpList isNotAtFirstPlace;
+    const GPRReg mask = jit.allocateScratch(StubRegister::T12);
+    RELEASE_ASSERT(noOverlap(cell, allocation, prototype, record, scratch, mask, instanceGPR));
     JumpList isNotRemembered;
-    JumpList hasNoRoom;
-    static_assert(sizeof(InstanceOfClassBelow) == 1 << shiftOfPrototypeForInstanceOfClassBelow);
-    constexpr int32_t bitsOfPlace = (numberOfInstancesOfClassesBelow - 1) << shiftOfPrototypeForInstanceOfClassBelow;
-    auto branchIfNotAtPlace = [&](JumpList& isElsewhere) {
-        jit.and32(TrustedImm32(bitsOfPlace), instance);
-        jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesOfClassesBelow)), instance);
-        isElsewhere.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, prototype)), prototype));
-        isElsewhere.append(jit.branch32(CCallHelpers::NotEqual, Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, allocation)), allocation));
-    };
-    jit.move(prototype, instance);
-    branchIfNotAtPlace(isNotAtFirstPlace);
-    Label isRemembered = jit.label();
-    static_assert(MarkedSpace::sizeStep == 2 * sizeof(Allocator) && MarkedSpace::sizeStep == copyChunkBytes);
-    jit.load32(Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, offsetOfAllocator)), offset);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
-    jit.loadPtr(BaseIndex(allocator, offset, CCallHelpers::TimesOne, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
-    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, hasNoRoom, std::nullopt, CountedUnder::Allocation);
-    jit.load32(Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, offsetOfAllocator)), offset);
-    jit.loadPtr(Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, cellAtBirth)), cellAtBirth);
-    jit.getEffectiveAddress(BaseIndex(offset, offset, CCallHelpers::TimesOne, -static_cast<int32_t>(copyChunkBytes)), offset);
-#if CPU(ARM64)
-    const GPRReg firstWord = allocation;
-    const GPRReg secondWord = jit.allocateScratch(StubRegister::T14);
-    const GPRReg address = jit.allocateScratch(StubRegister::T15);
-#endif
-    Label copyNextChunk = jit.label();
-#if CPU(X86_64)
-    loadChunk(jit, cellAtBirth, 0, offset);
-    storeChunk(jit, cell, 0, offset);
-#else
-    jit.add64(cellAtBirth, offset, address);
-    jit.loadPair64(address, TrustedImm32(0), firstWord, secondWord);
-    jit.add64(cell, offset, address);
-    jit.storePair64(firstWord, secondWord, address, TrustedImm32(0));
-#endif
-    jit.branchSub64(CCallHelpers::PositiveOrZero, TrustedImm32(copyChunkBytes), offset).linkTo(copyNextChunk, &jit);
-    jit.load64(Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, header)), offset);
-    jit.store64(offset, Address(cell));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesBelowPrototypes.entries)), record);
+    isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, record));
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesBelowPrototypes.maskOfOffsets)), mask);
+    static_assert(firstOffsetOfInstanceBelowPrototype(16, 3) == (19 * multiplierOfInstanceBelowPrototype) >> shiftOfProductOfInstanceBelowPrototype);
+    jit.zeroExtend32ToWord(allocation, scratch);
+    jit.add64(prototype, scratch);
+    jit.move(TrustedImm64(static_cast<int64_t>(multiplierOfInstanceBelowPrototype)), cell);
+    jit.mul64(cell, scratch);
+    jit.urshift64(TrustedImm32(shiftOfProductOfInstanceBelowPrototype), scratch);
+    Label looksAtEntry = jit.label();
+    jit.and64(mask, scratch);
+    jit.load64(BaseIndex(record, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(InstanceBelowPrototype, prototype)), cell);
+    isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, cell));
+    Jump isOfOtherPrototype = jit.branchPtr(CCallHelpers::NotEqual, cell, prototype);
+    jit.load32(BaseIndex(record, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(InstanceBelowPrototype, allocationOfSite)), cell);
+    Jump isRemembered = jit.branch32(CCallHelpers::Equal, cell, allocation);
+    isOfOtherPrototype.link(&jit);
+    jit.add64(TrustedImm32(sizeof(InstanceBelowPrototype)), scratch);
+    jit.jump().linkTo(looksAtEntry, &jit);
+
+    isRemembered.link(&jit);
+    jit.add64(scratch, record);
+    jit.loadPtr(Address(record, OBJECT_OFFSETOF(InstanceBelowPrototype, allocator)), mask);
+    allocateCell(jit, cell, mask, scratch, isNotRemembered);
+    jit.load32(Address(mask, LocalAllocator::offsetOfCellSize()), scratch);
+    jit.loadPtr(Address(record, OBJECT_OFFSETOF(InstanceBelowPrototype, words)), mask);
+    copyWholeCell(jit, mask, cell, scratch, allocation, record);
     jit.move(TrustedImm32(0), record);
     jit.returnToCaller();
 
-    // secondPlaceOfInstanceOfClassBelow(), in bytes.
-    isNotAtFirstPlace.link(&jit);
-    jit.move(prototype, instance);
-    jit.urshift32(TrustedImm32(shiftOfPrototypeForInstanceOfClassBelow), instance);
-    jit.or32(TrustedImm32(1 << shiftOfPrototypeForInstanceOfClassBelow), instance);
-    jit.xor32(prototype, instance);
-    branchIfNotAtPlace(isNotRemembered);
-    jit.jump().linkTo(isRemembered, &jit);
+    isNotRemembered.link(&jit);
 
-    // What is saved around the operation comes back, the second result with it.
-    // On ARM64 the first result and the first argument are one register: what is read while the arguments are laid out is in neither.
     const GPRReg setsPrototype = scratch;
     static_assert(areDistinctOnEveryISA(StubRegister::T9, StubRegister::T13, StubRegister::A0, StubRegister::A1, StubRegister::A3, StubRegister::A4));
     RELEASE_ASSERT(allocation == gprOf(StubRegister::T9) && setsPrototype == gprOf(StubRegister::T13));
-    emitLateRefill(jit, refill, hasNoRoom);
-    hasNoRoom.link(&jit);
-    jit.move(instance, allocation);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesOfClassesBelow)), scratch);
-    jit.subPtr(scratch, allocation);
-    jit.urshift32(TrustedImm32(shiftOfPrototypeForInstanceOfClassBelow), allocation);
-    jit.or32(TrustedImm32(static_cast<int32_t>(allocatesInstanceOfClassBelow)), allocation);
-    jit.move(TrustedImm32(0), record);
-    allocatesSlowly.link(&jit);
-    jit.move(TrustedImm32(0), setsPrototype);
-    Jump isReady = jit.jump();
-    isNotRemembered.link(&jit);
     jit.move(TrustedImm32(0), record);
     jit.move(TrustedImm32(1), setsPrototype);
+    Jump isReady = jit.jump();
+    allocatesSlowly.link(&jit);
+    jit.move(TrustedImm32(0), setsPrototype);
     isReady.link(&jit);
     jit.preservingCallerSavedRegisters(true, [&](unsigned) {
         jit.move(instanceGPR, operationArgumentGPR(0));
@@ -379,80 +488,6 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-StubSignature signatureOfCopyObject(StubKey key)
-{
-    if (key.count())
-        return StubSignature::withGPRResult({ gprOf(StubRegister::T9), gprOf(StubRegister::A1) });
-    return StubSignature::withGPRResult({ gprOf(StubRegister::T9), gprOf(StubRegister::A1), gprOf(copyEndOffsetRegister) });
-}
-
-void generateCopyObject(StubAssembler& jit)
-{
-    const unsigned copiedFieldBytes = jit.key().count() * copyChunkBytes;
-    const AllocationSiteRegisters site = allocateSiteRegisters(jit);
-    const auto [cell, allocation, header, firstScratch, secondScratch] = site;
-    const GPRReg source = jit.operand(1);
-    const GPRReg endOffset = copiedFieldBytes ? jit.allocateScratch(copyEndOffsetRegister) : jit.clobberOperand(2);
-#if CPU(ARM64)
-    std::optional<std::pair<FPRReg, FPRReg>> loopVectors;
-    if (!copiedFieldBytes)
-        loopVectors = std::pair<FPRReg, FPRReg> { jit.allocateScratch(ARM64Registers::q30), jit.allocateScratch(ARM64Registers::q31) };
-#endif
-
-    // The loop moves two chunks at a time, from the last field down. With an odd number of chunks it also copies the source's header and words.
-    auto initializeCopyAndReturn = [&](bool hasCalledOperation) {
-        for (unsigned offset = copyChunkBytes; offset <= copiedFieldBytes; offset += copyChunkBytes)
-            copyChunk(jit, Address(source, offset), Address(cell, offset), firstScratch, secondScratch);
-        if (!copiedFieldBytes) {
-#if CPU(ARM64)
-            const GPRReg from = firstScratch;
-            const GPRReg to = secondScratch;
-            RELEASE_ASSERT(loopVectors);
-            jit.add64(source, endOffset, from);
-            jit.add64(cell, endOffset, to);
-            Label loop = jit.label();
-            jit.loadPairVector(CCallHelpers::PostIndexAddress(from, -2 * static_cast<int>(copyChunkBytes)), loopVectors->first, loopVectors->second);
-            jit.storePairVector(loopVectors->first, loopVectors->second, CCallHelpers::PostIndexAddress(to, -2 * static_cast<int>(copyChunkBytes)));
-#else
-            Label loop = jit.label();
-            loadChunk(jit, source, 0, endOffset);
-            storeChunk(jit, cell, 0, endOffset);
-            loadChunk(jit, source, copyChunkBytes, endOffset);
-            storeChunk(jit, cell, copyChunkBytes, endOffset);
-#endif
-            jit.branchSub64(CCallHelpers::PositiveOrZero, TrustedImm32(2 * copyChunkBytes), endOffset).linkTo(loop, &jit);
-        }
-        const GPRReg words = secondScratch;
-        jit.load64(Address(source, offsetOfOrderWord), words);
-        jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), words);
-        jit.storePair64(header, words, cell, TrustedImm32(0));
-        fenceAfterAllocation(jit);
-        if (hasCalledOperation)
-            jit.pollBeforeReturningFromNativeCode();
-        jit.returnToCaller();
-    };
-
-    JumpList slowPath;
-    const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, site, slowPath);
-    jit.load64(inRecordAtSite(site.record, AllocationSiteRecord::offsetOfHeader()), header);
-    initializeCopyAndReturn(false);
-
-    emitLateRefill(jit, refill, slowPath);
-    slowPath.link(&jit);
-    if (copiedFieldBytes) {
-        jit.move(TrustedImm32(copiedFieldBytes - copyChunkBytes), endOffset);
-        jit.jumpToStub(jit.key().withCount(0));
-        return;
-    }
-    jit.preservingCallerSavedRegisters(true, [&](unsigned) {
-        jit.move(allocation, operationArgumentGPR(1));
-        jit.move(instanceGPR, operationArgumentGPR(0));
-        jit.callOperation(Entry::operationAOTAllocateSlow, jit.reuseScratch(StubRegister::Operation));
-    });
-    jit.load64(Address(cell), header);
-    initializeCopyAndReturn(true);
-}
-
 StubSignature signatureOfAllocateExtension(StubKey)
 {
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9), gprOf(StubRegister::A2) });
@@ -463,28 +498,21 @@ void generateAllocateExtension(StubAssembler& jit)
     const unsigned size = jit.key().count() * copyChunkBytes;
     const GPRReg owner = jit.operand(0);
     const GPRReg wordOffset = jit.operand(1);
-    const GPRReg granuleBits = jit.operand(2);
+    const GPRReg granuleBits = jit.clobberOperand(2);
     const GPRReg storage = jit.allocateScratch(StubRegister::R0);
     const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
     const GPRReg temporary = jit.allocateScratch(StubRegister::T11);
     const BaseIndex extensionWord(owner, wordOffset, CCallHelpers::TimesOne);
     const bool isNarrow = traitsOf(hiddenReferenceRepresentation(jit.options().useWideReferences)).isNarrowReference;
     JumpList slowPath;
-    // An Extension that lacks the granules gets one in the room it has, or the operation replaces it.
-    Jump hasNone;
+    Jump hasExtension;
     if (isNarrow) {
         jit.load32(extensionWord, storage);
-        hasNone = jit.branchTest32(CCallHelpers::Zero, storage);
-        decodeCell32(jit, storage, storage);
-        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), storage);
+        hasExtension = jit.branchTest32(CCallHelpers::NonZero, storage);
     } else {
         jit.load64(extensionWord, storage);
-        hasNone = jit.branchTest64(CCallHelpers::Zero, storage);
+        hasExtension = jit.branchTest64(CCallHelpers::NonZero, storage);
     }
-    appendGranule(jit, storage, granuleBits, temporary, allocator, slowPath);
-    jit.returnToCaller();
-    hasNone.link(&jit);
-    // The owner names its Extension by a narrow reference.
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
     jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(size) * sizeof(Allocator)), allocator);
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
@@ -504,6 +532,17 @@ void generateAllocateExtension(StubAssembler& jit)
         jit.store64(storage, extensionWord);
     jit.returnToCaller();
 
+    hasExtension.link(&jit);
+    if (isNarrow) {
+        decodeCell32(jit, storage, storage);
+        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), storage);
+    }
+    jit.load64(Address(storage, offsetOfExtensionGranuleBits), temporary);
+    jit.not64(temporary);
+    jit.and64(temporary, granuleBits);
+    appendGranule(jit, storage, granuleBits, temporary, allocator, slowPath);
+    jit.returnToCaller();
+
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
     jit.jumpToStub(StubKey(StubFamily::AllocateExtensionSlow));
@@ -514,7 +553,6 @@ StubSignature signatureOfAllocateExtensionSlow(StubKey)
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
-// Sixteen bytes are a unit. An entry is four bits wide.
 static constexpr uint64_t extensionUnitsByNumberOfGranules = [] {
     uint64_t units = 0;
     for (unsigned count = 1; count <= maxGranulesOfExtensionFromStub; ++count)
@@ -533,10 +571,57 @@ void loadUnitsOfExtensionWith(StubAssembler& jit, GPRReg granuleBits, GPRReg uni
     jit.and32(TrustedImm32(15), units);
 }
 
-// As Object::ensureExtensionGranules().
-static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg granuleBits, JumpList& givesUp)
+static void loadGranulesOfFirstExtension(StubAssembler& jit, GPRReg object, GPRReg result)
 {
-    const GPRReg replacement = jit.allocateScratch(StubRegister::R0);
+    RELEASE_ASSERT(object != result);
+    static_assert(LayoutData::prefixSize(false, false, true) == sizeof(SlotData) && !LayoutData::prefixSize(false, false, false) && std::endian::native == std::endian::little);
+    LayoutData withSlotOfExtraProperties { };
+    withSlotOfExtraProperties.hasExtraPropertiesSlot = true;
+    loadStructure(jit, object, result);
+    jit.loadPtr(Address(result, CompiledStructure::offsetOfLayout()), result);
+    Jump hasNoSuchSlot = jit.branchTest32(CCallHelpers::Zero, Address(result), TrustedImm32(static_cast<int32_t>(withSlotOfExtraProperties.firstWord())));
+    jit.subPtr(TrustedImm32(sizeof(SlotData)), result);
+    hasNoSuchSlot.link(&jit);
+    jit.load64(Address(result, -static_cast<int32_t>(sizeof(uint64_t))), result);
+}
+
+void allocateFirstExtensionWithOneGranule(StubAssembler& jit, GPRReg object, GPRReg granuleBit, GPRReg extensionAndGranule, GPRReg scratch, GPRReg secondScratch, Label hasGranule, JumpList& isLeftToStub)
+{
+    RELEASE_ASSERT(!jit.options().useWideReferences && noOverlap(object, granuleBit, extensionAndGranule, scratch, secondScratch));
+    static_assert(extensionCellSizeFor(1) == offsetOfFirstExtensionSlot + extensionGranuleSize);
+    Jump holdsGranules = jit.branchTest64(CCallHelpers::NonZero, Address(extensionAndGranule, offsetOfExtensionGranuleBits));
+    loadGranulesOfFirstExtension(jit, object, scratch);
+    jit.or64(granuleBit, scratch);
+    isLeftToStub.append(jit.branch64(CCallHelpers::NotEqual, scratch, granuleBit));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), scratch);
+    jit.loadPtr(Address(scratch, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(extensionCellSizeFor(1)) * sizeof(Allocator)), scratch);
+    isLeftToStub.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, extensionAndGranule, scratch, secondScratch, isLeftToStub, extensionCellSizeFor(1));
+    jit.store64(granuleBit, Address(extensionAndGranule, offsetOfExtensionGranuleBits));
+    jit.store64(TrustedImm32(0), Address(extensionAndGranule, offsetOfFirstExtensionSlot));
+    fenceAfterAllocation(jit);
+    loadExtensionWordOffset(jit, object, scratch);
+    encodeCell32(jit, extensionAndGranule, secondScratch);
+    jit.sub32(TrustedImm32(offsetOfEmptyExtensionInCage >> cell32Shift), secondScratch);
+    jit.store32(secondScratch, BaseIndex(object, scratch, CCallHelpers::TimesOne));
+    jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), extensionAndGranule);
+    Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, scratch);
+    jit.jump().linkTo(hasGranule, &jit);
+
+    needsBarrier.link(&jit);
+    checkStubOperands(writeBarrier(), { object });
+    RELEASE_ASSERT(scratch == gprOf(StubRegister::T9));
+    jit.emitFunctionPrologue();
+    jit.callStub(writeBarrier());
+    jit.emitFunctionEpilogue();
+    jit.jump().linkTo(hasGranule, &jit);
+
+    emitLateRefill(jit, refill, isLeftToStub);
+    holdsGranules.link(&jit);
+}
+
+static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg granuleBits, GPRReg replacement, JumpList& givesUp)
+{
     const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
     const GPRReg from = gprOf(StubRegister::T9);
@@ -545,22 +630,45 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
     const GPRReg to = allocator;
     RELEASE_ASSERT(noOverlap(owner, granuleBits, replacement, allocator, scratch, from, held, remaining));
 
-    // replacement is zero behind it where the operation is to do it.
     jit.preserving({ from, held, remaining }, [&] {
         JumpList cannot;
         JumpList isDone;
+        auto publish = [&](GPRReg wordOffset, GPRReg word) {
+            fenceAfterAllocation(jit);
+            encodeCell32(jit, replacement, word);
+            jit.sub32(TrustedImm32(offsetOfEmptyExtensionInCage >> cell32Shift), word);
+            jit.store32(word, BaseIndex(owner, wordOffset, CCallHelpers::TimesOne));
+            isDone.append(jit.jump());
+        };
+        auto loadAllocatorOfCells = [&](unsigned size) {
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
+            jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(size) * sizeof(Allocator)), allocator);
+            cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+        };
         loadExtensionWordOffset(jit, owner, from);
-        jit.load32(BaseIndex(owner, from, CCallHelpers::TimesOne), from);
-        cannot.append(jit.branchTest32(CCallHelpers::Zero, from));
-        decodeCell32(jit, from, from);
-        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), from);
+        jit.load32(BaseIndex(owner, from, CCallHelpers::TimesOne), held);
+        Jump hasNone = jit.branchTest32(CCallHelpers::Zero, held);
+        decodeExtension(jit, held, from);
         jit.load64(Address(from, offsetOfExtensionGranuleBits), held);
         jit.move(held, remaining);
         jit.or64(granuleBits, remaining);
+        Jump hasOne = jit.jump();
+        hasNone.link(&jit);
+        loadGranulesOfFirstExtension(jit, owner, remaining);
+        jit.or64(granuleBits, remaining);
+        jit.countPopulation64(remaining, scratch, CCallHelpers::fpTempRegister);
+        Jump getsSeveral = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(1));
+        static_assert(extensionCellSizeFor(1) == offsetOfFirstExtensionSlot + extensionGranuleSize);
+        loadAllocatorOfCells(extensionCellSizeFor(1));
+        allocateCell(jit, replacement, allocator, scratch, cannot);
+        jit.store64(remaining, Address(replacement, offsetOfExtensionGranuleBits));
+        jit.store64(TrustedImm32(0), Address(replacement, offsetOfFirstExtensionSlot));
+        publish(from, scratch);
+        getsSeveral.link(&jit);
+        hasOne.link(&jit);
         jit.countPopulation64(remaining, scratch, CCallHelpers::fpTempRegister);
         cannot.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionFromStub)));
 
-        // One granule becomes two, which is nearly half of all growth: no counting and no loops.
         JumpList isFilled;
         {
             static_assert(extensionCapacityFor(1) == 1 && extensionCapacityFor(2) == 3 && extensionCellSizeFor(2) == offsetOfFirstExtensionSlot + 3 * extensionGranuleSize);
@@ -570,9 +678,7 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
             jit.move(held, scratch);
             jit.sub64(TrustedImm32(1), scratch);
             isOtherGrowth.append(jit.branchTest64(CCallHelpers::NonZero, scratch, held));
-            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
-            jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(extensionCellSizeFor(2)) * sizeof(Allocator)), allocator);
-            cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+            loadAllocatorOfCells(extensionCellSizeFor(2));
             allocateCell(jit, replacement, allocator, scratch, cannot);
             jit.store64(remaining, Address(replacement, offsetOfExtensionGranuleBits));
             jit.load64(Address(from, offsetOfFirstExtensionSlot), scratch);
@@ -593,7 +699,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         loadUnitsOfExtensionWith(jit, held, replacement, scratch);
         Jump hasNoRoom = jit.branch32(CCallHelpers::NotEqual, allocator, replacement);
 
-        // The lowest of the new ones is above all that are held: what is behind those is zero.
         jit.move(from, replacement);
         jit.xor64(held, remaining, scratch);
         jit.move(scratch, allocator);
@@ -603,7 +708,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.store64(remaining, Address(from, offsetOfExtensionGranuleBits));
         isDone.append(jit.jump());
 
-        // As Extension::tryInsert() leaves it. One new granule after the other, the lowest first: those above its place move up by one.
         isAmongHeld.link(&jit);
         Jump collectorMayVisit = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
         {
@@ -651,9 +755,37 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.store64(remaining, Address(replacement, offsetOfExtensionGranuleBits));
 
         const GPRReg end = scratch;
-        loadUnitsOfExtensionWith(jit, remaining, end, to);
-        jit.lshift32(TrustedImm32(4), end);
+        jit.load32(Address(allocator, LocalAllocator::offsetOfCellSize()), end);
         jit.addPtr(replacement, end);
+        jit.xor64(held, remaining);
+        jit.move(remaining, to);
+        jit.neg64(to);
+        jit.and64(remaining, to);
+        Jump liesAmongHeld = jit.branch64(CCallHelpers::BelowOrEqual, to, held);
+        {
+            const GPRReg endOfHeld = held;
+            const GPRReg word = remaining;
+            jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), replacement, to);
+            jit.countPopulation64(held, held, CCallHelpers::fpTempRegister);
+            jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), from);
+            jit.getEffectiveAddress(BaseIndex(from, held, CCallHelpers::TimesEight), endOfHeld);
+            Jump asksFirst = jit.jump();
+            Label copies = jit.label();
+            jit.load64(Address(from), word);
+            jit.store64(word, Address(to));
+            jit.addPtr(TrustedImm32(sizeof(uint64_t)), from);
+            jit.addPtr(TrustedImm32(sizeof(uint64_t)), to);
+            asksFirst.link(&jit);
+            jit.branchPtr(CCallHelpers::Below, from, endOfHeld).linkTo(copies, &jit);
+            Label clearsRest = jit.label();
+            jit.store64(TrustedImm32(0), Address(to));
+            jit.addPtr(TrustedImm32(sizeof(uint64_t)), to);
+            jit.branchPtr(CCallHelpers::Below, to, end).linkTo(clearsRest, &jit);
+            isFilled.append(jit.jump());
+        }
+
+        liesAmongHeld.link(&jit);
+        jit.or64(held, remaining);
         jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), replacement, to);
         Label clears = jit.label();
         jit.store64(TrustedImm32(0), Address(to));
@@ -663,7 +795,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), from);
         jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), replacement, to);
         Label places = jit.label();
-        // The lowest bit that is left.
         jit.move(remaining, scratch);
         jit.neg64(scratch);
         jit.and64(remaining, scratch);
@@ -679,13 +810,8 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.branchTest64(CCallHelpers::NonZero, remaining).linkTo(places, &jit);
 
         isFilled.link(&jit);
-        fenceAfterAllocation(jit);
         loadExtensionWordOffset(jit, owner, scratch);
-        encodeCell32(jit, replacement, replacement);
-        jit.sub32(TrustedImm32(offsetOfEmptyExtensionInCage >> cell32Shift), replacement);
-        jit.store32(replacement, BaseIndex(owner, scratch, CCallHelpers::TimesOne));
-        // No Extension lies at the beginning of the cage.
-        isDone.append(jit.jump());
+        publish(scratch, to);
 
         cannot.link(&jit);
         jit.move(TrustedImm32(0), replacement);
@@ -698,62 +824,80 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
 void generateAllocateExtensionSlow(StubAssembler& jit)
 {
     static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1));
-    if (traitsOf(hiddenReferenceRepresentation(jit.options().useWideReferences)).isNarrowReference) {
+    const bool isNarrow = traitsOf(hiddenReferenceRepresentation(jit.options().useWideReferences)).isNarrowReference;
+    const GPRReg owner = jit.operand(0);
+    const GPRReg extension = jit.allocateScratch(StubRegister::R0);
+    RELEASE_ASSERT(extension == extensionMadeBySlowStub);
+    if (isNarrow) {
         JumpList givesUp;
-        growExtensionAndReturn(jit, jit.operand(0), jit.operand(1), givesUp);
+        growExtensionAndReturn(jit, owner, jit.operand(1), extension, givesUp);
         givesUp.link(&jit);
     }
-    jit.callOperationAndReturn(Entry::operationAOTEnsureExtensionGranules, { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .thirdArgumentIn = jit.operand(1) });
+    jit.callOperationAndReturn(Entry::operationAOTEnsureExtensionGranules, { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .thirdArgumentIn = jit.operand(1) }, [&] {
+        loadExtensionWordOffset(jit, owner, extension);
+        if (isNarrow) {
+            jit.load32(BaseIndex(owner, extension, CCallHelpers::TimesOne), extension);
+            decodeExtension(jit, extension, extension);
+        } else
+            jit.load64(BaseIndex(owner, extension, CCallHelpers::TimesOne), extension);
+    });
 }
 
-StubSignature signatureOfNewTypedArray(StubKey)
+StubSignature signatureOfNewTypedArray(StubKey key)
 {
+    if (key.form() == newTypedArray(LengthOfTypedArray::WholeNumber).form())
+        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
     return StubSignature::withGPRResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 });
 }
 
 void generateNewTypedArray(StubAssembler& jit)
 {
+    const bool isWholeNumber = jit.key().form() == newTypedArray(LengthOfTypedArray::WholeNumber).form();
     const GPRReg result = jit.result();
     const GPRReg type = jit.operand(0);
-    const FPRReg lengthAsDouble = jit.operandFPR(1);
-    const GPRReg length = jit.allocateScratch(StubRegister::A2);
+    const FPRReg lengthAsDouble = isWholeNumber ? jit.allocateScratch(FPRInfo::argumentFPR0) : jit.operandFPR(1);
+    const GPRReg length = isWholeNumber ? jit.operand(1) : jit.allocateScratch(StubRegister::A2);
     const GPRReg size = jit.allocateScratch(StubRegister::A3);
     const GPRReg storage = jit.allocateScratch(StubRegister::T9);
     const GPRReg allocator = jit.allocateScratch(StubRegister::T10);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
     const GPRReg record = jit.allocateScratch(StubRegister::T12);
-    const FPRReg scratchFPR = jit.allocateScratch(FPRInfo::argumentFPR1);
+    const FPRReg zeros = jit.allocateScratch(FPRInfo::argumentFPR1);
     constexpr unsigned recordSizeShift = getLSBSet(sizeof(TypedArrayAllocation));
     constexpr unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
-    constexpr unsigned maxBytes = 256;
+    constexpr unsigned maxLength = JSArrayBufferView::fastSizeLimit;
+    constexpr unsigned maxBytes = 1024;
     static_assert(noOverlap(GPRInfo::returnValueGPR, gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::T9), gprOf(StubRegister::T10), gprOf(StubRegister::T11), gprOf(StubRegister::T12)));
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1));
     static_assert(hasOneBitSet(MarkedSpace::sizeStep) && sizeof(TypedArrayAllocation) == 32 && JSArrayBufferView::offsetOfByteOffset() == JSArrayBufferView::offsetOfLength() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
-    static_assert(maxBytes <= JSArrayBufferView::fastSizeLimit && maxBytes <= MarkedSpace::largeCutoff);
+    static_assert(maxBytes <= MarkedSpace::largeCutoff && MarkedSpace::sizeStep == 16);
     auto inRecord = [&](ptrdiff_t offset) { return Address(record, AOT_INSTANCE_OFFSET(allocation.typedArrayAllocations) + offset); };
     JumpList slowCases;
-    jit.branchConvertDoubleToInt32(lengthAsDouble, length, slowCases, scratchFPR, false);
+    if (isWholeNumber)
+        jit.zeroExtend32ToWord(length, length);
+    else
+        jit.branchConvertDoubleToInt32(lengthAsDouble, length, slowCases, zeros, false);
     jit.sub32(length, TrustedImm32(1), scratch);
-    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(maxBytes)));
+    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(maxLength)));
     jit.zeroExtend32ToWord(type, record);
     jit.lshift64(TrustedImm32(recordSizeShift), record);
     jit.addPtr(instanceGPR, record);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, allocator))));
     jit.load32(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, elementSize)), size);
     jit.mul32(length, size);
-    jit.add32(TrustedImm32(7), size);
-    jit.and32(TrustedImm32(~7), size);
-    slowCases.append(jit.branch32(CCallHelpers::Above, size, TrustedImm32(maxBytes)));
-    jit.add32(TrustedImm32(MarkedSpace::sizeStep - 1), size, scratch);
-    jit.urshift32(TrustedImm32(stepShift), scratch);
+    jit.add32(TrustedImm32(MarkedSpace::sizeStep - 1), size);
+    jit.urshift32(TrustedImm32(stepShift), size);
+    slowCases.append(jit.branch32(CCallHelpers::Above, size, TrustedImm32(maxBytes / MarkedSpace::sizeStep)));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.primitiveAuxiliarySpace)), allocator);
-    jit.loadPtr(BaseIndex(allocator, scratch, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    jit.loadPtr(BaseIndex(allocator, size, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     allocateCell(jit, storage, allocator, scratch, slowCases);
-    jit.urshift32(TrustedImm32(3), size);
-    Label nextWord = jit.label();
-    jit.sub32(TrustedImm32(1), size);
-    jit.store64(TrustedImm32(0), BaseIndex(storage, size, CCallHelpers::TimesEight));
-    jit.branchTest32(CCallHelpers::NonZero, size).linkTo(nextWord, &jit);
+    jit.lshift32(TrustedImm32(stepShift), size);
+    jit.addPtr(TrustedImm32(-static_cast<int32_t>(MarkedSpace::sizeStep)), storage, scratch);
+    jit.moveZeroToDouble(zeros);
+    Label nextStep = jit.label();
+    jit.storeVector(zeros, BaseIndex(scratch, size, CCallHelpers::TimesOne));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(MarkedSpace::sizeStep), size).linkTo(nextStep, &jit);
     jit.loadPtr(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, allocator)), allocator);
     allocateCell(jit, result, allocator, scratch, slowCases);
     jit.load64(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, header)), scratch);
@@ -767,7 +911,110 @@ void generateNewTypedArray(StubAssembler& jit)
     jit.returnToCaller();
 
     slowCases.link(&jit);
+    if (isWholeNumber)
+        jit.convertInt32ToDouble(length, lengthAsDouble);
     jit.callOperationAndReturn(Entry::operationAOTNewTypedArray, { });
+}
+
+StubSignature signatureOfNewTypedArrayOfArray(StubKey)
+{
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+}
+
+void generateNewTypedArrayOfArray(StubAssembler& jit)
+{
+    const GPRReg result = jit.result();
+    const GPRReg source = jit.operand(0);
+    const GPRReg type = jit.operand(1);
+    const GPRReg length = jit.allocateScratch(StubRegister::A3);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T9);
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg record = jit.allocateScratch(StubRegister::T12);
+    const FPRReg number = jit.allocateScratch(FPRInfo::argumentFPR0);
+    const GPRReg size = result;
+    const GPRReg elements = allocator;
+    const GPRReg element = scratch;
+    const GPRReg truncated = record;
+    constexpr unsigned recordSizeShift = getLSBSet(sizeof(TypedArrayAllocation));
+    constexpr unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
+    constexpr unsigned elementSize = sizeof(uint32_t);
+    constexpr unsigned maxLength = 1024 / elementSize;
+    static_assert(noOverlap(GPRInfo::returnValueGPR, gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::T9), gprOf(StubRegister::T10), gprOf(StubRegister::T11), gprOf(StubRegister::T12)));
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
+    static_assert(hasOneBitSet(MarkedSpace::sizeStep) && maxLength <= JSArrayBufferView::fastSizeLimit && maxLength * elementSize <= MarkedSpace::largeCutoff);
+    auto inRecord = [&](ptrdiff_t offset) { return Address(record, AOT_INSTANCE_OFFSET(allocation.typedArrayAllocations) + offset); };
+
+    JumpList slowCases;
+    slowCases.append(jit.branchIfNotCell(source));
+    slowCases.append(jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
+    slowCases.append(branchIfNotPristine(jit, source));
+    if (!jit.options().hasOneInstance) {
+        loadStructure(jit, source, scratch);
+        slowCases.append(branchIfNotOfThisRealm(jit, scratch));
+    }
+    slowCases.append(branchIfHavingABadTime(jit));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), allocator);
+    slowCases.append(branchIfWatchpointSetIsNotWatched(jit, Address(allocator, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet()), scratch));
+    slowCases.append(branchIfWatchpointSetIsNotWatched(jit, Address(allocator, OBJECT_OFFSETOF(JSGlobalObject, m_arrayPrototypeChainIsSaneWatchpointSet)), scratch));
+    jit.load8(Address(source, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+    Jump holdsInt32s = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(Int32Shape));
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ContiguousShape)));
+    holdsInt32s.link(&jit);
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), scratch);
+    jit.load32(Address(scratch, Butterfly::offsetOfPublicLength()), length);
+    jit.sub32(length, TrustedImm32(1), scratch);
+    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(maxLength)));
+    jit.zeroExtend32ToWord(type, record);
+    jit.lshift64(TrustedImm32(recordSizeShift), record);
+    jit.addPtr(instanceGPR, record);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, allocator))));
+    jit.lshift32(length, TrustedImm32(getLSBSet(elementSize)), size);
+    jit.add32(TrustedImm32(MarkedSpace::sizeStep - 1), size);
+    jit.urshift32(TrustedImm32(stepShift), size);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.primitiveAuxiliarySpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, size, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, storage, allocator, scratch, slowCases);
+    jit.loadPtr(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, allocator)), allocator);
+    allocateCell(jit, result, allocator, scratch, slowCases);
+    jit.load64(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, header)), scratch);
+    jit.store64(scratch, Address(result));
+    jit.store64(TrustedImm32(0), Address(result, JSObject::butterflyOffset()));
+    jit.storePtr(storage, Address(result, JSArrayBufferView::offsetOfVector()));
+    jit.store64(length, Address(result, JSArrayBufferView::offsetOfLength()));
+    jit.store64(TrustedImm32(0), Address(result, JSArrayBufferView::offsetOfByteOffset()));
+    jit.store8(TrustedImm32(FastTypedArray), Address(result, JSArrayBufferView::offsetOfMode()));
+
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), elements);
+    Label copy = jit.label();
+    jit.sub32(TrustedImm32(1), length);
+    jit.load64(BaseIndex(elements, length, CCallHelpers::TimesEight), element);
+    Jump isNotInt32 = jit.branchIfNotInt32(element);
+    Label hasWord = jit.label();
+    jit.store32(element, BaseIndex(storage, length, CCallHelpers::TimesFour));
+    jit.branchTest32(CCallHelpers::NonZero, length).linkTo(copy, &jit);
+    fenceAfterAllocation(jit);
+    jit.returnToCaller();
+
+    isNotInt32.link(&jit);
+    Jump isNotNumber = jit.branchIfNotNumber(element);
+    unboxDouble(jit, element, truncated, number);
+    jit.truncateDoubleToInt64(number, element);
+    jit.move(element, truncated);
+    slowCases.append(jit.branchAdd64(CCallHelpers::Overflow, element, truncated));
+    jit.jump().linkTo(hasWord, &jit);
+
+    isNotNumber.link(&jit);
+    Jump isHole = jit.branchTest64(CCallHelpers::Zero, element);
+    slowCases.append(jit.branch64(CCallHelpers::NotEqual, element, TrustedImm32(JSValue::ValueUndefined)));
+    jit.move(TrustedImm32(0), element);
+    isHole.link(&jit);
+    jit.jump().linkTo(hasWord, &jit);
+
+    slowCases.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTTypedArrayOfPlainArray, { });
 }
 
 StubSignature signatureOfNewDictionary(StubKey)
@@ -777,10 +1024,8 @@ StubSignature signatureOfNewDictionary(StubKey)
 
 void generateNewDictionary(StubAssembler& jit)
 {
-    static_assert(exists(newDictionary(numberOfRoomierFinalObjects)) && !exists(newDictionary(numberOfRoomierFinalObjects + 1)));
-    const unsigned kind = static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + jit.key().count();
-    const unsigned inlineCapacity = JSFinalObject::defaultInlineCapacity + 2 * jit.key().count();
-    const size_t numberOfWords = JSFinalObject::allocationSize(inlineCapacity) / sizeof(uint64_t);
+    constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::DefaultFinalObject);
+    const size_t numberOfWords = JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity) / sizeof(uint64_t);
     const GPRReg result = jit.result();
     const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
@@ -799,7 +1044,6 @@ void generateNewDictionary(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTNewDictionary, {
         .saves = Saves::CallerSavedRegisters,
         .checksException = false,
-        .constantArguments = { OperationCall::ConstantArgument { operationArgumentGPR(1), inlineCapacity } },
     });
 }
 

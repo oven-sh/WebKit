@@ -1,0 +1,36 @@
+# A function calls what it is handed, and what it is handed is what the shell has picked of two
+# function quiet() { return 1 }  function loud() { return 2 }  function run(callee) { return callee() }  run(register(quiet, loud))
+# RUN(SHELL): run-in-shell globalThis.register = (quiet, loud) => loud; globalThis.sink = print;
+# SHELL: 2
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1 calleeName="register"
+    v6 = Call v2, -, v5 calleeName="run"
+    v7 = PropGet v3 key="sink" [isFreeName]
+    v8 = Call v7, -, v6 calleeName="sink"
+    Return v8
+}
+function f1 name="quiet" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="loud" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 calleeName="callee"
+    Return v1
+}

@@ -1,0 +1,5 @@
+# the same function with typed operations withheld: nobody resolves what the protocol finds, so the variable is read again behind the call
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: GetModuleVariable
+# PROGRAM-OF: protocols-on-plain-records-run-no-code.ir

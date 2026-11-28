@@ -1,0 +1,28 @@
+# a member that a program may replace, that this one uses and that it is not seen to write is locked when the program starts, and is a constant from then on: `eval("Date.now = f")` throws
+# a store that names the object and the member opens that member and no other. A member that nobody uses gets no lock
+# Date.now(); Math.random(); Math.random = f;
+# RUN: locks
+# CHECK: locked DateNow constant
+# CHECK-NOT: DateParse
+# CHECK-NOT: MathRandom
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = Builtin builtin=Math
+    v5 = PropGet v4 key="random"
+    v6 = Call v5, v4
+    v7 = NewClosure function=f1
+    PropSet v4, v7 key="random"
+    Return v6
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

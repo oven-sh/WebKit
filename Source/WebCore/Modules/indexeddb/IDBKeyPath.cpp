@@ -28,6 +28,7 @@
 #include "IDBKeyPath.h"
 
 #include <wtf/ASCIICType.h>
+#include <wtf/Borrow.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -50,7 +51,7 @@ public:
     {
     }
 
-    TokenType LEGACY_NODELETE currentTokenType() const { return m_currentTokenType; }
+    NODELETE TokenType currentTokenType() const { return m_currentTokenType; }
 
     TokenType nextTokenType()
     {
@@ -58,7 +59,7 @@ public:
         return m_currentTokenType;
     }
 
-    const String& LEGACY_NODELETE currentElement() { return m_currentElement; }
+    NODELETE const String& currentElement() { return m_currentElement; }
 
 private:
     TokenType lex(String&);
@@ -198,7 +199,7 @@ bool isIDBKeyPathValid(const IDBKeyPath& keyPath)
     }, [](const Vector<String>& vector) {
         if (vector.isEmpty())
             return false;
-        for (auto& key : vector) {
+        for (auto& key : borrow(vector)) {
             if (!IDBIsValidKeyPath(key))
                 return false;
         }

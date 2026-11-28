@@ -53,7 +53,7 @@ WebWheelEvent::WebWheelEvent(WebEventData&& eventData, WebWheelEventData&& wheel
     : WebEvent(WTF::move(eventData))
     , m_data(WTF::move(wheelData))
 {
-    ASSERT(isWheelEventType(type()));
+    RELEASE_ASSERT(isWheelEventType(type()));
 }
 
 bool WebWheelEvent::isWheelEventType(WebEventType type)
@@ -118,7 +118,7 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const WebWheelEvent& event)
     ts.dumpProperty("rawPlatformDelta"_s, event.rawPlatformDelta());
     ts.dumpProperty("scrollCount"_s, event.scrollCount());
     ts.dumpProperty("unacceleratedScrollingDelta"_s, event.unacceleratedScrollingDelta());
-    ts.dumpProperty("inputSource"_s, event.inputSource() == WebEventInputSource::Automation ? "automation"_s : "userDriven"_s);
+    ts.dumpProperty("inputSource"_s, event.inputSource() == WebEventInputSource::Touch ? "touch"_s : "default"_s);
 #endif
     return ts;
 }

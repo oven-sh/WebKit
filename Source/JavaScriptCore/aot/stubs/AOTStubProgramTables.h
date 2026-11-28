@@ -19,7 +19,6 @@ constexpr ptrdiff_t offsetOfProgramTableRange(ProgramTableIndex index)
     return OBJECT_OFFSETOF(ProgramTables, ranges) + static_cast<unsigned>(index) * sizeof(TableRange);
 }
 
-// In both functions, tables holds Instance::image.tables.
 inline Address programTableCount(GPRReg tables, ProgramTableIndex index)
 {
     return Address(tables, offsetOfProgramTableRange(index) + OBJECT_OFFSETOF(TableRange, count));
@@ -32,13 +31,21 @@ inline void loadProgramTable(StubAssembler& jit, GPRReg tables, ProgramTableInde
     jit.addPtr(tables, result);
 }
 
-// By closure number: it comes from a closure, or from the field of a closure that is yet to be made.
+inline void loadAddressOfClosureFacts(StubAssembler& jit, GPRReg function, GPRReg facts)
+{
+    static_assert(sizeof(ClosureFacts) == 4);
+    ASSERT(noOverlap(function, facts));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.closureFactNumbers)), facts);
+    jit.load16(BaseIndex(facts, function, CCallHelpers::TimesTwo), facts);
+    jit.lshift32(TrustedImm32(2), facts);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.closureFacts)), facts);
+}
+
 inline void loadKindOfClosureFunction(StubAssembler& jit, GPRReg function, GPRReg kind)
 {
     static_assert(sizeof(FunctionKindData) == 2);
-    ASSERT(noOverlap(function, kind));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.closureFunctionKinds)), kind);
-    jit.load16(BaseIndex(kind, function, CCallHelpers::TimesTwo), kind);
+    loadAddressOfClosureFacts(jit, function, kind);
+    jit.load16(Address(kind, OBJECT_OFFSETOF(ClosureFacts, kind)), kind);
 }
 
 inline uint32_t slimFunctionKindBit()

@@ -1,0 +1,44 @@
+# two thousand barrels, each with a star on the next, and the last of them mocked: every one of them has the name through the mock, and lib.js below it has not
+# findMocksOfProgram() goes backwards over the requests from the modules that may be mocked, each module once. The old question searched the way for each name that was asked about
+# b1.js: export * from "./b2.js" .. b1999.js: export * from "./b2000.js"   b2000.js, which a test mocks: export * from "./lib.js"   lib.js: export const text = "real"
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: through-mock m1 "text"
+# CHECK: through-mock m1000 "text"
+# CHECK: through-mock m1999 "text"
+# CHECK: through-mock m2000 "text"
+# CHECK-NOT: through-mock m2001
+# RUN(LINK): link variables mechanisms=all
+# LINK-NOT: variable g1 proven=
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+# REPEAT: i = 1..1999
+module m%(i) path="/b%(i).js" displayPath="b%(i).js" body=f%(i) requests=[{target=m%(i+1) completes=true}] exports=[{name="text" variable=g0 isFromStarExport=true}]
+# END REPEAT
+module m2000 path="/b2000.js" displayPath="b2000.js" flags=[MayBeMocked] body=f2000 requests=[{target=m2001 completes=true}] exports=[{name="text" variable=g0 isFromStarExport=true}]
+module m2001 path="/lib.js" displayPath="lib.js" body=f2001 exports=[{name="text" variable=g0}]
+entry module=m0
+variable g0 name="text" module=m2001 declared={type=anything}
+variable g1 name="out" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="text"
+    PutModuleVariable v1 variable=g1
+    v3 = Undefined
+    Return v3
+}
+# REPEAT: i = 1..2000
+function f%(i) module=m%(i) kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# END REPEAT
+function f2001 module=m2001 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}

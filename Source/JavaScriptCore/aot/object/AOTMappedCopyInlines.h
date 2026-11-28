@@ -22,9 +22,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// False where the slot holds nothing. The type of what store gets is as wide as the slot of the target. What takes more than loads is left to moveInOtherWay.
 template<typename Store, typename Functor>
-ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move, const uint8_t* slot, const Store& store, const Functor& moveInOtherWay, const uint32_t* literalStrings = nullptr)
+ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move, const uint8_t* slot, const Store& store, const Functor& moveInOtherWay)
 {
     using Kind = MappedCopy::MoveKind;
     auto load = [&]<typename T>(T) ALWAYS_INLINE_LAMBDA {
@@ -133,27 +132,6 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
             return bits && moveInOtherWay();
         return storeAlways(static_cast<uint32_t>(bits >> MarkedBlockCage::shift));
     }
-    case Kind::NarrowLiteralString: {
-        // The word of a literal string names its cell once somebody has made it.
-        uint32_t word = load(uint32_t());
-        if (isLiteralStringWord(word))
-            word = literalStrings[literalStringIndex(word)];
-        if (word <= undefinedCell32) [[unlikely]]
-            return load(uint32_t()) != absentCell32 && moveInOtherWay();
-        return storeAlways(word);
-    }
-    case Kind::WideLiteralString: {
-        uint64_t bits = load(uint64_t());
-        if (isLiteralStringWord(bits)) {
-            uint32_t word = literalStrings ? literalStrings[literalStringIndex(static_cast<uint32_t>(bits))] : 0;
-            if (!word) [[unlikely]]
-                return moveInOtherWay();
-            return storeAlways(std::bit_cast<uint64_t>(MarkedBlockCage::decode(cellCageBase, word)));
-        }
-        if (bits <= JSValue::ValueUndefined) [[unlikely]]
-            return bits != JSValue::ValueEmpty && moveInOtherWay();
-        return storeAlways(bits);
-    }
     case Kind::BoxedAsInt32:
     case Kind::BoxedAsInt64:
     case Kind::BoxedAsDouble: {
@@ -171,10 +149,11 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
         return moveInOtherWay();
     }
     case Kind::BoxedAsNarrowString: {
-        JSValue value = JSValue::decode(load(uint64_t()));
-        if (!value.isCell() || !value.asCell()->isString()) [[unlikely]]
+        uint64_t bits = load(uint64_t());
+        JSValue value = JSValue::decode(bits);
+        if (bits - cellCageBase >= MarkedBlockCage::maxSize || !value.isCell() || !value.asCell()->isString()) [[unlikely]]
             return moveInOtherWay();
-        return storeAlways(static_cast<uint32_t>(load(uint64_t()) >> MarkedBlockCage::shift));
+        return storeAlways(static_cast<uint32_t>(bits >> MarkedBlockCage::shift));
     }
     case Kind::BoxedAsJSValue: {
         JSValue value = JSValue::decode(load(uint64_t()));
@@ -210,7 +189,6 @@ ALWAYS_INLINE void storeBitsOfWidth(unsigned width, uint8_t* slot, uint64_t bits
         *reinterpret_cast<uint16_t*>(slot) = static_cast<uint16_t>(bits);
 }
 
-// It collects nothing, throws nothing and tells nobody, so it runs before the operation has a frame. While the collector marks, every owner needs a barrier, so no thread of it sees the target here.
 ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* target, EncodedJSValue encodedSource, uint32_t excludedRunNumberPlusOne)
 {
     static_assert(std::endian::native == std::endian::little && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
@@ -288,7 +266,7 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
             *reinterpret_cast<T*>(slotOfTarget) = bits;
         }, [] {
             return false;
-        }, instance.runtime.constants.literalStrings);
+        });
         if (!didMove) [[unlikely]]
             return clearFieldsMovedInVain(*copy, &move, target);
     }

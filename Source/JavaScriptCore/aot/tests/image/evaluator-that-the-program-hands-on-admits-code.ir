@@ -1,0 +1,18 @@
+# take(Function)
+# The text of the program names the evaluator and hands it on: whoever gets it may give it any text, so the image admits code that nobody has read.
+# It is the control of Bun's test/aot/engine-tests/image/holder-that-the-library-lets-go-hands-out-no-evaluator.ir and Bun's test/aot/engine-tests/image/name-read-off-a-value-nobody-knows-finds-no-evaluator.ir: what those two withhold is withheld from the lookups of the library and from whoever merely holds the holder.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags {{*}}AdmitsUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="take" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="take"
+    v4 = Undefined
+    Return v4
+}

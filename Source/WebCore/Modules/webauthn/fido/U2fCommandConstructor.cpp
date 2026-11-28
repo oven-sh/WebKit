@@ -40,6 +40,8 @@
 #include "WebAuthenticationConstants.h"
 #include "WebAuthenticationUtils.h"
 
+#include <wtf/Borrow.h>
+
 namespace fido {
 using namespace WebCore;
 
@@ -47,8 +49,7 @@ namespace {
 
 static Vector<uint8_t> constructU2fRegisterCommand(std::span<const uint8_t> applicationParameter, std::span<const uint8_t> challengeParameter)
 {
-    Vector<uint8_t> data;
-    data.reserveInitialCapacity(kU2fChallengeParamLength + kU2fApplicationParamLength);
+    Vector<uint8_t> data(ReserveCapacityTag { }, kU2fChallengeParamLength + kU2fApplicationParamLength);
     data.append(challengeParameter);
     data.append(applicationParameter);
 
@@ -66,8 +67,7 @@ static std::optional<Vector<uint8_t>> constructU2fSignCommand(const Vector<uint8
     if (keyHandle.byteLength() > kMaxKeyHandleLength)
         return std::nullopt;
 
-    Vector<uint8_t> data;
-    data.reserveInitialCapacity(kU2fChallengeParamLength + kU2fApplicationParamLength + 1 + keyHandle.byteLength());
+    Vector<uint8_t> data(ReserveCapacityTag { }, kU2fChallengeParamLength + kU2fApplicationParamLength + 1 + keyHandle.byteLength());
     data.appendVector(challengeParameter);
     data.appendVector(applicationParameter);
     data.append(static_cast<uint8_t>(keyHandle.byteLength()));
@@ -103,7 +103,7 @@ std::optional<Vector<uint8_t>> convertToU2fRegisterCommand(const Vector<uint8_t>
         return std::nullopt;
 
     ASSERT(request.rp.id);
-    return constructU2fRegisterCommand(produceRpIdHash(request.rp.id), clientDataHash);
+    return constructU2fRegisterCommand(produceRpIdHash(request.rp.id), borrow(clientDataHash)->span());
 }
 
 std::optional<Vector<uint8_t>> convertToU2fCheckOnlySignCommand(const Vector<uint8_t>& clientDataHash, const PublicKeyCredentialCreationOptions& request, const PublicKeyCredentialDescriptor& keyHandle)

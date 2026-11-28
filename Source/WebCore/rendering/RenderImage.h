@@ -46,18 +46,20 @@ enum ImageSizeChangeType {
 struct CreateShareableBitmapFromImageOptions {
     enum class AllowAnimatedImages : bool { No, Yes };
     enum class UseSnapshotForTransparentImages : bool { No, Yes };
+    enum class ResultColorSpace : bool { Screen, FromImage };
 
     std::optional<FloatSize> screenSizeInPixels;
     AllowAnimatedImages allowAnimatedImages { AllowAnimatedImages::Yes };
     UseSnapshotForTransparentImages useSnapshotForTransparentImages { UseSnapshotForTransparentImages::No };
+    ResultColorSpace resultColorSpace { ResultColorSpace::Screen };
 };
 
 class RenderImage : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderImage);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderImage);
 public:
-    RenderImage(Type, Element&, Style::ComputedStyle&&, Style::Image* = nullptr, float currentPixelDensity = 1);
-    RenderImage(Type, Document&, Style::ComputedStyle&&, Style::Image* = nullptr);
+    RenderImage(Type, Element&, UniqueRef<Style::ComputedStyle>&&, Style::Image* = nullptr, float currentPixelDensity = 1);
+    RenderImage(Type, Document&, UniqueRef<Style::ComputedStyle>&&, Style::Image* = nullptr);
     virtual ~RenderImage();
 
     RenderImageResource& imageResource() { return *m_imageResource; }
@@ -77,8 +79,7 @@ public:
 
     bool isGeneratedContent() const { return m_isGeneratedContent; }
 
-    const String& altText() const LIFETIME_BOUND { return m_altText; }
-    void setAltText(const String& altText) { m_altText = altText; }
+    WEBCORE_EXPORT String altText() const;
 
     // https://html.spec.whatwg.org/multipage/images.html#current-pixel-density
     float currentPixelDensity() const { return m_currentPixelDensity; }
@@ -102,6 +103,7 @@ public:
 
     // FIXME: Condense these into fewer concrete categories of sizing algorithms once we know all the different sizing rules needed.
     ConcreteObjectSize concreteObjectSizeForPainting() const;
+    static ConcreteObjectSize concreteObjectSizeForPainting(const LayoutRect& replacedContentRect);
     ConcreteObjectSize concreteObjectSizeForInteractionRegion() const;
     WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForPasteboard() const;
     ConcreteObjectSize concreteObjectSizeForAccessibility() const;
@@ -124,7 +126,7 @@ public:
     FloatSize preferredAspectRatioAsSize() const final;
 
 protected:
-    RenderImage(Type, Element&, Style::ComputedStyle&&, OptionSet<ReplacedFlag>, Style::Image* = nullptr, float currentPixelDensity = 1);
+    RenderImage(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<ReplacedFlag>, Style::Image* = nullptr, float currentPixelDensity = 1);
     void willBeDestroyed() override;
 
 #if ENABLE(SMART_IMAGE_RESIZER)
@@ -139,8 +141,10 @@ protected:
     void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
+    void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&) override final;
 
     ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&);
+    ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&, const ConcreteObjectSize&);
     void paint(PaintInfo&, const LayoutPoint&) final;
     void layout() override;
 
@@ -187,7 +191,7 @@ private:
 
     bool imageRepresentsNothing() const;
 
-    // Text to display as long as the image isn't available.
+    // The alt text of the element; 'content'-derived alt lives in style data.
     String m_altText;
     const std::unique_ptr<RenderImageResource> m_imageResource;
     bool m_needsToSetSizeForAltText { false };

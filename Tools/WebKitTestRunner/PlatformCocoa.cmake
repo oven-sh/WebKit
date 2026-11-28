@@ -1,4 +1,30 @@
-if (WEBKIT_SDK_IS_MACOS)
+# Fonts for layout tests. ActivateFontsCocoa.mm registers fonts from the
+# injected bundle's Resources/. AHEM is the critical one -- layout tests assume
+# it for pixel-perfect metric consistency.
+set(_wtr_fonts
+    "${WebKitTestRunner_DIR}/fonts/AHEM____.TTF"
+    "${WebKitTestRunner_DIR}/fonts/FakeHelvetica-Helvetica-400.ttf"
+    "${WebKitTestRunner_DIR}/fonts/FakeHelvetica-Helvetica-500.ttf"
+    "${WebKitTestRunner_DIR}/fonts/FakeHelvetica-Helvetica2-400.ttf"
+    "${WebKitTestRunner_DIR}/fonts/FakeHelvetica-Helvetica2-500.ttf"
+    "${WebKitTestRunner_DIR}/fonts/FakeHelvetica-SingleExtendedCharacter.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKit Layout Tests 2.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKit Layout Tests.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher100.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher200.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher300.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher400.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher500.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher600.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher700.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher800.ttf"
+    "${WebKitTestRunner_DIR}/fonts/WebKitWeightWatcher900.ttf"
+    "${WebKitTestRunner_DIR}/FakeHelvetica-ArmenianCharacter.ttf"
+    "${WebKitTestRunner_DIR}/FontWithFeatures.otf"
+    "${WebKitTestRunner_DIR}/FontWithFeatures.ttf"
+)
+
+if (WEBKIT_PLATFORM_MAC)
 
 # TestRunnerShared/CMakeLists.txt defines TestRunnerShared_DIR; this file uses the old name.
 set(WebKitTestRunner_SHARED_DIR ${TOOLS_DIR}/TestRunnerShared)
@@ -66,16 +92,6 @@ else ()
     )
 endif ()
 
-# ActivateFontsCocoa.mm registers fonts from the bundle's Resources/.
-# AHEM is the critical one -- layout tests assume it for pixel-perfect metric consistency.
-file(GLOB _wtr_fonts
-    "${WebKitTestRunner_DIR}/fonts/*.ttf"
-    "${WebKitTestRunner_DIR}/fonts/*.TTF"
-    "${WebKitTestRunner_DIR}/fonts/*.otf"
-    "${WebKitTestRunner_DIR}/FakeHelvetica-ArmenianCharacter.ttf"
-    "${WebKitTestRunner_DIR}/FontWithFeatures.ttf"
-    "${WebKitTestRunner_DIR}/FontWithFeatures.otf"
-)
 set_property(TARGET TestRunnerInjectedBundle APPEND PROPERTY RESOURCE "${_wtr_fonts}")
 target_sources(TestRunnerInjectedBundle PRIVATE ${_wtr_fonts})
 
@@ -219,27 +235,25 @@ set(PRODUCT_BUNDLE_IDENTIFIER com.apple.WebKitTestRunner.InjectedBundle)
 configure_file("${WebKitTestRunner_DIR}/InjectedBundle-Info.plist"
                "${CMAKE_CURRENT_BINARY_DIR}/InjectedBundle-Info.plist")
 set(_wktr_app_dir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKitTestRunnerApp.app")
+if (NOT WEBKIT_SDK_IS_MACOS)
+    set(_wktr_app_plugins_dir "${_wktr_app_dir}/PlugIns")
+    set(_wktr_app_resources_dir "${_wktr_app_dir}")
+else ()
+    set(_wktr_app_plugins_dir "${_wktr_app_dir}/Contents/PlugIns")
+    set(_wktr_app_resources_dir "${_wktr_app_dir}/Contents/Resources")
+endif ()
 # TestControllerIOS.mm loads the injected bundle out of the app's PlugIns directory.
 set_target_properties(TestRunnerInjectedBundle PROPERTIES
     BUNDLE TRUE
     BUNDLE_EXTENSION bundle
     OUTPUT_NAME WebKitTestRunnerInjectedBundle
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/InjectedBundle-Info.plist"
-    LIBRARY_OUTPUT_DIRECTORY "${_wktr_app_dir}/PlugIns"
+    LIBRARY_OUTPUT_DIRECTORY "${_wktr_app_plugins_dir}"
     CODE_SIGN_BUNDLE "$<TARGET_BUNDLE_DIR:TestRunnerInjectedBundle>"
 )
 
-# Fonts for layout tests.
-file(GLOB _wktr_fonts
-    "${WebKitTestRunner_DIR}/fonts/*.ttf"
-    "${WebKitTestRunner_DIR}/fonts/*.TTF"
-    "${WebKitTestRunner_DIR}/fonts/*.otf"
-    "${WebKitTestRunner_DIR}/FakeHelvetica-ArmenianCharacter.ttf"
-    "${WebKitTestRunner_DIR}/FontWithFeatures.ttf"
-    "${WebKitTestRunner_DIR}/FontWithFeatures.otf"
-)
-set_property(TARGET TestRunnerInjectedBundle APPEND PROPERTY RESOURCE "${_wktr_fonts}")
-target_sources(TestRunnerInjectedBundle PRIVATE ${_wktr_fonts})
+set_property(TARGET TestRunnerInjectedBundle APPEND PROPERTY RESOURCE "${_wtr_fonts}")
+target_sources(TestRunnerInjectedBundle PRIVATE ${_wtr_fonts})
 
 list(APPEND WebKitTestRunner_INCLUDE_DIRECTORIES
     ${WebKit_FRAMEWORK_HEADERS_DIR}
@@ -389,17 +403,17 @@ set_target_properties(WebKitTestRunner PROPERTIES
 )
 
 add_custom_command(
-    OUTPUT "${_wktr_app_dir}/Launch.storyboardc"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${_wktr_app_dir}"
-    COMMAND ibtool --compile "${_wktr_app_dir}/Launch.storyboardc" "${WebKitTestRunner_DIR}/ios/Launch.storyboard"
+    OUTPUT "${_wktr_app_resources_dir}/Launch.storyboardc"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_wktr_app_resources_dir}"
+    COMMAND ibtool --compile "${_wktr_app_resources_dir}/Launch.storyboardc" "${WebKitTestRunner_DIR}/ios/Launch.storyboard"
     DEPENDS "${WebKitTestRunner_DIR}/ios/Launch.storyboard"
     VERBATIM)
 
-target_sources(WebKitTestRunner PRIVATE "${_wktr_app_dir}/Launch.storyboardc")
+target_sources(WebKitTestRunner PRIVATE "${_wktr_app_resources_dir}/Launch.storyboardc")
 # The app signs in POST_BUILD, which only re-runs on relink.
 set_property(TARGET WebKitTestRunner APPEND PROPERTY LINK_DEPENDS
     "$<TARGET_FILE:TestRunnerInjectedBundle>"
-    "${_wktr_app_dir}/Launch.storyboardc")
+    "${_wktr_app_resources_dir}/Launch.storyboardc")
 
 if (USE_EXTENSIONKIT)
     add_dependencies(WebKitTestRunner WebContentExtension WebContentCaptivePortalExtension WebContentEnhancedSecurityExtension NetworkingExtension)

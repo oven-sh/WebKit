@@ -30,10 +30,13 @@
 
 #import "AppKitSPI.h"
 #import "AudioSessionRoutingArbitratorProxy.h"
+#import "WKAppKitGestureController.h"
+#import "WKClickHighlightController.h"
 #import "WKNSData.h"
 #import "WKWebViewMac.h"
 #import "WebColorPicker.h"
 #import "WebPageProxy.h"
+#import "WebPageProxyTesting.h"
 #import "WebPopupMenuProxyMac.h"
 #import "WebProcessProxy.h"
 #import "WebViewImpl.h"
@@ -207,6 +210,56 @@
 #else
     return NO;
 #endif
+}
+
+- (NSRect)_clickHighlightRectForTesting
+{
+#if ENABLE(TWO_PHASE_CLICKS)
+    if (RetainPtr controller = [protect(_impl->appKitGestureController()) clickHighlightController])
+        return [controller highlightViewFrame];
+#endif
+    return NSZeroRect;
+}
+
+- (BOOL)_isShowingClickHighlightForTesting
+{
+#if ENABLE(TWO_PHASE_CLICKS)
+    return [[protect(_impl->appKitGestureController()) clickHighlightController] isShowingHighlight];
+#else
+    return NO;
+#endif
+}
+
+- (NSColor *)_clickHighlightColorForTesting
+{
+#if ENABLE(TWO_PHASE_CLICKS)
+    if (RetainPtr controller = [protect(_impl->appKitGestureController()) clickHighlightController])
+        return WebCore::cocoaColor([controller highlightColor]).autorelease();
+#endif
+    return nil;
+}
+
+- (NSRect)_hoverActivatedByClickBoundsForTesting
+{
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    if (auto& bounds = _page->hoverActivatedByClickBounds())
+        return *bounds;
+#endif
+    return NSZeroRect;
+}
+
+- (void)_setScrollerStyleOverrideForTesting:(NSNumber *)scrollerStyle completionHandler:(void (^)(void))completionHandler
+{
+    RefPtr pageForTesting = _page->pageForTesting();
+    if (!pageForTesting)
+        return completionHandler();
+
+    std::optional<WebCore::ScrollbarStyle> styleOverride;
+    if (scrollerStyle)
+        styleOverride = scrollerStyle.integerValue == NSScrollerStyleOverlay ? WebCore::ScrollbarStyle::Overlay : WebCore::ScrollbarStyle::AlwaysVisible;
+    pageForTesting->setScrollbarStyleOverride(styleOverride, [completionHandler = makeBlockPtr(completionHandler)] {
+        completionHandler();
+    });
 }
 
 @end

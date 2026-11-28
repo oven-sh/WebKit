@@ -155,7 +155,7 @@ bool isDraggableLink(const Element& element)
 static PlatformMouseEvent createMouseEvent(const DragData& dragData)
 {
     auto modifiers = PlatformKeyboardEvent::currentStateOfModifierKeys();
-    return PlatformMouseEvent(dragData.clientPosition(), dragData.globalPosition(), MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, modifiers, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    return PlatformMouseEvent(dragData.clientPosition(), dragData.globalPosition(), MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, modifiers, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::Default);
 }
 
 DragController::DragController(Page& page, std::unique_ptr<DragClient>&& client)
@@ -245,7 +245,7 @@ void DragController::dragExited(LocalFrame& frame, DragData&& dragData)
         fileInput->setCanReceiveDroppedFiles(false);
 }
 
-inline static bool LEGACY_NODELETE dragIsHandledByDocument(DragHandlingMethod dragHandlingMethod)
+NODELETE inline static bool dragIsHandledByDocument(DragHandlingMethod dragHandlingMethod)
 {
     return dragHandlingMethod != DragHandlingMethod::None && dragHandlingMethod != DragHandlingMethod::PageLoad;
 }
@@ -315,7 +315,7 @@ DragEventTargetData DragController::performDragOperation(DragData&& dragData, Lo
         return { DragEventHandled::No };
 
     auto urlString = dragData.asURL();
-    if (urlString.isEmpty())
+    if (urlString.isEmpty() || URL { urlString }.protocolIsJavaScript())
         return { DragEventHandled::No };
 
     client().willPerformDragDestinationAction(DragDestinationAction::Load, dragData);
@@ -398,13 +398,13 @@ static RefPtr<HTMLInputElement> asFileInput(Node& node)
     return inputElement && inputElement->isFileUpload() ? inputElement : nullptr;
 }
 
-static bool LEGACY_NODELETE isEnabledColorInput(Node& node)
+NODELETE static bool isEnabledColorInput(Node& node)
 {
     auto* input = dynamicDowncast<HTMLInputElement>(node);
     return input && input->isColorControl() && !input->isDisabledFormControl();
 }
 
-static bool LEGACY_NODELETE isInShadowTreeOfEnabledColorInput(Node& node)
+NODELETE static bool isInShadowTreeOfEnabledColorInput(Node& node)
 {
     auto* host = node.shadowHost();
     return host && isEnabledColorInput(*host);
@@ -906,7 +906,7 @@ static void selectElement(Element& element)
     }
 }
 
-static IntPoint LEGACY_NODELETE dragLocForDHTMLDrag(const IntPoint& mouseDraggedPoint, const IntPoint& dragOrigin, const IntPoint& dragImageOffset, bool isLinkImage)
+NODELETE static IntPoint dragLocForDHTMLDrag(const IntPoint& mouseDraggedPoint, const IntPoint& dragOrigin, const IntPoint& dragImageOffset, bool isLinkImage)
 {
     // dragImageOffset is the cursor position relative to the lower-left corner of the image.
 #if PLATFORM(MAC)
@@ -1409,7 +1409,7 @@ void DragController::beginDrag(DragItem dragItem, LocalFrame& frame, const IntPo
     client().beginDrag(WTF::move(dragItem), frame, mouseDownPointInRootViewCoordinates, mouseDraggedPointInRootViewCoordinates, dataTransfer, dragSourceAction);
 }
 
-static RefPtr<Element> LEGACY_NODELETE containingLinkElement(Element& element)
+NODELETE static RefPtr<Element> containingLinkElement(Element& element)
 {
     for (auto& currentElement : lineageOfType<Element>(element)) {
         if (currentElement.isLink())
@@ -1437,11 +1437,11 @@ void DragController::doSystemDrag(DragImage image, RefPtr<TextIndicator>&& textI
     item.containsSelection = protect(frame.selection())->contains(eventPos);
     item.rootFrameID = rootFrameID;
 
-    auto eventPositionInRootViewCoordinates = roundedIntPoint(frameView->contentsToMainFrameView(FloatPoint { eventPos }));
-    auto dragLocationInRootViewCoordinates = roundedIntPoint(frameView->contentsToMainFrameView(FloatPoint { dragLoc }));
-    item.eventPositionInContentCoordinates = mainFrameView->rootViewToContents(eventPositionInRootViewCoordinates);
-    item.eventPositionInRootViewCoordinates = eventPositionInRootViewCoordinates;
-    item.dragLocationInContentCoordinates = mainFrameView->rootViewToContents(dragLocationInRootViewCoordinates);
+    auto eventPositionInMainFrameViewCoordinates = roundedIntPoint(frameView->contentsToMainFrameView(FloatPoint { eventPos }));
+    auto dragLocationInMainFrameViewCoordinates = roundedIntPoint(frameView->contentsToMainFrameView(FloatPoint { dragLoc }));
+    item.eventPositionInContentCoordinates = mainFrameView->rootViewToContents(eventPositionInMainFrameViewCoordinates);
+    item.eventPositionInMainFrameViewCoordinates = eventPositionInMainFrameViewCoordinates;
+    item.dragLocationInContentCoordinates = mainFrameView->rootViewToContents(dragLocationInMainFrameViewCoordinates);
     item.dragLocationInWindowCoordinates = mainFrameView->contentsToWindow(item.dragLocationInContentCoordinates);
 
     std::optional<NodeIdentifier> nodeID;
@@ -1457,10 +1457,10 @@ void DragController::doSystemDrag(DragImage image, RefPtr<TextIndicator>&& textI
                 if (auto* page = frame.page())
                     dragPreviewSize.scale(1 / page->deviceScaleFactor());
             }
-            item.dragPreviewFrameInRootViewCoordinates = { dragLocationInRootViewCoordinates, WTF::move(dragPreviewSize) };
+            item.dragPreviewFrameInMainFrameViewCoordinates = { dragLocationInMainFrameViewCoordinates, WTF::move(dragPreviewSize) };
         } else {
             // We can position the preview using the bounds of the drag source element.
-            item.dragPreviewFrameInRootViewCoordinates = element->boundsInRootViewSpace();
+            item.dragPreviewFrameInMainFrameViewCoordinates = element->boundsInMainFrameViewSpace();
         }
 
         if (RefPtr link = containingLinkElement(*element)) {

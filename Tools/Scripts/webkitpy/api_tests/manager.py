@@ -26,6 +26,8 @@ import os
 import re
 import time
 
+from webkitcorepy.string_utils import pluralize
+
 from webkitpy.api_tests.runner import EarlyExitException, Runner
 from webkitpy.api_tests.test_expectations import (
     APITestExpectations, PASS, FAIL, CRASH, TIMEOUT,
@@ -33,6 +35,7 @@ from webkitpy.api_tests.test_expectations import (
 )
 from webkitpy.common.net import results_database
 from webkitpy.common.iteration_compatibility import iteritems
+from webkitpy.common.program_status import ProgramStatus
 from webkitpy.common.system.executive import ScriptError
 from webkitpy.results.upload import Upload
 from webkitpy.xcode.simulated_device import DeviceRequest, SimulatedDeviceManager
@@ -50,12 +53,24 @@ class Manager(object):
     FAILED_TESTS = 3
     FAILED_UPLOAD = 4
 
-    def __init__(self, port, options, stream):
+    FAILURE_MESSAGES = {
+        FAILED_BUILD_CHECK: 'Build check failed',
+        FAILED_COLLECT_TESTS: 'Failed to collect tests',
+        FAILED_TESTS: 'Test suite failed',
+        FAILED_UPLOAD: 'Upload failed',
+    }
+
+    MAXIMUM_LOG_LENGTH_PER_UPLOAD = 256 * 1024
+
+    def __init__(self, port, options, stream, status=None):
         self._port = port
         self.host = port.host
         self._options = options
         self._stream = stream
+        self._status = status or ProgramStatus.disabled()
         self._expectations = None
+        self._interrupted = False
+        self._unexpected_failure_count = 0
 
     @staticmethod
     def _test_list_from_output(output: str, prefix='') -> list[str]:
@@ -140,6 +155,20 @@ class Manager(object):
         }
         return ' '.join(text for status, text in status_to_upload_text.items() if status in expectation.expected) or None
 
+    @classmethod
+    def _upload_results_with_logs(cls, upload_results: dict[str, dict], unexpected_failures: dict[str, tuple]) -> dict[str, dict]:
+        results = dict(upload_results)
+        total = 0
+        for test, (_, output, _) in unexpected_failures.items():
+            if not output:
+                continue
+            log = Upload.truncate_log(output)
+            total += len(log.encode('utf-8'))
+            if total > cls.MAXIMUM_LOG_LENGTH_PER_UPLOAD:
+                break
+            results[test] = dict(results[test], log=log)
+        return results
+
     def _collect_tests(self, args):
         available_tests = []
         specified_binaries = self._binaries_for_arguments(args)
@@ -148,7 +177,9 @@ class Manager(object):
                 continue
 
             to_be_listed = path
-            if not self._port.host.platform.is_win():
+            # An app's executable is signed as part of its bundle, so a copy of it won't launch.
+            list_from_copy = not self._port.host.platform.is_win() and '.app/Contents/MacOS/' not in path
+            if list_from_copy:
                 to_be_listed = self.host.filesystem.join(self.host.filesystem.dirname(path), 'ToBeListed')
                 self.host.filesystem.copyfile(path, to_be_listed)
                 self.host.filesystem.copymode(path, to_be_listed)
@@ -161,7 +192,7 @@ class Manager(object):
                 _log.error(f'Failed to list {canonicalized_binary} tests')
                 raise
             finally:
-                if not self._port.host.platform.is_win():
+                if list_from_copy:
                     self.host.filesystem.remove(to_be_listed)
 
         if len(args) == 0:
@@ -220,6 +251,13 @@ class Manager(object):
     _SPECIFIC_TEST_ARG_RE = re.compile(r'\S+\..+')
 
     @staticmethod
+    def _tests_outside_the_blocklist(port, test_names):
+        parallel_tests, blocklisted_tests = port.filter_api_tests_by_blocklist(test_names)
+        if blocklisted_tests:
+            _log.info(f'Skipping {len(blocklisted_tests)} tests in the blocklist')
+        return parallel_tests
+
+    @staticmethod
     def _arguments_with_parallel_safety_tests(args, parallel_safety_arguments):
         # With no arguments every test is collected, including the ones being checked.
         if not args:
@@ -244,7 +282,7 @@ class Manager(object):
         )
 
     def _set_up_run(self, args, device_type=None):
-        self._stream.write_update("Starting helper ...")
+        self._write_update("Starting helper ...")
         if not self._port.start_helper():
             return False
 
@@ -277,7 +315,82 @@ class Manager(object):
                         result.append(line)
         return result
 
+    def _classify_results(self, results, current_config):
+        """Returns the unexpected failures, expected failures and unexpected passes in results."""
+        unexpected_failures = {}
+        expected_failures = {}
+        unexpected_passes = {}
+
+        for test, test_result in iteritems(results):
+            status = test_result[0]
+            if status == Runner.STATUS_DISABLED:
+                continue
+            exp = self._expectations.get_expectation(test, current_config)
+            actual = runner_status_to_expectation(status)
+            is_expected = actual is not None and actual in (exp.expected if exp else PASS)
+            passed = status == Runner.STATUS_PASSED
+
+            if is_expected and not passed:
+                expected_failures[test] = test_result
+            elif not is_expected and passed:
+                unexpected_passes[test] = test_result
+            elif not is_expected:
+                unexpected_failures[test] = test_result
+
+        return unexpected_failures, expected_failures, unexpected_passes
+
+    def _retry_failing_tests(self, runner, current_config):
+        unexpected_failures, _, _ = self._classify_results(runner.results, current_config)
+        failing_tests = list(unexpected_failures)
+        if not failing_tests:
+            return {}
+
+        _log.info(f'\nRetrying {pluralize(len(failing_tests), "unexpected failure")}')
+        # One worker, like run-webkit-tests, so a test that only fails alongside others is reported as flaky.
+        retry_runner = Runner(self._port, self._stream, expectations=self._expectations, status=self._status)
+        retry_runner.run(failing_tests, num_workers=1)
+
+        runner.results, flakies = Manager._merge_retry_results(runner.results, retry_runner.results)
+        if flakies:
+            _log.info(f'Flaky tests: {", ".join(sorted(flakies))}')
+        return flakies
+
+    @staticmethod
+    def _merge_retry_results(first_run_results, retry_results):
+        """Returns the results with each retried test's latest result, and the first-run results of the tests that passed on retry."""
+        final = dict(first_run_results)
+        final.update(retry_results)
+        flakies = {
+            test: first_run_results[test]
+            for test, result in iteritems(retry_results)
+            if result[0] == Runner.STATUS_PASSED and test in first_run_results and first_run_results[test][0] != Runner.STATUS_PASSED
+        }
+        return final, flakies
+
     def run(self, args, json_output=None):
+        self._status.report('working')
+        result = self._run(args, json_output)
+        self._report_finished(result)
+        return result
+
+    def _report_finished(self, result):
+        if self._interrupted:
+            self._status.report('idle')
+        elif result == Manager.SUCCESS:
+            self._status.report('done')
+        else:
+            self._status.report('error', msg=self._failure_message(result))
+
+    def _failure_message(self, result):
+        if result == Manager.FAILED_TESTS and self._unexpected_failure_count:
+            return pluralize(self._unexpected_failure_count, 'unexpected failure')
+        return Manager.FAILURE_MESSAGES.get(result, 'Test suite failed')
+
+    def _write_update(self, msg):
+        self._stream.write_update(msg)
+        self._status.report('working', msg=msg)
+
+    def _run(self, args, json_output):
         if self._options.test_list:
             for list_path in self._options.test_list:
                 if not self.host.filesystem.isfile(list_path):
@@ -292,9 +405,11 @@ class Manager(object):
             if not self.host.filesystem.isdir(self.host.filesystem.dirname(json_output)) or self.host.filesystem.isdir(json_output):
                 raise RuntimeError(f'Cannot write to {json_output}')
 
+        self._port.warn_about_ignored_sanitizer_options()
+
         start_time = time.time()
 
-        self._stream.write_update('Checking build ...')
+        self._write_update('Checking build ...')
         if not self._port.check_api_test_build(self._binaries_for_arguments(args)):
             _log.error('Build check failed')
             return Manager.FAILED_BUILD_CHECK
@@ -304,23 +419,26 @@ class Manager(object):
 
         configuration_for_upload = self._port.configuration_for_upload(self._port.target_host(0))
 
-        self._stream.write_update('Collecting tests ...')
+        self._write_update('Collecting tests ...')
         try:
             test_names = self._collect_tests(args)
         except ScriptError:
             self._stream.writeln('Failed to collect tests')
             return Manager.FAILED_COLLECT_TESTS
-        self._stream.write_update(f'Found {len(test_names)} tests')
+        self._write_update(f'Found {len(test_names)} tests')
         if len(test_names) == 0:
             self._stream.writeln('No tests found')
             return Manager.FAILED_COLLECT_TESTS
+
+        if self._port.get_option('skip_blocklisted'):
+            test_names = Manager._tests_outside_the_blocklist(self._port, test_names)
 
         if self._port.get_option('dump'):
             for test in test_names:
                 self._stream.writeln(test)
             return Manager.SUCCESS
 
-        self._stream.write_update('Loading test expectations ...')
+        self._write_update('Loading test expectations ...')
         self._load_expectations(test_names)
         current_config = self._expectations.get_current_configuration()
 
@@ -355,28 +473,33 @@ class Manager(object):
             test_names = [t for t in test_names if t not in all_skipped]
 
         if skipped_by_expectation:
-            self._stream.write_update(f'Skipping {len(skipped_by_expectation)} tests marked [ Skip ]')
+            self._write_update(f'Skipping {len(skipped_by_expectation)} tests marked [ Skip ]')
         if skipped_as_failing:
-            self._stream.write_update(f'Skipping {len(skipped_as_failing)} tests marked as failing (--skip-failing-tests)')
+            self._write_update(f'Skipping {len(skipped_as_failing)} tests marked as failing (--skip-failing-tests)')
         if skipped_as_flaky:
-            self._stream.write_update(f'Skipping {len(skipped_as_flaky)} flaky tests (--skip-flaky-tests)')
+            self._write_update(f'Skipping {len(skipped_as_flaky)} flaky tests (--skip-flaky-tests)')
 
         test_names = [test for test in test_names for _ in range(self._options.repeat_each)]
         if self._options.repeat_each != 1:
             _log.debug(f'Repeating each test {self._options.iterations} times')
 
         runner = None
+        flakies = {}
         try:
             _log.info('Running tests')
-            runner = Runner(self._port, self._stream, expectations=self._expectations)
+            runner = Runner(self._port, self._stream, expectations=self._expectations, status=self._status)
             runner.exit_after_n_failures = getattr(self._options, 'exit_after_n_failures', None)
             for i in range(self._options.iterations):
                 _log.debug(f'\nIteration {i + 1}')
                 runner.run(test_names, int(self._options.child_processes) if self._options.child_processes else None)
+            # A retry would pass a test that only fails under load, which is what --test-parallel-safety checks for.
+            if getattr(self._options, 'retry_failures', False) and not self._port.get_option('test_parallel_safety'):
+                flakies = self._retry_failing_tests(runner, current_config)
         except EarlyExitException as e:
             self._stream.writeln(f'\nExiting early after {e.failure_count} failures.')
         except KeyboardInterrupt:
             # If we receive a KeyboardInterrupt, print results.
+            self._interrupted = True
             self._stream.writeln('')
         finally:
             self._clean_up_run()
@@ -393,30 +516,7 @@ class Manager(object):
         test_parallel_safety_tests = self._port.get_option('test_parallel_safety') or []
         is_parallel_safety_mode = bool(test_parallel_safety_tests)
 
-        unexpected_failures = {}
-        expected_failures = {}
-        unexpected_passes = {}
-
-        for test, test_result in iteritems(runner.results):
-            status = test_result[0]
-            if status == runner.STATUS_DISABLED:
-                continue
-            exp = self._expectations.get_expectation(test, current_config)
-            expectation_status = runner_status_to_expectation(status)
-
-            if exp is None or exp.expected == PASS:
-                if status != runner.STATUS_PASSED:
-                    unexpected_failures[test] = test_result
-            else:
-                is_expected = exp.result_is_expected(expectation_status) if expectation_status is not None else False
-                if is_expected:
-                    if status != runner.STATUS_PASSED:
-                        expected_failures[test] = test_result
-                else:
-                    if status == runner.STATUS_PASSED:
-                        unexpected_passes[test] = test_result
-                    else:
-                        unexpected_failures[test] = test_result
+        unexpected_failures, expected_failures, unexpected_passes = self._classify_results(runner.results, current_config)
 
         summary = f'Ran {len(runner.results) - disabled} tests of {original_test_count} with {len(successful)} successful'
         if expected_failures:
@@ -437,6 +537,7 @@ class Manager(object):
         result = Manager.SUCCESS
 
         has_unexpected_failures = bool(unexpected_failures)
+        self._unexpected_failure_count = len(unexpected_failures)
 
         if is_parallel_safety_mode:
             if has_unexpected_failures:
@@ -521,12 +622,21 @@ class Manager(object):
         # A passing test has no 'actual' and passing tests are not worth the size when reporting.
         result_dictionary['results'] = {test: test_result for test, test_result in upload_results.items() if test_result.get('actual')}
 
+        # A flaky test passed on retry, so `results` leaves it out; this keeps its first-run failure for EWS to report.
+        result_dictionary['flaky_results'] = {
+            test: Upload.create_test_result(
+                expected=self._expected_results_for_upload(self._expectations.get_expectation(test, current_config)),
+                actual=status_to_test_result[flaky_result[0]],
+                time=int(flaky_result[2] * 1000),
+            ) for test, flaky_result in iteritems(flakies)
+        }
+
         if json_output:
             self.host.filesystem.write_text_file(json_output, json.dumps(result_dictionary, indent=4))
 
         if self._options.report_urls:
             self._stream.writeln('\n')
-            self._stream.write_update('Preparing upload data ...')
+            self._write_update('Preparing upload data ...')
 
             upload = Upload(
                 suite=self._options.suite or 'api-tests',
@@ -538,10 +648,10 @@ class Manager(object):
                     end_time=end_time,
                     tests_skipped=len(result_dictionary['Skipped']),
                 ),
-                results=upload_results,
+                results=self._upload_results_with_logs(upload_results, unexpected_failures),
             )
             for url in self._options.report_urls:
-                self._stream.write_update(f'Uploading to {url} ...')
+                self._write_update(f'Uploading to {url} ...')
                 if not upload.upload(url, log_line_func=self._stream.writeln):
                     result = Manager.FAILED_UPLOAD
             self._stream.writeln('Uploads completed!')

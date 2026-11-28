@@ -37,51 +37,31 @@
 #include "MutationObserver.h"
 #include "NodeDocument.h"
 #include "OpportunisticTaskScheduler.h"
-#include "SecurityOrigin.h"
 #include "ThreadGlobalData.h"
 #include "ThreadTimers.h"
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WindowEventLoop);
 
-static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& LEGACY_NODELETE windowEventLoopMap()
+NODELETE static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& windowEventLoopMap()
 {
     RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>> map;
     return map.get();
 }
 
-static String agentClusterKeyOrNullIfUnique(const SecurityOrigin& origin)
+Ref<WindowEventLoop> WindowEventLoop::eventLoopForAgentCluster(const String& agentClusterID)
 {
-    auto computeKey = [&] {
-        // https://html.spec.whatwg.org/multipage/webappapis.html#obtain-agent-cluster-key
-        if (origin.isOpaque())
-            return origin.toString();
-        RegistrableDomain registrableDomain { origin.data() };
-        if (registrableDomain.isEmpty())
-            return origin.toString();
-        return makeString(origin.protocol(), "://"_s, registrableDomain.string());
-    };
-    auto key = computeKey();
-    if (key.isEmpty() || key == "null"_s)
-        return { };
-    return key;
-}
-
-Ref<WindowEventLoop> WindowEventLoop::eventLoopForSecurityOrigin(const SecurityOrigin& origin)
-{
-    auto key = agentClusterKeyOrNullIfUnique(origin);
-    if (key.isNull())
+    if (agentClusterID.isEmpty())
         return create({ });
 
-    auto addResult = windowEventLoopMap().add(key, nullptr);
+    auto addResult = windowEventLoopMap().add(agentClusterID, nullptr);
     if (addResult.isNewEntry) [[unlikely]] {
-        auto newEventLoop = create(key);
+        auto newEventLoop = create(agentClusterID);
         addResult.iterator->value = newEventLoop.ptr();
         return newEventLoop;
     }

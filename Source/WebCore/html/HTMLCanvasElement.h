@@ -46,7 +46,6 @@
 
 namespace WebCore {
 
-class BitmapImage;
 class BlobCallback;
 class CanvasRenderingContext;
 class CanvasRenderingContext2D;
@@ -59,6 +58,7 @@ class ImageBitmapRenderingContext;
 class ImageBuffer;
 class ImageData;
 class MediaStream;
+class NativeImage;
 class OffscreenCanvas;
 class VideoFrame;
 class WebGLRenderingContextBase;
@@ -81,7 +81,7 @@ public:
     WEBCORE_EXPORT ExceptionOr<void> setWidth(unsigned);
     WEBCORE_EXPORT ExceptionOr<void> setHeight(unsigned);
 
-    const AtomString& LEGACY_NODELETE canvasContentForBindings() const;
+    NODELETE const AtomString& canvasContentForBindings() const;
     CanvasContent canvasContent() const;
     bool hasDrawableContent() const;
 
@@ -96,7 +96,7 @@ public:
     ExceptionOr<void> clearElementGeometry(const CanvasElementImageSource&);
     ExceptionOr<Ref<DOMMatrix>> getElementTransform(const Element&);
 
-    CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
+    NODELETE CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
     ExceptionOr<std::optional<RenderingContext>> getContext(JSC::JSGlobalObject&, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
 
     RefPtr<CanvasRenderingContext> getContext(const String&);
@@ -142,7 +142,7 @@ public:
 
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
-    BitmapImage* copiedImage() const;
+    NativeImage* copiedImage() const;
     RefPtr<ImageData> getImageData();
 
     SecurityOrigin* securityOrigin() const final;
@@ -156,7 +156,7 @@ public:
     void setIsSnapshotting(bool isSnapshotting) { m_isSnapshotting = isSnapshotting; }
     bool isSnapshotting() const { return m_isSnapshotting; }
 
-    bool LEGACY_NODELETE isControlledByOffscreen() const;
+    NODELETE bool isControlledByOffscreen() const;
 
     void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) final;
     void dispatchEvent(Event&) final;
@@ -183,7 +183,7 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
 
     bool canContainRangeEndPoint() const final;
@@ -204,10 +204,10 @@ private:
     std::unique_ptr<CanvasRenderingContext> m_context;
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_changedDrawableElements;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
-    mutable RefPtr<BitmapImage> m_copiedImage; // For CSSCanvasValue.
+    mutable RefPtr<NativeImage> m_copiedImage; // For CSSCanvasValue.
 };
 
-WebCoreOpaqueRoot LEGACY_NODELETE root(HTMLCanvasElement*);
+NODELETE WebCoreOpaqueRoot root(HTMLCanvasElement*);
 
 } // namespace WebCore
 

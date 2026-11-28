@@ -1,0 +1,66 @@
+# nothing is proven of `found`; a Point or nothing is written. The narrowed `found` is used behind the branch, so no guess takes the question in. The question itself says what is expected: no block and no operation more
+# function pick(found: Point | undefined, other) { if (found) return found; return other; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: entry=0:
+# CHECK-NEXT: [[truth]]: boolean {{*}} = ToBoolean [[found]] form=Generic [expectsObjectOrNothing]
+# CHECK-NEXT: Branch [[truth]]
+# CHECK-NOT: = ToBoolean
+# function any(found, other) { if (found) return found; return other; }
+# RUN(UNWRITTEN): walk f2 mechanisms=none+TypedOperations+Guesses
+# UNWRITTEN-LABEL: code f2:Body
+# UNWRITTEN: = ToBoolean
+# UNWRITTEN-NOT: expects
+# function flag(found: boolean, other) { if (found) return found; return other; }
+# RUN(BOOLEAN): walk f3 mechanisms=none+TypedOperations+Guesses
+# BOOLEAN-LABEL: code f3:Body
+# BOOLEAN: = ToBoolean
+# BOOLEAN-NOT: expects
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f2
+    v10 = Call v1, -, v9
+    v11 = NewClosure function=f3
+    v12 = Call v1, -, v11
+    Return v12
+}
+function f1 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|L0, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v1
+}
+function f2 name="any" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v1
+}
+function f3 name="flag" module=m0 length=2 thisType={type=anything} parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v1
+}

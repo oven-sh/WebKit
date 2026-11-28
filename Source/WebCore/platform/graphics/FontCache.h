@@ -36,6 +36,7 @@
 #include <WebCore/FontSelector.h>
 #include <WebCore/FontTaggedSettings.h>
 #include <WebCore/SystemFallbackFontCache.h>
+#include <WebCore/SystemFontDatabase.h>
 #include <WebCore/Timer.h>
 #include <array>
 #include <limits.h>
@@ -83,6 +84,7 @@ struct IDWriteFontCollection;
 #if USE(SKIA)
 #include "SkiaHarfBuzzFontCache.h"
 #include <skia/core/SkFontMgr.h>
+#include <skia/core/SkTypeface.h>
 #if !OS(ANDROID) && !PLATFORM(WIN)
 #include "SkiaSystemFallbackFontCache.h"
 #endif
@@ -119,6 +121,32 @@ enum class FontLookupOptions : uint8_t {
     DisallowObliqueSynthesis = 1 << 2,
 };
 
+#if USE(SKIA)
+struct SkiaTypefaceCacheKey {
+    FontFamilyName family;
+    SkFontStyle style;
+
+    friend bool operator==(const SkiaTypefaceCacheKey&, const SkiaTypefaceCacheKey&) = default;
+};
+
+inline void add(Hasher& hasher, const SkiaTypefaceCacheKey& key)
+{
+    add(hasher, key.family, key.style.weight(), key.style.width(), key.style.slant());
+}
+
+struct SkiaTypefaceCacheKeyHashTraits : SimpleClassHashTraits<SkiaTypefaceCacheKey> {
+    static constexpr bool emptyValueIsZero = false;
+    static void constructDeletedValue(SkiaTypefaceCacheKey& slot)
+    {
+        new (NotNull, &slot) SkiaTypefaceCacheKey { AtomString { WTF::HashTableDeletedValue }, { } };
+    }
+    static bool isDeletedValue(const SkiaTypefaceCacheKey& key)
+    {
+        return key.family.string().isHashTableDeletedValue();
+    }
+};
+#endif
+
 class FontCache : public CanMakeCheckedPtr<FontCache> {
     WTF_MAKE_TZONE_ALLOCATED(FontCache);
     WTF_MAKE_NONCOPYABLE(FontCache);
@@ -137,7 +165,7 @@ public:
     Vector<String> systemFontFamilies();
     void platformInit();
 
-    static bool LEGACY_NODELETE isSystemFontForbiddenForEditing(const String&);
+    NODELETE static bool isSystemFontForbiddenForEditing(const String&);
 
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT static void setFontAllowlist(const Vector<String>&);
@@ -174,7 +202,7 @@ public:
     enum class ShouldRunInvalidationCallback : bool { No, Yes };
     WEBCORE_EXPORT static void invalidateAllFontCaches(ShouldRunInvalidationCallback = ShouldRunInvalidationCallback::Yes);
 
-    WEBCORE_EXPORT size_t LEGACY_NODELETE fontCount();
+    NODELETE WEBCORE_EXPORT size_t fontCount();
     WEBCORE_EXPORT size_t inactiveFontCount();
     WEBCORE_EXPORT void purgeInactiveFontData(unsigned count = UINT_MAX);
     void platformPurgeInactiveFontData();
@@ -205,6 +233,8 @@ public:
 #if PLATFORM(COCOA)
     FontFamilySpecificationCoreTextCache& fontFamilySpecificationCoreTextCache() LIFETIME_BOUND { return m_fontFamilySpecificationCoreTextCache; }
     SystemFontDatabaseCoreText& systemFontDatabaseCoreText() LIFETIME_BOUND { return m_systemFontDatabaseCoreText; }
+#else
+    SystemFontDatabase& systemFontDatabase() LIFETIME_BOUND { return m_systemFontDatabase; }
 #endif
 
     bool useBackslashAsYenSignForFamily(const AtomString& family);
@@ -215,6 +245,8 @@ public:
 
 #if USE(SKIA)
     static Vector<hb_feature_t> computeFeatures(const FontDescription&, const FontCreationContext&);
+    sk_sp<SkTypeface> matchFamilyStyle(const AtomString&, const SkFontStyle&);
+
     WEBCORE_EXPORT SkFontMgr& fontManager() const;
     SkiaHarfBuzzFontCache& harfBuzzFontCache() LIFETIME_BOUND { return m_harfBuzzFontCache; }
 #endif
@@ -240,7 +272,7 @@ private:
 #endif
 
 #if PLATFORM(COCOA)
-    FontDatabase& LEGACY_NODELETE database(AllowUserInstalledFonts);
+    NODELETE FontDatabase& database(AllowUserInstalledFonts);
 #endif
 
     Timer m_purgeTimer;
@@ -277,6 +309,8 @@ private:
     SystemFontDatabaseCoreText m_systemFontDatabaseCoreText;
 
     friend class ComplexTextController;
+#else
+    SystemFontDatabase m_systemFontDatabase;
 #endif
 
 #if USE(FREETYPE)
@@ -285,6 +319,7 @@ private:
 
 #if USE(SKIA)
     mutable sk_sp<SkFontMgr> m_fontManager;
+    HashMap<SkiaTypefaceCacheKey, sk_sp<SkTypeface>, DefaultHash<SkiaTypefaceCacheKey>, SkiaTypefaceCacheKeyHashTraits> m_typefaceCache;
     SkiaHarfBuzzFontCache m_harfBuzzFontCache;
 #if !OS(ANDROID) && !PLATFORM(WIN)
     SkiaSystemFallbackFontCache m_skiaSystemFallbackFontCache;

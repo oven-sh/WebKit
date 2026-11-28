@@ -1,0 +1,65 @@
+# function set(o: Point, v) { o.x = v; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: PutSlot {{*}}key="x" receivers=[L0] level=Expected
+# RUN(ALONE): walk f1 mechanisms=none+TypedOperations+Guesses
+# ALONE-NOT: Branch
+# ALONE-NOT: = ShapeTest
+# ALONE-NOT: = IsNotFrozen
+# ALONE-NOT: = IsSlotFilled
+# ALONE-NOT: PropSet
+# RUN(CREATES): walk f2 mechanisms=none+TypedOperations+Guesses
+# CREATES-LABEL: code f2:Body
+# CREATES: PutSlotOrAdd {{*}}key="z" receivers=[L0] level=Expected
+# CREATES-NOT: Branch
+# RUN(NOARMS): walk f2 mechanisms=none+TypedOperations+Guesses
+# NOARMS-NOT: = HasLayoutPrototype
+# NOARMS-NOT: PropSet
+# RUN(TWO): walk f3 mechanisms=none+TypedOperations+Guesses
+# TWO-LABEL: code f3:Body
+# TWO: = ShapeTest {{*}}layouts=[L0]
+# TWO: PutSlot {{*}}key="x" receivers=[L0] level=Proven
+# TWO: PutSlot {{*}}key="y" receivers=[L0] level=Proven
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything}}] ownFieldCount=3
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f2
+    v10 = Call v1, -, v9
+    v11 = NewClosure function=f3
+    v12 = Call v1, -, v11
+    Return v12
+}
+function f1 name="set" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=L0}
+    PropSet v2, v1 key="x" mode=Strict
+    v4 = NewClosure function=f1
+    Return v4
+}
+function f2 name="create" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=L0}
+    PropSet v2, v1 key="z" mode=Strict
+    v4 = NewClosure function=f2
+    Return v4
+}
+function f3 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=L0}
+    PropSet v2, v1 key="x" mode=Strict
+    PropSet v2, v1 key="y" mode=Strict
+    v5 = NewClosure function=f3
+    Return v5
+}

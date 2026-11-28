@@ -43,7 +43,7 @@ public:
     virtual void dispatch(Function<void ()>&&) = 0;
 
 protected:
-    FunctionDispatcher();
+    NODELETE FunctionDispatcher();
 };
 
 class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE SerialFunctionDispatcher : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<SerialFunctionDispatcher>, public FunctionDispatcher {
@@ -63,8 +63,14 @@ inline void assertIsCurrent(const SerialFunctionDispatcher& queue) WTF_ASSERTS_A
     ASSERT_WITH_SECURITY_IMPLICATION(queue.isCurrent());
 }
 
+inline void releaseAssertIsCurrent(const SerialFunctionDispatcher& queue) WTF_ASSERTS_ACQUIRED_CAPABILITY(queue)
+{
+    RELEASE_ASSERT(queue.isCurrent());
+}
+
 } // namespace WTF
 
 using WTF::FunctionDispatcher;
 using WTF::SerialFunctionDispatcher;
 using WTF::GuaranteedSerialFunctionDispatcher;
+using WTF::releaseAssertIsCurrent;

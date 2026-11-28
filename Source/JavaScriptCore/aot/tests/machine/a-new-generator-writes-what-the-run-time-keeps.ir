@@ -1,0 +1,33 @@
+# what makes a generator, by itself. No walk runs: the Code is written out.
+# the slow road fills the allocator of generators, the rare data of the closure and the Structure that is remembered there: words of the run time, which the road in line reads. A generator that takes its prototype may make a Structure.
+# an async generator, and a generator that takes its prototype, read `prototype` off the function object: for a function of the library that may run a getter or a trap of the program: they write whatever that writes.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
+# CHECK: = Patch({{*}}Writes:Top
+# CHECK: = Patch({{*}}Writes:Top
+# -- code
+# code f1:Body {
+#   b0(v0: function @JSValue) entry=0:
+#     v1: function @Cell = Unbox v0
+#     v2: Generator @Cell = NewGenerator v1 function=f1 traits=[mayCollect, mayTouchMemory]
+#     v3: AsyncGenerator @Cell = NewAsyncGenerator v1 function=f1 traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = TakeGeneratorPrototype v2, v1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v5: AsyncGenerator @JSValue = Box v3
+#     Return v5
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asked" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

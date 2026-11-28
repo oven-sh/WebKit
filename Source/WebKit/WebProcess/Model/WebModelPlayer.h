@@ -46,6 +46,10 @@
 #include <wtf/URL.h>
 #include <wtf/UniqueRef.h>
 
+#if ENABLE(SPATIAL_PORTAL)
+#include "Mesh.h"
+#endif
+
 OBJC_CLASS WKBridgeModelLoader;
 OBJC_CLASS WKStageModeOrbitSimulator;
 
@@ -93,6 +97,10 @@ private:
 
         bool isPlaying() const { return pauseState == PauseState::Playing; }
 
+#if ENABLE(SPATIAL_PORTAL)
+        WebCore::TransformationMatrix anchorPlacementTransform(const HostedModel& anchor);
+#endif
+
         RetainPtr<WKBridgeModelLoader> loader;
         RetainPtr<NSData> retainedData;
 
@@ -111,6 +119,9 @@ private:
         std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore;
 #if ENABLE(SPATIAL_PORTAL)
         std::optional<WebCore::TransformationMatrix> childTransform;
+        std::optional<WebCore::NodeIdentifier> anchorNode;
+        String anchorPlacementName;
+        std::optional<WebCore::TransformationMatrix> anchorCorrection;
 #endif
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
         RefPtr<WebCore::Model> cachedModelSource;
@@ -195,10 +206,30 @@ private:
     void pushEnvironmentMapToModel();
     WebCore::StageModeOperation effectiveStageMode() const;
 #if ENABLE(SPATIAL_PORTAL)
+    struct PortalLayerBacking {
+        ImageBufferSetIdentifier bufferSet;
+        bool isOpaque { false };
+    };
+
     void setPortalTransform(const WebCore::UsedPortalTransform&) final;
     void setPortalAction(WebCore::PortalActionKind) final;
     bool isSpatialPortal() const { return !!m_portalTransform; }
+    void setPortalPromotedChildren(const Vector<WebCore::PortalPromotedChild>&) final;
+    void portalPromotedChildDidPaint() final;
+    bool hostsPortalPromotedChild(WebCore::NodeIdentifier) const final;
+    bool hasPromotedDOMContent() const;
+    void setDisplayedPortalChildren(Vector<WebCore::NodeIdentifier>&&);
+    void resolvePortalPromotedChildren();
+    void retryRenderForPortalContent();
+    bool ensurePortalContentBacking();
+    static std::optional<PortalLayerBacking> portalLayerBacking(WebCore::GraphicsLayer*);
     void notifyPortalTransformUpdated();
+    void setAnchor(WebCore::NodeIdentifier, std::optional<WebCore::NodeIdentifier> anchorNode, const String& placement) final;
+    bool isAnchoredTo(const HostedModel&, WebCore::NodeIdentifier ancestorNode) const;
+    void pushPortalChildTransform(WebCore::NodeIdentifier);
+    void pushAnchoredPortalChildTransforms(WebCore::NodeIdentifier anchorNode);
+#else
+    bool hasPromotedDOMContent() const { return false; }
 #endif
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
@@ -234,6 +265,14 @@ private:
 #if ENABLE(SPATIAL_PORTAL)
     std::optional<WebCore::UsedPortalTransform> m_portalTransform;
     WebCore::PortalActionKind m_portalAction { WebCore::PortalActionKind::None };
+    Vector<WebCore::PortalPromotedChild> m_portalPromotedChildren;
+    Vector<PortalChildQuad> m_portalChildQuads;
+    Vector<WebCore::NodeIdentifier> m_displayedPortalChildren;
+    Vector<WebCore::NodeIdentifier> m_inFlightPortalChildren;
+    std::optional<WebCore::LayoutSize> m_portalLayoutSize;
+    unsigned m_portalContentBufferFrames { 0 };
+    unsigned m_portalRenderRetries { 0 };
+    bool m_portalPromotedChildrenNeedResolution { false };
 #endif
 
     bool m_isUpdateLoopRunning { false };

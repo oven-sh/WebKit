@@ -1,0 +1,31 @@
+# In every build, with no verifier asked for: the emitters stop at a value that one arm alone defines and that is read behind the join of the arms.
+# Nothing behind them would notice: on the way through the other arm the code would read a register that holds something else.
+# DIAGNOSTIC: UseNotDominated
+# RUN: emit-code
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v3: boolean @Boolean = ToBoolean v0 form=Generic
+#     Branch v3 -> taken b1(), notTaken b2()
+#   b1():
+#     v2: anything @JSValue = PropGet v1 key="m"
+#     Jump -> next b3()
+#   b2():
+#     Jump -> next b3()
+#   b3():
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="picks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}

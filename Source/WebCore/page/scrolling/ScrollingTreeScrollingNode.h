@@ -58,6 +58,7 @@ class WEBCORE_EXPORT ScrollingTreeScrollingNode : public ScrollingTreeNode {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ScrollingTreeScrollingNode, WEBCORE_EXPORT);
     friend class ScrollingTreeScrollingNodeDelegate;
 #if PLATFORM(MAC)
+    friend class ScrollerPairMac;
     friend class ScrollingTreeScrollingNodeDelegateMac;
 #endif
 #if ENABLE(SCROLLING_THREAD)
@@ -71,7 +72,7 @@ public:
 
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
     bool commitStateAfterChildren(const ScrollingStateNode&) override;
-    void LEGACY_NODELETE didCompleteCommitForNode() final;
+    NODELETE void didCompleteCommitForNode() final;
 
     virtual bool canHandleWheelEvent(const PlatformWheelEvent&, EventTargeting) const;
     virtual WheelEventHandlingResult handleWheelEvent(const PlatformWheelEvent&, EventTargeting = EventTargeting::Propagate);
@@ -99,8 +100,9 @@ public:
     bool restoredRubberbandingInProgress() const { return m_restoredRubberbandingInProgress; }
 #endif
 
-    virtual bool startAnimatedScrollToPosition(FloatPoint);
+    virtual bool startAnimatedScrollToPosition(FloatPoint, ScrollAnimationCurve);
     virtual void stopAnimatedScroll(EnumSet<AnimatedScrollType>);
+    void stopSpringAnimation();
 
     virtual void serviceScrollAnimation(MonotonicTime);
 
@@ -130,12 +132,14 @@ public:
     bool canHaveHorizontalScrollbar() const { return m_scrollableAreaParameters.horizontalScrollbarMode != ScrollbarMode::AlwaysOff; }
     bool canHaveVerticalScrollbar() const { return m_scrollableAreaParameters.verticalScrollbarMode != ScrollbarMode::AlwaysOff; }
     bool canHaveScrollbars() const { return m_scrollableAreaParameters.horizontalScrollbarMode != ScrollbarMode::AlwaysOff || m_scrollableAreaParameters.verticalScrollbarMode != ScrollbarMode::AlwaysOff; }
+    bool allowsHorizontalScrolling() const;
+    bool allowsVerticalScrolling() const;
 
-    const FloatScrollSnapOffsetsInfo& LEGACY_NODELETE snapOffsetsInfo() const LIFETIME_BOUND;
-    std::optional<unsigned> LEGACY_NODELETE currentHorizontalSnapPointIndex() const;
-    std::optional<unsigned> LEGACY_NODELETE currentVerticalSnapPointIndex() const;
-    void LEGACY_NODELETE setCurrentHorizontalSnapPointIndex(std::optional<unsigned>);
-    void LEGACY_NODELETE setCurrentVerticalSnapPointIndex(std::optional<unsigned>);
+    NODELETE const FloatScrollSnapOffsetsInfo& snapOffsetsInfo() const LIFETIME_BOUND;
+    NODELETE std::optional<unsigned> currentHorizontalSnapPointIndex() const;
+    NODELETE std::optional<unsigned> currentVerticalSnapPointIndex() const;
+    NODELETE void setCurrentHorizontalSnapPointIndex(std::optional<unsigned>);
+    NODELETE void setCurrentVerticalSnapPointIndex(std::optional<unsigned>);
 
     bool eventCanScrollContents(const PlatformWheelEvent&) const;
     
@@ -157,7 +161,7 @@ public:
     void scrollbarVisibilityDidChange(ScrollbarOrientation, bool);
     void scrollbarMinimumThumbLengthDidChange(ScrollbarOrientation, int);
 
-    ScrollbarRevealBehavior LEGACY_NODELETE takeScrollbarRevealBehaviorForNextScrollbarUpdate();
+    NODELETE ScrollbarRevealBehavior takeScrollbarRevealBehaviorForNextScrollbarUpdate();
 
 protected:
     ScrollingTreeScrollingNode(ScrollingTree&, ScrollingNodeType, ScrollingNodeID);
@@ -201,17 +205,14 @@ protected:
     ScrollElasticity horizontalScrollElasticity() const { return m_scrollableAreaParameters.horizontalScrollElasticity; }
     ScrollElasticity verticalScrollElasticity() const { return m_scrollableAreaParameters.verticalScrollElasticity; }
 
-    bool allowsHorizontalScrolling() const { return m_scrollableAreaParameters.allowsHorizontalScrolling; }
-    bool allowsVerticalScrolling() const { return m_scrollableAreaParameters.allowsVerticalScrolling; }
-
     bool horizontalOverscrollBehaviorPreventsPropagation() const { return m_scrollableAreaParameters.horizontalOverscrollBehavior != OverscrollBehavior::Auto; }
     bool verticalOverscrollBehaviorPreventsPropagation() const { return m_scrollableAreaParameters.verticalOverscrollBehavior != OverscrollBehavior::Auto; }
 
     bool overscrollBehaviorAllowsHorizontalRubberBand() const { return m_scrollableAreaParameters.horizontalOverscrollBehavior != OverscrollBehavior::None; }
     bool overscrollBehaviorAllowsVerticalRubberBand() const { return m_scrollableAreaParameters.verticalOverscrollBehavior != OverscrollBehavior::None; }
 
-    PlatformWheelEvent LEGACY_NODELETE eventForPropagation(const PlatformWheelEvent&) const;
-    ScrollPropagationInfo LEGACY_NODELETE computeScrollPropagation(const FloatSize&) const;
+    NODELETE PlatformWheelEvent eventForPropagation(const PlatformWheelEvent&) const;
+    NODELETE ScrollPropagationInfo computeScrollPropagation(const FloatSize&) const;
     bool overscrollBehaviorAllowsRubberBand() const { return m_scrollableAreaParameters.horizontalOverscrollBehavior != OverscrollBehavior::None ||  m_scrollableAreaParameters.verticalOverscrollBehavior != OverscrollBehavior::None; }
 
     bool shouldRubberBand(const PlatformWheelEvent&, EventTargeting) const;

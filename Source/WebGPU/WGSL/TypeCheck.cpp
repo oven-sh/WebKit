@@ -36,6 +36,7 @@
 #include "TypeStore.h"
 #include "Types.h"
 #include "WGSLShaderModule.h"
+#include <wtf/Borrow.h>
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
@@ -167,6 +168,7 @@ public:
     [[nodiscard]] Result<void> visit(AST::Attribute&);
     [[nodiscard]] Result<void> visit(AST::AlignAttribute&);
     [[nodiscard]] Result<void> visit(AST::BindingAttribute&);
+    [[nodiscard]] Result<void> visit(AST::BlendSrcAttribute&);
     [[nodiscard]] Result<void> visit(AST::GroupAttribute&);
     [[nodiscard]] Result<void> visit(AST::IdAttribute&);
     [[nodiscard]] Result<void> visit(AST::LocationAttribute&);
@@ -230,8 +232,8 @@ private:
     [[nodiscard]] Result<void> introduceFunction(const AST::Identifier&, const Type*);
     [[nodiscard]] Result<void> convertValue(const SourceSpan&, const Type*, std::optional<ConstantValue>&);
 
-    void LEGACY_NODELETE evaluated(Evaluation);
-    void LEGACY_NODELETE inferred(const Type*);
+    NODELETE void evaluated(Evaluation);
+    NODELETE void inferred(const Type*);
     [[nodiscard]] bool unify(const Type*, const Type*);
 
     [[nodiscard]] Result<void> binaryExpression(const SourceSpan&, AST::Expression*, AST::BinaryOperation, AST::Expression&, AST::Expression&);
@@ -240,7 +242,7 @@ private:
     [[nodiscard]] Result<void> allocateSimpleConstructor(ASCIILiteral, TargetConstructor, const Validator&, Arguments&&...);
     [[nodiscard]] Result<void> allocateTextureStorageConstructor(ASCIILiteral, Types::TextureStorage::Kind);
 
-    bool LEGACY_NODELETE isModuleScope() const;
+    NODELETE bool isModuleScope() const;
 
     [[nodiscard]] Result<AccessMode> accessMode(AST::Expression&);
     [[nodiscard]] Result<TexelFormat> texelFormat(AST::Expression&);
@@ -248,6 +250,8 @@ private:
 
     template<typename CallArguments>
     [[nodiscard]] Result<const Type*> chooseOverload(ASCIILiteral, const SourceSpan&, AST::Expression*, const String&, CallArguments&& valueArguments, const Vector<const Type*>& typeArguments);
+    template<typename CallArguments>
+    [[nodiscard]] Result<const Type*> chooseOverloadForInferredArguments(ASCIILiteral, const SourceSpan&, AST::Expression*, const String&, CallArguments&& valueArguments, const Vector<const Type*>& typeArguments);
 
     template<typename Node>
     [[nodiscard]] Result<void> setConstantValue(Node&, const Type*, const ConstantValue&);
@@ -483,7 +487,9 @@ Result<void> TypeChecker::declareBuiltins()
     CHECK(introduceValue(AST::Identifier::make("uniform"_s), m_types.addressSpaceType()));
     CHECK(introduceValue(AST::Identifier::make("storage"_s), m_types.addressSpaceType()));
 
-    // This file contains the declarations generated from `TypeDeclarations.rb`
+    // This file contains the declarations generated from `TypeDeclarations.rb`, which refer to the
+    // type store as `types`.
+    auto& types = m_types;
 #include "TypeDeclarations.h" // NOLINT
 
     return { };
@@ -782,8 +788,7 @@ Result<void> TypeChecker::visit(AST::Function& function)
         CHECK(visit(attribute));
     }
 
-    Vector<const Type*> parameters;
-    parameters.reserveInitialCapacity(function.parameters().size());
+    Vector<const Type*> parameters(ReserveCapacityTag { }, function.parameters().size());
     for (auto& parameter : function.parameters()) {
         CHECK(visitAttributes(parameter.attributes()));
         UNWRAP(parameterType, resolve(parameter.typeName()));
@@ -804,7 +809,7 @@ Result<void> TypeChecker::visit(AST::Function& function)
     {
         ContextScope functionContext(this);
         for (unsigned i = 0; i < parameters.size(); ++i)
-            CHECK(introduceValue(function.parameters()[i].name(), parameters[i]));
+            CHECK(introduceValue(function.parameters()[i].name(), borrow(parameters)[i]));
         // We visit the statements here instead of the compound statement since
         // we don't want to introduce an extra context scope
         CHECK(visitStatements(function.body().statements()));
@@ -831,6 +836,8 @@ Result<void> TypeChecker::visit(AST::Attribute& attribute)
         return visit(uncheckedDowncast<AST::AlignAttribute>(attribute));
     case AST::NodeKind::BindingAttribute:
         return visit(uncheckedDowncast<AST::BindingAttribute>(attribute));
+    case AST::NodeKind::BlendSrcAttribute:
+        return visit(uncheckedDowncast<AST::BlendSrcAttribute>(attribute));
     case AST::NodeKind::GroupAttribute:
         return visit(uncheckedDowncast<AST::GroupAttribute>(attribute));
     case AST::NodeKind::IdAttribute:
@@ -867,6 +874,14 @@ Result<void> TypeChecker::visit(AST::BindingAttribute& attribute)
     UNWRAP(type, check(attribute.binding(), Constraints::ConcreteInteger, Evaluation::Constant));
     if (!type) [[unlikely]]
         TYPE_ERROR(attribute.span(), "@binding must be an i32 or u32 value"_s);
+    return { };
+}
+
+Result<void> TypeChecker::visit(AST::BlendSrcAttribute& attribute)
+{
+    UNWRAP(type, check(attribute.blendSrc(), Constraints::ConcreteInteger, Evaluation::Constant));
+    if (!type) [[unlikely]]
+        TYPE_ERROR(attribute.span(), "@blend_src must be an i32 or u32 value"_s);
     return { };
 }
 
@@ -1453,6 +1468,12 @@ Result<void> TypeChecker::binaryExpression(const SourceSpan& span, AST::Expressi
                 }
             }
         }
+
+        // The left operand has already been inferred above. Inferring it again in chooseOverload
+        // would make checking a chain of N short-circuiting operators take O(2^N) time.
+        CHECK(infer(rightExpression, m_maxEvaluation));
+        CHECK(chooseOverloadForInferredArguments("operator"_s, span, expression, toASCIILiteral(operation), ReferenceWrapperVector<AST::Expression, 2> { leftExpression, rightExpression }, { }));
+        return { };
     }
 
     CHECK(chooseOverload("operator"_s, span, expression, toASCIILiteral(operation), ReferenceWrapperVector<AST::Expression, 2> { leftExpression, rightExpression }, { }));
@@ -1633,7 +1654,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
 
             for (unsigned i = 0; i < numberOfArguments; ++i) {
                 auto& argument = call.arguments()[i];
-                auto* parameterType = functionType.parameters[i];
+                auto* parameterType = borrow(functionType.parameters)[i];
                 UNWRAP(argumentType, infer(argument, m_maxEvaluation));
                 if (!unify(parameterType, argumentType)) [[unlikely]]
                     TYPE_ERROR(argument.span(), "type in function call does not match parameter type: expected '"_s, *parameterType, "', found '"_s, *argumentType, '\'');
@@ -1879,7 +1900,7 @@ Result<void> TypeChecker::bitcast(AST::CallExpression& call, const Vector<const 
         TYPE_ERROR(call.span(), "cannot discard the result of bitcast"_s);
 
     auto& argument = call.arguments()[0];
-    auto* destinationType = typeArguments[0];
+    auto* destinationType = borrow(typeArguments)[0];
     UNWRAP(sourceType, infer(argument, m_maxEvaluation));
 
     if (auto* reference = std::get_if<Types::Reference>(sourceType))
@@ -2230,18 +2251,27 @@ Result<const Type*> TypeChecker::vectorFieldAccess(const Types::Vector& vector, 
 template<typename CallArguments>
 Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceSpan& span, AST::Expression* expression, const String& target, CallArguments&& callArguments, const Vector<const Type*>& typeArguments)
 {
+    if (!m_shaderModule.lookupOverload(target))
+        return { nullptr };
+
+    for (unsigned i = 0; i < callArguments.size(); ++i)
+        CHECK(infer(callArguments[i], m_maxEvaluation));
+
+    return chooseOverloadForInferredArguments(kind, span, expression, target, std::forward<CallArguments>(callArguments), typeArguments);
+}
+
+template<typename CallArguments>
+Result<const Type*> TypeChecker::chooseOverloadForInferredArguments(ASCIILiteral kind, const SourceSpan& span, AST::Expression* expression, const String& target, CallArguments&& callArguments, const Vector<const Type*>& typeArguments)
+{
     auto* overload = m_shaderModule.lookupOverload(target);
     if (!overload)
         return { nullptr };
 
-    Vector<const Type*> valueArguments;
-    valueArguments.reserveInitialCapacity(callArguments.size());
-    for (unsigned i = 0; i < callArguments.size(); ++i) {
-        UNWRAP(type, infer(callArguments[i], m_maxEvaluation));
-        valueArguments.append(type);
-    }
+    Vector<const Type*> valueArguments(ReserveCapacityTag { }, callArguments.size());
+    for (unsigned i = 0; i < callArguments.size(); ++i)
+        valueArguments.append(callArguments[i].inferredType());
 
-    auto selectedOverload = resolveOverloads(m_types, overload->overloads, valueArguments, typeArguments);
+    auto selectedOverload = resolveOverloads(m_types, m_shaderModule.overloadCandidates(*overload), valueArguments, typeArguments);
     if (selectedOverload.has_value()) {
         ASSERT(selectedOverload->parameters.size() == callArguments.size());
         if (m_discardResult == DiscardResult::Yes && overload->mustUse) [[unlikely]]
@@ -2311,7 +2341,7 @@ Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceS
 
     StringPrintStream valueArgumentsStream;
     bool first = true;
-    for (auto* argument : valueArguments) {
+    for (auto* argument : borrow(valueArguments)) {
         if (!first)
             valueArgumentsStream.print(", ");
         first = false;
@@ -2321,7 +2351,7 @@ Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceS
     first = true;
     if (typeArguments.size()) {
         typeArgumentsStream.print("<");
-        for (auto* typeArgument : typeArguments) {
+        for (auto* typeArgument : borrow(typeArguments)) {
             if (!first)
                 typeArgumentsStream.print(", ");
             first = false;
@@ -2413,7 +2443,7 @@ Result<Behaviors> TypeChecker::analyze(AST::Statement& statement)
                     auto& continueStatement = downcast<AST::ContinueStatement>(statement);
                     continueStatement.setIsFromSwitchToContinuing();
                     for (size_t j = i + 1; j < m_breakTargetStack.size(); ++j) {
-                        auto* switchStatement = std::get<AST::SwitchStatement*>(m_breakTargetStack[j]);
+                        auto* switchStatement = std::get<AST::SwitchStatement*>(borrow(m_breakTargetStack)[j]);
                         if (j == static_cast<size_t>(i + 1))
                             switchStatement->setIsInsideLoop();
                         else
@@ -2688,9 +2718,8 @@ Result<void> TypeChecker::introduceFunction(const AST::Identifier& name, const T
 std::optional<FailedCheck> typeCheck(ShaderModule& shaderModule)
 {
     auto result = TypeChecker(shaderModule).check();
-    // Every module builds its own copy of the builtin overload candidates, several hundred kilobytes
-    // of them, and nothing resolves an overload after this. Free them now rather than when the page
-    // lets go of the module.
+    // Every module builds its own copy of the candidates of the builtins it calls, and nothing
+    // resolves an overload after this. Free them now rather than when the page lets go of the module.
     shaderModule.releaseOverloadCandidates();
     return result;
 }

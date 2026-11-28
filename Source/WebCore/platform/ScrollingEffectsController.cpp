@@ -35,6 +35,7 @@
 #include "ScrollAnimationSmooth.h"
 #include "ScrollExtents.h"
 #include "ScrollableArea.h"
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
@@ -113,7 +114,7 @@ void ScrollingEffectsController::finishKeyboardScroll(bool immediate)
         animationKeyboard->finishKeyboardScroll(immediate);
 }
 
-bool ScrollingEffectsController::startAnimatedScrollToDestination(FloatPoint startOffset, FloatPoint destinationOffset)
+bool ScrollingEffectsController::startAnimatedScrollToDestination(FloatPoint startOffset, FloatPoint destinationOffset, ScrollAnimationCurve curve)
 {
     if (CheckedPtr animation = m_currentAnimation.get())
         animation->stop();
@@ -121,38 +122,50 @@ bool ScrollingEffectsController::startAnimatedScrollToDestination(FloatPoint sta
     // We always create and attempt to start the animation. If it turns out to not need animating, then the animation
     // remains inactive, and we'll remove it on the next animationCallback().
     m_currentAnimation = makeUnique<ScrollAnimationSmooth>(*this);
-    bool started = protect(downcast<ScrollAnimationSmooth>(*m_currentAnimation))->startAnimatedScrollToDestination(startOffset, destinationOffset);
+    bool started = protect(downcast<ScrollAnimationSmooth>(*m_currentAnimation))->startAnimatedScrollToDestination(startOffset, destinationOffset, curve);
     LOG_WITH_STREAM(ScrollAnimations, stream << "ScrollingEffectsController " << this << " startAnimatedScrollToDestination " << *m_currentAnimation << " started " << started);
     return started;
 }
 
-bool ScrollingEffectsController::retargetAnimatedScroll(FloatPoint newDestinationOffset)
+bool ScrollingEffectsController::retargetAnimatedScroll(FloatPoint newDestinationOffset, ScrollAnimationCurve curve)
 {
-    CheckedPtr animationSmooth = dynamicDowncast<ScrollAnimationSmooth>(m_currentAnimation.get());
+    CheckedPtr animationSmooth = dynamicDowncast<ScrollAnimationSmooth>(m_currentAnimation);
     if (!animationSmooth)
         return false;
     
     LOG_WITH_STREAM(ScrollAnimations, stream << "ScrollingEffectsController " << this << " retargetAnimatedScroll to " << newDestinationOffset);
 
     ASSERT(animationSmooth->isActive());
-    return animationSmooth->retargetActiveAnimation(newDestinationOffset);
+    return animationSmooth->retargetActiveAnimation(newDestinationOffset, curve);
 }
 
 bool ScrollingEffectsController::retargetAnimatedScrollBy(FloatSize offset)
 {
-    if (!is<ScrollAnimationSmooth>(m_currentAnimation))
+    CheckedPtr currentAnimation = dynamicDowncast<ScrollAnimationSmooth>(m_currentAnimation);
+    if (!currentAnimation || !currentAnimation->isActive())
         return false;
 
-    CheckedRef currentAnimation = *m_currentAnimation;
-    if (!currentAnimation->isActive())
+    // A spring's destination is an edge of the document, so adding the delta to it would keep scrolling toward that edge.
+    // Let the caller scroll by the delta from the current position instead.
+    if (currentAnimation->curve() == ScrollAnimationCurve::Spring)
         return false;
 
     LOG_WITH_STREAM(ScrollAnimations, stream << "ScrollingEffectsController " << this << " retargetAnimatedScrollBy " << offset);
 
+    // Scrolling by a delta isn't a scroll to an edge of the document, so it uses the default curve.
     if (auto destinationOffset = currentAnimation->destinationOffset())
-        return currentAnimation->retargetActiveAnimation(*destinationOffset + offset);
+        return currentAnimation->retargetActiveAnimation(*destinationOffset + offset, ScrollAnimationCurve::Default);
 
     return false;
+}
+
+std::optional<FloatPoint> ScrollingEffectsController::animatedScrollDestinationOffset() const
+{
+    CheckedPtr animation = dynamicDowncast<ScrollAnimationSmooth>(m_currentAnimation);
+    if (!animation || !animation->isActive())
+        return std::nullopt;
+
+    return animation->destinationOffset();
 }
 
 void ScrollingEffectsController::stopAnimatedNonRubberbandingScroll()
@@ -187,9 +200,29 @@ void ScrollingEffectsController::stopAnimatedScroll()
         animation->stop();
 }
 
+bool ScrollingEffectsController::isSpringAnimationRunning() const
+{
+    CheckedPtr animation = dynamicDowncast<ScrollAnimationSmooth>(m_currentAnimation);
+    return animation && animation->isActive() && animation->curve() == ScrollAnimationCurve::Spring;
+}
+
+void ScrollingEffectsController::stopSpringAnimation()
+{
+    if (!isSpringAnimationRunning())
+        return;
+
+    stopAnimatedScroll();
+
+    // Stopping partway can leave a scroll snap container between snap positions, so snap to the nearest one, as at the end of a scroll gesture.
+    if (usesScrollSnap() && m_scrollSnapState->transitionToSnapAnimationState(m_client.scrollExtents(), m_client.pageScaleFactor(), m_client.scrollOffset()))
+        startScrollSnapAnimation();
+}
+
 bool ScrollingEffectsController::startMomentumScrollWithInitialVelocity(const FloatPoint& initialOffset, const FloatSize& initialVelocity, const FloatSize& initialDelta, NOESCAPE const Function<FloatPoint(const FloatPoint&)>& destinationModifier)
 {
     if (m_currentAnimation) {
+        // Replacing a running animation is a handoff, not the end of scrolling, so don't end scroll snapping.
+        SetForScope isReplacingAnimation(m_isReplacingMomentumAnimation, true);
         protect(m_currentAnimation)->stop();
         if (!is<ScrollAnimationMomentum>(m_currentAnimation.get()))
             m_currentAnimation = nullptr;
@@ -200,6 +233,11 @@ bool ScrollingEffectsController::startMomentumScrollWithInitialVelocity(const Fl
 
     bool started = protect(downcast<ScrollAnimationMomentum>(*m_currentAnimation))->startAnimatedScrollWithInitialVelocity(initialOffset, initialVelocity, initialDelta, destinationModifier);
     LOG_WITH_STREAM(ScrollAnimations, stream << "ScrollingEffectsController::startMomentumScrollWithInitialVelocity() - animation " << *m_currentAnimation << " initialVelocity " << initialVelocity << " initialDelta " << initialDelta << " started " << started);
+
+    if (!started && usesScrollSnap() && m_isAnimatingScrollSnap) {
+        m_scrollSnapState->transitionToDestinationReachedState();
+        stopScrollSnapAnimation();
+    }
     return started;
 }
 
@@ -555,7 +593,7 @@ void ScrollingEffectsController::scrollAnimationDidEnd(ScrollAnimation& animatio
 {
     LOG_WITH_STREAM(ScrollAnimations, stream << "ScrollingEffectsController " << this << " scrollAnimationDidEnd " << animation);
 
-    if (usesScrollSnap() && m_isAnimatingScrollSnap) {
+    if (usesScrollSnap() && m_isAnimatingScrollSnap && !m_isReplacingMomentumAnimation) {
         m_scrollSnapState->transitionToDestinationReachedState();
         stopScrollSnapAnimation();
     }

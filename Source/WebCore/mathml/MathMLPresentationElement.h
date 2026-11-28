@@ -44,7 +44,7 @@ protected:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
 
     static std::optional<bool> toOptionalBool(const BooleanValue& value) { return value == BooleanValue::Default ? std::nullopt : std::optional<bool>(value == BooleanValue::True); }
-    const BooleanValue& LEGACY_NODELETE cachedBooleanAttribute(const QualifiedName&, std::optional<BooleanValue>&);
+    NODELETE const BooleanValue& cachedBooleanAttribute(const QualifiedName&, std::optional<BooleanValue>&);
 
     static Length parseMathMLLength(StringView, bool acceptLegacyMathMLLengths);
     const Length& cachedMathMLLength(const QualifiedName&, std::optional<Length>&);
@@ -55,7 +55,7 @@ protected:
     std::optional<MathVariant> m_mathVariant;
 
 private:
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) override;
     bool isPresentationMathML() const override { return true; }
 
     static Length parseNumberAndUnit(StringView, bool acceptLegacyMathMLLengths);

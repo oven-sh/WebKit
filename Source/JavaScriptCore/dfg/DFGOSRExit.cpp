@@ -186,7 +186,7 @@ OSRExit OSRExitStream::at(unsigned index) const
 
 void OSRExit::emitRestoreArguments(CCallHelpers& jit, VM& vm, const Operands<ValueRecovery>& operands)
 {
-    UncheckedKeyHashMap<MinifiedID, VirtualRegister> alreadyAllocatedArguments; // Maps phantom arguments node ID to operand.
+    HashMap<MinifiedID, VirtualRegister> alreadyAllocatedArguments; // Maps phantom arguments node ID to operand.
     for (size_t index = 0; index < operands.size(); ++index) {
         const ValueRecovery& recovery = operands[index];
 
@@ -351,8 +351,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeOSRExitSideState, void, (V
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     CodeOrigin exitCodeOrigin(BytecodeIndex::fromBits(exitBytecodeIndexBits), exitInlineCallFrame);
 
-    Vector<std::unique_ptr<CheckpointOSRExitSideState>, VM::expectedMaxActiveSideStateCount> sideStates;
-    sideStates.reserveInitialCapacity(exitCodeOrigin.inlineDepth());
+    Vector<std::unique_ptr<CheckpointOSRExitSideState>, VM::expectedMaxActiveSideStateCount> sideStates(ReserveCapacityTag { }, exitCodeOrigin.inlineDepth());
     auto sideStateCommitter = makeScopeExit([&] {
         for (size_t i = sideStates.size(); i--;)
             vm.pushCheckpointOSRSideState(WTF::move(sideStates[i]));

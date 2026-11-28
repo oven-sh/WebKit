@@ -58,7 +58,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderHTMLCanvas);
 
-RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, Style::ComputedStyle&& style)
+RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderReplaced(Type::HTMLCanvas, element, WTF::move(style), element.size())
 {
     ASSERT(isRenderHTMLCanvas());
@@ -66,7 +66,7 @@ RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, Style::ComputedSt
 
 RenderHTMLCanvas::~RenderHTMLCanvas() = default;
 
-HTMLCanvasElement& LEGACY_NODELETE RenderHTMLCanvas::canvasElement() const
+NODELETE HTMLCanvasElement& RenderHTMLCanvas::canvasElement() const
 {
     return downcast<HTMLCanvasElement>(nodeForNonAnonymous());
 }
@@ -81,6 +81,11 @@ bool RenderHTMLCanvas::requiresLayer() const
 {
     if (RenderReplaced::requiresLayer())
         return true;
+
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    if (RefPtr renderingContext = canvasElement().renderingContext(); renderingContext && renderingContext->isHDR())
+        return true;
+#endif
 
     return canvasCompositingStrategy(*this) != CanvasPaintedToEnclosingLayer;
 }
@@ -122,7 +127,7 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
     LayoutRect contentBoxRect = this->contentBoxRect();
 
     if (context.detectingContentfulPaint()) {
-        if (!context.contentfulPaintDetected() && protect(canvasElement())->renderingContext())
+        if (!context.contentfulPaintDetected() && canvasElement().renderingContext())
             context.setContentfulPaintDetected();
         return;
     }
@@ -160,8 +165,7 @@ DisplayList::RecorderImpl* RenderHTMLCanvas::canvasDrawableRecorder(RenderElemen
 
     // FIXME: Clearing the recorder should happen only when a repaint or a layout happens.
     auto initialState = context.state().clone(GraphicsContextState::Purpose::Initial);
-    auto initialCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-    Ref snapshotRecorder = DisplayList::RecorderImpl::create(initialState, elementRelativeBounds, initialCTM, context.colorSpace());
+    Ref snapshotRecorder = DisplayList::RecorderImpl::create(initialState, elementRelativeBounds, AffineTransform { }, context.colorSpace());
     snapshotRecorder->translate(-elementRelativeBounds.x(), -elementRelativeBounds.y());
 
     m_canvasDrawableRecorderMap.set(element, WTF::move(snapshotRecorder));
@@ -230,10 +234,12 @@ void RenderHTMLCanvas::canvasSizeChanged()
 
 void RenderHTMLCanvas::styleDidChange(Style::Difference difference, const Style::ComputedStyle* oldStyle)
 {
-    RenderReplaced::styleDidChange(difference, oldStyle);
-
+    // Update the context first: whether it is HDR depends on the dynamic range limit, and that decides
+    // whether this canvas needs its own layer, which the base class updates.
     if (!oldStyle || style().dynamicRangeLimit() != oldStyle->dynamicRangeLimit())
         protect(canvasElement())->dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+
+    RenderReplaced::styleDidChange(difference, oldStyle);
 }
 
 NaturalDimensions RenderHTMLCanvas::zoomedNaturalDimensions() const

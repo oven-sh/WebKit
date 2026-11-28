@@ -43,17 +43,17 @@ class RenderHTMLCanvas final : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderHTMLCanvas);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderHTMLCanvas);
 public:
-    RenderHTMLCanvas(HTMLCanvasElement&, Style::ComputedStyle&&);
+    RenderHTMLCanvas(HTMLCanvasElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderHTMLCanvas();
 
-    HTMLCanvasElement& LEGACY_NODELETE canvasElement() const;
+    NODELETE HTMLCanvasElement& canvasElement() const;
 
     void canvasSizeChanged();
 
     RenderBlock* innerRenderer() const { return m_innerRenderer.get(); }
-    void LEGACY_NODELETE setInnerRenderer(RenderBlock*);
+    NODELETE void setInnerRenderer(RenderBlock*);
 
-    bool hasDrawableContent() const final;
+    bool hasDrawableContent() const;
 
     DisplayList::RecorderImpl* canvasDrawableRecorder(RenderElement&, GraphicsContext&, const IntRect& elementRelativeBounds) const;
     std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(RenderElement&) const;

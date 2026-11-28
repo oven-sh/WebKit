@@ -25,6 +25,7 @@
 
 #include "HTMLMetaCharsetParser.h"
 #include "HTMLNames.h"
+#include "HTTPParsers.h"
 #include "Logging.h"
 #include "MIMETypeRegistry.h"
 #include <pal/text/TextCodec.h>
@@ -32,6 +33,7 @@
 #include <pal/text/TextEncodingDetector.h>
 #include <pal/text/TextEncodingRegistry.h>
 #include <wtf/ASCIICType.h>
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
@@ -51,13 +53,13 @@ public:
     static enum Type judge(std::span<const uint8_t>);
     static constexpr int ESC = 0x1b;
     static const std::array<uint8_t, 256> sjisMap;
-    static int LEGACY_NODELETE ISkanji(int code)
+    NODELETE static int ISkanji(int code)
     {
         if (code >= 0x100)
             return 0;
         return sjisMap[code & 0xff] & 1;
     }
-    static int LEGACY_NODELETE ISkana(int code)
+    NODELETE static int ISkana(int code)
     {
         if (code >= 0x100)
             return 0;
@@ -240,13 +242,13 @@ auto KanjiCode::judge(std::span<const uint8_t> string) -> Type
 
 TextResourceDecoder::ContentType TextResourceDecoder::contentTypeForMIMEType(const String& mimeType)
 {
-    // FIXME: The MIME type should have been canonicalized by now, but libsoup and responses that clients
-    // construct, such as for loadSimulatedRequest, can still pass it on in mixed case.
-    if (equalLettersIgnoringASCIICase(mimeType, "text/css"_s))
+    ASSERT(mimeType == extractMIMETypeFromMediaType(mimeType));
+
+    if (mimeType == "text/css"_s)
         return ContentType::CSS;
-    if (equalLettersIgnoringASCIICase(mimeType, "text/html"_s))
+    if (mimeType == "text/html"_s)
         return ContentType::HTML;
-    if (MIMETypeRegistry::isXMLMIMEType(mimeType) || equalLettersIgnoringASCIICase(mimeType, "text/xsl"_s))
+    if (MIMETypeRegistry::isXMLMIMEType(mimeType) || mimeType == "text/xsl"_s)
         return ContentType::XML;
     return ContentType::PlainText;
 }
@@ -375,7 +377,8 @@ size_t TextResourceDecoder::checkForBOM(std::span<const uint8_t> data)
 
     size_t bufferLength = m_buffer.size();
 
-    auto buffer1 = m_buffer.span();
+    Borrow buffer { m_buffer };
+    auto buffer1 = buffer->span();
     auto buffer2 = data;
     uint8_t c1 = !buffer1.empty() ? consume(buffer1) : !buffer2.empty() ? consume(buffer2) : 0;
     uint8_t c2 = !buffer1.empty() ? consume(buffer1) : !buffer2.empty() ? consume(buffer2) : 0;
@@ -465,7 +468,8 @@ bool TextResourceDecoder::checkForHeadCharset(std::span<const uint8_t> data, boo
     if (m_charsetParser)
         return checkForMetaCharset(data);
 
-    auto bufferData = m_buffer.span();
+    Borrow buffer { m_buffer };
+    auto bufferData = buffer->span();
 
     // Is there enough data available to check for XML declaration?
     if (bufferData.size() < 8)
@@ -596,7 +600,7 @@ String TextResourceDecoder::decode(std::span<const uint8_t> data)
         memcpySpan(m_buffer.mutableSpan().subspan(oldSize), data);
     }
 
-    String result = m_codec->decode(m_buffer.subspan(lengthOfBOM), false, m_contentType == ContentType::XML && !m_useLenientXMLDecoding, m_sawError);
+    String result = m_codec->decode(borrow(m_buffer)->subspan(lengthOfBOM), false, m_contentType == ContentType::XML && !m_useLenientXMLDecoding, m_sawError);
     m_buffer.clear();
     return result;
 }
@@ -609,14 +613,14 @@ String TextResourceDecoder::flush()
     if (m_buffer.size() && shouldAutoDetect()
         && ((!m_checkedForHeadCharset && (m_contentType == ContentType::HTML || m_contentType == ContentType::XML)) || (!m_checkedForCSSCharset && (m_contentType == ContentType::CSS)))) {
         PAL::TextEncoding detectedEncoding;
-        if (detectTextEncoding(m_buffer.span(), m_parentFrameAutoDetectedEncoding, &detectedEncoding))
+        if (detectTextEncoding(borrow(m_buffer)->span(), m_parentFrameAutoDetectedEncoding, &detectedEncoding))
             setEncoding(detectedEncoding, EncodingSource::AutoDetected);
     }
 
     if (!m_codec)
         m_codec = newTextCodec(m_encoding);
 
-    String result = m_codec->decode(m_buffer.span(), true, m_contentType == ContentType::XML && !m_useLenientXMLDecoding, m_sawError);
+    String result = m_codec->decode(borrow(m_buffer)->span(), true, m_contentType == ContentType::XML && !m_useLenientXMLDecoding, m_sawError);
     m_buffer.clear();
     m_codec = nullptr;
     m_checkedForBOM = false; // Skip BOM again when re-decoding.

@@ -57,7 +57,7 @@ void RenderTreeBuilder::FormControls::attach(RenderButton& parent, RenderPtr<Ren
 
 RenderPtr<RenderObject> RenderTreeBuilder::FormControls::detach(RenderButton& parent, RenderObject& child, RenderTreeBuilder::WillBeDestroyed willBeDestroyed)
 {
-    auto* innerRenderer = parent.innerRenderer();
+    CheckedPtr innerRenderer = parent.innerRenderer();
     if (!innerRenderer || &child == innerRenderer || child.parent() == &parent) {
         ASSERT(&child == innerRenderer || !innerRenderer);
         return m_builder.blockBuilder().detach(parent, child, willBeDestroyed);
@@ -65,18 +65,22 @@ RenderPtr<RenderObject> RenderTreeBuilder::FormControls::detach(RenderButton& pa
     return m_builder.detach(*innerRenderer, child, willBeDestroyed);
 }
 
-
-RenderBlock& RenderTreeBuilder::FormControls::findOrCreateParentForChild(RenderButton& parent)
+CheckedRef<RenderBlock> RenderTreeBuilder::FormControls::findOrCreateParentForChild(RenderButton& parent)
 {
-    auto* innerRenderer = parent.innerRenderer();
+    CheckedPtr innerRenderer = parent.innerRenderer();
     if (innerRenderer)
-        return *innerRenderer;
+        return innerRenderer.releaseNonNull();
 
-    auto wrapper = Block::createAnonymousBlockWithStyle(protect(parent.document()), parent.style());
+    auto newStyle = Style::ComputedStyle::createAnonymousStyleWithDisplay(protect(parent.style()), Style::DisplayType::BlockFlow);
+    parent.updateAnonymousChildStyle(newStyle);
+
+    auto wrapper = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(parent.document()), WTF::move(newStyle));
+    wrapper->initializeStyle();
+
     innerRenderer = wrapper.get();
     m_builder.blockBuilder().attach(parent, WTF::move(wrapper), nullptr);
     parent.setInnerRenderer(*innerRenderer);
-    return *innerRenderer;
+    return innerRenderer.releaseNonNull();
 }
 
 void RenderTreeBuilder::FormControls::updateAfterDescendants(RenderElement& renderer)
@@ -95,7 +99,7 @@ void RenderTreeBuilder::FormControls::updateAfterDescendants(RenderElement& rend
         RefPtr container = selectElement->optionContainer();
         CheckedPtr containerRenderer = container ? container->renderer() : nullptr;
         if (containerRenderer)
-            updatePseudoElement(PseudoElementType::Checkmark, renderer, containerRenderer->style().usedAppearance(), renderer.firstChild());
+            updatePseudoElement(PseudoElementType::Checkmark, renderer, containerRenderer->style().usedAppearance(), PseudoElementPosition::FirstChild);
 
         return;
     }
@@ -106,14 +110,14 @@ void RenderTreeBuilder::FormControls::updateAfterDescendants(RenderElement& rend
     }
 }
 
-void RenderTreeBuilder::FormControls::updatePseudoElement(PseudoElementType type, RenderElement& renderer, StyleAppearance usedAppearance, RenderObject* beforeChild)
+void RenderTreeBuilder::FormControls::updatePseudoElement(PseudoElementType type, RenderElement& renderer, StyleAppearance usedAppearance, PseudoElementPosition position)
 {
     WeakPtr existingPseudoElement = renderer.pseudoElementRenderer(type);
 
     if (usedAppearance != StyleAppearance::Base && !existingPseudoElement)
         return;
 
-    auto pseudoStyle = renderer.style().pseudoElementStyle({ type });
+    CheckedPtr pseudoStyle = renderer.style().pseudoElementStyle({ type });
     if (!pseudoStyle)
         return;
 
@@ -123,21 +127,22 @@ void RenderTreeBuilder::FormControls::updatePseudoElement(PseudoElementType type
 
     if (!shouldHavePseudoElementRenderer()) {
         if (existingPseudoElement)
-            m_builder.destroy(*existingPseudoElement);
+            // The renderer is destroyed by this call, so it cannot be protected.
+            SUPPRESS_UNCHECKED_ARG m_builder.destroy(*existingPseudoElement);
         return;
     }
 
     if (existingPseudoElement && existingPseudoElement->style().content() == pseudoStyle->content()) {
+        CheckedRef pseudoElementRenderer = *existingPseudoElement;
         auto pseudoElementStyle = Style::ComputedStyle::clone(*pseudoStyle);
-        existingPseudoElement->setStyle(WTF::move(pseudoElementStyle));
-        RenderTreeUpdater::GeneratedContent::updateStyleForContentRenderers(*existingPseudoElement, existingPseudoElement->style());
+        pseudoElementRenderer->setStyle(WTF::move(pseudoElementStyle));
+        RenderTreeUpdater::GeneratedContent::updateStyleForContentRenderers(pseudoElementRenderer, protect(pseudoElementRenderer->style()));
         return;
     }
 
     if (existingPseudoElement) {
-        if (beforeChild == existingPseudoElement)
-            beforeChild = existingPseudoElement->nextSibling();
-        m_builder.destroy(*existingPseudoElement);
+        // The renderer is destroyed by this call, so it cannot be protected.
+        SUPPRESS_UNCHECKED_ARG m_builder.destroy(*existingPseudoElement);
     }
 
     if (!renderer.canHaveChildren())
@@ -149,14 +154,15 @@ void RenderTreeBuilder::FormControls::updatePseudoElement(PseudoElementType type
     RenderPtr<RenderBlockFlow> pseudoElement = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, document, WTF::move(pseudoElementStyle));
     pseudoElement->initializeStyle();
 
-    if (!renderer.isChildAllowed(*pseudoElement, pseudoElement->style()))
+    if (!renderer.isChildAllowed(*pseudoElement, protect(pseudoElement->style())))
         return;
 
     if (pseudoElement->style().content().isData())
-        RenderTreeUpdater::GeneratedContent::createContentRenderers(m_builder, *pseudoElement, pseudoElement->style(), type);
+        RenderTreeUpdater::GeneratedContent::createContentRenderers(m_builder, *pseudoElement, protect(pseudoElement->style()), type);
 
     renderer.setPseudoElementRenderer(type, *pseudoElement.get());
 
+    CheckedPtr beforeChild = position == PseudoElementPosition::FirstChild ? renderer.firstChild() : nullptr;
     m_builder.attach(renderer, WTF::move(pseudoElement), beforeChild);
 }
 

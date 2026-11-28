@@ -1,0 +1,32 @@
+# The list follows from the program alone. A number costs a built-in nothing, however large it is, unless the work of that built-in grows with it.
+# new RegExp("abcdef".slice(4, 4294967296) + "abc".slice(0 / 0, 1)); new RegExp(Array(4294967296).length + "long");
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /efa/
+# CHECK-NOT: long
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abcdef"
+    v1 = PropGet v0 key="slice"
+    v2 = Integer integer=4
+    v3 = Integer integer=4294967296
+    v4 = Call v1, v0, v2, v3 calleeKey="slice"
+    v5 = String string="abc"
+    v6 = Integer
+    v7 = Div v6, v6
+    v8 = Integer integer=1
+    v9 = Call v1, v5, v7, v8 calleeKey="slice"
+    v10 = Add v4, v9
+    v11 = Builtin builtin=RegExp
+    v12 = Construct v11, -, v10
+    v13 = Builtin builtin=Array
+    v14 = Call v13, -, v3
+    v15 = PropGet v14 key="length"
+    v16 = String string="long"
+    v17 = Add v15, v16
+    v18 = Construct v11, -, v17
+    Return v18
+}

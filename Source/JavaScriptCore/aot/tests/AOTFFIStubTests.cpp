@@ -14,15 +14,17 @@
 #if FFI_STUBS_SUPPORTED
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTFFIStubs.h"
 #include "AOTIRParser.h"
 #include "AOTIRProgram.h"
 #include "AOTImageFormat.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include <algorithm>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -33,6 +35,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 namespace {
+
+constexpr ASCIILiteral noCodeFromDiskWord = "exclude=CodeOutsideImage"_s;
 
 constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -48,6 +52,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = PropGet v0 key="eval" [isFreeName]
     v3 = Call v2, -, v1
+    Return
+}
+)IR"_s;
+
+constexpr ASCIILiteral importsModuleOutsideImage = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 )IR"_s;
@@ -112,22 +124,23 @@ throws.close();
 let open = [];
 let failure = "none";
 try {
-    while (open.length < 100000)
-        open.push(callback(["i32"], "i32", x => x + open.length));
+    while (open.length < 5000) {
+        const number = open.length;
+        open.push(callback(["i32"], "i32", x => x + number));
+    }
 } catch (error) {
     failure = error.constructor.name;
 }
 print(open.length + " " + failure);
-print(callCbI32(open[0], 1) + " " + callCbI32(open[255], 2));
+let answeredByTheirOwn = 0;
+for (let i = 0; i < open.length; ++i)
+    answeredByTheirOwn += callCbI32(open[i], 1) === i + 1 ? 1 : 0;
+print(answeredByTheirOwn);
 open[100].close();
+open[4000].close();
 open[100] = callback(["i32"], "i32", x => x - 1);
-print(callCbI32(open[100], 10) + " " + callCbI32(open[99], 3) + " " + callCbI32(open[101], 4));
-try {
-    callback(["i32"], "i32", x => x);
-    print("another one was opened");
-} catch (error) {
-    print(error.constructor.name);
-}
+open[4000] = callback(["i32"], "i32", x => x - 2);
+print(callCbI32(open[100], 10) + " " + callCbI32(open[99], 3) + " " + callCbI32(open[101], 4) + " " + callCbI32(open[4000], 10) + " " + callCbI32(open[3999], 1) + " " + callCbI32(open[4001], 1));
 for (let i = 0; i < open.length; ++i)
     open[i].close();
 
@@ -150,10 +163,9 @@ constexpr ASCIILiteral outputOfCallsAndCallbacks = R"(42
 13510798882152452
 RangeError: thrown by the callback for 13
 4
-256 RangeError
-257 258
-9 259 260
-RangeError
+5000 none
+5000
+9 102 105 8 4000 4002
 500500
 )"_s;
 
@@ -199,16 +211,16 @@ static const FFI::StubDirectory& directoryOf(const FFIStubs& stubs)
 static std::unique_ptr<CompileOutput> compileProgram(ASCIILiteral text, std::initializer_list<ASCIILiteral> optionWords)
 {
     BuildContext build(optionsWith(optionWords));
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(text)), Typed::IRForm::AsRead, build);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(text)), build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
     }
     AOT_TEST_CHECK(program);
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        Typed::printDiagnosticsOf(*output, WTF::dataFile());
+    AOT_TEST_CHECK(output->hasImage());
     return output;
 }
 
@@ -219,15 +231,29 @@ static std::unique_ptr<CompileOutput> compileEmptyProgram(std::initializer_list<
 
 static const ImageHeader& headerOf(const CompileOutput& output)
 {
-    AOT_TEST_CHECK(output.image.size() >= sizeof(ImageHeader));
-    return *reinterpret_cast<const ImageHeader*>(output.image.span().data());
+    std::span<const uint8_t> image = output.section(Wire::ResultSection::Image);
+    AOT_TEST_CHECK(image.size() >= sizeof(ImageHeader));
+    return *reinterpret_cast<const ImageHeader*>(image.data());
 }
 
-static void checkLayout(std::initializer_list<ASCIILiteral> optionWords, unsigned expectedNumberOfEntries)
+static std::unique_ptr<CompileOutput> compileClosedProgram()
 {
-    BuildContext context(optionsWith(optionWords));
-    AOT_TEST_CHECK(context.limit(LimitID::ForeignCallbackStubs) == expectedNumberOfEntries);
-    FFIStubs stubs = generateWith(optionWords);
+    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ noCodeFromDiskWord });
+    AOT_TEST_CHECK(!headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript));
+    return output;
+}
+
+static std::unique_ptr<CompileOutput> compileOpenProgram()
+{
+    std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { noCodeFromDiskWord });
+    AOT_TEST_CHECK(headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript));
+    return output;
+}
+
+static void testLayout()
+{
+    constexpr unsigned expectedNumberOfEntries = 256;
+    FFIStubs stubs = generateWith({ });
     const FFI::StubDirectory& directory = directoryOf(stubs);
 
     AOT_TEST_CHECK(stubs.codeAlignment == imagePageSize);
@@ -248,75 +274,70 @@ static void checkLayout(std::initializer_list<ASCIILiteral> optionWords, unsigne
     AOT_TEST_CHECK(std::ranges::any_of(stubs.code.span().subspan(directory.invoke, entries[0] - directory.invoke), [](uint8_t byte) { return !!byte; }));
 }
 
-static void testLayout()
-{
-    checkLayout({ }, 256);
-    checkLayout({ "limit=ForeignCallbackStubs:4"_s }, 4);
-    checkLayout({ "limit=ForeignCallbackStubs:1"_s }, 1);
-}
-
 static void testSameBytesEveryTime()
 {
     FFIStubs first = generateWith({ });
     AOT_TEST_CHECK(generateWith({ }).code == first.code && generateWith({ }).directory == first.directory);
     AOT_TEST_CHECK(generateWith({ "threads=1"_s }).code == first.code && generateWith({ "threads=1"_s }).directory == first.directory);
-    AOT_TEST_CHECK(generateWith({ "limit=ForeignCallbackStubs:4"_s }).code != first.code);
 }
 
 static void testClosedProgramHasNone()
 {
-    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ });
+    std::unique_ptr<CompileOutput> output = compileClosedProgram();
     AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize);
 }
 
 static void testOpenProgramHasStubs()
 {
-    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ "admit=Inspector"_s });
+    std::unique_ptr<CompileOutput> output = compileOpenProgram();
+    std::span<const uint8_t> image = output->section(Wire::ResultSection::Image);
     const ImageHeader& header = headerOf(*output);
-    FFIStubs stubs = generateWith({ "admit=Inspector"_s });
+    FFIStubs stubs = generateWith({ noCodeFromDiskWord });
     AOT_TEST_CHECK(header.code.ffiCodeSize == stubs.code.size());
     AOT_TEST_CHECK(!(header.code.ffiCodeOffset % imagePageSize));
     AOT_TEST_CHECK(static_cast<uint64_t>(header.code.ffiCodeOffset) + header.code.ffiCodeSize <= header.codeSize);
-    AOT_TEST_CHECK(header.codeOffset + header.codeSize <= output->image.size());
-    AOT_TEST_CHECK(equalSpans(output->image.span().subspan(header.codeOffset + header.code.ffiCodeOffset, header.code.ffiCodeSize), stubs.code.span()));
+    AOT_TEST_CHECK(header.codeOffset + header.codeSize <= image.size());
+    AOT_TEST_CHECK(equalSpans(image.subspan(header.codeOffset + header.code.ffiCodeOffset, header.code.ffiCodeSize), stubs.code.span()));
 }
 
 static void testOpenProgramBuiltWithoutForeignCallsHasNone()
 {
-    std::unique_ptr<CompileOutput> withStubs = compileEmptyProgram({ "admit=Inspector"_s });
-    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCalls"_s });
+    std::unique_ptr<CompileOutput> withStubs = compileOpenProgram();
+    std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { noCodeFromDiskWord, "exclude=ForeignCalls"_s });
     const ImageHeader& header = headerOf(*output);
     AOT_TEST_CHECK(!header.code.ffiCodeSize);
     AOT_TEST_CHECK(header.flags == headerOf(*withStubs).flags && header.has(ImageFlag::AdmitsUnknownJavaScript));
     AOT_TEST_CHECK(header.executableSize + headerOf(*withStubs).code.ffiCodeSize <= headerOf(*withStubs).executableSize);
-    AOT_TEST_CHECK(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize == header.codeSize);
+    AOT_TEST_CHECK(std::max<uint64_t>(header.executableSize, static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize) == header.codeSize);
 }
 
 static void testUnseenCodeWithoutForeignCalls()
 {
-    AOT_TEST_CHECK(headerOf(*compileProgram(evaluatesText, { })).code.ffiCodeSize);
-    std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { "exclude=ForeignCallsOfUnseenCode"_s });
-    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AdmitsLibraryText));
+    AOT_TEST_CHECK(headerOf(*compileOpenProgram()).code.ffiCodeSize);
+    std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { noCodeFromDiskWord, "exclude=ForeignCallsOfUnseenCode"_s });
+    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AllowsLibrarySource));
+    std::unique_ptr<CompileOutput> withLibrary = compileProgram(importsModuleOutsideImage, { "exclude=ForeignCallsOfUnseenCode"_s });
+    AOT_TEST_CHECK(headerOf(*withLibrary).code.ffiCodeSize && headerOf(*withLibrary).has(ImageFlag::AllowsLibrarySource));
     AOT_TEST_CHECK(headerOf(*compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCallsOfUnseenCode"_s })).code.ffiCodeSize);
 }
 
 static void testDirectoryIsNotExecutable()
 {
-    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ "admit=Inspector"_s });
+    std::unique_ptr<CompileOutput> output = compileOpenProgram();
     const ImageHeader& header = headerOf(*output);
-    FFIStubs stubs = generateWith({ "admit=Inspector"_s });
+    FFIStubs stubs = generateWith({ noCodeFromDiskWord });
     uint64_t offset = WTF::roundUpToMultipleOf<imageFFIDirectoryAlignment>(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize);
     AOT_TEST_CHECK(header.executableSize <= offset && offset + stubs.directory.size() == header.codeSize);
-    AOT_TEST_CHECK(equalSpans(output->image.span().subspan(header.codeOffset + offset, stubs.directory.size()), stubs.directory.span()));
+    AOT_TEST_CHECK(equalSpans(output->section(Wire::ResultSection::Image).subspan(header.codeOffset + offset, stubs.directory.size()), stubs.directory.span()));
 
-    std::unique_ptr<CompileOutput> closedOutput = compileEmptyProgram({ });
+    std::unique_ptr<CompileOutput> closedOutput = compileClosedProgram();
     const ImageHeader& closed = headerOf(*closedOutput);
-    AOT_TEST_CHECK(static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize == closed.codeSize);
+    AOT_TEST_CHECK(std::max<uint64_t>(closed.executableSize, static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize) == closed.codeSize);
 }
 
 static String runInShell(const CompileOutput& output, ASCIILiteral statements)
 {
-    TemporaryFile image(".image"_s, output.image.span());
+    TemporaryFile image(".image"_s, output.section(Wire::ResultSection::Image));
     String source = makeString(scriptStart, statements);
     TemporaryFile script(".js"_s, byteCast<uint8_t>(source.span8()));
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), "--useJIT=false"_s, "--useDollarVM=1"_s, script.path() };
@@ -329,7 +350,7 @@ static String runInShell(const CompileOutput& output, ASCIILiteral statements)
 
 static void testShellCallsAndCallbacks()
 {
-    String printed = runInShell(*compileEmptyProgram({ "admit=Inspector"_s }), callsAndCallbacks);
+    String printed = runInShell(*compileOpenProgram(), callsAndCallbacks);
     if (printed != outputOfCallsAndCallbacks)
         dataLog("the shell printed\n", printed, "expected\n", outputOfCallsAndCallbacks);
     AOT_TEST_CHECK(printed == outputOfCallsAndCallbacks);
@@ -337,7 +358,7 @@ static void testShellCallsAndCallbacks()
 
 static void testShellWithoutStubs()
 {
-    String printed = runInShell(*compileEmptyProgram({ }), firstUses);
+    String printed = runInShell(*compileClosedProgram(), firstUses);
     Vector<String> lines = printed.split('\n');
     if (lines.size() != 2)
         dataLog("the shell printed\n", printed);
@@ -345,7 +366,7 @@ static void testShellWithoutStubs()
     for (const String& line : lines)
         AOT_TEST_CHECK(line.startsWith("TypeError: "_s) && line.contains("bun:ffi requires the JIT"_s));
 
-    AOT_TEST_CHECK(runInShell(*compileEmptyProgram({ "admit=Inspector"_s }), firstUses) == "returned 42\na callback was opened\n"_s);
+    AOT_TEST_CHECK(runInShell(*compileOpenProgram(), firstUses) == "returned 42\na callback was opened\n"_s);
 }
 
 std::span<const NativeTest> ffiStubTests()

@@ -1,0 +1,78 @@
+# var words = new Int32Array(64); function run(p) { var n = 0; while (true) { n = (n + words[p]) | 0; if (words[p] === 0) { sink(n); ++p; continue; } p = (p + words[p + 1]) | 0; if (n > 1000) return n; } }
+# The call may store another view into the variable. The vector and the length that the variable mirrors are read in front of the iterations without the call.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = IsBelowLength
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: frequency=Rare
+# CHECK: = GetMirroredLength {{*}} variable=g0
+# CHECK-NOT: frequency=Rare
+# CHECK: = GetMirroredVector {{*}} variable=g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="words" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="run" module=m0 declared={type=anything} initialization=Function function=f1
+variable g2 name="replace" module=m0 declared={type=anything} initialization=Function function=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=64
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = GetModuleVariable variable=g2
+    v7 = Call v5, -, v6
+    v8 = GetModuleVariable variable=g1
+    v9 = Integer integer=3
+    v10 = Call v8, -, v9
+    v11 = Integer integer=-3
+    v12 = Call v8, -, v11
+    Return v12
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = GetModuleVariable variable=g0
+    v6 = ElemGet v5, v2
+    v7 = Add v3, v6
+    v8 = Integer
+    v9 = BitOr v7, v8
+    v10 = GetModuleVariable variable=g0
+    v11 = ElemGet v10, v2
+    v12 = StrictEq v11, v8
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="sink" [isFreeName]
+    v15 = Call v14, -, v9
+    v16 = Increment v2
+    Jump -> next b1(v16, v9)
+  b3():
+    v17 = GetModuleVariable variable=g0
+    v18 = Integer integer=1
+    v19 = Add v2, v18
+    v20 = ElemGet v17, v19
+    v21 = Add v2, v20
+    v22 = BitOr v21, v8
+    v23 = Integer integer=1000
+    v24 = Greater v9, v23
+    Branch v24 -> taken b4(), notTaken b1(v22, v9)
+  b4():
+    Return v9
+}
+function f2 name="replace" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=8
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Undefined
+    Return v4
+}

@@ -139,7 +139,7 @@ public:
     inline bool inherits(const ClassInfo*) const; // Defined inline in Structure.h
     JS_EXPORT_PRIVATE bool inheritsSlow(const ClassInfo*) const;
     template<typename Target> inline bool inherits() const; // Defined inline in Structure.h
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isValidCallee() const;
+    NODELETE JS_EXPORT_PRIVATE bool isValidCallee() const;
     bool isAPIValueWrapper() const { return m_type == APIValueWrapperType; }
     
     // Each cell has a built-in lock. Currently it's simply available for use if you need it. It's
@@ -176,12 +176,12 @@ public:
     }
     bool isPristine() const;
     
-    ASCIILiteral LEGACY_NODELETE className() const;
+    NODELETE ASCIILiteral className() const;
 
     // Extracting the value.
     JS_EXPORT_PRIVATE bool getString(JSGlobalObject*, String&) const;
     JS_EXPORT_PRIVATE String getString(JSGlobalObject*) const; // null string if not a string
-    JS_EXPORT_PRIVATE JSObject* LEGACY_NODELETE getObject(); // NULL if not an object
+    NODELETE JS_EXPORT_PRIVATE JSObject* getObject(); // NULL if not an object
     const JSObject* getObject() const; // NULL if not an object
         
     // Returns information about how to call/construct this cell as a function/constructor. May tell
@@ -190,8 +190,8 @@ public:
     // this is an object, then typeof will return "function" instead of "object". These methods
     // cannot change their minds and must be thread-safe. They are sometimes called from compiler
     // threads.
-    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
-    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getConstructData(JSCell*);
+    NODELETE JS_EXPORT_PRIVATE static CallData getCallData(JSCell*);
+    NODELETE JS_EXPORT_PRIVATE static CallData getConstructData(JSCell*);
 
     // Basic conversions.
     JS_EXPORT_PRIVATE JSValue toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
@@ -207,12 +207,12 @@ public:
     JS_EXPORT_PRIVATE static void dumpToStream(const JSCell*, PrintStream&);
 
     size_t estimatedSizeInBytes(VM&) const;
-    JS_EXPORT_PRIVATE static size_t LEGACY_NODELETE estimatedSize(JSCell*, VM&);
+    NODELETE JS_EXPORT_PRIVATE static size_t estimatedSize(JSCell*, VM&);
 
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(inline);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS_WITH_MODIFIER(inline);
 
-    JS_EXPORT_PRIVATE static void LEGACY_NODELETE analyzeHeap(JSCell*, HeapAnalyzer&);
+    NODELETE JS_EXPORT_PRIVATE static void analyzeHeap(JSCell*, HeapAnalyzer&);
 
     // Object operations, with the toObject operation included.
     inline const ClassInfo* classInfo() const; // Defined inline in Structure.h
@@ -284,18 +284,18 @@ protected:
     void finishCreation(VM&, Structure*, CreatingEarlyCellTag);
 
     // Dummy implementations of override-able static functions for classes to put in their MethodTable
-    static NO_RETURN_DUE_TO_CRASH void LEGACY_NODELETE getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-    static NO_RETURN_DUE_TO_CRASH void LEGACY_NODELETE getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    NODELETE static NO_RETURN_DUE_TO_CRASH void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    NODELETE static NO_RETURN_DUE_TO_CRASH void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE preventExtensions(JSObject*, JSGlobalObject*);
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE isExtensible(JSObject*, JSGlobalObject*);
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE setPrototype(JSObject*, JSGlobalObject*, JSValue, bool);
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH JSValue LEGACY_NODELETE getPrototype(JSObject*, JSGlobalObject*);
+    NODELETE JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool preventExtensions(JSObject*, JSGlobalObject*);
+    NODELETE JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool isExtensible(JSObject*, JSGlobalObject*);
+    NODELETE JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool);
+    NODELETE JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH JSValue getPrototype(JSObject*, JSGlobalObject*);
 
-    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE customHasInstance(JSObject*, JSGlobalObject*, JSValue);
-    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
+    NODELETE JS_EXPORT_PRIVATE static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
+    NODELETE JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    NODELETE JS_EXPORT_PRIVATE static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    NODELETE JS_EXPORT_PRIVATE static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
 
 private:
     friend class LLIntOffsetsExtractor;

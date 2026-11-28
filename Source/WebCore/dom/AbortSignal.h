@@ -45,7 +45,7 @@ class WebCoreOpaqueRoot;
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTarget, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(AbortSignal, WEBCORE_EXPORT);
 public:
-    static Ref<AbortSignal> LEGACY_NODELETE create(ScriptExecutionContext*);
+    NODELETE static Ref<AbortSignal> create(ScriptExecutionContext*);
     WEBCORE_EXPORT ~AbortSignal();
 
     // ContextDestructionObserver.
@@ -68,6 +68,7 @@ public:
 
     bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
     bool hasAbortEventListener() const { return m_hasAbortEventListener; }
+    bool hasAbortAlgorithms() const { return m_algorithms.size() > m_removedAlgorithmCount; }
 
     using Algorithm = Function<void(JSC::JSValue reason)>;
     uint32_t addAlgorithm(Algorithm&&);
@@ -110,13 +111,14 @@ private:
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;
     uint32_t m_algorithmIdentifier { 0 };
+    uint32_t m_removedAlgorithmCount { 0 };
     bool m_aborted { false };
     bool m_hasActiveTimeoutTimer { false };
     bool m_hasAbortEventListener { false };
     bool m_isDependent { false };
 };
 
-WebCoreOpaqueRoot LEGACY_NODELETE root(AbortSignal*);
+NODELETE WebCoreOpaqueRoot root(AbortSignal*);
 
 } // namespace WebCore
 

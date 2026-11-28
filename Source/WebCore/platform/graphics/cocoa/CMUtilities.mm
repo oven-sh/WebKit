@@ -30,12 +30,14 @@
 
 #import "CAAudioStreamDescription.h"
 #import "CDMFairPlayStreaming.h"
+#import "CVUtilities.h"
 #import "FormatDescriptionUtilities.h"
 #import "ISOTrackEncryptionBox.h"
 #import "Logging.h"
 #import "MediaSampleAVFObjC.h"
 #import "MediaSamplesBlock.h"
 #import "MediaUtilities.h"
+#import "PlanarImageConverterCV.h"
 #import "SharedBuffer.h"
 #import "WebMAudioUtilitiesCocoa.h"
 #import <CoreMedia/CMFormatDescription.h>
@@ -44,7 +46,6 @@
 #import <pal/avfoundation/MediaTimeAVFoundation.h>
 #import <pal/cf/CoreAudioExtras.h>
 #import <pal/spi/cocoa/AudioToolboxSPI.h>
-#import <wtf/Scope.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/FlipBytes.h>
 #import <wtf/StdLibExtras.h>
@@ -112,8 +113,7 @@ static Vector<std::pair<FourCC, Ref<SharedBuffer>>> parseExtensionAtomsDictionar
     Vector<const void*, 1> keys(extensionCount);
     Vector<const void*, 1> values(extensionCount);
     CFDictionaryGetKeysAndValues(atomDictionary, keys.mutableSpan().data(), values.mutableSpan().data());
-    Vector<std::pair<FourCC, Ref<SharedBuffer>>> result;
-    result.reserveInitialCapacity(extensionCount - indexStart);
+    Vector<std::pair<FourCC, Ref<SharedBuffer>>> result(ReserveCapacityTag { }, extensionCount - indexStart);
     // Per CMFormatDescription.h, each value is either a CFData payload or a CFArray
     // of CFData (multiple atoms of the same FourCC). Expand arrays into multiple
     // entries sharing a FourCC.
@@ -136,10 +136,8 @@ static Vector<std::pair<FourCC, Ref<SharedBuffer>>> parseExtensionAtomsDictionar
 
 static RetainPtr<CFDictionaryRef> createExtensionAtomsDictionary(const Vector<std::pair<FourCC, Ref<SharedBuffer>>>& configurations)
 {
-    Vector<FourCC> orderedKeys;
-    Vector<Vector<RetainPtr<CFDataRef>>> groupedDatas;
-    orderedKeys.reserveInitialCapacity(configurations.size());
-    groupedDatas.reserveInitialCapacity(configurations.size());
+    Vector<FourCC> orderedKeys(ReserveCapacityTag { }, configurations.size());
+    Vector<Vector<RetainPtr<CFDataRef>>> groupedDatas(ReserveCapacityTag { }, configurations.size());
     for (auto& [fourCC, buffer] : configurations) {
         size_t existingIndex = notFound;
         for (size_t i = 0; i < orderedKeys.size(); ++i) {
@@ -423,18 +421,21 @@ static CFStringRef convertToCMFieldDetail(PlatformVideoFieldDetail fieldDetail)
     return nullptr;
 }
 
-static std::optional<OSType> LEGACY_NODELETE pixelFormatTypeForDecodedVideo(const VideoInfo& info)
+static std::optional<OSType> pixelFormatTypeForDecodedVideo(const VideoInfo& info)
 {
     if (!info.pixelFormat())
         return { };
 
-    // The 8-bit planar formats are repacked into a biplanar buffer when the CVPixelBuffer is created.
-    switch (*info.pixelFormat()) {
-    case VideoPixelFormat::I420:
-        return info.colorSpace().fullRange.value_or(false) ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-    default:
+    // The planar formats are repacked into a biplanar buffer when the CVPixelBuffer is created, or a triplanar one with alpha.
+    bool hasAlpha = pixelFormatHasAlpha(*info.pixelFormat());
+    auto layout = planarYUVFormatLayout(pixelFormatWithoutAlpha(*info.pixelFormat()));
+    auto sampleFormat = layout ? PlanarImageConverter::pixelBufferSampleFormat(layout->format) : std::nullopt;
+    if (!sampleFormat)
         return { };
-    }
+    auto colorFormat = PlanarImageConverter::pixelFormat(layout->subsampling, *sampleFormat, info.colorSpace().fullRange.value_or(false));
+    if (!colorFormat || !hasAlpha)
+        return colorFormat;
+    return pixelFormatWithAlpha(*colorFormat);
 }
 
 // Calls add() with every property that can be expressed both as a CMFormatDescription extension and
@@ -510,6 +511,16 @@ static std::optional<AudioStreamDescription::PCMFormat> encodedPCMFormat(const A
     }
 }
 
+static RetainPtr<CFStringRef> separateAlphaStreamExtensionKey()
+{
+    return CFSTR("org.webkit.SeparateAlphaStream");
+}
+
+bool hasSeparateAlphaStream(CMFormatDescriptionRef description)
+{
+    return description && PAL::CMFormatDescriptionGetExtension(description, separateAlphaStreamExtensionKey()) == kCFBooleanTrue;
+}
+
 RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const TrackInfo& info)
 {
     ASSERT(info.isVideo() || info.isAudio());
@@ -545,9 +556,18 @@ RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const Tra
 
             auto absd = CAAudioStreamDescription { static_cast<double>(audioInfo->rate()), audioInfo->channels(), *format, CAAudioStreamDescription::IsInterleaved::Yes }.streamDescription();
 
+            AudioChannelLayoutWithSize channelLayout;
+            if (auto layout = audioInfo->channelLayout()) {
+                channelLayout = channelLayoutFromMediaChannelLayout(*layout, audioInfo->channels());
+                if (!channelLayout.first) {
+                    RELEASE_LOG_ERROR(MediaStream, "createFormatDescriptionFromTrackInfo: invalid channel layout");
+                    return nullptr;
+                }
+            }
+
             RetainPtr extensions = createExtensionsDictionary(info);
             CMFormatDescriptionRef newFormat = nullptr;
-            if (auto error = PAL::CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &absd, 0, nullptr, 0, nullptr, extensions.get(), &newFormat)) {
+            if (auto error = PAL::CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &absd, channelLayout.second, channelLayout.first.get(), 0, nullptr, extensions.get(), &newFormat)) {
                 RELEASE_LOG_ERROR(MediaStream, "createFormatDescriptionFromTrackInfo: CMAudioFormatDescriptionCreate failed with error %d", (int)error);
                 return nullptr;
             }
@@ -569,10 +589,20 @@ RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const Tra
         codecType = *pixelFormatType;
     }
 
-    if (videoInfo.colorSpace().fullRange.value_or(false))
+    // The pixel formats with an alpha plane are video range only.
+    auto alphaPlaneBitDepth = bitDepthOfPixelFormatWithAlphaPlane(codecType);
+    if (videoInfo.colorSpace().fullRange.value_or(false) && !alphaPlaneBitDepth)
         CFDictionaryAddValue(extensions.get(), PAL::kCMFormatDescriptionExtension_FullRangeVideo, kCFBooleanTrue);
 
-    int bitDepth = videoInfo.bitDepth();
+    if (alphaPlaneBitDepth) {
+        CFDictionaryAddValue(extensions, PAL::kCMFormatDescriptionExtension_ContainsAlphaChannel, kCFBooleanTrue);
+        CFDictionaryAddValue(extensions, PAL::kCMFormatDescriptionExtension_AlphaChannelMode, PAL::kCMFormatDescriptionAlphaChannelMode_StraightAlpha);
+    }
+
+    if (videoInfo.hasSeparateAlphaStream())
+        CFDictionaryAddValue(extensions, separateAlphaStreamExtensionKey(), kCFBooleanTrue);
+
+    int bitDepth = alphaPlaneBitDepth.value_or(videoInfo.bitDepth());
     RetainPtr bitsPerComponent = adoptCF(CFNumberCreate(nullptr, kCFNumberIntType, &bitDepth));
     CFDictionaryAddValue(extensions.get(), PAL::kCMFormatDescriptionExtension_BitsPerComponent, bitsPerComponent.get());
 
@@ -599,6 +629,13 @@ RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const Tra
     }
 
     return adoptCF(formatDescription);
+}
+
+const AudioStreamBasicDescription* richestDecodableStreamBasicDescription(CMFormatDescriptionRef description)
+{
+    if (auto* formatListItem = PAL::CMAudioFormatDescriptionGetRichestDecodableFormat(description))
+        return &formatListItem->mASBD;
+    return PAL::CMAudioFormatDescriptionGetStreamBasicDescription(description);
 }
 
 RefPtr<AudioInfo> createAudioInfoFromFormatDescription(CMFormatDescriptionRef description)
@@ -670,6 +707,7 @@ RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef de
             .fieldDetail = fieldDetailFromFormatDescription(description),
             .extensionAtoms = WTF::move(extensionAtoms),
             .reorderQueueMaxSize = reorderQueueMaxSize,
+            .hasSeparateAlphaStream = hasSeparateAlphaStream(description),
 #if PLATFORM(VISION)
             .immersiveVideoMetadata = immersiveVideoMetadataFromFormatDescription(description)
 #endif
@@ -751,52 +789,24 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedAudioToC
     return sampleBuffer;
 }
 
-static bool copyI420ToBiplanarPixelBuffer(std::span<const uint8_t> source, CVPixelBufferRef pixelBuffer, size_t width, size_t height)
+RetainPtr<CMFormatDescriptionRef> createFormatDescriptionWithAlpha(CVPixelBufferRef pixelBuffer)
 {
-    size_t chromaWidth = (width + 1) / 2;
-    size_t chromaHeight = (height + 1) / 2;
-    size_t lumaSize = width * height;
-    size_t chromaSize = chromaWidth * chromaHeight;
-    if (source.size() != lumaSize + 2 * chromaSize)
-        return false;
+    CMVideoFormatDescriptionRef rawDescription = nullptr;
+    if (PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, &rawDescription) != noErr)
+        return nullptr;
+    RetainPtr description = adoptCF(rawDescription);
 
-    if (CVPixelBufferGetPlaneCount(pixelBuffer) != 2
-        || CVPixelBufferGetWidthOfPlane(pixelBuffer, 0) != width
-        || CVPixelBufferGetHeightOfPlane(pixelBuffer, 0) != height
-        || CVPixelBufferGetWidthOfPlane(pixelBuffer, 1) != chromaWidth
-        || CVPixelBufferGetHeightOfPlane(pixelBuffer, 1) != chromaHeight)
-        return false;
+    RetainPtr sourceExtensions = PAL::CMFormatDescriptionGetExtensions(description);
+    RetainPtr extensions = adoptCF(CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, sourceExtensions));
+    if (!extensions)
+        return description;
+    CFDictionarySetValue(extensions, PAL::kCMFormatDescriptionExtension_ContainsAlphaChannel, kCFBooleanTrue);
+    CFDictionarySetValue(extensions, PAL::kCMFormatDescriptionExtension_AlphaChannelMode, PAL::kCMFormatDescriptionAlphaChannelMode_StraightAlpha);
 
-    if (CVPixelBufferLockBaseAddress(pixelBuffer, 0) != kCVReturnSuccess)
-        return false;
-    auto unlock = makeScopeExit([pixelBuffer] {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
-    });
-
-    auto lumaSource = source.first(lumaSize);
-    auto uSource = source.subspan(lumaSize, chromaSize);
-    auto vSource = source.subspan(lumaSize + chromaSize, chromaSize);
-
-    auto lumaDestination = CVPixelBufferGetSpanOfPlane(pixelBuffer, 0);
-    size_t lumaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0);
-    auto chromaDestination = CVPixelBufferGetSpanOfPlane(pixelBuffer, 1);
-    size_t chromaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1);
-    if (lumaStride < width || chromaStride < 2 * chromaWidth || lumaDestination.size() < lumaStride * height || chromaDestination.size() < chromaStride * chromaHeight)
-        return false;
-
-    for (size_t y = 0; y < height; ++y)
-        memcpySpan(lumaDestination.subspan(y * lumaStride, width), lumaSource.subspan(y * width, width));
-
-    for (size_t y = 0; y < chromaHeight; ++y) {
-        auto destination = chromaDestination.subspan(y * chromaStride, 2 * chromaWidth);
-        auto u = uSource.subspan(y * chromaWidth, chromaWidth);
-        auto v = vSource.subspan(y * chromaWidth, chromaWidth);
-        for (size_t x = 0; x < chromaWidth; ++x) {
-            destination[2 * x] = u[x];
-            destination[2 * x + 1] = v[x];
-        }
-    }
-    return true;
+    rawDescription = nullptr;
+    if (PAL::CMVideoFormatDescriptionCreate(kCFAllocatorDefault, CVPixelBufferGetPixelFormatType(pixelBuffer), CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer), extensions, &rawDescription) != noErr)
+        return description;
+    return adoptCF(rawDescription);
 }
 
 // A CMSampleBuffer holds a single image buffer, so the block must hold exactly one frame.
@@ -809,6 +819,8 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedVideoToC
     auto pixelFormatType = pixelFormatTypeForDecodedVideo(info);
     if (!pixelFormatType)
         return makeUnexpected("Unsupported decoded video pixel format"_s);
+    auto pixelFormat = *info.pixelFormat();
+    bool hasAlpha = pixelFormatHasAlpha(pixelFormat);
 
     auto& sample = samples.first();
     RefPtr sampleData = sample.data;
@@ -830,17 +842,23 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedVideoToC
     RetainPtr pixelBuffer = adoptCF(rawPixelBuffer);
 
     Ref contiguousData = sampleData->makeContiguous();
-    if (!copyI420ToBiplanarPixelBuffer(contiguousData->span(), pixelBuffer.get(), width, height))
+    if (!copyPlanarYUVToPixelBuffer(contiguousData->span(), pixelFormat, info.colorSpace().fullRange.value_or(false), pixelBuffer))
         return makeUnexpected("Invalid decoded video data"_s);
 
     addImageBufferProperties(info, [&](CFStringRef key, CFTypeRef value) {
         CVBufferSetAttachment(pixelBuffer.get(), key, value, kCVAttachmentMode_ShouldPropagate);
     });
 
-    CMVideoFormatDescriptionRef rawFormatDescription = nullptr;
-    if (PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer.get(), &rawFormatDescription) != noErr || !rawFormatDescription)
+    RetainPtr<CMFormatDescriptionRef> formatDescription;
+    if (hasAlpha)
+        formatDescription = createFormatDescriptionWithAlpha(pixelBuffer);
+    else {
+        CMVideoFormatDescriptionRef rawFormatDescription = nullptr;
+        if (PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, &rawFormatDescription) == noErr)
+            formatDescription = adoptCF(rawFormatDescription);
+    }
+    if (!formatDescription)
         return makeUnexpected("CMVideoFormatDescriptionCreateForImageBuffer failed"_s);
-    RetainPtr formatDescription = adoptCF(rawFormatDescription);
 
     CMSampleTimingInfo timing { PAL::toCMTime(sample.duration), PAL::toCMTime(sample.presentationTime), PAL::toCMTime(sample.decodeTime) };
     CMSampleBufferRef rawSampleBuffer = nullptr;
@@ -856,6 +874,16 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedVideoToC
     }
 
     return sampleBuffer;
+}
+
+static RetainPtr<CFStringRef> compressedAlphaDataAttachmentKey()
+{
+    return CFSTR("org.webkit.CompressedAlphaData");
+}
+
+RetainPtr<CFArrayRef> compressedAlphaData(CMSampleBufferRef sampleBuffer)
+{
+    return dynamic_cf_cast<CFArrayRef>(PAL::CMGetAttachment(sampleBuffer, compressedAlphaDataAttachmentKey(), nullptr));
 }
 
 std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const MediaSamplesBlock& samples, CMFormatDescriptionRef formatDescription)
@@ -882,10 +910,8 @@ std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const
         completeBlockBuffers = adoptCF(rawBlockBuffer);
     }
 
-    Vector<CMSampleTimingInfo> packetTimings;
-    packetTimings.reserveInitialCapacity(samples.size());
-    Vector<size_t> packetSizes;
-    packetSizes.reserveInitialCapacity(samples.size());
+    Vector<CMSampleTimingInfo> packetTimings(ReserveCapacityTag { }, samples.size());
+    Vector<size_t> packetSizes(ReserveCapacityTag { }, samples.size());
     auto cumulativeTrimDurationAtStart = MediaTime::zeroTime();
     auto cumulativeTrimDurationAtEnd = MediaTime::zeroTime();
     for (auto& sample : samples) {
@@ -931,6 +957,14 @@ std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const
             // Attach HDR10+ (aka SMPTE ST 2094-40) metadata, if present:
             if (samples[i].hdrMetadataType == PlatformMediaCapabilitiesHdrMetadataType::SmpteSt209440 && samples[i].hdrMetadata)
                 CFDictionarySetValue(attachments, PAL::kCMSampleAttachmentKey_HDR10PlusPerFrameData, Ref { *samples[i].hdrMetadata }->createCFData().get());
+        }
+        if (std::ranges::all_of(samples, [](auto& sample) { return !!sample.alphaData; })) {
+            RetainPtr alphaDatas = adoptCF(CFArrayCreateMutable(kCFAllocatorDefault, samples.size(), &kCFTypeArrayCallBacks));
+            for (auto& sample : samples) {
+                RetainPtr alphaData = RefPtr { sample.alphaData }->createCFData();
+                CFArrayAppendValue(alphaDatas, alphaData);
+            }
+            PAL::CMSetAttachment(rawSampleBuffer, compressedAlphaDataAttachmentKey(), alphaDatas, kCMAttachmentMode_ShouldPropagate);
         }
     } else if (samples.isAudio() && samples.discontinuity())
         PAL::CMSetAttachment(rawSampleBuffer, PAL::kCMSampleBufferAttachmentKey_FillDiscontinuitiesWithSilence, *samples.discontinuity() ? kCFBooleanTrue : kCFBooleanFalse, kCMAttachmentMode_ShouldPropagate);
@@ -1047,8 +1081,7 @@ UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef cm
     };
 
     if (info && info->codecName() == kAudioFormatLinearPCM) {
-        MediaSamplesBlock::SamplesVector sample;
-        sample.reserveInitialCapacity(1);
+        MediaSamplesBlock::SamplesVector sample(ReserveCapacityTag { }, 1);
         sample.append(mediaSampleItemForSample(MediaSampleAVFObjC::create(cmSample, info->trackID()), trimDurationAtStart, trimDurationAtEnd));
         return makeUniqueRef<MediaSamplesBlock>(info.get(), WTF::move(sample));
     }
@@ -1074,6 +1107,17 @@ UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef cm
             return mediaSampleItemForSample(subSamples[index], MediaTime::zeroTime(), MediaTime::zeroTime());
         return mediaSampleItemForSample(subSamples[index], trims[index].first, trims[index].second);
     });
+    if (RetainPtr alphaDatas = compressedAlphaData(cmSample)) {
+        // toCMSampleBuffer() stores one alpha plane per sample; on a mismatch, drop the alpha rather than pair it with the wrong frame.
+        size_t alphaCount = CFArrayGetCount(alphaDatas);
+        bool countsMatch = alphaCount == samples.size();
+        if (!countsMatch)
+            RELEASE_LOG_ERROR(Media, "samplesBlockFromCMSampleBuffer: %zu alpha planes for %zu samples, dropping alpha", alphaCount, samples.size());
+        for (size_t index = 0; countsMatch && index < samples.size(); ++index) {
+            if (RetainPtr alphaData = dynamic_cf_cast<CFDataRef>(CFArrayGetValueAtIndex(alphaDatas, index)))
+                samples[index].alphaData = SharedBuffer::create(alphaData);
+        }
+    }
     return makeUniqueRef<MediaSamplesBlock>(info.get(), WTF::move(samples));
 }
 
@@ -1164,8 +1208,18 @@ PlatformVideoColorSpace computeVideoFrameColorSpace(CVPixelBufferRef pixelBuffer
         matrix = PlatformVideoMatrixCoefficients::Bt470bg;
 
     auto pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
-    // FIXME: We should do a more comprehensive check.
-    bool isFullRange = pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange && pixelFormat != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+    bool isFullRange;
+    if (auto description = PlanarImageConverter::pixelFormatDescription(pixelFormat))
+        isFullRange = description->isFullRange;
+    else {
+        // FIXME: We should do a more comprehensive check.
+        isFullRange = pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange;
+    }
 
     std::optional<PlatformVideoChromaLocation> chromaLocation;
     RetainPtr pixelChromaLocation = CVBufferGetAttachment(pixelBuffer, kCVImageBufferChromaLocationTopFieldKey, nil);
@@ -1452,8 +1506,7 @@ RetainPtr<CMSampleBufferRef> copySampleBufferForRange(CMSampleBufferRef sampleBu
         return nullptr;
     RetainPtr subBlock = adoptCF(rawSubBlock);
 
-    Vector<size_t> sampleSizes;
-    sampleSizes.reserveInitialCapacity(static_cast<size_t>(range.length));
+    Vector<size_t> sampleSizes(ReserveCapacityTag { }, static_cast<size_t>(range.length));
     for (CFIndex i = 0; i < range.length; ++i) {
         const auto& desc = packetDescs[range.location + i];
         if (desc.mStartOffset < 0)
@@ -1642,7 +1695,7 @@ FourCC computeBoxType(FourCC codecType)
     }
 }
 
-std::pair<std::unique_ptr<AudioChannelLayout, WTF::SystemFree<AudioChannelLayout>>, size_t> channelLayoutFromChannelLayoutTag(UInt32 channelLayoutTag)
+AudioChannelLayoutWithSize channelLayoutFromChannelLayoutTag(UInt32 channelLayoutTag)
 {
     if (channelLayoutTag == kAudioChannelLayoutTag_UseChannelDescriptions || channelLayoutTag == kAudioChannelLayoutTag_UseChannelBitmap) {
         ASSERT_NOT_REACHED();
@@ -1653,6 +1706,246 @@ std::pair<std::unique_ptr<AudioChannelLayout, WTF::SystemFree<AudioChannelLayout
     channelLayout->mChannelLayoutTag = channelLayoutTag;
     auto channelLayoutSize = PAL::allocationSize(*channelLayout);
     return { WTF::move(channelLayout), channelLayoutSize };
+}
+
+AudioChannelLayoutWithSize channelLayoutFromChannelLabels(std::span<const AudioChannelLabel> channelLabels)
+{
+    auto channelLayout = PAL::createAudioChannelLayout(static_cast<uint32_t>(channelLabels.size()), PAL::ShouldZeroMemory::Yes);
+    channelLayout->mChannelLayoutTag = kAudioChannelLayoutTag_UseChannelDescriptions;
+    auto descriptions = unsafeMakeSpan(channelLayout->mChannelDescriptions, channelLayout->mNumberChannelDescriptions);
+    for (size_t index = 0; index < channelLabels.size(); ++index)
+        descriptions[index].mChannelLabel = channelLabels[index];
+    auto channelLayoutSize = PAL::allocationSize(*channelLayout);
+    return { WTF::move(channelLayout), channelLayoutSize };
+}
+
+static std::optional<WebAudioChannel> webAudioChannel(AudioChannelLabel label, bool surroundsAreSides)
+{
+    switch (label) {
+    case kAudioChannelLabel_Left:
+        return WebAudioChannel::FrontLeft;
+    case kAudioChannelLabel_Right:
+        return WebAudioChannel::FrontRight;
+    case kAudioChannelLabel_Center:
+    case kAudioChannelLabel_Mono:
+        return WebAudioChannel::FrontCenter;
+    case kAudioChannelLabel_LFEScreen:
+        return WebAudioChannel::LowFrequency;
+    case kAudioChannelLabel_LeftSurround:
+        return surroundsAreSides ? WebAudioChannel::SideLeft : WebAudioChannel::BackLeft;
+    case kAudioChannelLabel_RightSurround:
+        return surroundsAreSides ? WebAudioChannel::SideRight : WebAudioChannel::BackRight;
+    case kAudioChannelLabel_RearSurroundLeft:
+    case kAudioChannelLabel_LeftBackSurround:
+        return WebAudioChannel::BackLeft;
+    case kAudioChannelLabel_RearSurroundRight:
+    case kAudioChannelLabel_RightBackSurround:
+        return WebAudioChannel::BackRight;
+    case kAudioChannelLabel_LeftCenter:
+        return WebAudioChannel::FrontLeftOfCenter;
+    case kAudioChannelLabel_RightCenter:
+        return WebAudioChannel::FrontRightOfCenter;
+    case kAudioChannelLabel_CenterSurround:
+        return WebAudioChannel::BackCenter;
+    case kAudioChannelLabel_LeftSurroundDirect:
+    case kAudioChannelLabel_LeftSideSurround:
+        return WebAudioChannel::SideLeft;
+    case kAudioChannelLabel_RightSurroundDirect:
+    case kAudioChannelLabel_RightSideSurround:
+        return WebAudioChannel::SideRight;
+    case kAudioChannelLabel_TopCenterSurround:
+        return WebAudioChannel::TopCenter;
+    case kAudioChannelLabel_VerticalHeightLeft:
+        return WebAudioChannel::TopFrontLeft;
+    case kAudioChannelLabel_VerticalHeightCenter:
+        return WebAudioChannel::TopFrontCenter;
+    case kAudioChannelLabel_VerticalHeightRight:
+        return WebAudioChannel::TopFrontRight;
+    case kAudioChannelLabel_TopBackLeft:
+    case kAudioChannelLabel_LeftTopRear:
+        return WebAudioChannel::TopBackLeft;
+    case kAudioChannelLabel_TopBackCenter:
+    case kAudioChannelLabel_CenterTopRear:
+        return WebAudioChannel::TopBackCenter;
+    case kAudioChannelLabel_TopBackRight:
+    case kAudioChannelLabel_RightTopRear:
+        return WebAudioChannel::TopBackRight;
+    default:
+        return { };
+    }
+}
+
+std::optional<Vector<WebAudioChannel>> webAudioChannelsFromChannelDescriptions(std::span<const AudioChannelDescription> descriptions)
+{
+    // Surround channels are at the back, unless the layout also has back or back center channels; they are then at the side.
+    bool surroundsAreSides = std::ranges::any_of(descriptions, [](auto& description) {
+        switch (description.mChannelLabel) {
+        case kAudioChannelLabel_RearSurroundLeft:
+        case kAudioChannelLabel_RearSurroundRight:
+        case kAudioChannelLabel_LeftBackSurround:
+        case kAudioChannelLabel_RightBackSurround:
+        case kAudioChannelLabel_CenterSurround:
+            return true;
+        default:
+            return false;
+        }
+    });
+
+    Vector<WebAudioChannel> channels;
+    channels.reserveInitialCapacity(descriptions.size());
+    for (auto& description : descriptions) {
+        auto channel = webAudioChannel(description.mChannelLabel, surroundsAreSides);
+        if (!channel)
+            return { };
+        channels.append(*channel);
+    }
+    return channels;
+}
+
+// The inverse of webAudioChannelsFromChannelDescriptions(): surround channels are labelled as such when they are
+// the only channels at the back or at the side; otherwise the back channels are rear surround channels.
+static Vector<AudioChannelLabel> channelLabelsFromWebAudioChannelMask(uint32_t mask)
+{
+    auto has = [&](WebAudioChannel channel) {
+        return !!(mask & webAudioChannelBit(channel));
+    };
+    bool hasSides = has(WebAudioChannel::SideLeft) || has(WebAudioChannel::SideRight);
+    bool hasBacks = has(WebAudioChannel::BackLeft) || has(WebAudioChannel::BackRight) || has(WebAudioChannel::BackCenter);
+
+    Vector<AudioChannelLabel> labels;
+    for (uint8_t index = 0; index < numberOfWebAudioChannels; ++index) {
+        auto channel = static_cast<WebAudioChannel>(index);
+        if (!has(channel))
+            continue;
+        labels.append([&] -> AudioChannelLabel {
+            switch (channel) {
+            case WebAudioChannel::FrontLeft:
+                return kAudioChannelLabel_Left;
+            case WebAudioChannel::FrontRight:
+                return kAudioChannelLabel_Right;
+            case WebAudioChannel::FrontCenter:
+                return kAudioChannelLabel_Center;
+            case WebAudioChannel::LowFrequency:
+                return kAudioChannelLabel_LFEScreen;
+            case WebAudioChannel::BackLeft:
+                return hasSides || has(WebAudioChannel::BackCenter) ? kAudioChannelLabel_RearSurroundLeft : kAudioChannelLabel_LeftSurround;
+            case WebAudioChannel::BackRight:
+                return hasSides || has(WebAudioChannel::BackCenter) ? kAudioChannelLabel_RearSurroundRight : kAudioChannelLabel_RightSurround;
+            case WebAudioChannel::FrontLeftOfCenter:
+                return kAudioChannelLabel_LeftCenter;
+            case WebAudioChannel::FrontRightOfCenter:
+                return kAudioChannelLabel_RightCenter;
+            case WebAudioChannel::BackCenter:
+                return kAudioChannelLabel_CenterSurround;
+            case WebAudioChannel::SideLeft:
+                return hasBacks ? kAudioChannelLabel_LeftSurround : kAudioChannelLabel_LeftSideSurround;
+            case WebAudioChannel::SideRight:
+                return hasBacks ? kAudioChannelLabel_RightSurround : kAudioChannelLabel_RightSideSurround;
+            case WebAudioChannel::TopCenter:
+                return kAudioChannelLabel_TopCenterSurround;
+            case WebAudioChannel::TopFrontLeft:
+                return kAudioChannelLabel_VerticalHeightLeft;
+            case WebAudioChannel::TopFrontCenter:
+                return kAudioChannelLabel_VerticalHeightCenter;
+            case WebAudioChannel::TopFrontRight:
+                return kAudioChannelLabel_VerticalHeightRight;
+            case WebAudioChannel::TopBackLeft:
+                return kAudioChannelLabel_TopBackLeft;
+            case WebAudioChannel::TopBackCenter:
+                return kAudioChannelLabel_TopBackCenter;
+            case WebAudioChannel::TopBackRight:
+                return kAudioChannelLabel_TopBackRight;
+            }
+            ASSERT_NOT_REACHED();
+            return kAudioChannelLabel_Unknown;
+        }());
+    }
+    return labels;
+}
+
+AudioChannelLayoutWithSize channelLayoutFromMediaChannelLayout(const MediaChannelLayout& layout, uint32_t numberOfChannels)
+{
+    if (!layout.isValid(numberOfChannels) || numberOfChannels > std::numeric_limits<uint16_t>::max())
+        return { nullptr, 0 };
+
+    // The labels are the ones of CoreAudio's own layouts, so that the speakers are the same as with a layout tag.
+    if (layout.kind == MediaChannelLayout::Kind::Positional)
+        return channelLayoutFromChannelLabels(channelLabelsFromWebAudioChannelMask(layout.mask).span());
+
+    if (layout.kind == MediaChannelLayout::Kind::Ambisonic && layout.mask) {
+        // A tag can't describe non-diegetic channels, so the channels are described one by one.
+        uint32_t components = numberOfChannels - std::popcount(layout.mask);
+        Vector<AudioChannelLabel> labels(components, [](size_t index) -> AudioChannelLabel {
+            return kAudioChannelLabel_HOA_ACN_0 + static_cast<AudioChannelLabel>(index);
+        });
+        labels.append(kAudioChannelLabel_Left);
+        labels.append(kAudioChannelLabel_Right);
+        return channelLayoutFromChannelLabels(labels.span());
+    }
+
+    auto channelLayout = PAL::createAudioChannelLayout(0, PAL::ShouldZeroMemory::Yes);
+    switch (layout.kind) {
+    case MediaChannelLayout::Kind::Positional:
+        ASSERT_NOT_REACHED();
+        return { nullptr, 0 };
+    case MediaChannelLayout::Kind::Discrete:
+        // A single channel without a position is mono.
+        channelLayout->mChannelLayoutTag = numberOfChannels == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_DiscreteInOrder | numberOfChannels;
+        break;
+    case MediaChannelLayout::Kind::Ambisonic:
+        channelLayout->mChannelLayoutTag = kAudioChannelLayoutTag_HOA_ACN_SN3D | numberOfChannels;
+        break;
+    }
+    auto channelLayoutSize = PAL::allocationSize(*channelLayout);
+    return { WTF::move(channelLayout), channelLayoutSize };
+}
+
+std::optional<MediaChannelLayout> mediaChannelLayoutFromChannelLayout(const AudioChannelLayout& channelLayout)
+{
+    if (channelLayout.mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelBitmap) {
+        uint32_t mask = channelLayout.mChannelBitmap;
+        if (!mask || mask >= (1U << numberOfWebAudioChannels))
+            return { };
+        return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Positional, .mask = mask };
+    }
+    if (channelLayout.mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelDescriptions) {
+        // Ambisonic components HOA_ACN_0 to HOA_ACN_n, optionally followed by a non-diegetic stereo pair.
+        auto descriptions = PAL::span(channelLayout);
+        size_t components = 0;
+        while (components < descriptions.size() && descriptions[components].mChannelLabel == kAudioChannelLabel_HOA_ACN_0 + components)
+            ++components;
+        if (components) {
+            if (components == descriptions.size())
+                return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Ambisonic };
+            if (descriptions.size() == components + 2 && descriptions[components].mChannelLabel == kAudioChannelLabel_Left && descriptions[components + 1].mChannelLabel == kAudioChannelLabel_Right)
+                return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Ambisonic, .mask = MediaChannelLayout::nonDiegeticStereoMask };
+            return { };
+        }
+
+        // A single channel without a position is mono.
+        if (descriptions.size() == 1 && descriptions[0].mChannelLabel == kAudioChannelLabel_Mono)
+            return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Discrete };
+
+        // Channels at distinct Web Audio positions, in Web Audio order.
+        auto channels = webAudioChannelsFromChannelDescriptions(descriptions);
+        if (!channels || channels->isEmpty() || !std::ranges::is_sorted(*channels))
+            return { };
+        uint32_t mask = 0;
+        for (auto channel : *channels)
+            mask |= webAudioChannelBit(channel);
+        if (static_cast<size_t>(std::popcount(mask)) != channels->size())
+            return { };
+        return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Positional, .mask = mask };
+    }
+    switch (channelLayout.mChannelLayoutTag & 0xFFFF0000) {
+    case kAudioChannelLayoutTag_Mono & 0xFFFF0000:
+    case kAudioChannelLayoutTag_DiscreteInOrder:
+        return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Discrete };
+    case kAudioChannelLayoutTag_HOA_ACN_SN3D:
+        return MediaChannelLayout { .kind = MediaChannelLayout::Kind::Ambisonic };
+    default:
+        return { };
+    }
 }
 
 String channelLayoutDescription(UInt32 channelLayoutTag)

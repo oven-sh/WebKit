@@ -53,10 +53,10 @@ private:
     String cssText(const CSS::SerializationContext&) const final;
     String conditionText() const final;
 
-    const MQ::MediaQueryList& LEGACY_NODELETE mediaQueries() const;
+    NODELETE const MQ::MediaQueryList& mediaQueries() const;
     void setMediaQueries(MQ::MediaQueryList&&);
 
-    mutable RefPtr<MediaList> m_mediaCSSOMWrapper;
+    const RefPtr<MediaList> m_mediaCSSOMWrapper;
 };
 
 } // namespace WebCore

@@ -64,6 +64,8 @@
 #import <pal/spi/cocoa/NSStringSPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <pal/spi/cocoa/URLFormattingSPI.h>
+#import <pal/system/ios/Device.h>
+#import <wtf/Box.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -82,10 +84,6 @@
 #endif
 
 #import "WebKitSwiftSoftLink.h"
-
-#if !HAVE(URL_FORMATTING)
-SOFT_LINK_PRIVATE_FRAMEWORK_OPTIONAL(LinkPresentation)
-#endif
 
 static constexpr Seconds DefaultWatchdogTimerInterval = 1_s;
 
@@ -172,12 +170,27 @@ enum FullScreenState : NSInteger {
     ExitingFullScreen,
 };
 
+static CGFloat baseScale()
+{
+#if PLATFORM(APPLETV)
+    if (PAL::deviceClassIsHomeView())
+        return 544. / 448;
+#endif
+    return 1;
+}
+
+static CGFloat baseMinimumEffectiveDeviceWidth()
+{
+#if PLATFORM(APPLETV)
+    if (PAL::deviceClassIsHomeView())
+        return 448;
+#endif
+    return 0;
+}
+
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WKFullScreenWindowControllerIOSAdditions.mm>)
 #import <WebKitAdditions/WKFullScreenWindowControllerIOSAdditions.mm>
 #else
-static constexpr auto baseScale = 1;
-static constexpr auto baseMinimumEffectiveDeviceWidth = 0;
-
 #if PLATFORM(VISION)
 static void setLightspillEnabledForElementFullscreenLayer(CALayer *, bool) { }
 #endif
@@ -185,9 +198,9 @@ static void setLightspillEnabledForElementFullscreenLayer(CALayer *, bool) { }
 
 struct WKWebViewState {
     WebCore::FloatBoxExtent _savedWebPageObscuredContentInsets;
-    CGFloat _savedPageScale = baseScale;
+    CGFloat _savedPageScale = baseScale();
     CGFloat _savedViewScale = 1.0;
-    CGFloat _savedZoomScale = baseScale;
+    CGFloat _savedZoomScale = baseScale();
     CGFloat _savedContentZoomScale = 1;
     BOOL _savedContentInsetWasExternallyOverridden = NO;
     UIEdgeInsets _savedEdgeInset = UIEdgeInsetsZero;
@@ -202,7 +215,7 @@ struct WKWebViewState {
     std::optional<CGPoint> _savedContentOffset;
     BOOL _savedBouncesZoom = NO;
     BOOL _savedForceAlwaysUserScalable = NO;
-    CGFloat _savedMinimumEffectiveDeviceWidth = baseMinimumEffectiveDeviceWidth;
+    CGFloat _savedMinimumEffectiveDeviceWidth = baseMinimumEffectiveDeviceWidth();
     BOOL _savedHaveSetUnobscuredSafeAreaInsets = NO;
     UIEdgeInsets _savedUnobscuredSafeAreaInsets = UIEdgeInsetsZero;
     BOOL _savedHasOverriddenLayoutParameters = NO;
@@ -270,6 +283,7 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
 #if !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
         _savedContentInsetAdjustmentBehaviorWasExternallyOverridden = scrollView._contentInsetAdjustmentBehaviorWasExternallyOverridden;
+        _savedContentInsetAdjustmentBehavior = scrollView.contentInsetAdjustmentBehavior;
 #endif
         if (RefPtr page = webView._page.get()) {
             _savedWebPageObscuredContentInsets = page->obscuredContentInsets();
@@ -842,6 +856,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 @implementation WKFullScreenWindowController {
     RetainPtr<WKFullScreenPlaceholderView> _webViewPlaceholder;
+    RetainPtr<CGImageRef> _placeholderSnapshot;
+    RetainPtr<UIView> _placeholderSnapshotView;
 
     WebKit::FullScreenState _fullScreenState;
     WebKit::WKWebViewState _viewState;
@@ -855,6 +871,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     RetainPtr<UISwipeGestureRecognizer> _startDismissGestureRecognizer;
     RetainPtr<UIPanGestureRecognizer> _interactivePanDismissGestureRecognizer;
     RetainPtr<WKFullScreenInteractiveTransition> _interactiveDismissTransitionCoordinator;
+    BOOL _suppressDismissalGestures;
 #endif
 #if PLATFORM(VISION)
     RetainPtr<UIWindow> _lastKnownParentWindow;
@@ -976,6 +993,13 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)enterFullScreen:(CGSize)mediaDimensions completionHandler:(CompletionHandler<void(bool)>&&)completionHandler
 {
+    RetainPtr placeholderSnapshot = std::exchange(_placeholderSnapshot, nil);
+    completionHandler = [weakSelf = WeakObjCPtr<WKFullScreenWindowController> { self }, completionHandler = WTF::move(completionHandler)](bool success) mutable {
+        if (!success)
+            [weakSelf.get() _removePlaceholderSnapshotView];
+        completionHandler(success);
+    };
+
     if (self.isFullScreen)
         return completionHandler(false);
 
@@ -987,7 +1011,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     auto logIdentifier = OBJC_LOGIDENTIFIER;
     WeakObjCPtr<WKFullScreenWindowController> weakSelf { self };
-    page->fullscreenClient().requestPresentingViewController([logIdentifier, weakSelf = WTF::move(weakSelf), mediaDimensions, completionHandler = WTF::move(completionHandler)] (UIViewController *viewController, NSError *error) mutable {
+    page->fullscreenClient().requestPresentingViewController([logIdentifier, weakSelf = WTF::move(weakSelf), mediaDimensions, placeholderSnapshot = WTF::move(placeholderSnapshot), completionHandler = WTF::move(completionHandler)](UIViewController *viewController, NSError *error) mutable {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf)
             return completionHandler(false);
@@ -1019,7 +1043,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             return completionHandler(false);
         }
 
-        [strongSelf _enterFullScreen:mediaDimensions windowScene:windowScene.get() completionHandler:WTF::move(completionHandler)];
+        [strongSelf _enterFullScreen:mediaDimensions windowScene:windowScene.get() placeholderSnapshot:placeholderSnapshot.get() completionHandler:WTF::move(completionHandler)];
     });
 }
 
@@ -1047,7 +1071,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 }
 
-- (void)_enterFullScreen:(CGSize)mediaDimensions windowScene:(UIWindowScene *)windowScene completionHandler:(CompletionHandler<void(bool)>&&)completionHandler
+- (void)_enterFullScreen:(CGSize)mediaDimensions windowScene:(UIWindowScene *)windowScene placeholderSnapshot:(CGImageRef)placeholderSnapshot completionHandler:(CompletionHandler<void(bool)>&&)completionHandler
 {
     ASSERT(_fullScreenState == WebKit::WaitingToEnterFullScreen);
     ASSERT(!_exitRequested);
@@ -1161,9 +1185,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self _updateLocationInfo];
 
 #if ENABLE(FULLSCREEN_DISMISSAL_GESTURES)
+    // A projected video uses drag to aim its camera, and this recognizer cancels touches in the
+    // view, so a downward drag would exit fullscreen instead of tilting the view.
+    _suppressDismissalGestures = manager->isProjectedVideo();
+
     _startDismissGestureRecognizer = adoptNS([[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(_startToDismissFullscreenChanged:)]);
     [_startDismissGestureRecognizer setDelegate:self];
-    [_startDismissGestureRecognizer setCancelsTouchesInView:YES];
+    [_startDismissGestureRecognizer setEnabled:!_suppressDismissalGestures];
+    [_startDismissGestureRecognizer setCancelsTouchesInView:!_suppressDismissalGestures];
     [_startDismissGestureRecognizer setNumberOfTouchesRequired:1];
     [_startDismissGestureRecognizer setDirection:UISwipeGestureRecognizerDirectionDown];
     [_fullscreenViewController.get().view addGestureRecognizer:_startDismissGestureRecognizer.get()];
@@ -1187,7 +1216,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     WKSnapshotConfiguration* config = nil;
     auto logIdentifier = OBJC_LOGIDENTIFIER;
-    [webView takeSnapshotWithConfiguration:config completionHandler:makeBlockPtr([self, protectedSelf = RetainPtr { self }, logIdentifier, completionHandler = WTF::move(completionHandler)] (UIImage * snapshotImage, NSError * error) mutable {
+    auto didTakeSnapshot = [self, protectedSelf = RetainPtr { self }, logIdentifier, completionHandler = WTF::move(completionHandler)](UIImage * snapshotImage, NSError * error) mutable {
         RetainPtr<WKWebView> webView = self._webView;
         RefPtr page = [self._webView _page].get();
         if (!page)
@@ -1199,6 +1228,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
         [[_webViewPlaceholder layer] setContents:(id)protect([snapshotImage CGImage]).get()];
         WebKit::replaceViewWithView(webView.get(), _webViewPlaceholder.get());
+        [self _removePlaceholderSnapshotView];
 
         [webView setAutoresizingMask:(UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight)];
         // FIXME (267139): Changing the web view's frame should ideally only be done by the fullscreen view controller.
@@ -1241,7 +1271,60 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         });
 
         [CATransaction commit];
+    };
+
+    if (placeholderSnapshot) {
+        OBJC_ALWAYS_LOG(logIdentifier, "using snapshot captured at request time");
+        didTakeSnapshot(adoptNS([[UIImage alloc] initWithCGImage:placeholderSnapshot scale:page->deviceScaleFactor() orientation:UIImageOrientationUp]).get(), nil);
+        return;
+    }
+
+    [webView takeSnapshotWithConfiguration:config completionHandler:makeBlockPtr(WTF::move(didTakeSnapshot)).get()];
+}
+
+- (void)installPlaceholderSnapshot
+{
+    _placeholderSnapshot = nullptr;
+    [self _removePlaceholderSnapshotView];
+
+#if HAVE(CORE_ANIMATION_RENDER_SERVER)
+    RetainPtr<WKWebView> webView = self._webView;
+    RefPtr page = [webView _page].get();
+    CGRect bounds = [webView bounds];
+    if (!page || CGRectIsEmpty(bounds))
+        return;
+
+    // Only keep a snapshot taken synchronously; one taken later may include changes the page made after requesting fullscreen.
+    auto placeholderSnapshot = Box<RetainPtr<CGImageRef>>::create();
+    [webView _snapshotRectAfterScreenUpdates:YES rectInViewCoordinates:bounds intoImageOfWidth:bounds.size.width * page->deviceScaleFactor() completionHandler:makeBlockPtr([placeholderSnapshot](CGImageRef image) {
+        *placeholderSnapshot = image;
     }).get()];
+    _placeholderSnapshot = WTF::move(*placeholderSnapshot);
+
+    if (_placeholderSnapshot) {
+        _placeholderSnapshotView = adoptNS([[UIView alloc] initWithFrame:[webView frame]]);
+        [_placeholderSnapshotView setAutoresizingMask:[webView autoresizingMask]];
+        [_placeholderSnapshotView setUserInteractionEnabled:NO];
+        [[_placeholderSnapshotView layer] setContents:(id)_placeholderSnapshot.get()];
+        [[webView superview] insertSubview:_placeholderSnapshotView.get() aboveSubview:webView.get()];
+    }
+
+    OBJC_ALWAYS_LOG(OBJC_LOGIDENTIFIER, _placeholderSnapshot ? "captured" : "capture failed");
+#endif
+}
+
+- (void)discardPlaceholderSnapshot
+{
+    if (!_placeholderSnapshot)
+        return;
+
+    _placeholderSnapshot = nullptr;
+    [self _removePlaceholderSnapshotView];
+}
+
+- (void)_removePlaceholderSnapshotView
+{
+    [std::exchange(_placeholderSnapshotView, nil) removeFromSuperview];
 }
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
@@ -1586,8 +1669,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 
     CompletionHandler<void()> completionHandlerAfterRenderingUpdateIfFocused([protectedSelf = retainPtr(self), self, windowWasKey, logIdentifier = OBJC_LOGIDENTIFIER] {
-        _webViewPlaceholder.get().parent = nil;
-        [_webViewPlaceholder removeFromSuperview];
+        RetainPtr webViewPlaceholder = std::exchange(_webViewPlaceholder, nil);
+        [webViewPlaceholder setParent:nil];
+        [webViewPlaceholder removeFromSuperview];
 
         if (RefPtr page = [self._webView _page].get()) {
             page->setSuppressVisibilityUpdates(false);
@@ -1625,6 +1709,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (void)close
 {
     OBJC_ALWAYS_LOG(OBJC_LOGIDENTIFIER);
+    [self _removePlaceholderSnapshotView];
     [self _exitFullscreenImmediately];
     self._webView = nil;
 }
@@ -1899,16 +1984,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     NSString *EVOrganizationName = [self _EVOrganizationName];
     BOOL showsEVOrganizationName = [EVOrganizationName length] > 0;
 
-    NSString *domain = nil;
-
-#if HAVE(URL_FORMATTING)
-    domain = [url _lp_simplifiedDisplayString];
-#else
-    if (LinkPresentationLibrary())
-        domain = [url _lp_simplifiedDisplayString];
-    else
-        domain = WTF::userVisibleString(url);
-#endif
+    NSString *domain = [url _lp_simplifiedDisplayString];
 
     NSString *text = nil;
     if ([[url scheme] caseInsensitiveCompare:@"data"] == NSOrderedSame)

@@ -45,7 +45,9 @@ class Encoder;
 
 namespace WebKit {
 
-enum class WebEventInputSource : uint8_t { UserDriven, Automation };
+// Touch is for events that come from direct touches on macOS (the touch screen, not the trackpad), which WebKit delivers as mouse,
+// wheel, and gesture events instead of touch events. Default is everything else, including mouse and trackpad input, and touches on other platforms.
+enum class WebEventInputSource : uint8_t { Default, Touch };
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
 uintptr_t generateSignpostIdentifier();
@@ -80,7 +82,7 @@ public:
 
     MonotonicTime timestamp() const { return m_data.timestamp; }
 
-    bool LEGACY_NODELETE isActivationTriggeringEvent() const;
+    NODELETE bool isActivationTriggeringEvent() const;
     WTF::UUID authorizationToken() const { return m_data.authorizationToken; }
 
 #if PLATFORM(GTK) || PLATFORM(WPE)

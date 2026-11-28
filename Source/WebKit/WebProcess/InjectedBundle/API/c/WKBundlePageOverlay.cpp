@@ -121,7 +121,7 @@ private:
             return m_client.mouseUp(toAPI(&pageOverlay), WebKit::toAPI(flooredIntPoint(event.position())), WebKit::toAPI(event.button()), m_client.base.clientInfo);
         }
         case WebCore::PlatformMouseEvent::Type::MouseMoved: {
-            if (event.button() == WebCore::MouseButton::None) {
+            if (!event.button()) {
                 if (!m_client.mouseMoved)
                     return false;
 
@@ -147,7 +147,7 @@ private:
             return std::nullopt;
 
         WKBundleRangeHandleRef apiRange = nullptr;
-        auto actionContext = (WKDDActionContext *)m_client.actionContextForResultAtPoint(toAPI(&pageOverlay), WKPointMake(location.x(), location.y()), &apiRange, m_client.base.clientInfo);
+        SUPPRESS_FORWARD_DECL_ARG auto actionContext = (WKDDActionContext *)m_client.actionContextForResultAtPoint(toAPI(&pageOverlay), WKPointMake(location.x(), location.y()), &apiRange, m_client.base.clientInfo);
         if (!actionContext || !apiRange)
             return std::nullopt;
 

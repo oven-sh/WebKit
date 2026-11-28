@@ -39,10 +39,9 @@
 #include "StyleRule.h"
 #include <wtf/MainThread.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
-static bool LEGACY_NODELETE isSiblingOrSubject(MatchElement::Relation relation)
+NODELETE static bool isSiblingOrSubject(MatchElement::Relation relation)
 {
     switch (relation) {
     case MatchElement::Relation::Subject:
@@ -78,13 +77,64 @@ const CSSSelector& RuleAndSelector::selector() const
     return styleRule->selectorList().selectorAt(selectorIndex);
 }
 
+Ref<RuleFeatureSelectors> RuleFeatureSelectors::create(CSSSelectorList&& invalidationSelector, CSSSelectorList&& scopeSelector)
+{
+    return adoptRef(*new RuleFeatureSelectors(WTF::move(invalidationSelector), WTF::move(scopeSelector)));
+}
+
+RuleFeatureSelectors::RuleFeatureSelectors(CSSSelectorList&& invalidationSelector, CSSSelectorList&& scopeSelector)
+    : invalidationSelector(WTF::move(invalidationSelector))
+    , scopeSelector(WTF::move(scopeSelector))
+{
+}
+
 RuleFeature::RuleFeature(const RuleData& ruleData, MatchElement matchElement, IsNegation isNegation, CSSSelectorList&& invalidationSelector, CSSSelectorList&& scopeSelector)
     : RuleAndSelector(ruleData)
     , matchElement(matchElement)
     , isNegation(isNegation)
-    , invalidationSelector(WTF::move(invalidationSelector))
-    , scopeSelector(WTF::move(scopeSelector))
+    , m_selectors([&] -> Selectors {
+        // The accessors return a single complex selector.
+        ASSERT(invalidationSelector.size() <= 1);
+        ASSERT(scopeSelector.size() <= 1);
+
+        if (!invalidationSelector.isEmpty() && !scopeSelector.isEmpty())
+            return RuleFeatureSelectors::create(WTF::move(invalidationSelector), WTF::move(scopeSelector));
+        if (!invalidationSelector.isEmpty())
+            return RuleFeatureInvalidationSelector { WTF::move(invalidationSelector) };
+        if (!scopeSelector.isEmpty())
+            return RuleFeatureScopeSelector { WTF::move(scopeSelector) };
+        return std::monostate { };
+    }())
 {
+}
+
+// CompactVariant::switchOn() passes alternatives decoded into a temporary so only the heap allocated selectors may be referenced.
+const CSSSelector* RuleFeature::invalidationSelector() const
+{
+    return WTF::switchOn(m_selectors,
+        [](const RuleFeatureInvalidationSelector& selector) -> const CSSSelector* {
+            return &selector.selectorList.first();
+        },
+        [](const Ref<const RuleFeatureSelectors>& selectors) -> const CSSSelector* {
+            return &selectors->invalidationSelector.first();
+        },
+        [](const auto&) -> const CSSSelector* {
+            return nullptr;
+        });
+}
+
+const CSSSelector* RuleFeature::scopeSelector() const
+{
+    return WTF::switchOn(m_selectors,
+        [](const RuleFeatureScopeSelector& selector) -> const CSSSelector* {
+            return &selector.selectorList.first();
+        },
+        [](const Ref<const RuleFeatureSelectors>& selectors) -> const CSSSelector* {
+            return &selectors->scopeSelector.first();
+        },
+        [](const auto&) -> const CSSSelector* {
+            return nullptr;
+        });
 }
 
 SelectorDeduplicationKey::SelectorDeduplicationKey(const CSSSelector& selector)
@@ -145,7 +195,7 @@ static MatchElement::Relation computeNextRelation(MatchElement::Relation relatio
     return relation;
 };
 
-static MatchElement::HasRelation LEGACY_NODELETE toHasRelation(MatchElement::Relation relation)
+NODELETE static MatchElement::HasRelation toHasRelation(MatchElement::Relation relation)
 {
     switch (relation) {
     case MatchElement::Relation::Parent:
@@ -181,12 +231,12 @@ MatchElement::HasRelation computeHasArgumentRelation(const CSSSelector& hasSelec
     return toHasRelation(relation);
 }
 
-static bool LEGACY_NODELETE isSiblingCombinator(CSSSelector::Relation relation)
+NODELETE static bool isSiblingCombinator(CSSSelector::Relation relation)
 {
     return relation == CSSSelector::Relation::DirectAdjacent || relation == CSSSelector::Relation::IndirectAdjacent;
 }
 
-static bool LEGACY_NODELETE compoundContainsHostPseudoClass(const CSSSelector& anySimpleInCompound)
+NODELETE static bool compoundContainsHostPseudoClass(const CSSSelector& anySimpleInCompound)
 {
     for (auto* simple = anySimpleInCompound.leftmostInCompound(); simple; simple = simple->followingInCompound()) {
         if (simple->match() == CSSSelector::Match::PseudoClass && simple->isHostPseudoClass())
@@ -237,7 +287,7 @@ static MatchElement computeSubSelectorMatchElement(MatchElement matchElement, co
 // Returns true if a combinator inside :is()/:not() within :has() can match elements outside the
 // :has() scope. We use this to decide if a nested entry can be associated with a scope selector
 // to bound invalidation traversal.
-static bool LEGACY_NODELETE isHasScopeBreakingCombinator(CSSSelector::Relation relation, MatchElement::HasRelation hasRelation)
+NODELETE static bool isHasScopeBreakingCombinator(CSSSelector::Relation relation, MatchElement::HasRelation hasRelation)
 {
     if (relation == CSSSelector::Relation::DescendantSpace)
         return true;
@@ -521,8 +571,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
                 scopeSelectorFromSources(scopeSources)
             });
 
-            setUsesRelation(matchElement.relation);
-
             if constexpr (!std::is_same_v<std::nullptr_t, HostAffectingNames>) {
                 if (matchElement.relation == MatchElement::Relation::Host)
                     hostAffectingNames->add(name);
@@ -549,7 +597,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
 
         if (matchElement.relation == MatchElement::Relation::Host)
             attributesAffectingHost.add(selector->attribute().localNameLowercase());
-        setUsesRelation(matchElement.relation);
     }
 
     for (auto& entry : selectorFeatures.pseudoClasses) {
@@ -569,8 +616,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
         if (matchElement.relation == MatchElement::Relation::Host)
             pseudoClassesAffectingHost.add(selector->pseudoClass());
         pseudoClasses.add(selector->pseudoClass());
-
-        setUsesRelation(matchElement.relation);
     }
 
     for (auto& entry : selectorFeatures.hasPseudoClasses) {
@@ -588,7 +633,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
             scopeSources.isEmpty() ? CSSSelectorList { } : CSSSelectorParser::makeHasScopeSelector(scopeSources)
         });
 
-        setUsesRelation(matchElement.relation);
         usesHasPseudoClass = true;
     }
 }
@@ -645,9 +689,6 @@ void RuleFeatureSet::add(const RuleFeatureSet& other)
 
     addMap(hasPseudoClassRules, other.hasPseudoClassRules);
 
-    for (size_t i = 0; i < usedRelations.size(); ++i)
-        usedRelations[i] = usedRelations[i] || other.usedRelations[i];
-
     usesFirstLineRules = usesFirstLineRules || other.usesFirstLineRules;
     usesFirstLetterRules = usesFirstLetterRules || other.usesFirstLetterRules;
     hasStartingStyleRules = hasStartingStyleRules || other.hasStartingStyleRules;
@@ -690,5 +731,4 @@ void RuleFeatureSet::shrinkToFit()
         rules->shrinkToFit();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

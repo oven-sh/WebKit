@@ -43,6 +43,7 @@ namespace JSC {
     /* Call intrinsics. */ \
     macro(NoIntrinsic) \
     macro(AbsIntrinsic) \
+    macro(SignIntrinsic) \
     macro(ACosIntrinsic) \
     macro(ASinIntrinsic) \
     macro(ATanIntrinsic) \
@@ -249,6 +250,7 @@ namespace JSC {
     macro(TypedArrayByteLengthIntrinsic) \
     macro(DataViewByteLengthIntrinsic) \
     macro(TypedArrayByteOffsetIntrinsic) \
+    macro(TypedArrayBufferIntrinsic) \
     macro(UnderscoreProtoIntrinsic) \
     macro(SpeciesGetterIntrinsic) \
     macro(WebAssemblyInstanceExportsIntrinsic) \
@@ -311,7 +313,7 @@ enum Intrinsic : uint8_t {
 #undef JSC_DEFINE_INTRINSIC
 };
 
-std::optional<IterationKind> LEGACY_NODELETE iterationKindForIntrinsic(Intrinsic);
+NODELETE std::optional<IterationKind> iterationKindForIntrinsic(Intrinsic);
 
 ASCIILiteral intrinsicName(Intrinsic);
 

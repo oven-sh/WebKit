@@ -123,7 +123,7 @@ struct FlatOp {
     uint16_t laterFirstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what any later alternative can begin with. *RunBeforeReference: 0 if the group ended before the run, else one more than the units between the run and the end of the group.
     uint16_t registerIndex { 0 }; // DotStarEnclosure: a FlatStepBackward.
     uint16_t memoRow { 0 }; // One more than this op's first row of the table of failed searches. 0: the search from here on depends on more than the position, or makes no choice.
-    uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin. ChoiceByTable: where this alternative's row of FlatProgram::dispatchEntries begins.
+    uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin. ChoiceByTable: where this alternative's row of FlatProgram::dispatchEntries begins. LoopBackUnlessEmpty: whether a turn that took nothing ends the loop instead of failing.
     uint32_t target { 0 }; // *RunBeforeReference: the units between the run and the reference, and from bit 16 up the register that holds the least end of a greedy run.
     uint32_t needed { 0 }; // ChoiceByTable: where its table's part of FlatProgram::dispatchClasses begins. FlatStepBackward::BackReference: whether it ignores case. GreedyRunBeforeReference: the least length of the run.
 };
@@ -143,7 +143,7 @@ struct FlatFrame {
     uint32_t extra;
 };
 
-enum class FlatStartScan : uint8_t { None, OneCharacter, Table, TableBehindPair, RequiredTextsAlone };
+enum class FlatStartScan : uint8_t { None, OneCharacter, Table, TableBehindPair, RequiredTextsAlone, PrecedingUnitOnly };
 
 class FlatProgram {
     WTF_MAKE_TZONE_ALLOCATED(FlatProgram);
@@ -193,7 +193,7 @@ public:
             return;
         // A text at a fixed distance names the one place to try, and the attempt there fails as soon as the table would.
         bool isTextAtFixedDistance = texts.size() == 1 && !texts[0].text.isEmpty() && texts[0].leastDistance == texts[0].greatestDistance;
-        if (startScan == FlatStartScan::None || isTextAtFixedDistance || (mayMatchOnlyAtInputEnd && texts[0].isAllThatMatchesAtEndHold))
+        if (startScan == FlatStartScan::None || startScan == FlatStartScan::PrecedingUnitOnly || isTextAtFixedDistance || (mayMatchOnlyAtInputEnd && texts[0].isAllThatMatchesAtEndHold))
             startScan = FlatStartScan::RequiredTextsAlone;
         // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
         if (std::exchange(skipsStartsBehindFailedRuns, false))
@@ -265,6 +265,16 @@ public:
     StartPair startPair;
     static constexpr unsigned leastLengthSearchedByStartPair = 64;
     FlatStartScan startScan { FlatStartScan::None };
+    // The code units that may precede a match, according to the lookbehinds and the multiline ^ at the start of every match. No attempt is made after any other unit.
+    struct PrecedingUnits {
+        std::array<uint64_t, 4> latin1 { };
+        bool mayBeWide { false };
+        // A match can begin at the start of the input.
+        bool mayBeAbsent { false };
+
+        friend bool operator==(const PrecedingUnits&, const PrecedingUnits&) = default;
+    };
+    std::optional<PrecedingUnits> precedingUnits;
     // No attempt is made where these rule a match out.
     RequiredTexts requiredTexts;
     // `\/[^\/]*\.log` on a path: the start scan is selective, so the texts are not asked at every start. But it stops at every `/` and each attempt walks a folder's name: together they walk the subject.
@@ -272,9 +282,12 @@ public:
     bool asksRequiredTextsLate { false };
     static constexpr unsigned unitsWalkedBeforeTextsAreAsked = 128;
     // Of a program that makes one attempt, with a run in front of the text: `^(?:.*\/)?[^\/]*\.pem$` walks a path once for each of its folders.
-    // A long subject is looked through for the text first: the run alone costs more. A shorter one when the attempt has gone back this often, and then the attempt begins anew: a short attempt pays nothing.
+    // A subject of middling length whose first unit fits is looked through for the text first: the run alone costs more. Any other when the attempt has gone back this often,
+    // and then the attempt begins anew: a short attempt pays nothing, or a bounded look, however long the subject is.
     std::optional<RequiredText> textOfEveryMatch;
     static constexpr unsigned leastLengthLookedThroughFirst = 256;
+    static constexpr unsigned greatestLengthLookedThroughFirst = 4096;
+    // A step may walk a run again, so the number does not grow with the subject.
     static constexpr unsigned stepsBeforeLookingForText = 9;
     uint8_t stepsPerCharacterBehindLookForText { 0 };
 
@@ -303,6 +316,7 @@ public:
     // Of a pattern in unicode mode with a step that can consume a surrogate. There a lead surrogate and the trail surrogate behind it are one character, and that trail surrogate alone is none.
     // A match that meets a surrogate, in a step that tests for a class or goes back, where an attempt begins or where one might, is made again by the full machine.
     bool decodesSurrogatePairs { false };
+    bool isInUnicodeMode { false };
     // Whether the JIT takes turns off matchLimit for this pattern, and so can give a match up.
     bool jitCountsTurns { false };
     bool countsTurns { false };
@@ -334,6 +348,18 @@ public:
         unsigned greatestLength { 0 };
     };
     std::optional<WholeTexts> wholeTexts;
+    // The hash table of wholeTexts for compiled code. A free slot has length 0. The table is followed by as many slots as there are texts, so a search never wraps around.
+    struct WholeTextSlot {
+        uint32_t length { 0 };
+        const char16_t* units { nullptr };
+    };
+    Vector<WholeTextSlot> wholeTextSlots;
+    const WholeTextSlot* firstWholeTextSlot { nullptr };
+    uint32_t wholeTextSlotMask { 0 };
+    uint32_t maxWholeTextLength { 0 };
+    // For each text, the bit at the low bits of its placeOf() is set. Most subjects equal no text, and their bit is clear, so they need no search.
+    static constexpr unsigned numberOfWholeTextBits = 256;
+    std::array<uint64_t, numberOfWholeTextBits / 64> wholeTextBits { };
     // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
     unsigned memoRows { 0 };
     unsigned positionKeyedMemoRows { 0 };
@@ -413,10 +439,10 @@ struct RegExpMatchOutcome {
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&, FlatProgramForm = FlatProgramForm::Fast);
 // Whether the pattern has a program of each form, and the one that counts turns keeps a table.
-bool hasFlatProgramsThatRememberFailedSearches(StringView pattern, OptionSet<Flags>);
+bool hasFlatProgramsThatRememberFailedSearches(const YarrPattern& analyzed, StringView);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
 // It depends on whether the group has anything to go back into. What has been found out about a disjunction is kept, so that each is walked once however deep groups are nested.
-using KnownBacktrackableContent = UncheckedKeyHashMap<const PatternDisjunction*, bool>;
+using KnownBacktrackableContent = HashMap<const PatternDisjunction*, bool>;
 bool jitCountsTurnsOf(const PatternTerm&, KnownBacktrackableContent&);
 void removeUnneededLogging(FlatProgram&);
 // For ops that run with nothing to undo: each becomes the form that pushes no undo frame.

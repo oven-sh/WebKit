@@ -33,8 +33,7 @@
 #include "StylePrimitiveNumericTypes+Serialization.h"
 #include "TransformOperationData.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 void Serialize<Ray>::operator()(StringBuilder& builder, const CSS::SerializationContext& context, const Style::ComputedStyle& style, const Ray& value)
 {
@@ -85,7 +84,7 @@ static double lengthForRayPath(const Ray& ray, const MotionPathData& data)
     );
 }
 
-static double LEGACY_NODELETE lengthForRayContainPath(const FloatRect& elementRect, double computedPathLength)
+NODELETE static double lengthForRayContainPath(const FloatRect& elementRect, double computedPathLength)
 {
     return std::max(0.0, computedPathLength - (std::max(elementRect.width(), elementRect.height()) / 2));
 }
@@ -138,5 +137,4 @@ AcceleratedEffectRayFunction Evaluation<RayFunction, AcceleratedEffectRayFunctio
 
 #endif
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

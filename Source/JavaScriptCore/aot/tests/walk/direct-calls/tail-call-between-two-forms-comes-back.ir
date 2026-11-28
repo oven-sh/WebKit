@@ -1,0 +1,105 @@
+# whoever is jumped to returns in place of the caller, so a jump needs one form on both sides. Between two forms the call is still direct: it comes back, and what it gave is brought into the caller's form.
+# No ring of calls in tail position has such a pair: a ring of calls of values returns boxed values throughout
+# function small(n) { return n | 0 }  function wide(n) { return n > 0 ? small(n) : 0.5 }  function loose(n) { return n > 1 ? wide(n) : undefined }
+# function even(n) { return n === 0 ? true : odd(n - 1) }  function odd(n) { return n === 0 ? false : even(n - 1) }  sink(loose(3.5), even(3), small(3.5), wide(3.5))
+# RUN: walk f2 mechanisms=-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: [[call]]: i32 @Int32 = CallDirect {{*}}function=f1
+# CHECK-NEXT: [[double]]: i32 @Double = IntegerToNumber [[call]]
+# CHECK-NEXT: Return [[double]]
+# RUN(BOXES): walk f3 mechanisms=-Inlining
+# BOXES-LABEL: code f3:Body
+# BOXES: [[call]]: {{*}} @Double = CallDirect {{*}}function=f2
+# BOXES-NEXT: [[boxed]]: {{*}} @OptionalDouble = Box [[call]]
+# BOXES-NEXT: Return [[boxed]]
+# RUN(RING): walk f4 mechanisms=-Inlining
+# RING-LABEL: code f4:Body
+# RING: [[call]]: boolean @JSValue = CallDirect {{*}}function=f5
+# RING-NEXT: ReturnCall [[call]]
+
+variable g0 name="small" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="wide" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="loose" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="even" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="odd" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double number=3.5
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0 calleeName="loose"
+    v3 = Integer integer=3
+    v4 = GetModuleVariable variable=g3
+    v5 = Call v4, -, v3 calleeName="even"
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -, v0 calleeName="small"
+    v8 = GetModuleVariable variable=g1
+    v9 = Call v8, -, v0 calleeName="wide"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="sink" [isFreeName]
+    v12 = Call v11, -, v2, v5, v7, v9
+    Return v12
+}
+function f1 name="small" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    Return v2
+}
+function f2 name="wide" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Greater v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0 calleeName="small"
+    ReturnCall v4
+  b2():
+    v5 = Double number=0.5
+    Return v5
+}
+function f3 name="loose" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Greater v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v0 calleeName="wide"
+    ReturnCall v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f4 name="even" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=true
+    Return v3
+  b2():
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = GetModuleVariable variable=g4
+    v7 = Call v6, -, v5 calleeName="odd"
+    ReturnCall v7
+}
+function f5 name="odd" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean
+    Return v3
+  b2():
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = GetModuleVariable variable=g3
+    v7 = Call v6, -, v5 calleeName="even"
+    ReturnCall v7
+}

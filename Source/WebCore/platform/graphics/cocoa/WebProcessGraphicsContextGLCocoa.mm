@@ -81,7 +81,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(DisplayBufferFence);
 
 class DisplayBufferDisplayDelegate final : public GraphicsLayerContentsDisplayDelegate {
 public:
-    static Ref<DisplayBufferDisplayDelegate> LEGACY_NODELETE create(bool isOpaque)
+    NODELETE static Ref<DisplayBufferDisplayDelegate> create(bool isOpaque)
     {
         return adoptRef(*new DisplayBufferDisplayDelegate(isOpaque));
     }
@@ -133,7 +133,6 @@ private:
 class WebProcessGraphicsContextGLCocoa final : public GraphicsContextGLCocoa
 {
     WTF_MAKE_TZONE_ALLOCATED(WebProcessGraphicsContextGLCocoa);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebProcessGraphicsContextGLCocoa);
 public:
     ~WebProcessGraphicsContextGLCocoa();
 

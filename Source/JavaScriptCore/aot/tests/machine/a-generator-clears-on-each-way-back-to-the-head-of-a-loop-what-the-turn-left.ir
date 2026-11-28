@@ -1,0 +1,61 @@
+# function* steps(tag) { for (;;) { yield 0; const thing = { tag }; yield 1; if (tag) continue; tag = thing.tag; } }   globalThis.made = steps;
+# `thing` is made behind the first yield of a turn and lives across the second alone. Its word is stored where it is made.
+# Nothing needs it at the head of the loop, which is passed in every turn and does not know which way has led there. Each of the two ways back knows that the word is set, and clears it:
+# a generator that waits at the first yield of the next turn holds the object no longer. The head, which lies between the first two entrypoints behind the start, stores nothing there.
+# RUN: emit f1:CoroutineBody mechanisms=all
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK: entrypoint 1
+# CHECK-NOT: Store({{*}}offset = 96, InternalFields
+# CHECK: entrypoint 2
+# In which order the blocks of the making and of the two ways back are laid hangs on the machine, so they are counted: two stores clear the word, and one more sets it.
+# RUN(CLEARS): emit f1:CoroutineBody mechanisms=all
+# CLEARS-COUNT-2: Store(@2, {{*}}offset = 96, InternalFields
+# CLEARS-NOT: Store(@2, {{*}}offset = 96, InternalFields
+# RUN(STORES): emit f1:CoroutineBody mechanisms=all
+# STORES-COUNT-3: Store({{*}}offset = 96, InternalFields
+# STORES-NOT: Store({{*}}offset = 96, InternalFields
+
+layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="made"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="steps" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+  b0(v0: anything, v1: function, v2: anything):
+    InitialYield v2, v0
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = Integer integer=0
+    v7 = Yield v6, v4, v0
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Switch v9 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v8
+  b3():
+    Return v8
+  b4():
+    v10 = NewObject -, v4 layout=L0 fields=[0]
+    v11 = FinishObject v10
+    v12 = Integer integer=1
+    v13 = Yield v12, v4, v0
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Switch v15 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5():
+    Throw v14
+  b6():
+    Return v14
+  b7():
+    Branch v4 -> taken b1(v4), notTaken b8()
+  b8():
+    v16 = PropGet v11 key="tag"
+    Jump -> next b1(v16)
+}

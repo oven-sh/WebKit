@@ -1,0 +1,151 @@
+# what Math.floor, ceil, trunc and round make of the quotient of two proven integers is divided as integers, wherever no -0, NaN or infinity can come of it
+# function down(v) { if (!isInt32(v)) return v; return Math.floor(v / ((v & 7) + 1)); }
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = DivideIntegers
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = DivideIntegers
+# RUN(ONLY): walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# ONLY-NOT: = CallInline
+# function up(v) { if (!isInt32(v)) return v; return Math.ceil((v & 255) / ((v & 7) + 1)); }
+# RUN(UP): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# UP-LABEL: code f2:Body
+# UP: = DivideIntegers {{*}}rounding=Ceil
+# function upOfNegative(v) { if (!isInt32(v)) return v; return Math.ceil(v / ((v & 7) + 1)); } a quotient between -1 and 0 goes up to -0
+# RUN(MINUS): walk f3 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# MINUS-NOT: DivideIntegers
+# function byZero(v) { if (!isInt32(v)) return v; return Math.floor(v / (v & 7)); } what a zero divides is no integer
+# RUN(ZERO): walk f4 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# ZERO-NOT: DivideIntegers
+# function halve(v) { if (!isInt32(v)) return v; let i = v; while (i > 0) i = Math.floor(i / 2); return i; } a look at the loop types the call as the division, so what comes round is an integer
+# RUN(LOOP): walk f5 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# LOOP-LABEL: code f5:Body
+# LOOP: @Int32){{*}}isLoopHead=true
+# LOOP: = DivideIntegers
+# function named(Math, v) { if (!isInt32(v)) return v; return Math.floor(v / ((v & 7) + 1)); } nothing is decided by the text of a name
+# RUN(NAME): walk f6 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# NAME-NOT: DivideIntegers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="down" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = Div v2, v6
+    v8 = Builtin builtin=Math
+    v9 = Builtin builtin=MathFloor
+    v10 = Call v9, v8, v7 calleeKey="floor" calleeName="Math.floor"
+    Return v10
+  b2(v11):
+    Return v11
+}
+function f2 name="up" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = Integer integer=255
+    v8 = BitAnd v2, v7
+    v9 = Div v8, v6
+    v10 = Builtin builtin=Math
+    v11 = Builtin builtin=MathCeil
+    v12 = Call v11, v10, v9 calleeKey="ceil" calleeName="Math.ceil"
+    Return v12
+  b2(v13):
+    Return v13
+}
+function f3 name="upOfNegative" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = Div v2, v6
+    v8 = Builtin builtin=Math
+    v9 = Builtin builtin=MathCeil
+    v10 = Call v9, v8, v7 calleeKey="ceil" calleeName="Math.ceil"
+    Return v10
+  b2(v11):
+    Return v11
+}
+function f4 name="byZero" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Div v2, v4
+    v6 = Builtin builtin=Math
+    v7 = Builtin builtin=MathFloor
+    v8 = Call v7, v6, v5 calleeKey="floor" calleeName="Math.floor"
+    Return v8
+  b2(v9):
+    Return v9
+}
+function f5 name="halve" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b5(| 0)
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    LoopHint
+    v5 = Integer
+    v6 = Greater v3, v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer integer=2
+    v8 = Div v3, v7
+    v9 = Builtin builtin=Math
+    v10 = Builtin builtin=MathFloor
+    v11 = Call v10, v9, v8 calleeKey="floor" calleeName="Math.floor"
+    Jump -> next b2(v11)
+  b4():
+    Return v3
+  b5(v12):
+    Return v12
+}
+function f6 name="named" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=i32
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Integer integer=7
+    v5 = BitAnd v3, v4
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    v8 = Div v3, v7
+    v9 = PropGet v0 key="floor"
+    v10 = Call v9, v0, v8 calleeKey="floor" calleeName="Math.floor"
+    Return v10
+  b2(v11):
+    Return v11
+}

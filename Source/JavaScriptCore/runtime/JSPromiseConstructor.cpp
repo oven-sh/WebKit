@@ -50,7 +50,7 @@
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromiseConstructor);
-static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
+JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncReject);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncWithResolvers);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncAny);
@@ -178,7 +178,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncWithResolvers, (JSGlobalObject* g
     return JSValue::encode(JSPromise::createNewPromiseCapability(globalObject, thisValue));
 }
 
-static bool LEGACY_NODELETE isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
+NODELETE static bool isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
 {
     if (value != globalObject->promiseConstructor()) [[unlikely]]
         return false;
@@ -201,6 +201,20 @@ static ALWAYS_INLINE bool canSkipIntermediatePromise(JSGlobalObject* globalObjec
     if (!cell->isObject())
         return true;
     return isDefinitelyNonThenable(uncheckedDowncast<JSObject>(cell), globalObject);
+}
+
+static ALWAYS_INLINE JSPromise* dynamicCastToPlainPromise(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isCell())
+        return nullptr;
+    JSCell* cell = value.asCell();
+    if (cell->structureID() != globalObject->promiseStructure()->id()) [[unlikely]]
+        return nullptr;
+    if (globalObject->promiseSpeciesWatchpointSet().state() != IsWatched) [[unlikely]]
+        return nullptr;
+    if (!globalObject->promiseThenWatchpointSet().isStillValid()) [[unlikely]]
+        return nullptr;
+    return uncheckedDowncast<JSPromise>(cell);
 }
 
 static ALWAYS_INLINE unsigned vectorLengthHintForCombinator(JSValue iterable)
@@ -318,6 +332,12 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
     JSFunction* reject = nullptr;
     forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
+
+        if (auto* plainPromise = dynamicCastToPlainPromise(globalObject, value)) [[likely]] {
+            scope.release();
+            plainPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseRaceResolveJob, promise, promise);
+            return;
+        }
 
         if (canSkipIntermediatePromise(globalObject, value)) {
             scope.release();
@@ -531,6 +551,14 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
 
         values->putDirectIndex(globalObject, index, jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
+
+        if (auto* plainPromise = dynamicCastToPlainPromise(globalObject, value)) [[likely]] {
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            scope.release();
+            plainPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, globalContext, jsNumber(index));
+            ++index;
+            return;
+        }
 
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
@@ -1004,6 +1032,14 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAllSettled, (JSGlobalObject* glob
         values->putDirectIndex(globalObject, index, jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
 
+        if (auto* plainPromise = dynamicCastToPlainPromise(globalObject, value)) [[likely]] {
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            scope.release();
+            plainPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllSettledResolveJob, globalContext, jsNumber(index));
+            ++index;
+            return;
+        }
+
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
             scope.release();
@@ -1452,6 +1488,14 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
 
         errors->putDirectIndex(globalObject, index, jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
+
+        if (auto* plainPromise = dynamicCastToPlainPromise(globalObject, value)) [[likely]] {
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            scope.release();
+            plainPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAnyResolveJob, globalContext, jsNumber(index));
+            ++index;
+            return;
+        }
 
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);

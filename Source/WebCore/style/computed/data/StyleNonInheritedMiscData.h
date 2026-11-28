@@ -49,8 +49,7 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class DeprecatedFlexibleBoxData;
 class FilterData;
@@ -73,7 +72,7 @@ public:
     void dumpDifferences(TextStream&, const NonInheritedMiscData&) const;
 #endif
 
-    bool LEGACY_NODELETE hasFilters() const;
+    NODELETE bool hasFilters() const;
 
     // This is here to pack in with m_refCount.
     Opacity opacity;
@@ -126,5 +125,4 @@ private:
     NonInheritedMiscData(const NonInheritedMiscData&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

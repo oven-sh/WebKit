@@ -94,7 +94,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManagerAudioHardwareListener);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManagerProxy);
 
-static WeakPtr<RemoteMediaSessionManagerProxy>& LEGACY_NODELETE singletonWeakPtr()
+NODELETE static WeakPtr<RemoteMediaSessionManagerProxy>& singletonWeakPtr()
 {
     static NeverDestroyed<WeakPtr<RemoteMediaSessionManagerProxy>> singleton;
     return singleton;
@@ -280,6 +280,12 @@ void RemoteMediaSessionManagerProxy::mediaSessionWillBeginPlayback(IPC::Connecti
     // process's sessions: making this one current, and the concurrent playback restriction.
     if (RefPtr session = findAndUpdateSession(connection, state))
         REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::sessionWillBeginPlayback(*session);
+}
+
+void RemoteMediaSessionManagerProxy::enforceConcurrentPlaybackRestriction(IPC::Connection& connection, RemoteMediaSessionState&& state)
+{
+    if (RefPtr session = findAndUpdateSession(connection, state))
+        REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::enforceConcurrentPlaybackRestriction(*session);
 }
 
 void RemoteMediaSessionManagerProxy::addMediaSessionRestriction(WebCore::PlatformMediaSessionMediaType type, WebCore::MediaSessionRestrictions restrictions)

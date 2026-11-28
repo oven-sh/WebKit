@@ -1,0 +1,131 @@
+# The program runs no text and hands `kept` to nobody, so linked() rules out of its layout whatever no statement does, and compiled code reads its objects without a look.
+# The shell takes the object out of the heap (aotFindObjectOfLayout()), a road that no program has: each run does one deed that is ruled out. That is a false proof made on purpose, and the run time ends the process at the deed:
+# an emptied slot, a frozen object or another prototype under code that does not look would be a wrong answer or worse. What fits what is proven goes through.
+# The same deeds on a layout that reaches unseen code stop nothing and leave their marks: deeds-of-code-that-the-build-has-not-seen-leave-their-marks-on-the-object.ir.
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); print(aotPlaceOfProperty(kept, "count"), JSON.stringify(aotMarksOfObject(kept))); kept.count = 5; kept.label = "other"; print(kept.count, kept.label, aotPlaceOfProperty(kept, "count")); });
+# CHECK: slot ""
+# CHECK-NEXT: 5 other slot
+# CHECK-NEXT: exited with 0
+# Every call of `twice` is copied and no compiled code enters it by value: its entry is closed.
+# RUN(ENTERS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { print(aotFindObjectOfLayout(0).twice()); print("went on"); });
+# ENTERS: bun: internal AOT error: type check failed
+# ENTERS-NEXT: in an argument
+# ENTERS-NOT: went on
+# ENTERS: crashed with
+# RUN(STORES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { aotFindObjectOfLayout(0).count = "text"; print("went on"); });
+# STORES: bun: internal AOT error: object mutation check failed
+# STORES-NEXT: StoreOfOtherType on an instance of class 'Closed'{{*}}, but the compiler proved that this never happens
+# STORES-NOT: went on
+# STORES: crashed with
+# RUN(DELETES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { delete aotFindObjectOfLayout(0).label; print("went on"); });
+# DELETES: bun: internal AOT error: object mutation check failed
+# DELETES-NEXT: DeleteField on an instance of class 'Closed'
+# DELETES-NOT: went on
+# DELETES: crashed with
+# RUN(REDEFINES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { Object.defineProperty(aotFindObjectOfLayout(0), "label", { get() { return "got"; } }); print("went on"); });
+# REDEFINES: bun: internal AOT error: object mutation check failed
+# REDEFINES-NEXT: RedefineProperty on an instance of class 'Closed'
+# REDEFINES-NOT: went on
+# REDEFINES: crashed with
+# RUN(ADDS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { aotFindObjectOfLayout(0).other = 1; print("went on"); });
+# ADDS: bun: internal AOT error: object mutation check failed
+# ADDS-NEXT: AddProperty on an instance of class 'Closed'
+# ADDS-NOT: went on
+# ADDS: crashed with
+# RUN(FREEZES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { Object.freeze(aotFindObjectOfLayout(0)); print("went on"); });
+# FREEZES: bun: internal AOT error: object mutation check failed
+# FREEZES-NEXT: ChangeIntegrity on an instance of class 'Closed'
+# FREEZES-NOT: went on
+# FREEZES: crashed with
+# RUN(RELINKS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { Object.setPrototypeOf(aotFindObjectOfLayout(0), null); print("went on"); });
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on an instance of class 'Closed'
+# RELINKS-NOT: went on
+# RELINKS: crashed with
+
+module m0 path="closed.js" displayPath="closed.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Closed" module=m0 position=6 constructor=f2 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g0 @0
+    v5 = NewClosure function=f3 @85
+    DefineMethod v3, v5 layout=L0 key="twice" @85
+    v7 = FinishClass v3 layout=L0 @0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v10 = Construct v9 calleeName="Closed" @232
+    v11 = Integer @254
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @254
+    v13 = Integer @273
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @273
+    Jump -> next b2(v12, v14) @266
+  b2(v15, v16):
+    LoopHint @266
+    v18 = Integer integer=3 @283
+    v19 = Less v16, v18 @283
+    Branch v19 -> taken b3(), notTaken b5() @283
+  b3():
+    v20 = Call v1, -, v10 calleeName="sum" [isNeverInlined] @303
+    v21 = Add v15, v20 @303
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @294
+    Jump -> next b4() @294
+  b4():
+    v23 = Increment v16 @286
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @286
+    Jump -> next b2(v22, v24) @286
+  b5():
+    v25 = Undefined @286
+    Return v25 @286
+}
+function f1 name="sum" module=m0 position=128 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @128
+  b1():
+    v1 = PropGet v0 key="count" @160
+    v2 = PropGet v0 key="twice" @175
+    v3 = Call v2, v0 calleeKey="twice" calleeName="closed.twice" @182
+    v4 = Add v1, v3 @175
+    v5 = PropGet v0 key="label" @192
+    v6 = PropGet v5 key="length" @199
+    v7 = Add v4, v6 @192
+    Return v7 @192
+}
+function f2 name="Closed" module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @28
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @28
+    v2 = NewObject v1 layout=L0 @28
+    v3 = Convert v2 declared={type=L0} @28
+    v4 = Integer integer=1 @50
+    PropSet v3, v4 key="count" @37
+    v6 = String string="label" @70
+    PropSet v3, v6 key="label" @57
+    v8 = Undefined @57
+    v9 = TypeTest v8 testedType=object @57
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @57
+  b2(v10):
+    Jump -> next b4(v10) @57
+  b3(v11):
+    Jump -> next b4(v3) @57
+  b4(v12):
+    Return v12 @57
+}
+function f3 name="twice" module=m0 position=85 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @85
+  b1():
+    v1 = PropGet v0 key="count" @106
+    v2 = Integer integer=2 @119
+    v3 = Mul v1, v2 @119
+    Return v3 @119
+}

@@ -65,7 +65,7 @@ static constexpr auto Redirect = "Redirect"_s;
 static constexpr auto PopUp = "PopUp"_s;
 static constexpr auto SubFrame = "SubFrame"_s;
 
-static ASCIILiteral LEGACY_NODELETE toString(const SOAuthorizationSession::InitiatingAction& action)
+NODELETE static ASCIILiteral toString(const SOAuthorizationSession::InitiatingAction& action)
 {
     switch (action) {
     case SOAuthorizationSession::InitiatingAction::Redirect:
@@ -204,7 +204,7 @@ void SOAuthorizationSession::start()
 
 void SOAuthorizationSession::continueStartAfterGetAuthorizationHints(const String& hints)
 {
-    AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: (hints=%s)", hints.utf8());
+    AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: (hints=%s)", makeUTF8CString(hints));
 
     ASSERT(m_state == State::Active);
     RefPtr page = m_page.get();

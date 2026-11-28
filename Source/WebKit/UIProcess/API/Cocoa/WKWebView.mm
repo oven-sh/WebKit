@@ -177,6 +177,7 @@
 #import <WebCore/ElementContext.h>
 #import <WebCore/ElementTargetingTypes.h>
 #import <WebCore/ExceptionCode.h>
+#import <WebCore/FontAttributes.h>
 #import <WebCore/ICUSearcher.h>
 #import <WebCore/ImageUtilities.h>
 #import <WebCore/JSDOMBinding.h>
@@ -246,16 +247,13 @@
 #import <WebCore/ExceptionData.h>
 #endif
 
-#if ENABLE(SCREEN_TIME)
-#import <pal/cocoa/ScreenTimeSoftLink.h>
-#endif
-
 #if PLATFORM(IOS_FAMILY)
 #import "PointerTouchCompatibilitySimulator.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "UIKitSPI.h"
 #import "WKContentViewInteraction.h"
+#import "WKFormSelectPicker.h"
 #import "WKScrollView.h"
 #import "WKWebViewContentProviderRegistry.h"
 #import "WKWebViewIOS.h"
@@ -278,6 +276,10 @@
 #import "WKViewInternal.h"
 #import <WebCore/ColorMac.h>
 #import <pal/spi/mac/NSViewSPI.h>
+#endif
+
+#if ENABLE(SCREEN_TIME)
+#import <pal/cocoa/ScreenTimeSoftLink.h>
 #endif
 
 #import "WebKitSwiftSoftLink.h"
@@ -402,7 +404,7 @@ static bool shouldAllowPictureInPictureMediaPlayback()
 
 #endif // PLATFORM(IOS_FAMILY)
 
-SUPPRESS_NODELETE static bool LEGACY_NODELETE shouldRequireUserGestureToLoadVideo()
+NODELETE SUPPRESS_NODELETE static bool shouldRequireUserGestureToLoadVideo()
 {
 #if PLATFORM(IOS_FAMILY)
     static bool shouldRequireUserGestureToLoadVideo = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::RequiresUserGestureToLoadVideo);
@@ -418,7 +420,7 @@ static bool shouldRestrictBaseURLSchemes()
     return shouldRestrictBaseURLSchemes;
 }
 
-static WebCore::RectEdges<bool> LEGACY_NODELETE toRectEdges(_WKRectEdge edges)
+NODELETE static WebCore::RectEdges<bool> toRectEdges(_WKRectEdge edges)
 {
     return {
         static_cast<bool>(edges & _WKRectEdgeTop),
@@ -429,7 +431,7 @@ static WebCore::RectEdges<bool> LEGACY_NODELETE toRectEdges(_WKRectEdge edges)
 }
 
 #if PLATFORM(MAC)
-static uint32_t LEGACY_NODELETE convertUserInterfaceDirectionPolicy(WKUserInterfaceDirectionPolicy policy)
+NODELETE static uint32_t convertUserInterfaceDirectionPolicy(WKUserInterfaceDirectionPolicy policy)
 {
     switch (policy) {
     case WKUserInterfaceDirectionPolicyContent:
@@ -440,7 +442,7 @@ static uint32_t LEGACY_NODELETE convertUserInterfaceDirectionPolicy(WKUserInterf
     return static_cast<uint32_t>(WebCore::UserInterfaceDirectionPolicy::Content);
 }
 
-static uint32_t LEGACY_NODELETE convertSystemLayoutDirection(NSUserInterfaceLayoutDirection direction)
+NODELETE static uint32_t convertSystemLayoutDirection(NSUserInterfaceLayoutDirection direction)
 {
     switch (direction) {
     case NSUserInterfaceLayoutDirectionLeftToRight:
@@ -678,7 +680,6 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
     _findInteractionEnabled = NO;
     _needsToPresentLockdownModeMessage = YES;
     _allowsMagnification = YES;
-    _avoidsUnsafeArea = YES;
 
     auto fastClickingEnabled = []() {
         if (NSNumber *enabledValue = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKitFastClickingDisabled"])
@@ -907,6 +908,10 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
     // For SharedPreferencesForWebProcess
     preferences->setAllowTestOnlyIPC(!![_configuration _allowTestOnlyIPC]);
     preferences->setUsesSingleWebProcess(pool.usesSingleWebProcess());
+
+#if PLATFORM(IOS)
+    preferences->setFullscreenSafeAreaQuirkEnabled(PAL::currentUserInterfaceIdiomIsSmallScreen() && WTF::processHasEntitlement("com.apple.developer.web-browser"_s));
+#endif
 
     preferences->endBatchingUpdates();
 
@@ -1263,8 +1268,6 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
 {
     THROW_IF_SUSPENDED;
     [self _didAccessBackForwardList];
-    if (self._safeBrowsingWarning)
-        return [self reload];
     return wrapper(_page->goBack()).autorelease();
 }
 
@@ -1442,7 +1445,7 @@ static bool validateArgument(id argument)
     _page->resumeAllMediaPlayback(makeBlockPtr(completionHandler));
 }
 
-static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::MediaPlaybackState mediaPlaybackState)
+NODELETE static WKMediaPlaybackState toWKMediaPlaybackState(WebKit::MediaPlaybackState mediaPlaybackState)
 {
     switch (mediaPlaybackState) {
     case WebKit::MediaPlaybackState::NoMediaPlayback:
@@ -1515,7 +1518,7 @@ static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::Media
         mutedState.add(WebCore::MediaProducerMutedState::AudioCaptureIsMuted);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, WebCore::MediaProducerMutedState::AudioCaptureIsMuted);
 }
 
 - (void)setCameraCaptureState:(WKMediaCaptureState)state completionHandler:(void (^)(void))completionHandler
@@ -1537,7 +1540,7 @@ static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::Media
         mutedState.add(WebCore::MediaProducerMutedState::VideoCaptureIsMuted);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, WebCore::MediaProducerMutedState::VideoCaptureIsMuted);
 }
 
 - (void)_evaluateJavaScript:(NSString *)javaScriptString asAsyncFunction:(BOOL)asAsyncFunction withSourceURL:(NSURL *)sourceURL withArguments:(NSDictionary<NSString *, id> *)arguments forceUserGesture:(BOOL)forceUserGesture inFrame:(WKFrameInfo *)frame inWorld:(WKContentWorld *)world completionHandler:(void (^)(id, NSError *))completionHandler
@@ -1545,13 +1548,28 @@ static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::Media
     THROW_IF_SUSPENDED;
     auto handler = adoptNS([completionHandler copy]);
 
+    std::optional<WebCore::FrameIdentifier> frameID;
+    if (frame && frame._handle && frame._handle->_frameHandle->frameID())
+        frameID = frame._handle->_frameHandle->frameID();
+
+    // Skip walking the arguments when the target frame is already gone.
+    if (frameID && !WebKit::WebFrameProxy::webFrame(frameID)) {
+        if (handler) {
+            auto error = nsErrorFromExceptionDetails(WebCore::ExceptionDetails { "Unable to execute JavaScript: Target frame could not be found in the page"_s, 0, 0, WebCore::ExceptionDetails::Type::InvalidTargetFrame });
+            RunLoop::mainSingleton().dispatch([handler, error] {
+                auto rawHandler = (void (^)(id, NSError *))handler.get();
+                rawHandler(nil, error.get());
+            });
+        }
+        return;
+    }
+
     std::optional<Vector<std::pair<String, WebKit::JavaScriptEvaluationResult>>> argumentsMap;
     if (asAsyncFunction)
         argumentsMap = Vector<std::pair<String, WebKit::JavaScriptEvaluationResult>> { };
     NSString *errorMessage = nil;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL id key in arguments) {
+    for (id key in arguments) {
         RetainPtr keyString = dynamic_objc_cast<NSString>(key);
         if (!keyString) {
             errorMessage = @"Key value must be NSString";
@@ -1583,10 +1601,6 @@ static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::Media
         return;
     }
     
-    std::optional<WebCore::FrameIdentifier> frameID;
-    if (frame && frame._handle && frame._handle->_frameHandle->frameID())
-        frameID = frame._handle->_frameHandle->frameID();
-
     auto removeTransientActivation = !_dontResetTransientActivationAfterRunJavaScript && WebKit::shouldEvaluateJavaScriptWithoutTransientActivation() ? WebCore::RemoveTransientActivation::Yes : WebCore::RemoveTransientActivation::No;
 
     std::optional<IPC::TransferString> scriptString;
@@ -2246,18 +2260,31 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
 
 - (void)_presentImmersiveElement:(const WebCore::LayerHostingContextIdentifier)contextID frameInfo:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion
 {
+    RetainPtr environment = adoptNS([[WKImmersiveEnvironment alloc] _initWithContextID:contextID processIdentifier:[self _webProcessIdentifier] frameInfo:frameInfo]);
+    [self _presentImmersiveEnvironment:environment.get() completion:WTF::move(completion)];
+}
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+- (void)_presentImmersiveImageElement:(CGImageRef)image focalLengthIn35mm:(NSNumber *)focalLengthIn35mm frameInfo:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion
+{
+    RetainPtr environment = adoptNS([[WKImmersiveEnvironment alloc] _initWithImage:image focalLengthIn35mm:focalLengthIn35mm frameInfo:frameInfo]);
+    [self _presentImmersiveEnvironment:environment.get() completion:WTF::move(completion)];
+}
+#endif
+
+- (void)_presentImmersiveEnvironment:(WKImmersiveEnvironment *)environment completion:(CompletionHandler<void(bool)>&&)completion
+{
     id<WKImmersiveEnvironmentDelegate> immersiveEnvironmentDelegate = self.immersiveEnvironmentDelegate;
     if (!immersiveEnvironmentDelegate) {
         completion(false);
         return;
     }
 
-    RetainPtr environment = adoptNS([[WKImmersiveEnvironment alloc] _initWithContextID:contextID processIdentifier:[self _webProcessIdentifier] frameInfo:frameInfo]);
     _currentImmersiveEnvironment = environment;
 
-    [immersiveEnvironmentDelegate webView:self presentImmersiveEnvironment:environment.get() completionHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKWebView>(self), completion = WTF::move(completion)](NSError *error) mutable {
+    [immersiveEnvironmentDelegate webView:self presentImmersiveEnvironment:environment completionHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKWebView>(self), weakEnvironment = WeakObjCPtr<WKImmersiveEnvironment>(environment), completion = WTF::move(completion)](NSError *error) mutable {
         if (error) {
-            if (RetainPtr retainedSelf = weakSelf.get())
+            if (RetainPtr retainedSelf = weakSelf.get(); retainedSelf && retainedSelf->_currentImmersiveEnvironment.get() == weakEnvironment.get().get())
                 retainedSelf->_currentImmersiveEnvironment = nil;
         }
         completion(!error);
@@ -2446,7 +2473,7 @@ static RetainPtr<NSDictionary> dictionaryRepresentationForEditorState(const WebK
     };
 }
 
-static NSTextAlignment LEGACY_NODELETE nsTextAlignment(WebKit::TextAlignment alignment)
+NODELETE static NSTextAlignment nsTextAlignment(WebKit::TextAlignment alignment)
 {
     switch (alignment) {
     case WebKit::TextAlignment::Natural:
@@ -2464,7 +2491,7 @@ static NSTextAlignment LEGACY_NODELETE nsTextAlignment(WebKit::TextAlignment ali
     return NSTextAlignmentNatural;
 }
 
-static _WKSelectionAttributes LEGACY_NODELETE selectionAttributes(const WebKit::EditorState& editorState, _WKSelectionAttributes previousAttributes)
+NODELETE static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& editorState, _WKSelectionAttributes previousAttributes)
 {
     switch (editorState.selectionType) {
     case WebCore::SelectionType::None:
@@ -2794,8 +2821,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
     }
 
     Vector<WebCore::WritingTools::Context> contextData;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WTContext *context in contexts) {
+    for (WTContext *context in contexts) {
         auto webContext = WebKit::convertToWebContext(context);
         if (!webContext) {
             ASSERT_NOT_REACHED();
@@ -2832,8 +2858,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
     }
 
     Vector<WebCore::WritingTools::TextSuggestion> replacementData;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WTTextSuggestion *suggestion in suggestions) {
+    for (WTTextSuggestion *suggestion in suggestions) {
         auto replacementDataItem = WebKit::convertToWebTextSuggestion(suggestion);
         if (!replacementDataItem) {
             ASSERT_NOT_REACHED();
@@ -3390,7 +3415,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
     CGSize containerSize = self.frame.size;
     auto contentInsets = _page->obscuredContentInsets();
 #if PLATFORM(IOS_FAMILY)
-    UIEdgeInsets cocoaInsets = UIEdgeInsetsMake(contentInsets.top(), contentInsets.left(), contentInsets.bottom(), contentInsets.right());
+    UIEdgeInsets cocoaInsets = WebKit::uiEdgeInsets(contentInsets);
 #else
     NSEdgeInsets cocoaInsets = NSEdgeInsetsMake(contentInsets.top(), contentInsets.left(), contentInsets.bottom(), contentInsets.right());
 #endif
@@ -3447,7 +3472,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
     if (isTopColorChanging) {
         [self didChangeValueForKey:RetainPtr { NSStringFromSelector(@selector(_sampledTopFixedPositionContentColor)) }.get()];
-#if ENABLE(MANAGED_UIREFRESHCONTROL_APPEARANCE)
+#if ENABLE(MANAGED_REFRESHCONTROL_APPEARANCE)
         [self _updateRefreshControlAppearance];
 #endif
     }
@@ -4465,8 +4490,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKCONTENTVIEW)
     THROW_IF_SUSPENDED;
     HashSet<String> transformed;
     transformed.reserveInitialCapacity(extensionIDs.count);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *extensionID in extensionIDs)
+    for (NSString *extensionID in extensionIDs)
         transformed.addVoid(extensionID);
     _page->inspectorController().browserExtensionsDisabled(WTF::move(transformed));
 }
@@ -4566,6 +4590,13 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKCONTENTVIEW)
         if (capturedCompletionBlock)
             capturedCompletionBlock(YES);
     });
+}
+
+- (void)_applyBlockPresentationIntent:(NSPresentationIntent *)intent
+{
+    THROW_IF_SUSPENDED;
+    if (auto blockIntent = WebCore::BlockPresentationIntent::fromPresentationIntent(intent))
+        _page->applyBlockPresentationIntent(*blockIntent);
 }
 
 - (id <_WKTextManipulationDelegate>)_textManipulationDelegate
@@ -4681,8 +4712,7 @@ static CGRect webViewRectForMainFrameRect(WebKit::WebPageProxy& page, const std:
 
     Vector<WebCore::TextManipulationController::ExclusionRule> exclusionRules;
     if (configuration) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL _WKTextManipulationExclusionRule *wkRule in configuration.exclusionRules) {
+        for (_WKTextManipulationExclusionRule *wkRule in configuration.exclusionRules) {
             auto type = wkRule.isExclusion ? ExclusionRule::Type::Exclude : ExclusionRule::Type::Include;
             if (wkRule.attributeName)
                 exclusionRules.append({type, ExclusionRule::AttributeRule { wkRule.attributeName, wkRule.attributeValue } });
@@ -4786,8 +4816,7 @@ static WebCore::TextManipulationTokenIdentifier coreTextManipulationTokenIdentif
     }
 
     Vector<WebCore::TextManipulationToken> tokens;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL _WKTextManipulationToken *wkToken in item.tokens)
+    for (_WKTextManipulationToken *wkToken in item.tokens)
         tokens.append(WebCore::TextManipulationToken { coreTextManipulationTokenIdentifierFromString(wkToken.identifier), wkToken.content, std::nullopt });
 
     Vector<WebCore::TextManipulationItem> coreItems({ WebCore::TextManipulationItem { identifiers->frameID, false, false, identifiers->itemID, WTF::move(tokens) } });
@@ -4799,8 +4828,7 @@ static WebCore::TextManipulationTokenIdentifier coreTextManipulationTokenIdentif
 static RetainPtr<NSMutableArray> makeFailureSetForAllTextManipulationItems(NSArray<_WKTextManipulationItem *> *items)
 {
     RetainPtr<NSMutableArray> wkFailures = adoptNS([[NSMutableArray alloc] initWithCapacity:items.count]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL _WKTextManipulationItem *item in items)
+    for (_WKTextManipulationItem *item in items)
         [wkFailures addObject:adoptNS([[NSError alloc] initWithDomain:_WKTextManipulationItemErrorDomain code:_WKTextManipulationItemErrorNotAvailable userInfo:@{_WKTextManipulationItemErrorItemKey: item}]).get()];
     return wkFailures;
 };
@@ -4848,10 +4876,8 @@ static RetainPtr<NSArray> wkTextManipulationErrors(NSArray<_WKTextManipulationIt
         return;
     }
 
-    Vector<WebCore::TextManipulationItem> coreItems;
-    coreItems.reserveInitialCapacity(items.count);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL _WKTextManipulationItem *wkItem in items) {
+    Vector<WebCore::TextManipulationItem> coreItems(ReserveCapacityTag { }, items.count);
+    for (_WKTextManipulationItem *wkItem in items) {
         Vector<WebCore::TextManipulationToken> coreTokens(wkItem.tokens.count, [&](size_t i) {
             RetainPtr<_WKTextManipulationToken> wkToken = wkItem.tokens[i];
             return WebCore::TextManipulationToken { coreTextManipulationTokenIdentifierFromString(wkToken.get().identifier), wkToken.get().content, std::nullopt };
@@ -5228,8 +5254,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 #if ENABLE(APP_HIGHLIGHTS)
     Vector<Ref<WebCore::SharedMemory>> buffers;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSData *highlight in highlights)
+    for (NSData *highlight in highlights)
         convertAndAddHighlight(buffers, highlight);
     
     _page->restoreAppHighlightsAndScrollToIndex(buffers, std::nullopt);
@@ -5422,10 +5447,8 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 
 - (void)_createIconDataFromImageData:(NSData *)imageData withLengths:(NSArray<NSNumber *> *)lengths completionHandler:(void (^)(NSData *, NSError *))completionHandler
 {
-    Vector<unsigned> targetLengths;
-    targetLengths.reserveInitialCapacity(lengths.count);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSNumber *length in lengths) {
+    Vector<unsigned> targetLengths(ReserveCapacityTag { }, lengths.count);
+    for (NSNumber *length in lengths) {
         if (unsigned lengthValue = length.unsignedIntValue)
             targetLengths.append(lengthValue);
     }
@@ -5903,12 +5926,15 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
     protect(*_page)->showMediaCapturePermissionPrompt(WebKit::customizationFromConfiguration(configuration), [completionHandler = makeBlockPtr(completionHandler)](WebKit::MediaPermissionPromptResult&& promptResult) {
         auto outcome = !promptResult.wasAnswered ? _WKMediaCapturePermissionPromptOutcomeDismissed : promptResult.granted ? _WKMediaCapturePermissionPromptOutcomeAllowed : _WKMediaCapturePermissionPromptOutcomeDenied;
         RetainPtr chosenAction = WTF::move(promptResult.chosenAction);
-        RetainPtr result = adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:outcome chosenAction:chosenAction.get()]);
+        RetainPtr result = adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:outcome
+            chosenAction:chosenAction
+            cameraDeviceID:nsStringNilIfEmpty(promptResult.selectedVideoDeviceUID)
+            microphoneDeviceID:nsStringNilIfEmpty(promptResult.selectedAudioDeviceUID)]);
         completionHandler(result.get());
     });
 #else
     UNUSED_PARAM(configuration);
-    completionHandler(adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:_WKMediaCapturePermissionPromptOutcomeDismissed chosenAction:nil]).get());
+    completionHandler(adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:_WKMediaCapturePermissionPromptOutcomeDismissed chosenAction:nil cameraDeviceID:nil microphoneDeviceID:nil]).get());
 #endif
 }
 
@@ -6073,7 +6099,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
     return _page->shouldUseBackForwardCache();
 }
 
-static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMilestones(_WKRenderingProgressEvents events)
+NODELETE static inline OptionSet<WebCore::LayoutMilestone> layoutMilestones(_WKRenderingProgressEvents events)
 {
     OptionSet<WebCore::LayoutMilestone> milestones;
 
@@ -6129,8 +6155,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
         [NSException raise:NSInvalidArgumentException format:@"Configuration cannot be nil"];
 
     Vector<WebCore::MarkupExclusionRule> markupExclusionRules;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL _WKArchiveExclusionRule *rule in configuration.exclusionRules) {
+    for (_WKArchiveExclusionRule *rule in configuration.exclusionRules) {
         if (!rule.elementLocalName && (!rule.attributeLocalNames || !rule.attributeLocalNames.count))
             continue;
         Vector<std::pair<AtomString, AtomString>> attibutes;
@@ -6216,8 +6241,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
     }
 
     HashSet<WebCore::FrameIdentifier> targetFrameIDs;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WKFrameInfo *frame in frames) {
+    for (WKFrameInfo *frame in frames) {
         if (!frame)
             continue;
 
@@ -6445,7 +6469,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
     downcast<WebKit::FindClient>(_page->findClient()).setDelegate(findDelegate);
 }
 
-static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFindOptions wkFindOptions)
+NODELETE static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFindOptions)
 {
     OptionSet<WebKit::FindOptions> findOptions;
 
@@ -6543,7 +6567,11 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
     auto request = WebCore::ResourceRequest { url };
     if (auto userAgent = _page->userAgent(); !userAgent.isEmpty())
         request.setHTTPUserAgent(WTF::move(userAgent));
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    _page->preconnectTo(WTF::move(request), _page->advancedPrivacyProtectionsPolicies());
+#else
     _page->preconnectTo(WTF::move(request));
+#endif
 }
 
 - (BOOL)_canUseCredentialStorage
@@ -7018,7 +7046,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
         mutedState.add(displayMutedFlags);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, displayMutedFlags);
 }
 
 - (void)_setSystemAudioCaptureState:(WKSystemAudioCaptureState)state completionHandler:(void (^)(void))completionHandler
@@ -7040,7 +7068,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
         mutedState.add(WebCore::MediaProducerMutedState::WindowCaptureIsMuted);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, WebCore::MediaProducerMutedState::WindowCaptureIsMuted);
 }
 
 - (void)_setOverrideDeviceScaleFactor:(CGFloat)deviceScaleFactor
@@ -7069,10 +7097,8 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
 
 static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKTargetedElementInfo *> *wkElements)
 {
-    Vector<Ref<API::TargetedElementInfo>> elements;
-    elements.reserveInitialCapacity(wkElements.count);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL _WKTargetedElementInfo *element in wkElements)
+    Vector<Ref<API::TargetedElementInfo>> elements(ReserveCapacityTag { }, wkElements.count);
+    for (_WKTargetedElementInfo *element in wkElements)
         elements.append(protect(*element->_info));
     return elements;
 }
@@ -7324,14 +7350,23 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 
 #endif // PLATFORM(MAC)
 
+- (BOOL)_hasActiveNativeMenu
+{
+#if PLATFORM(MAC)
+    return !![self _activePopupButtonCell];
+#elif PLATFORM(IOS_FAMILY)
+    return !![_contentView visibleSelectPicker];
+#else
+    return NO;
+#endif
+}
+
 - (Vector<String>)_activeNativeMenuItemTitles
 {
 #if PLATFORM(MAC)
     RetainPtr allItems = [[self _activePopupButtonCell] itemArray];
-    Vector<String> itemTitles;
-    itemTitles.reserveInitialCapacity([allItems count]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *item in allItems.get()) {
+    Vector<String> itemTitles(ReserveCapacityTag { }, [allItems count]);
+    for (NSMenuItem *item in allItems.get()) {
         if (!item.enabled)
             continue;
 
@@ -7340,9 +7375,27 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
     }
 
     return itemTitles;
+#elif PLATFORM(IOS_FAMILY)
+    return makeVector<String>([[_contentView visibleSelectPicker] enabledMenuItemTitles]);
 #else
-    // FIXME: Bridge this into UIKit's context menu interaction.
     return { };
+#endif
+}
+
+- (BOOL)_selectActiveNativeMenuItemWithTitle:(NSString *)title
+{
+#if PLATFORM(MAC)
+    RetainPtr nativePopup = [self _activePopupButtonCell];
+    if (!nativePopup || [nativePopup indexOfItemWithTitle:title] == -1)
+        return NO;
+
+    [nativePopup selectItemWithTitle:title];
+    [retainPtr([nativePopup menu]) cancelTrackingWithoutAnimation];
+    return YES;
+#elif PLATFORM(IOS_FAMILY)
+    return [[_contentView visibleSelectPicker] selectEnabledMenuItemWithTitle:title];
+#else
+    return NO;
 #endif
 }
 
@@ -7383,7 +7436,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 
     UniqueRef assertionScope = _page->createTextExtractionAssertionScope();
     if (protect(_page->preferences())->textExtractionFilterEnabled() && (configuration.filterOptions & _WKTextExtractionFilterRules)) {
-        [self _ensureTextExtractionFilterRulesWithCompletionHandler:[weakSelf = WeakObjCPtr<WKWebView>(self), assertionScope = WTF::move(assertionScope), configuration = RetainPtr { configuration }, completionHandler = makeBlockPtr(completionHandler)]() mutable {
+        [self _fetchTextExtractionFilterRulesIfNeededWithCompletionHandler:[weakSelf = WeakObjCPtr<WKWebView>(self), assertionScope = WTF::move(assertionScope), configuration = RetainPtr { configuration }, completionHandler = makeBlockPtr(completionHandler)] mutable {
             RetainPtr strongSelf = weakSelf.get();
             if (!strongSelf)
                 return completionHandler(WebKit::createEmptyTextExtractionResult().get());
@@ -7418,15 +7471,9 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
         return completionHandler(adoptNS([[_WKTextExtractionInteractionResult alloc] initWithErrorDescription:@"Browsing context is invalid" summary:nil interactedElementBounds:CGRectNull]).get());
     }
 
-#if PLATFORM(MAC)
-    RetainPtr nativePopup = [self _activePopupButtonCell];
-    if (nativePopup && interaction.action == WebCore::TextExtraction::Action::SelectMenuItem && !interaction.text.isEmpty()) {
+    if ([self _hasActiveNativeMenu] && interaction.action == WebCore::TextExtraction::Action::SelectMenuItem && !interaction.text.isEmpty()) {
         RetainPtr title = interaction.text.createNSString();
-        BOOL foundItem = [nativePopup indexOfItemWithTitle:title.get()] != -1;
-        if (foundItem) {
-            [nativePopup selectItemWithTitle:title.get()];
-            [retainPtr([nativePopup menu]) cancelTrackingWithoutAnimation];
-        }
+        BOOL foundItem = [self _selectActiveNativeMenuItemWithTitle:title];
         page->callAfterNextPresentationUpdate([title, foundItem, completionHandler = makeBlockPtr(WTF::move(completionHandler))] {
             RetainPtr errorDescription = foundItem ? nil : [NSString stringWithFormat:@"No popup menu item with title '%@'", title.get()];
             RetainPtr summary = foundItem ? [NSString stringWithFormat:@"Successfully updated option in select element"] : nil;
@@ -7435,7 +7482,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
         });
         return;
     }
-#endif // PLATFORM(MAC)
 
     [self _performInteraction:WTF::move(interaction) inFrame:targetFrame actionType:actionType staleNodeResolution:WebKit::StaleNodeResolutionState { .requestedIdentifier = nodeIdentifierString } completionHandler:completionHandler];
 }
@@ -7465,7 +7511,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
         WebKit::TextExtractionFilter::singleton().prewarm();
 
     if (filterUsingRules) {
-        [self _ensureTextExtractionFilterRulesWithCompletionHandler:[weakSelf = WeakObjCPtr<WKWebView>(self), string = checked_objc_cast<NSString>(adoptNS([string copy])), completionHandler = makeBlockPtr(completionHandler), options]() mutable {
+        [self _fetchTextExtractionFilterRulesIfNeededWithCompletionHandler:[weakSelf = WeakObjCPtr<WKWebView>(self), string = checked_objc_cast<NSString>(adoptNS([string copy])), completionHandler = makeBlockPtr(completionHandler), options]() mutable {
             RetainPtr strongSelf = weakSelf.get();
             if (!strongSelf)
                 return completionHandler(string.get());

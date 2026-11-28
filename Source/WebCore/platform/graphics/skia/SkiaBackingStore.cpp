@@ -26,9 +26,10 @@
 #include "config.h"
 #include "SkiaBackingStore.h"
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "BitmapTexturePool.h"
 #include "CoordinatedTileBuffer.h"
+#include "Damage.h"
 #include "FontRenderOptions.h"
 #include "PlatformDisplay.h"
 #include "SkiaDamageRegion.h"
@@ -68,28 +69,38 @@ void SkiaBackingStore::update(const FloatSize& size, float scale, CoordinatedBac
         m_tiles.remove(tileID);
     }
 
-    for (const auto& tileUpdate : update.tilesToUpdate()) {
+    for (const auto& item : update.tilesToUpdateVisibility()) {
+        auto it = m_tiles.find(item.key);
+        ASSERT(it != m_tiles.end());
+        it->value.setIsVisible(item.value);
+    }
+
+    for (auto& tileUpdate : update.tilesToUpdate()) {
         auto it = m_tiles.find(tileUpdate.tileID);
         ASSERT(it != m_tiles.end());
         if (tileUpdate.buffer->paintingState() != CoordinatedTileBuffer::PaintingState::Cancelled) {
-            it->value.scheduleUpdate(tileUpdate.dirtyRect, tileUpdate.tileRect, tileUpdate.buffer);
+            it->value.scheduleUpdate(tileUpdate.dirtyRect, WTF::move(tileUpdate.damageRects), tileUpdate.tileRect, WTF::move(tileUpdate.buffer));
             m_hasPendingTileUpdates = true;
         }
     }
 }
 
-void SkiaBackingStore::processPendingTileUpdates()
+bool SkiaBackingStore::processPendingTileUpdates(ProcessHiddenTiles processHiddenTiles, std::optional<Damage>& damage, const Function<bool()>& shouldStopProcessingTiles)
 {
     if (!m_hasPendingTileUpdates)
-        return;
+        return false;
 
+    m_hasPendingTileUpdates = false;
     m_hasPaddedTiles = false;
+    bool wasStopped = false;
     for (auto& tile : m_tiles.values()) {
-        tile.processPendingUpdateIfNeeded();
+        if (!wasStopped)
+            wasStopped = tile.processPendingUpdateIfNeeded(processHiddenTiles, damage, shouldStopProcessingTiles);
+        m_hasPendingTileUpdates |= tile.hasPendingUpdates();
         m_hasPaddedTiles |= tile.isPadded();
     }
 
-    m_hasPendingTileUpdates = false;
+    return wasStopped;
 }
 
 static inline bool allTileEdgesExposed(const FloatRect& totalRect, const FloatRect& tileRect)
@@ -229,19 +240,65 @@ void SkiaBackingStore::drawDebugBorders(SkCanvas& canvas, const SkPaint& paint)
         canvas.drawRect(SkRect(tile.rect()), paint);
 }
 
-void SkiaBackingStore::Tile::scheduleUpdate(const IntRect& dirtyRect, const IntRect& tileRect, CoordinatedTileBuffer& buffer)
+void SkiaBackingStore::Tile::scheduleUpdate(const IntRect& dirtyRect, Vector<IntRect, 1>&& damageRects, const IntRect& tileRect, Ref<CoordinatedTileBuffer>&& buffer)
 {
-    m_pendingUpdates.append({ tileRect, dirtyRect, Ref { buffer } });
+    Vector<IntRect, 1> mergedDamageRects = WTF::move(damageRects);
+    if (!m_isVisible) {
+        m_pendingUpdates.removeAllMatching([&](auto& update) {
+            if (update.tileRect != tileRect || !dirtyRect.contains(update.dirtyRect))
+                return false;
+
+            mergedDamageRects.appendVector(WTF::move(update.damageRects));
+            return true;
+        });
+    }
+
+    m_pendingUpdates.append({ tileRect, dirtyRect, WTF::move(mergedDamageRects), WTF::move(buffer) });
 }
 
-void SkiaBackingStore::Tile::processPendingUpdateIfNeeded()
+bool SkiaBackingStore::Tile::processPendingUpdateIfNeeded(ProcessHiddenTiles processHiddenTiles, std::optional<Damage>& damage, const Function<bool()>& shouldStopProcessingTiles)
 {
+    if (!m_isVisible && processHiddenTiles == ProcessHiddenTiles::No)
+        return false;
+
+    bool wasStopped = false;
+    size_t processedCount = 0;
     for (auto& pendingUpdate : m_pendingUpdates) {
         auto paintingState = pendingUpdate.buffer->paintingState();
-        if (paintingState != CoordinatedTileBuffer::PaintingState::Cancelled)
-            update(pendingUpdate.dirtyRect, pendingUpdate.tileRect, pendingUpdate.buffer.get());
+        if (paintingState == CoordinatedTileBuffer::PaintingState::Pending || paintingState == CoordinatedTileBuffer::PaintingState::Painting)
+            break;
+
+        if (paintingState == CoordinatedTileBuffer::PaintingState::Cancelled) {
+            processedCount++;
+            continue;
+        }
+
+        if (shouldStopProcessingTiles && shouldStopProcessingTiles()) {
+            wasStopped = true;
+            break;
+        }
+
+        update(pendingUpdate.dirtyRect, pendingUpdate.tileRect, pendingUpdate.buffer.get());
+        processedCount++;
+
+        if (damage) {
+            for (const auto& rect : pendingUpdate.damageRects) {
+                FloatRect dirtyRect(rect);
+                dirtyRect.scale(1 / m_scale);
+                damage->add(dirtyRect);
+            }
+        }
+
+        // When processing hidden tiles, flush the surface here to make sure the deadline
+        // used in shouldStopProcessingTiles() takes into account the work done while flushing.
+        if (m_surface && processHiddenTiles == ProcessHiddenTiles::Yes)
+            PlatformDisplay::sharedDisplay().skiaGrContext()->flush(m_surface.get());
     }
-    m_pendingUpdates.clear();
+
+    if (processedCount)
+        m_pendingUpdates.removeAt(0, processedCount);
+
+    return wasStopped;
 }
 
 void SkiaBackingStore::Tile::ensureTexture(const IntSize& size, CoordinatedTileBuffer& buffer)
@@ -273,7 +330,7 @@ void SkiaBackingStore::Tile::ensureTexture(const IntSize& size, CoordinatedTileB
 
 void SkiaBackingStore::Tile::update(const IntRect& dirtyRect, const IntRect& tileRect, CoordinatedTileBuffer& buffer)
 {
-    WTFBeginSignpost(this, SkiaBackingStoreTileUpdate, "rect %ix%i+%i+%i %s", tileRect.x(), tileRect.y(), tileRect.width(), tileRect.height(), buffer.isBackedByOpenGL() ? "GPUToGPU" : "CPUToGPU");
+    WTFBeginSignpost(this, SkiaBackingStoreTileUpdate, "rect %ix%i+%i+%i %s %s distance %u", tileRect.x(), tileRect.y(), tileRect.width(), tileRect.height(), m_isVisible ? "visible" : "pre-rendered", buffer.isBackedByOpenGL() ? "GPUToGPU" : "CPUToGPU", buffer.distance());
 
     FloatRect unscaledTileRect(tileRect);
     unscaledTileRect.scale(1. / m_scale);
@@ -370,6 +427,11 @@ bool SkiaBackingStore::Tile::isPadded() const
     return m_texture && m_texture->size() != m_texture->allocatedSize();
 }
 
+bool SkiaBackingStore::Tile::hasPendingUpdates() const
+{
+    return !m_pendingUpdates.isEmpty();
+}
+
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

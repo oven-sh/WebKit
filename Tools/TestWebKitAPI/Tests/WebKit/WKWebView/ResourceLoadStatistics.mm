@@ -39,13 +39,16 @@
 #import <WebKit/WKFoundation.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKProcessPoolPrivate.h>
+#import <WebKit/WKString.h>
 #import <WebKit/WKUIDelegatePrivate.h>
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebsiteDataRecordPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
+#import <WebKit/WKWebsiteDataStoreRef.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/MonotonicTime.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/URL.h>
 #import <wtf/darwin/DispatchExtras.h>
@@ -2486,3 +2489,257 @@ TEST(ResourceLoadStatistics, HasStorageAccessWithDatabaseError)
 
     [defaultFileManager removeItemAtPath:itpRootURL.path error:nil];
 }
+
+#if WK_HAVE_C_SPI
+
+static constexpr NSTimeInterval oneWeek = 7 * 24 * 60 * 60;
+
+// The cookie is set with a one year lifetime. Returns its remaining lifetime, or -1 if it was not stored.
+static NSTimeInterval cnameCloakedCookieLifetime(ASCIILiteral firstPartyHost, ASCIILiteral subresourceHost, const char* cnameURL, bool debugMode)
+{
+    using namespace TestWebKitAPI;
+
+    HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, makeString("<img src='https://"_s, subresourceHost, "/cookie.png'>"_s) } },
+        { "/cookie.png"_s, { { { "Content-Type"_s, "image/png"_s }, { "Set-Cookie"_s, "cnameCloakingTest=value; Max-Age=31536000; Secure; SameSite=None"_s } }, ""_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr storeConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+    [storeConfiguration setHTTPSProxy:[NSURL URLWithString:[NSString stringWithFormat:@"https://127.0.0.1:%d/", server.port()]]];
+    RetainPtr dataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]);
+    [dataStore _setResourceLoadStatisticsEnabled:YES];
+    [dataStore _setResourceLoadStatisticsDebugMode:debugMode];
+
+    RetainPtr viewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    [viewConfiguration setWebsiteDataStore:dataStore.get()];
+    RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:viewConfiguration.get()]);
+    RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+    [delegate allowAnyTLSCertificate];
+    [webView setNavigationDelegate:delegate.get()];
+
+    bool networkSessionReady = false;
+    [dataStore fetchDataRecordsOfTypes:[NSSet setWithObject:WKWebsiteDataTypeCookies] completionHandler:[&](NSArray<WKWebsiteDataRecord *> *) {
+        networkSessionReady = true;
+    }];
+    Util::run(&networkSessionReady);
+
+    bool cnameSet = false;
+    WKRetainPtr cnameURLString = adoptWK(WKStringCreateWithUTF8CString(cnameURL));
+    WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting((WKWebsiteDataStoreRef)dataStore.get(), cnameURLString.get(), &cnameSet, [](void* context) {
+        *static_cast<bool*>(context) = true;
+    });
+    Util::run(&cnameSet);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://%s/", firstPartyHost.characters()]]]];
+    [delegate waitForDidFinishNavigation];
+
+    __block RetainPtr<NSHTTPCookie> storedCookie;
+    __block bool gotCookies = false;
+    [[dataStore httpCookieStore] getAllCookies:^(NSArray<NSHTTPCookie *> *cookies) {
+        for (NSHTTPCookie *cookie in cookies) {
+            if ([cookie.name isEqualToString:@"cnameCloakingTest"])
+                storedCookie = cookie;
+        }
+        gotCookies = true;
+    }];
+    Util::run(&gotCookies);
+
+    if (!storedCookie)
+        return -1;
+    return [storedCookie expiresDate].timeIntervalSinceNow;
+}
+
+TEST(ResourceLoadStatistics, CNAMECloakingCapIsSkippedBetweenYouTubeAndGoogle)
+{
+    EXPECT_GT(cnameCloakedCookieLifetime("www.youtube.com"_s, "accounts.youtube.com"_s, "https://google.com/", false), oneWeek + 3600);
+}
+
+TEST(ResourceLoadStatistics, CNAMECloakingCapIsSkippedBetweenYouTubeAndGoogleInDebugMode)
+{
+    EXPECT_GT(cnameCloakedCookieLifetime("www.youtube.com"_s, "accounts.youtube.com"_s, "https://google.com/", true), oneWeek + 3600);
+}
+
+// Shows that the google.com CNAME reaches the network process, so the two tests above are not passing vacuously.
+TEST(ResourceLoadStatistics, CNAMECloakingCapStillAppliesToOtherSitesWithAGoogleCNAME)
+{
+    auto lifetime = cnameCloakedCookieLifetime("www.example.com"_s, "sub.example.com"_s, "https://google.com/", false);
+    EXPECT_GT(lifetime, 0);
+    EXPECT_LE(lifetime, oneWeek);
+}
+
+TEST(ResourceLoadStatistics, CNAMECloakingCapStillAppliesToYouTubeWithAnotherCNAME)
+{
+    auto lifetime = cnameCloakedCookieLifetime("www.youtube.com"_s, "accounts.youtube.com"_s, "https://3rdpartytestwebkit.org/", false);
+    EXPECT_GT(lifetime, 0);
+    EXPECT_LE(lifetime, oneWeek);
+}
+
+TEST(ResourceLoadStatistics, CNAMECloakingCapStillAppliesToYouTubeWithAnotherCNAMEInDebugMode)
+{
+    auto lifetime = cnameCloakedCookieLifetime("www.youtube.com"_s, "accounts.youtube.com"_s, "https://3rdpartytestwebkit.org/", true);
+    EXPECT_GT(lifetime, 0);
+    EXPECT_LE(lifetime, oneWeek);
+}
+
+TEST(ResourceLoadStatistics, CNAMECloakingCapStillAppliesToOtherSites)
+{
+    auto lifetime = cnameCloakedCookieLifetime("www.example.com"_s, "sub.example.com"_s, "https://3rdpartytestwebkit.org/", false);
+    EXPECT_GT(lifetime, 0);
+    EXPECT_LE(lifetime, oneWeek);
+}
+
+#endif // WK_HAVE_C_SPI
+
+#if PLATFORM(MAC)
+
+// rdar://73582895: home.nest.com reads the Google session from an accounts.google.com iframe. Once the
+// user grants that iframe storage access, other nest.com pages should get it without asking again, and
+// so should pages loaded after a network process restart. On Mac the sign-in button quirk only runs in
+// Safari, so the iframe requests access itself here.
+TEST(ResourceLoadStatistics, NestGoogleStorageAccessReachesOtherPagesAndSurvivesRestart)
+{
+    using namespace TestWebKitAPI;
+    // The iframe's own load is checked rather than document.cookie. On SDKs without cookie partitioning
+    // the web process blocks document.cookie on a new page before asking the network process, which is
+    // where the cross-page grant lives. Nest checks the Google session over HTTP, so this is what matters.
+    String iframeCookieHeader;
+    HTTPServer server { HTTPServer::UseCoroutines::Yes, [&](Connection connection) -> ConnectionTask {
+        while (true) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            auto path = HTTPServer::parsePath(request);
+            if (path == "/set-cookie"_s) {
+                co_await connection.awaitableSend(HTTPResponse({ { { "Set-Cookie"_s, "auth=signedin; path=/; SameSite=None; Secure"_s } }, "cookie set"_s }).serialize());
+                continue;
+            }
+            if (path == "/login"_s) {
+                co_await connection.awaitableSend(HTTPResponse({ { { "Content-Type"_s, "text/html"_s } }, "<iframe src='https://accounts.google.com/iframe'></iframe>"_s }).serialize());
+                continue;
+            }
+            if (path == "/iframe"_s) {
+                StringView requestView { request.span() };
+                constexpr auto cookiePrefix = "\r\nCookie: "_s;
+                auto cookieStart = requestView.find(cookiePrefix);
+                if (cookieStart == notFound)
+                    iframeCookieHeader = emptyString();
+                else {
+                    cookieStart += cookiePrefix.length();
+                    iframeCookieHeader = requestView.substring(cookieStart, requestView.find("\r\n"_s, cookieStart) - cookieStart).toString();
+                }
+                co_await connection.awaitableSend(HTTPResponse("iframe"_s).serialize());
+                continue;
+            }
+            EXPECT_FALSE(true);
+        }
+    }, HTTPServer::Protocol::HttpsProxy };
+
+    RetainPtr<NSURL> dataStoreRoot = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"NestGoogleStorageAccessDataStore"] isDirectory:YES];
+    RetainPtr<NSURL> itpRoot = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"NestGoogleStorageAccessITP"] isDirectory:YES];
+    RetainPtr fileManager = [NSFileManager defaultManager];
+    [fileManager removeItemAtURL:dataStoreRoot.get() error:nil];
+    [fileManager removeItemAtURL:itpRoot.get() error:nil];
+    [fileManager createDirectoryAtURL:dataStoreRoot.get() withIntermediateDirectories:YES attributes:nil error:nil];
+    [fileManager createDirectoryAtURL:itpRoot.get() withIntermediateDirectories:YES attributes:nil error:nil];
+    RetainPtr<NSURL> sourceDatabase = [NSBundle.test_resourcesBundle URLForResource:@"basicITPDatabase" withExtension:@"db"];
+    [fileManager copyItemAtURL:sourceDatabase.get() toURL:[itpRoot URLByAppendingPathComponent:@"observations.db"] error:nil];
+
+    RetainPtr dataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initWithDirectory:dataStoreRoot.get()]);
+    dataStoreConfiguration.get()._resourceLoadStatisticsDirectory = itpRoot.get();
+    [dataStoreConfiguration setHTTPSProxy:[NSURL URLWithString:[NSString stringWithFormat:@"https://127.0.0.1:%d/", server.port()]]];
+    RetainPtr dataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:dataStoreConfiguration.get()]);
+    [dataStore _setResourceLoadStatisticsEnabled:YES];
+
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    [configuration setWebsiteDataStore:dataStore.get()];
+
+    __block unsigned promptCount = 0;
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    uiDelegate.get().requestStorageAccessPanelForDomain = ^(WKWebView *, NSString *subFrameDomain, NSString *topFrameDomain, void (^completionHandler)(BOOL)) {
+        EXPECT_WK_STREQ(@"google.com", subFrameDomain);
+        EXPECT_WK_STREQ(@"nest.com", topFrameDomain);
+        ++promptCount;
+        completionHandler(YES);
+    };
+
+    auto waitUntil = [](NS_NOESCAPE BOOL (^condition)(void)) {
+        auto deadline = MonotonicTime::now() + 10_s;
+        while (!condition()) {
+            if (MonotonicTime::now() > deadline)
+                return false;
+            Util::runFor(50_ms);
+        }
+        return true;
+    };
+
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    bool finishedNavigation = false;
+    bool* finishedNavigationPointer = &finishedNavigation;
+    navigationDelegate.get().didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        *finishedNavigationPointer = true;
+    };
+    auto load = [&](NSString *urlString) -> RetainPtr<TestWKWebView> {
+        RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+        webView.get().navigationDelegate = navigationDelegate.get();
+        webView.get().UIDelegate = uiDelegate.get();
+        finishedNavigation = false;
+        [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:urlString]]];
+        if (!Util::runFor(&finishedNavigation, 10_s))
+            return nullptr;
+        return webView;
+    };
+    auto loadLoginPage = [&] -> RetainPtr<TestWKWebView> {
+        RetainPtr webView = load(@"https://home.nest.com/login");
+        if (!webView)
+            return nullptr;
+        bool iframeLoaded = waitUntil(^BOOL {
+            return [[webView firstChildFrame].securityOrigin.host isEqualToString:@"accounts.google.com"];
+        });
+        if (!iframeLoaded)
+            return nullptr;
+        return webView;
+    };
+    auto iframeCookie = [](TestWKWebView *webView) -> RetainPtr<NSString> {
+        return [webView stringByEvaluatingJavaScript:@"document.cookie" inFrame:[webView firstChildFrame]];
+    };
+
+    RetainPtr googleView = load(@"https://accounts.google.com/set-cookie");
+    ASSERT_TRUE(googleView) << "load accounts.google.com/set-cookie";
+
+    RetainPtr firstView = loadLoginPage();
+    ASSERT_TRUE(firstView) << "load home.nest.com/login and its iframe";
+    EXPECT_WK_STREQ(iframeCookieHeader, "");
+    EXPECT_WK_STREQ(iframeCookie(firstView.get()).get(), "");
+
+    [firstView evaluateJavaScript:@"internals.withUserGesture(() => document.requestStorageAccess()); true" inFrame:[firstView firstChildFrame] completionHandler:nil];
+    bool prompted = waitUntil(^BOOL {
+        return promptCount == 1;
+    });
+    ASSERT_TRUE(prompted) << "storage access prompt for google.com under nest.com";
+    bool firstPageHasCookie = waitUntil(^BOOL {
+        return [iframeCookie(firstView.get()) isEqualToString:@"auth=signedin"];
+    });
+    EXPECT_TRUE(firstPageHasCookie) << "requesting page";
+
+    RetainPtr secondView = loadLoginPage();
+    ASSERT_TRUE(secondView) << "load the second page";
+    EXPECT_WK_STREQ(iframeCookieHeader, "auth=signedin");
+
+    [dataStore _terminateNetworkProcess];
+
+    // The test's cookie jar does not survive the restart, unlike the ITP database, so set the cookie
+    // again. What matters is that the iframe can read it without requesting access again.
+    RetainPtr googleViewAfterRestart = load(@"https://accounts.google.com/set-cookie");
+    ASSERT_TRUE(googleViewAfterRestart) << "load accounts.google.com/set-cookie after the restart";
+
+    // The new network process reads the saved grant from the ITP database asynchronously, so a page
+    // loaded right after the restart can be too early. Retry a few times before failing.
+    iframeCookieHeader = { };
+    for (unsigned attempt = 0; attempt < 5 && iframeCookieHeader != "auth=signedin"_s; ++attempt) {
+        RetainPtr afterRestartView = loadLoginPage();
+        ASSERT_TRUE(afterRestartView) << "load after the network process restart";
+    }
+    EXPECT_WK_STREQ(iframeCookieHeader, "auth=signedin");
+    EXPECT_EQ(promptCount, 1u);
+}
+
+#endif // PLATFORM(MAC)

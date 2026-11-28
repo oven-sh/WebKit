@@ -55,6 +55,38 @@ TEST(MIMESniffer, MIMETypes)
     ASSERT_EQ(MIMESniffer::getMIMETypeFromContent({ aviData.data(), aviData.size() }), String("video/avi"_s));
 }
 
+// Builds a buffer holding the first frame header of an MP3 file without ID3 tag, followed by the header of the second frame located at frameSize.
+static Vector<uint8_t> mp3TwoFrameHeaders(std::array<uint8_t, 4> firstHeader, std::array<uint8_t, 4> secondHeader, size_t frameSize)
+{
+    Vector<uint8_t> data(FillWith { }, frameSize + secondHeader.size(), 0);
+    memcpySpan(data.mutableSpan(), std::span { firstHeader });
+    memcpySpan(data.mutableSpan().subspan(frameSize), std::span { secondHeader });
+    return data;
+}
+
+TEST(MIMESniffer, MP3WithoutID3)
+{
+    // MPEG-1 Layer III, 128kbps, 48kHz, no padding: frame size is 144 * 128000 / 48000 = 384 (half-a-second-48000.mp3).
+    auto mpeg1 = mp3TwoFrameHeaders({ 0xFF, 0xFB, 0x94, 0x64 }, { 0xFF, 0xFB, 0xC4, 0x64 }, 384);
+    EXPECT_EQ(MIMESniffer::getMIMETypeFromContent(mpeg1.span()), String("audio/mpeg"_s));
+
+    // MPEG-1 Layer III, 128kbps, 44.1kHz, padded: frame size is 144 * 128000 / 44100 + 1 = 418 (sine440.mp3).
+    auto mpeg1Padded = mp3TwoFrameHeaders({ 0xFF, 0xFA, 0x93, 0xCC }, { 0xFF, 0xFA, 0x93, 0xCC }, 418);
+    EXPECT_EQ(MIMESniffer::getMIMETypeFromContent(mpeg1Padded.span()), String("audio/mpeg"_s));
+
+    // MPEG-2 Layer III, 64kbps, 22.05kHz, no padding: frame size is 72 * 64000 / 22050 = 208 (sound_5.mp3).
+    auto mpeg2 = mp3TwoFrameHeaders({ 0xFF, 0xF3, 0x80, 0xC4 }, { 0xFF, 0xF3, 0x20, 0xC4 }, 208);
+    EXPECT_EQ(MIMESniffer::getMIMETypeFromContent(mpeg2.span()), String("audio/mpeg"_s));
+
+    // MPEG-2.5 Layer III, 32kbps, 8kHz, no padding: frame size is 72 * 32000 / 8000 = 288 (half-a-second-8000.mp3).
+    auto mpeg25 = mp3TwoFrameHeaders({ 0xFF, 0xE3, 0x48, 0x64 }, { 0xFF, 0xE3, 0x58, 0x64 }, 288);
+    EXPECT_EQ(MIMESniffer::getMIMETypeFromContent(mpeg25.span()), String("audio/mpeg"_s));
+
+    // The second frame header must lie entirely within the sequence.
+    mpeg1.shrink(mpeg1.size() - 1);
+    EXPECT_NE(MIMESniffer::getMIMETypeFromContent(mpeg1.span()), String("audio/mpeg"_s));
+}
+
 TEST(MIMESniffer, WebMSnifferDoesNotReadPastEnd)
 {
     // Truncated WebM-style header crafted so hasSignatureForWebM() advances
@@ -69,6 +101,40 @@ TEST(MIMESniffer, WebMSnifferDoesNotReadPastEnd)
     // sequence[iter + 1] one byte past the end when iter == length - 1.
     constexpr std::array<const uint8_t, 5> truncatedWebMAtMagicByte = { 0x1A, 0x45, 0xDF, 0xA3, 0x42 };
     MIMESniffer::getMIMETypeFromContent(std::span { truncatedWebMAtMagicByte });
+}
+
+TEST(MIMESniffer, ModelMIMETypes)
+{
+    auto modelMIMEType = [](ASCIILiteral content) {
+        return MIMESniffer::getModelMIMETypeFromContent(byteCast<uint8_t>(content.span()));
+    };
+
+    ASSERT_EQ(modelMIMEType("PXR-USDC"_s), String("model/vnd.pixar.usd"_s));
+    ASSERT_EQ(modelMIMEType("#usda 1.0"_s), String("model/vnd.pixar.usd"_s));
+    ASSERT_EQ(modelMIMEType("PK\x03\x04"_s), String("model/vnd.usdz+zip"_s));
+    ASSERT_EQ(modelMIMEType("glTF"_s), String("model/gltf-binary"_s));
+    ASSERT_EQ(modelMIMEType("{\"asset\":{}}"_s), String("model/gltf+json"_s));
+    ASSERT_EQ(modelMIMEType("solid cube"_s), String("model/stl"_s));
+
+    // Binary STL: an 80-byte header, a little-endian triangle count, then 50 bytes per triangle.
+    auto binarySTL = [](uint8_t triangleCount, size_t extraBytes, ASCIILiteral header = ""_s) {
+        Vector<uint8_t> data(FillWith { }, 84 + triangleCount * 50 + extraBytes, 0);
+        memcpySpan(data.mutableSpan(), byteCast<uint8_t>(header.span()));
+        data[80] = triangleCount;
+        return MIMESniffer::getModelMIMETypeFromContent(data.span());
+    };
+    ASSERT_EQ(binarySTL(0, 0), String("model/stl"_s));
+    ASSERT_EQ(binarySTL(2, 0), String("model/stl"_s));
+    // A signature wins over a size that matches binary STL.
+    ASSERT_EQ(binarySTL(2, 0, "glTF"_s), String("model/gltf-binary"_s));
+    // The size must match the triangle count exactly.
+    ASSERT_TRUE(binarySTL(2, 1).isNull());
+
+    // The USDA signature includes the space after "#usda".
+    ASSERT_TRUE(modelMIMEType("#usda1.0"_s).isNull());
+    // Only the first half of the ZIP signature.
+    ASSERT_TRUE(modelMIMEType("PK"_s).isNull());
+    ASSERT_TRUE(modelMIMEType(""_s).isNull());
 }
 
 } // namespace TestWebKitAPI

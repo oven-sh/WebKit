@@ -136,6 +136,7 @@ public:
 
     // Minimum rope length for rope-walk optimizations (tryFindOneChar, tryReplaceOneChar).
     static constexpr unsigned minLengthForRopeWalk = 0x128;
+    static constexpr unsigned maxDepthOfWalkToSubstring = 8;
 
     static constexpr uintptr_t isRopeInPointer = 0x1;
 
@@ -255,7 +256,7 @@ public:
     StringImpl* tryGetValueImpl() const;
     ALWAYS_INLINE unsigned length() const;
 
-    JSValue LEGACY_NODELETE toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
+    NODELETE JSValue toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
     bool toBoolean() const { return !!length(); }
     JSObject* toObject(JSGlobalObject*) const;
     double toNumber(JSGlobalObject*) const;
@@ -301,9 +302,9 @@ public:
 
     // Set only when this string is known to hold an AtomStringImpl. A clear bit proves nothing, since
     // AtomStringImpl::add can atomize a StringImpl that several JSStrings already share, so never
-    // conclude from it that a string is not an atom. A reader that sees the bit set must not go on to
-    // load the StringImpl: it has no ordering against the impl store, which is the whole reason value
-    // profiling consults the bit.
+    // conclude from it that a string is not an atom. A concurrent reader (a compiler thread) that sees
+    // the bit set must not go on to load the StringImpl: it has no ordering against the impl store,
+    // which is the whole reason value profiling consults the bit. The mutator may load it.
     ALWAYS_INLINE bool isDefinitelyAtom() const { return perCellBit(); }
 
     void markAsAtom() const
@@ -349,6 +350,7 @@ private:
 
     void swapToAtomString(VM&, RefPtr<AtomStringImpl>&&) const;
 
+    friend JSString* jsString(VM&, StringImpl&);
     friend JSString* jsString(VM&, const String&);
     friend JSString* jsString(VM&, String&&);
     friend JSString* jsString(VM&, StringView);
@@ -367,6 +369,7 @@ private:
     friend JSString* jsSubstring(JSGlobalObject*, VM&, JSString*, unsigned, unsigned);
     friend JSString* tryJSSubstringImpl(VM&, JSString*, unsigned, unsigned);
     friend JSString* jsSubstringOfResolved(VM&, GCDeferralContext*, JSString*, unsigned, unsigned);
+    friend JSString* jsOwnedString(VM&, StringImpl&);
     friend JSString* jsOwnedString(VM&, const String&);
     friend class DecoderStringTable;
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*);
@@ -678,13 +681,20 @@ public:
 
     JSString* substringBase() const { return fiber1(); }
 
+#if CPU(ADDRESS64)
+    // A substring has no first fiber. This word caches the hash of its characters. It is zero until the hash is computed.
+    static constexpr unsigned substringHashShift = 32;
+    unsigned hashOfSubstring() const { return static_cast<unsigned>(m_fiber >> substringHashShift); }
+    void setHashOfSubstring(unsigned hash) const { m_fiber |= static_cast<uintptr_t>(hash) << substringHashShift; }
+#endif
+
     unsigned substringOffset() const
     {
         return static_cast<unsigned>(std::bit_cast<uintptr_t>(fiber2()));
     }
 
 #if ENABLE(AOT)
-    void resolveSubstringBySharing(StringImpl&) const;
+    void resolveBySharing(StringImpl&) const;
     bool tryResolveFlatLatin1Parts(VM&) const;
     template<typename CharactersOf> bool tryResolveLatin1Parts(VM&, NOESCAPE const CharactersOf&) const;
 #endif
@@ -1064,16 +1074,23 @@ ALWAYS_INLINE bool shouldMakeRope(size_t totalLength, unsigned newFiberCount)
     return StringImpl::headerSize<Latin1Character>() + totalLength >= sizeof(JSRopeString) + (newFiberCount - 1) * sizeof(JSString);
 }
 
-inline JSString* jsString(VM& vm, const String& s)
+inline JSString* jsString(VM& vm, StringImpl& s)
 {
     int size = s.length();
     if (!size)
         return vm.smallStrings.emptyString();
     if (size == 1) {
-        if (auto c = s.codeUnitAt(0); c <= maxSingleCharacterString)
+        if (auto c = s[0]; c <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(c);
     }
-    return JSString::create(vm, *s.impl());
+    return JSString::create(vm, Ref { s });
+}
+
+inline JSString* jsString(VM& vm, const String& s)
+{
+    if (!s.impl())
+        return vm.smallStrings.emptyString();
+    return jsString(vm, *s.impl());
 }
 
 inline JSString* jsString(VM& vm, String&& s)
@@ -1130,7 +1147,7 @@ inline JSString* tryJSSubstringImpl(VM& vm, JSString* base, unsigned offset, uns
 {
     // Cap traversal depth to avoid O(n^2) slicing on deep ropes (e.g. repeated s += 'A').
     // Exceeding the limit returns nullptr, letting jsSubstring flatten via resolveRope.
-    static constexpr unsigned maxTraversalDepth = 8;
+    static constexpr unsigned maxTraversalDepth = JSString::maxDepthOfWalkToSubstring;
 
     for (unsigned depth = 0; ; ++depth) {
         ASSERT(offset <= base->length());
@@ -1231,16 +1248,23 @@ inline JSString* jsSubstring(VM& vm, const String& s, unsigned offset, unsigned 
     return JSString::create(vm, WTF::move(impl));
 }
 
-inline JSString* jsOwnedString(VM& vm, const String& s)
+inline JSString* jsOwnedString(VM& vm, StringImpl& s)
 {
     int size = s.length();
     if (!size)
         return vm.smallStrings.emptyString();
     if (size == 1) {
-        if (auto c = s.codeUnitAt(0); c <= maxSingleCharacterString)
+        if (auto c = s[0]; c <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(c);
     }
-    return JSString::createHasOtherOwner(vm, *s.impl());
+    return JSString::createHasOtherOwner(vm, Ref { s });
+}
+
+inline JSString* jsOwnedString(VM& vm, const String& s)
+{
+    if (!s.impl())
+        return vm.smallStrings.emptyString();
+    return jsOwnedString(vm, *s.impl());
 }
 
 ALWAYS_INLINE JSString* jsStringWithCache(VM& vm, const String& s)

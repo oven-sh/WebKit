@@ -50,23 +50,19 @@ class EmbeddedSimulatorPort(EmbeddedPort):
 
     def environment_for_api_tests(self):
         inherited_env = super().environment_for_api_tests()
-        new_environment = {}
         SIMCTL_ENV_PREFIX = 'SIMCTL_CHILD_'
-        for value in inherited_env:
-            if not value.startswith(SIMCTL_ENV_PREFIX):
-                new_environment[SIMCTL_ENV_PREFIX + value] = inherited_env[value]
-            else:
-                new_environment[value] = inherited_env[value]
+        new_environment = {SIMCTL_ENV_PREFIX + name: value for name, value in inherited_env.items() if not name.startswith(SIMCTL_ENV_PREFIX)}
+        # A variable passed with the prefix wins over the same variable without it.
+        new_environment.update({name: value for name, value in inherited_env.items() if name.startswith(SIMCTL_ENV_PREFIX)})
         return new_environment
 
     def setup_environ_for_server(self, server_name=None):
         _log.debug('Setting up environment for server on {}'.format(self.operating_system()))
         env = super().setup_environ_for_server(server_name)
         if server_name == self.driver_name() and self.get_option('leaks'):
-            env['MallocStackLogging'] = '1'
-            env['__XPC_MallocStackLogging'] = '1'
-            env['MallocScribble'] = '1'
-            env['__XPC_MallocScribble'] = '1'
+            for name in ['MallocStackLogging', 'MallocScribble', 'SYSTEM_HEAP_USE_DEFAULT_ZONE']:
+                env[name] = '1'
+                env['__XPC_' + name] = '1'
         return env
 
     def did_spawn_worker(self, worker_number):

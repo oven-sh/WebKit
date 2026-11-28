@@ -45,7 +45,7 @@ public:
 
 private:
     void mouseDown(unsigned, double, WKEventModifiers, double, double, int /*clickCount*/, unsigned&) override;
-    void mouseUp(unsigned, double, WKEventModifiers, double, double, unsigned&) override;
+    void mouseUp(unsigned, double, WKEventModifiers, double, double, int /*clickCount*/, unsigned&) override;
     void mouseMoveTo(double, double, double, WKEventMouseButton, unsigned) override;
     void mouseScrollBy(int, int, double, double, double) override;
     void sendWheelEvent(double, double, double, double, double, bool) override;
@@ -73,7 +73,7 @@ private:
     uint32_t m_buttonState { 0 };
 #if ENABLE(TOUCH_EVENTS)
     Vector<struct wpe_input_touch_event_raw> m_touchEvents;
-    HashSet<unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_updatedTouchEvents;
+    HashSet<unsigned> m_updatedTouchEvents;
 #endif
 };
 

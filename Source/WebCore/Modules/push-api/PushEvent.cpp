@@ -46,7 +46,7 @@ static Vector<uint8_t> dataFromPushMessageDataInit(PushMessageDataInit& data)
             return value->span();
         },
         [](String& value) -> Vector<uint8_t> {
-            return value.utf8().span();
+            return makeUTF8CString(value).span();
         }
     );
 }
@@ -64,7 +64,7 @@ Ref<PushEvent> PushEvent::create(const AtomString& type, ExtendableEventInit&& i
     return adoptRef(*new PushEvent(type, WTF::move(initializer), WTF::move(data), isTrusted));
 }
 
-static inline RefPtr<PushMessageData> LEGACY_NODELETE pushMessageDataFromOptionalVector(std::optional<Vector<uint8_t>>&& data)
+NODELETE static inline RefPtr<PushMessageData> pushMessageDataFromOptionalVector(std::optional<Vector<uint8_t>>&& data)
 {
     if (!data)
         return nullptr;

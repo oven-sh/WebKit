@@ -30,6 +30,7 @@
 
 #include "AudioMediaStreamTrackRendererInternalUnitManager.h"
 #include "AudioVideoRendererRemoteMessageReceiverMessages.h"
+#include "DisplayListData.h"
 #include "GPUConnectionToWebProcessMessages.h"
 #include "GPUProcessConnectionInfo.h"
 #include "GPUProcessConnectionMessages.h"
@@ -65,6 +66,10 @@
 #if USE(AUDIO_SESSION)
 #include "RemoteAudioSession.h"
 #include "RemoteAudioSessionMessages.h"
+#endif
+
+#if PLATFORM(COCOA)
+#include <WebCore/PDFDocumentBuffer.h>
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -107,6 +112,10 @@
 #include "AudioSessionRoutingArbitrator.h"
 #endif
 
+#if ENABLE(UNIFIED_PDF)
+#include <WebCore/PDFKitDocument.h>
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -142,6 +151,7 @@ void GPUProcessConnection::didBecomeUnresponsive()
     // The function call might have been posted asynchronously from other thread.
     // Guard against notifying a problem for a GPUProcessConnection that has already been
     // switched away.
+    assertIsMainRunLoop();
     if (webProcess->existingGPUProcessConnection() != this)
         return;
     webProcess->gpuProcessConnectionDidBecomeUnresponsive();
@@ -169,12 +179,20 @@ void GPUProcessConnection::invalidate()
     m_hasInitialized = true;
 }
 
+void GPUProcessConnection::close()
+{
+    didClose(m_connection);
+}
+
 void GPUProcessConnection::didClose(IPC::Connection&)
 {
     RELEASE_LOG_ERROR(Process, "%p - GPUProcessConnection::didClose", this);
     auto protector = Ref { *this };
     Ref webProcess = WebProcess::singleton();
-    ASSERT(webProcess->existingGPUProcessConnection() == this);
+    assertIsMainRunLoop();
+    if (webProcess->existingGPUProcessConnection() != this)
+        return;
+    invalidate();
     webProcess->gpuProcessConnectionClosed();
 
 #if ENABLE(ROUTING_ARBITRATION)
@@ -365,6 +383,39 @@ void GPUProcessConnection::endRoutingArbitration()
 }
 #endif
 
+#if PLATFORM(COCOA)
+void GPUProcessConnection::drawDisplayListToPDF(DisplayListData&& displayListData, const FloatSize& size, CompletionHandler<void(RefPtr<SharedBuffer>&&)>&& completionHandler)
+{
+    Ref webProcess = WebProcess::singleton();
+    if (!webProcess->isPrintProcess()) {
+        ASSERT_NOT_REACHED();
+        completionHandler(nullptr);
+        return;
+    }
+
+    RefPtr displayList = WTF::move(displayListData).createDisplayList(webProcess->isLockdownModeEnabled(), [](Ref<SharedBuffer>&& data) -> Ref<SharedPDFDocument> {
+#if ENABLE(UNIFIED_PDF)
+        return PDFKitDocument::create(WTF::move(data));
+#else
+        return SharedPDFDocument::create(WTF::move(data));
+#endif
+    });
+    if (!displayList) {
+        completionHandler(nullptr);
+        return;
+    }
+
+    auto buffer = PDFDocumentBuffer::create(size);
+    if (!buffer) {
+        completionHandler(nullptr);
+        return;
+    }
+
+    buffer->context().drawDisplayList(*displayList);
+    completionHandler(buffer->takeData());
+}
+#endif
+
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
 void GPUProcessConnection::createVisibilityPropagationContextForPage(WebPage& page)
 {
@@ -449,12 +500,12 @@ void GPUProcessConnection::releaseGraphicsContextGL(RemoteGraphicsContextGLIdent
 }
 #endif
 
-void GPUProcessConnection::createGPU(WebGPUIdentifier identifier, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& serverHandle)
+void GPUProcessConnection::createGPU(RemoteGPUIdentifier identifier, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& serverHandle)
 {
     m_connection->send(Messages::GPUConnectionToWebProcess::CreateGPU(identifier, renderingBackendIdentifier, WTF::move(serverHandle)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 }
 
-void GPUProcessConnection::releaseGPU(WebGPUIdentifier identifier)
+void GPUProcessConnection::releaseGPU(RemoteGPUIdentifier identifier)
 {
     m_connection->send(Messages::GPUConnectionToWebProcess::ReleaseGPU(identifier), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 }

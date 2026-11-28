@@ -28,8 +28,7 @@
 #include <WebCore/FontTaggedSettings.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'font-variation-settings'> = normal | [ <opentype-tag> <number> ]#
 // https://drafts.csswg.org/css-fonts-4/#propdef-font-variation-settings
@@ -61,7 +60,7 @@ template<> struct Serialize<FontVariationSettings> { void operator()(StringBuild
 // MARK: - Blending
 
 template<> struct Blending<FontVariationSettings> {
-    bool LEGACY_NODELETE canBlend(const FontVariationSettings&, const FontVariationSettings&);
+    NODELETE bool canBlend(const FontVariationSettings&, const FontVariationSettings&);
     auto blend(const FontVariationSettings&, const FontVariationSettings&, const BlendingContext&) -> FontVariationSettings;
 };
 
@@ -69,5 +68,4 @@ template<> struct Blending<FontVariationSettings> {
 
 TextStream& operator<<(TextStream&, const FontVariationSettings&);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

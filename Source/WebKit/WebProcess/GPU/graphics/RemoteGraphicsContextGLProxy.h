@@ -78,7 +78,7 @@ public:
     void reshape(int width, int height) final;
     bool supportsExtension(WebCore::GCGLExtension) final;
     bool enableExtension(WebCore::GCGLExtension) final;
-    std::optional<size_t> LEGACY_NODELETE estimatedMemoryCost() final;
+    NODELETE std::optional<size_t> estimatedMemoryCost() final;
 
     GCGLint maxCombinedTextureImageUnits() final { return m_maxCombinedTextureImageUnits; }
     GCGLint maxVertexAttribs() final { return m_maxVertexAttribs; }
@@ -100,8 +100,9 @@ public:
 #endif
     GCGLErrorCodeSet getErrors() final;
 #if ENABLE(VIDEO)
-    bool copyTextureFromVideoFrame(WebCore::VideoFrame&, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum format, GCGLenum type , bool premultiplyAlpha, bool flipY) final;
+    bool copyTextureFromVideoFrame(WebCore::VideoFrame&, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum type, bool unpackFlipY, bool unpackPremultiplyAlpha) final;
     RefPtr<WebCore::NativeImage> videoFrameToNativeImage(WebCore::VideoFrame&) final;
+    std::optional<VideoUploadRecord> lastVideoUploadForTesting() final;
 #endif
 
     void simulateEventForTesting(WebCore::GraphicsContextGLSimulatedEventForTesting) final;
@@ -389,7 +390,7 @@ public:
 #endif
     // End of list used by generate-gpup-webgl script.
 
-    static bool LEGACY_NODELETE handleMessageToRemovedDestination(IPC::Connection&, IPC::Decoder&);
+    NODELETE static bool handleMessageToRemovedDestination(IPC::Connection&, IPC::Decoder&);
 
 protected:
     explicit RemoteGraphicsContextGLProxy(const WebCore::GraphicsContextGLAttributes&, RemoteRenderingBackendProxy&);
@@ -420,11 +421,11 @@ private:
     void addDebugMessage(GCGLenum, GCGLenum, GCGLenum, std::span<const char8_t>);
     void memoryCostChanged(std::optional<uint64_t>);
 
-    void LEGACY_NODELETE initialize(const RemoteGraphicsContextGLInitializationState&);
+    NODELETE void initialize(const RemoteGraphicsContextGLInitializationState&);
     void waitUntilInitialized();
     void disconnectGpuProcessIfNeeded();
     void abandonGpuProcess();
-    uint32_t LEGACY_NODELETE createObjectName();
+    NODELETE uint32_t createObjectName();
 
     WeakPtr<GPUProcessConnection> m_gpuProcessConnection; // Only main thread use.
     RefPtr<IPC::StreamClientConnection> m_streamConnection;
@@ -433,7 +434,15 @@ private:
     SharedVideoFrameWriter m_sharedVideoFrameWriter;
 #endif
 #if ENABLE(VIDEO)
+    // Test-only. The base class record numbers every copyTextureFromVideoFrame() call and holds the outcome
+    // of calls that did not reach the GPU process. The GPU process numbers the calls it received.
+    uint64_t m_videoUploadsSentForTesting { 0 };
+    bool m_lastVideoUploadWasSentForTesting { false };
+#endif
+#if ENABLE(VIDEO)
     const RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
+    // The connection of the GPU process connection that m_streamConnection was created on.
+    const RefPtr<IPC::Connection> m_gpuProcessIPCConnection;
 #endif
     GCGLint m_maxCombinedTextureImageUnits { 0 };
     GCGLint m_maxVertexAttribs { 0 };

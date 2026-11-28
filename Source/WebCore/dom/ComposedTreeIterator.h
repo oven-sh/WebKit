@@ -184,7 +184,11 @@ public:
             ComposedTreeIterator<ContextInlineCapacity>::traverseNextSibling();
             return *this;
         }
-        Iterator& operator--() { return static_cast<Iterator&>(ComposedTreeIterator<ContextInlineCapacity>::traversePreviousSibling()); }
+        Iterator& operator--()
+        {
+            ComposedTreeIterator<ContextInlineCapacity>::traversePreviousSibling();
+            return *this;
+        }
     };
 
     ComposedTreeChildAdapter(ContainerNode& parent)
@@ -261,7 +265,7 @@ inline Node* nextSiblingInComposedTreeIgnoringUserAgentShadow(Node& node)
     return node.nextSibling();
 }
 
-inline ContainerNode* LEGACY_NODELETE parentInComposedTreeIgnoringUserAgentShadow(Node& node)
+NODELETE inline ContainerNode* parentInComposedTreeIgnoringUserAgentShadow(Node& node)
 {
     if (auto* slot = node.assignedSlot()) {
         if (auto* shadowRoot = slot->containingShadowRoot(); shadowRoot && shadowRoot->mode() != ShadowRootMode::UserAgent)
@@ -430,7 +434,7 @@ inline void ComposedTreeIterator<ContextInlineCapacity>::traverseNextInShadowTre
             RefPtr assignedNode = assignedNodes->at(0).get();
             ASSERT(assignedNode);
             ASSERT(is<Element>(assignedNode->parentNode()));
-            m_contextStack.append(Context(*dynamicDowncast<Element>(assignedNode->parentNode()), *assignedNode, *assignedNode, Context::Slotted));
+            m_contextStack.append(Context(*protect(assignedNode->parentNode()), *assignedNode, *assignedNode, Context::Slotted));
             return;
         }
     }
@@ -468,7 +472,7 @@ inline bool ComposedTreeIterator<ContextInlineCapacity>::advanceInSlot(int direc
     RefPtr slotNode = assignedNodes.at(context().slotNodeIndex).get();
     ASSERT(slotNode);
     ASSERT(is<Element>(slotNode->parentNode()));
-    m_contextStack.append(Context(*dynamicDowncast<Element>(slotNode->parentNode()), *slotNode, *slotNode, Context::Slotted));
+    m_contextStack.append(Context(*protect(slotNode->parentNode()), *slotNode, *slotNode, Context::Slotted));
     return true;
 }
 

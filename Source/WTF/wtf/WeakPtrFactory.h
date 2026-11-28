@@ -85,7 +85,7 @@ public:
         return m_impl.get();
     }
 
-    SUPPRESS_NODELETE void LEGACY_NODELETE initializeIfNeeded(const T& object) const
+    NODELETE SUPPRESS_NODELETE void initializeIfNeeded(const T& object) const
     {
         if (m_impl)
             return;
@@ -102,7 +102,7 @@ public:
     {
         initializeIfNeeded(object);
 
-        ASSERT(&object == m_impl->template get<T>());
+        ASSERT_WITH_SECURITY_IMPLICATION(&object == m_impl->template get<T>());
         return WeakPtr<U, WeakPtrImpl>(*m_impl, enableWeakPtrThreadingAssertions);
     }
 
@@ -161,7 +161,7 @@ public:
         return m_impl.pointer();
     }
 
-    SUPPRESS_NODELETE void LEGACY_NODELETE initializeIfNeeded(const T& object) const
+    NODELETE SUPPRESS_NODELETE void initializeIfNeeded(const T& object) const
     {
         if (m_impl.pointer())
             return;
@@ -178,7 +178,7 @@ public:
     {
         initializeIfNeeded(object);
 
-        ASSERT(&object == m_impl.pointer()->template get<T>());
+        ASSERT_WITH_SECURITY_IMPLICATION(&object == m_impl.pointer()->template get<T>());
         return WeakPtr<U, WeakPtrImpl>(*m_impl.pointer(), enableWeakPtrThreadingAssertions);
     }
 

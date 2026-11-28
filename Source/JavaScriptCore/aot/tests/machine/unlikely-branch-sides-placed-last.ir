@@ -1,0 +1,107 @@
+# function narrow(o, f) { if (f & 4) o.rare; return o.common; }   function wide(o, f) { if (!(f & 1023)) o.rare; return o.common; }   function equal(o, k) { if (k === 7) o.rare; return o.common; }
+# function truth(o, c) { if (c) o.rare; return o.common; }   function turns(o, f) { while (f & 4) { o.body; f >>= 1; } return o.after; }
+# A bit of a constant mask of up to four bits is usually clear, a wider mask usually hits, and a value usually differs from an integer literal: the other side is placed out of line
+# and the branch falls through. No operation in that side takes another form. The truthiness of a value says nothing: its side stays in place, and a side that stays in a loop
+# which the other side leaves is never the unlikely one.
+# RUN(WALK): walk f1:Body f2:Body f3:Body
+# WALK-NOT: frequency=Unlikely
+# RUN(BYTES): bytes f1:Body f2:Body f3:Body f4:Body f5:Body mechanisms=all
+# BYTES-LABEL: unit f1:Body
+# BYTES: "common"
+# BYTES: "rare"
+# BYTES-LABEL: unit f2:Body
+# BYTES: "common"
+# BYTES: "rare"
+# BYTES-LABEL: unit f3:Body
+# BYTES: "common"
+# BYTES: "rare"
+# BYTES-LABEL: unit f4:Body
+# BYTES: "rare"
+# BYTES: "common"
+# BYTES-LABEL: unit f5:Body
+# BYTES: "body"
+# BYTES: "after"
+# RUN(SHELL): run-in-shell globalThis.publish = (narrow, wide, equal, truth, turns) => { let reads = []; const o = new Proxy({}, { get(target, key) { reads.push(key); return key.length; } }); print([narrow(o, 4), narrow(o, 3), wide(o, 0), wide(o, 8), equal(o, 7), equal(o, 8), truth(o, 1), truth(o, 0), turns(o, 12), turns(o, 0)].join()); print(reads.join()); };
+# SHELL: 6,6,6,6,6,6,6,6,5,5
+# SHELL-NEXT: rare,common,common,rare,common,common,rare,common,common,rare,common,common,body,body,after,after
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return
+}
+function f1 name="narrow" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=4
+    v3 = BitAnd v1, v2 @10
+    v4 = ToBoolean v3 @10
+    Branch v4 -> taken b1(), notTaken b2() @10
+  b1():
+    v5 = PropGet v0 key="rare" @20
+    Jump -> next b2() @20
+  b2():
+    v6 = PropGet v0 key="common" @30
+    Return v6 @30
+}
+function f2 name="wide" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1023
+    v3 = BitAnd v1, v2 @10
+    v4 = ToBoolean v3 @10
+    Branch v4 -> taken b2(), notTaken b1() @10
+  b1():
+    v5 = PropGet v0 key="rare" @20
+    Jump -> next b2() @20
+  b2():
+    v6 = PropGet v0 key="common" @30
+    Return v6 @30
+}
+function f3 name="equal" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=7
+    v3 = StrictEq v1, v2 @10
+    Branch v3 -> taken b1(), notTaken b2() @10
+  b1():
+    v4 = PropGet v0 key="rare" @20
+    Jump -> next b2() @20
+  b2():
+    v5 = PropGet v0 key="common" @30
+    Return v5 @30
+}
+function f4 name="truth" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v1 -> taken b1(), notTaken b2() @10
+  b1():
+    v2 = PropGet v0 key="rare" @20
+    Jump -> next b2() @20
+  b2():
+    v3 = PropGet v0 key="common" @30
+    Return v3 @30
+}
+function f5 name="turns" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=4
+    v3 = Integer integer=1
+    Jump -> next b1(v1) @5
+  b1(v4: anything):
+    LoopHint
+    v6 = BitAnd v4, v2 @10
+    v7 = ToBoolean v6 @10
+    Branch v7 -> taken b2(), notTaken b3() @10
+  b2():
+    v8 = PropGet v0 key="body" @20
+    v9 = RShift v4, v3 @25
+    Jump -> next b1(v9) @25
+  b3():
+    v10 = PropGet v0 key="after" @30
+    Return v10 @30
+}

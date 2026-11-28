@@ -24,8 +24,10 @@ public:
     }
 
     bool contains(UniquedStringImpl* uid) const final { return m_first->contains(uid) || m_second->contains(uid); }
-    String storeErrorMessage(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->storeErrorMessage(uid); }
-    String deleteErrorMessage(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->deleteErrorMessage(uid); }
+    bool refusesWrite(UniquedStringImpl* uid) const final { return m_first->refusesWrite(uid) || m_second->refusesWrite(uid); }
+    bool refusalDependsOnWriter(UniquedStringImpl* uid) const final { return m_first->refusalDependsOnWriter(uid) || m_second->refusalDependsOnWriter(uid); }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return (m_first->refusesWrite(uid) ? m_first : m_second)->storeErrorMessage(uid); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return (m_first->refusesWrite(uid) ? m_first : m_second)->deleteErrorMessage(uid); }
     String setPrototypeErrorMessage() const final
     {
         String message = m_first->setPrototypeErrorMessage();

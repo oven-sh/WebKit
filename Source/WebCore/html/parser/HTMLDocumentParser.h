@@ -54,6 +54,9 @@ public:
     static Ref<HTMLDocumentParser> create(HTMLDocument&, OptionSet<ParserContentPolicy> = DefaultParserContentPolicy);
     virtual ~HTMLDocumentParser();
 
+    void ref() const final { DocumentParser::ref(); }
+    void deref() const final { DocumentParser::deref(); }
+
     // CheckedPtr interface
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
@@ -72,7 +75,7 @@ public:
     HTMLTokenizer& tokenizer() LIFETIME_BOUND;
     TextPosition textPosition() const final;
 
-    bool LEGACY_NODELETE isOnStackOfOpenElements(Element&) const;
+    NODELETE bool isOnStackOfOpenElements(Element&) const;
 
 protected:
     explicit HTMLDocumentParser(HTMLDocument&, OptionSet<ParserContentPolicy> = DefaultParserContentPolicy);
@@ -90,11 +93,11 @@ private:
 
     // DocumentParser
     void detach() final;
-    bool LEGACY_NODELETE hasInsertionPoint() final;
+    NODELETE bool hasInsertionPoint() final;
     bool processingData() const final;
     void prepareToStopParsing() final;
     void stopParsing() final;
-    bool LEGACY_NODELETE isWaitingForScripts() const;
+    NODELETE bool isWaitingForScripts() const;
     bool isExecutingScript() const final;
     bool hasScriptsWaitingForStylesheets() const final;
     void executeScriptsWaitingForStylesheets() final;
@@ -113,7 +116,7 @@ private:
     // PendingScriptClient
     void notifyFinished(PendingScript&) final;
 
-    Document* LEGACY_NODELETE contextForParsingSession();
+    NODELETE Document* contextForParsingSession();
 
     enum class SynchronousMode : bool { AllowYield, ForceSynchronous };
     void append(RefPtr<StringImpl>&&, SynchronousMode);
@@ -131,9 +134,9 @@ private:
     void attemptToRunDeferredScriptsAndEnd();
     void end();
 
-    bool LEGACY_NODELETE isParsingFragment() const;
-    bool LEGACY_NODELETE isScheduledForResume() const;
-    bool LEGACY_NODELETE inPumpSession() const;
+    NODELETE bool isParsingFragment() const;
+    NODELETE bool isScheduledForResume() const;
+    NODELETE bool inPumpSession() const;
     bool shouldDelayEnd() const;
 
     void didBeginYieldingParser() final;

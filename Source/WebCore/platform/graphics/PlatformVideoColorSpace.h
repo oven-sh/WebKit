@@ -54,14 +54,25 @@ inline PlatformVideoColorSpace srgbColorSpace()
     return {
         .primaries = PlatformVideoColorPrimaries::Bt709,
         .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
+        .matrix = PlatformVideoMatrixCoefficients::Rgb,
+        .fullRange = true
+    };
+}
+
+// Variant of srgbColorSpace for Cocoa platforms.
+inline PlatformVideoColorSpace srgbAsBT709YUVColorSpace()
+{
+    return {
+        .primaries = PlatformVideoColorPrimaries::Bt709,
+        .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
         .matrix = PlatformVideoMatrixCoefficients::Bt709,
         .fullRange = true
     };
 }
 
-void LEGACY_NODELETE overrideVideoColorSpaceAsNeeded(PlatformVideoColorSpace&, const std::optional<PlatformVideoColorSpace>&);
+NODELETE void overrideVideoColorSpaceAsNeeded(PlatformVideoColorSpace&, const std::optional<PlatformVideoColorSpace>&);
 
-WEBCORE_EXPORT bool LEGACY_NODELETE usesITUR2100TF(const PlatformVideoColorSpace&);
+NODELETE WEBCORE_EXPORT bool usesITUR2100TF(const PlatformVideoColorSpace&);
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, PlatformVideoColorSpace);
 

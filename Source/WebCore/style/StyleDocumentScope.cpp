@@ -33,6 +33,7 @@
 #include "CSSKeyframesRule.h"
 #include "CSSStyleSheet.h"
 #include "ContainerNodeInlines.h"
+#include "ContainerQueryEvaluator.h"
 #include "DocumentInlines.h"
 #include "DocumentView.h"
 #include "Element.h"
@@ -49,6 +50,7 @@
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "RuleSet.h"
+#include "ScriptDisallowedScope.h"
 #include "ScrollableArea.h"
 #include "ShadowRoot.h"
 #include "StyleableInlines.h"
@@ -64,9 +66,7 @@
 #include <WebKitAdditions/StyleDocumentScopeAdditions.cpp>
 #endif
 
-namespace WebCore {
-
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentScope);
 
@@ -83,22 +83,24 @@ void DocumentScope::createDocumentResolver()
     ASSERT(!m_shadowRoot);
 
     SetForScope isUpdatingStyleResolver { m_isUpdatingStyleResolver, true };
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    m_resolver = Resolver::create(m_document, Resolver::ScopeType::Document);
+    Ref resolver = Resolver::create(m_document, Resolver::ScopeType::Document);
+    m_resolver = resolver.copyRef();
 
     if (!m_dynamicViewTransitionsStyle)
         m_dynamicViewTransitionsStyle = RuleSet::create();
 
-    m_resolver->ruleSets().setDynamicViewTransitionsStyle(m_dynamicViewTransitionsStyle.get());
+    resolver->ruleSets().setDynamicViewTransitionsStyle(m_dynamicViewTransitionsStyle.get());
 
     for (auto& keyframes : m_viewTransitionKeyframes)
-        m_resolver->addKeyframeStyle(keyframes.copyRef());
+        resolver->addKeyframeStyle(keyframes.copyRef());
 
     protect(m_document->fontSelector())->buildStarted();
 
-    m_resolver->ruleSets().initializeUserStyle();
-    m_resolver->addCurrentSVGFontFaceRules();
-    m_resolver->appendAuthorStyleSheets(m_activeStyleSheets);
+    resolver->ruleSets().initializeUserStyle();
+    resolver->addCurrentSVGFontFaceRules();
+    resolver->appendAuthorStyleSheets(m_activeStyleSheets);
 
     protect(m_document->fontSelector())->buildCompleted();
 }
@@ -122,8 +124,9 @@ void DocumentScope::addViewTransitionKeyframes(Ref<StyleRuleKeyframes>&& rule)
 
 void DocumentScope::releaseMemory()
 {
-    for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-        const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().releaseMemory();
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
+    for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots()) {
+        protect(const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope())->releaseMemory();
     }
 
     Scope::releaseMemory();
@@ -143,7 +146,7 @@ void DocumentScope::setPreferredStylesheetSetName(const WTF::String& name)
 auto DocumentScope::mediaQueryViewportStateForDocument(const Document& document) -> MediaQueryViewportState
 {
     // These things affect evaluation of viewport dependent media queries.
-    return { document.view()->layoutSize(), document.frame()->pageZoomFactor(), document.printing() };
+    return { protect(document.view())->layoutSize(), document.frame()->pageZoomFactor(), document.printing() };
 }
 
 void DocumentScope::evaluateMediaQueriesForViewportChange()
@@ -181,11 +184,12 @@ auto DocumentScope::collectResolverScopes() -> ResolverScopes
     if (RefPtr resolver = resolverIfExists())
         resolverScopes.add(*resolver, Vector<WeakPtr<Scope>> { this });
 
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
     for (Ref shadowRoot : m_document->inDocumentShadowRoots()) {
-        auto& scope = const_cast<ShadowRoot&>(shadowRoot.get()).styleScope();
+        CheckedRef scope = const_cast<ShadowRoot&>(shadowRoot.get()).styleScope();
 
-        if (RefPtr resolver = scope.resolverIfExists())
-            resolverScopes.add(*resolver, Vector<WeakPtr<Scope>> { }).iterator->value.append(&scope);
+        if (RefPtr resolver = scope->resolverIfExists())
+            resolverScopes.add(*resolver, Vector<WeakPtr<Scope>> { }).iterator->value.append(scope.ptr());
     }
     return resolverScopes;
 }
@@ -206,11 +210,11 @@ void DocumentScope::evaluateMediaQueries(NOESCAPE const TestFunction& testFuncti
             switch (evaluationChanges->type) {
             case DynamicMediaQueryEvaluationChanges::Type::InvalidateStyle: {
                 Invalidator invalidator(evaluationChanges->invalidationRuleSets);
-                invalidator.invalidateStyle(*scope);
+                invalidator.invalidateStyle(protect(*scope));
                 break;
             }
             case DynamicMediaQueryEvaluationChanges::Type::ResetStyle:
-                scope->scheduleUpdate(UpdateType::ContentsOrInterpretation);
+                protect(scope)->scheduleUpdate(UpdateType::ContentsOrInterpretation);
                 break;
             }
         }
@@ -227,8 +231,9 @@ void DocumentScope::didChangeStyleSheetEnvironment()
 
     m_sharedShadowTreeResolvers.clear();
 
-    for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-        const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().scheduleUpdate(UpdateType::ContentsOrInterpretation);
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
+    for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots()) {
+        protect(const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope())->scheduleUpdate(UpdateType::ContentsOrInterpretation);
     }
 
     m_document->invalidateCachedCSSParserContext();
@@ -242,8 +247,9 @@ void DocumentScope::didChangeExtensionStyleSheets()
     // Extension stylesheets may mutate in the middle of a style update when resource loading triggers
     // content extension processing. In this case we schedule an asyncronous full stylesheet update.
     // FIXME: We should defer all resource loading after style resolution completes.
-    for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-        const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().scheduleUpdate(UpdateType::FullForExtensionStyleSheets);
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
+    for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots()) {
+        protect(const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope())->scheduleUpdate(UpdateType::FullForExtensionStyleSheets);
     }
 
     scheduleUpdate(UpdateType::FullForExtensionStyleSheets);
@@ -271,8 +277,8 @@ bool DocumentScope::invalidateForContainerDependencies(LayoutDependencyUpdateCon
 
     Vector<CheckedPtr<Element>> containersToInvalidate;
 
-    for (auto& containerRenderer : m_document->renderView()->containerQueryBoxes()) {
-        CheckedPtr containerElement = containerRenderer.element();
+    for (CheckedRef containerRenderer : m_document->renderView()->containerQueryBoxes()) {
+        CheckedPtr containerElement = containerRenderer->element();
 
         // Invalidation uses real elements, replace ::before/::after with its host.
         if (auto* pseudoElement = dynamicDowncast<PseudoElement>(containerElement.get()))
@@ -281,10 +287,10 @@ bool DocumentScope::invalidateForContainerDependencies(LayoutDependencyUpdateCon
         if (!containerElement)
             continue;
 
-        auto size = containerRenderer.logicalSize();
+        auto size = ContainerQueryEvaluator::queryContainerLogicalSize(containerRenderer);
 
         auto sizeChanged = [&](LayoutSize oldSize) {
-            auto& type = containerRenderer.style().containerType();
+            auto& type = containerRenderer->style().containerType();
             if (type.hasInlineSize())
                 return size.width() != oldSize.width();
             if (type.hasSize())
@@ -306,14 +312,10 @@ bool DocumentScope::invalidateForContainerDependencies(LayoutDependencyUpdateCon
     return !containersToInvalidate.isEmpty();
 }
 
-// Edges the container can currently be scrolled further toward.
-static RectEdges<bool> scrollableEdges(const RenderBox& containerRenderer)
+// The scroll state a scroll-state query container exposes: which edges it can still be scrolled
+// toward, and which it was most recently scrolled toward.
+static DocumentScope::ScrollState scrollStateFor(const RenderBox& containerRenderer)
 {
-    // This mirrors ScrollableArea::edgePinnedState(), except for where it takes the axes from. That
-    // function decides whether an axis can scroll at all from the Scrollbar objects the area owns,
-    // and a frame view has none when scrolling is delegated to a native scroll view, so it reports
-    // every edge as pinned there. Take the axes from the renderer and the frame view instead, like
-    // RenderLayerScrollableArea::hasScrollableHorizontalOverflow() and LocalFrameView::isScrollable().
     CheckedPtr<const ScrollableArea> scrollableArea;
     bool canScrollHorizontally = false;
     bool canScrollVertically = false;
@@ -333,20 +335,22 @@ static RectEdges<bool> scrollableEdges(const RenderBox& containerRenderer)
         canScrollVertically = containerRenderer.scrollsOverflowY();
     }
 
-    // A container with no scrollable area is not a scroll container, so it is scrollable nowhere.
     if (!scrollableArea)
-        return { false, false, false, false };
+        return { };
 
     auto scrollPosition = scrollableArea->scrollPosition();
     auto minimumScrollPosition = scrollableArea->minimumScrollPosition();
     auto maximumScrollPosition = scrollableArea->maximumScrollPosition();
 
-    // Top, right, bottom, left.
     return {
-        canScrollVertically && scrollPosition.y() > minimumScrollPosition.y(),
-        canScrollHorizontally && scrollPosition.x() < maximumScrollPosition.x(),
-        canScrollVertically && scrollPosition.y() < maximumScrollPosition.y(),
-        canScrollHorizontally && scrollPosition.x() > minimumScrollPosition.x()
+        // Top, right, bottom, left.
+        {
+            canScrollVertically && scrollPosition.y() > minimumScrollPosition.y(),
+            canScrollHorizontally && scrollPosition.x() < maximumScrollPosition.x(),
+            canScrollVertically && scrollPosition.y() < maximumScrollPosition.y(),
+            canScrollHorizontally && scrollPosition.x() > minimumScrollPosition.x()
+        },
+        scrollableArea->scrolledDirections()
     };
 }
 
@@ -365,12 +369,12 @@ void DocumentScope::updateScrollStateSnapshots()
 
     Vector<CheckedPtr<Element>> containersToInvalidate;
 
-    for (auto& containerRenderer : renderView->scrollStateQueryBoxes()) {
-        CheckedPtr containerElement = containerRenderer.element();
+    for (CheckedRef containerRenderer : renderView->scrollStateQueryBoxes()) {
+        CheckedPtr containerElement = containerRenderer->element();
         if (!containerElement)
             continue;
 
-        auto scrollState = ScrollState { scrollableEdges(containerRenderer) };
+        auto scrollState = scrollStateFor(containerRenderer);
 
         auto it = previousScrollStates.find(*containerElement);
         // A container seen for the first time is always invalidated, even when its state matches the
@@ -403,7 +407,7 @@ bool DocumentScope::invalidateForAnchorDependencies(LayoutDependencyUpdateContex
 
     Vector<CheckedRef<Element>> anchoredElementsToInvalidate;
 
-    if (m_document->renderView()->anchors().isEmptyIgnoringNullReferences())
+    if (m_document->renderView()->anchors().computeIsEmpty())
         return false;
 
     auto anchorMap = AnchorPositionEvaluator::makeAnchorPositionedForAnchorMap(m_anchorPositionedToAnchorMap);
@@ -413,14 +417,14 @@ bool DocumentScope::invalidateForAnchorDependencies(LayoutDependencyUpdateContex
         result.absoluteRect = anchorRenderer.absoluteBoundingBoxRect();
         // Include containing block sizes as anchor function insets may be computed against any side and if they change
         // we need to invalidate.
-        for (auto* containingBlock = anchorRenderer.containingBlock(); containingBlock; containingBlock = containingBlock->containingBlock()) {
+        for (CheckedPtr containingBlock = anchorRenderer.containingBlock(); containingBlock; containingBlock = containingBlock->containingBlock()) {
             if (containingBlock->canContainAbsolutelyPositionedObjects())
                 result.containingBlockSizes.append(containingBlock->contentBoxSize());
         }
         return result;
     };
 
-    for (auto& anchorRenderer : m_document->renderView()->anchors()) {
+    for (CheckedRef anchorRenderer : m_document->renderView()->anchors()) {
         auto anchorPosition = makeAnchorPosition(anchorRenderer);
         m_anchorPositionsOnLastUpdate.add(anchorRenderer, anchorPosition);
 
@@ -457,11 +461,11 @@ bool DocumentScope::invalidateForPositionTryFallbacks(LayoutDependencyUpdateCont
 
     bool invalidated = false;
 
-    for (auto& box : m_document->renderView()->positionTryBoxes()) {
+    for (CheckedRef box : m_document->renderView()->positionTryBoxes()) {
         if (!AnchorPositionEvaluator::overflowsInsetModifiedContainingBlock(box))
             continue;
 
-        CheckedPtr element = box.element();
+        CheckedPtr element = box->element();
         if (auto* pseudoElement = dynamicDowncast<PseudoElement>(element.get()))
             element = pseudoElement->hostElement();
 
@@ -515,5 +519,4 @@ void DocumentScope::forgetLastSuccessfulPositionOptionIndex(const Styleable& sty
     m_lastSuccessfulPositionOptionIndexes.remove(styleable);
 }
 
-}
 }

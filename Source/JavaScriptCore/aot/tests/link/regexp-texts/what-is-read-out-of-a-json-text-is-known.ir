@@ -1,0 +1,27 @@
+# Patterns, routes and tables are often read out of a JSON text when a program starts. The rehearsal enters JSON.parse, so a pattern made of what lies in the text is foreseen.
+# const parts = JSON.parse("[12,[34]]"); new RegExp("a" + parts[0]); new RegExp("b" + parts[1][0]);
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /a12/
+# CHECK: text /b34/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=JSONParse
+    v2 = String string="[12,[34]]"
+    v3 = Call v1, -, v2
+    v4 = Integer
+    v5 = Integer integer=1
+    v6 = ElemGet v3, v4
+    v7 = String string="a"
+    v8 = Add v7, v6
+    v9 = Construct v0, -, v8
+    v10 = ElemGet v3, v5
+    v11 = ElemGet v10, v4
+    v12 = String string="b"
+    v13 = Add v12, v11
+    v14 = Construct v0, -, v13
+    Return v4
+}

@@ -1,0 +1,44 @@
+# function copy(width) { return width * 3; }   function row(x) { return copy((x & 4095) / 4 | 0); }   globalThis.keep = row;
+# What a caller leaves for a callee is what its operand SHOWS. `(x & 4095) / 4 | 0` is written as DivideIntegers, an operation of the family of calls of built-ins whose result is typed by the rule from its operands.
+# Its operands show int[0, 4095] and 4, so it shows the range that the rule gives and not its form alone: `width` arrives as that range, and the product cannot leave an int32: nothing is checked.
+# RUN(CALLER): walk f2 mechanisms=all-Inlining
+# CALLER-LABEL: code f2:Body
+# CALLER: [[divided]]: int[0, 1024] @Int32 = DivideIntegers
+# CALLER-NEXT: CallDirect [[divided]] function=f1
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[width]]: int[0, 1024] @Int32
+# CHECK: : int[0, 3072] @Int32 = Mul [[width]], {{*}} form=Integers
+
+variable g0 name="copy" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    PropSet v4, v1 key="keep"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="copy" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    v2 = Mul v0, v1
+    Return v2
+}
+function f2 name="row" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=4095
+    v3 = BitAnd v0, v2
+    v4 = Integer integer=4
+    v5 = Div v3, v4
+    v6 = Integer
+    v7 = BitOr v5, v6
+    v8 = Call v1, -, v7 calleeName="copy"
+    ReturnCall v8
+}

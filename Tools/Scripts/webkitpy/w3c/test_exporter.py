@@ -26,10 +26,12 @@
 
 import argparse
 import logging
+import os
 import re
 import string
 import sys
 import subprocess
+import tempfile
 import textwrap
 
 from webkitcorepy import arguments, string_utils, run
@@ -47,6 +49,10 @@ from webkitpy.common.memoized import memoized
 _log = logging.getLogger(__name__)
 
 WEBKIT_WPT_DIR = 'LayoutTests/imported/w3c/web-platform-tests'
+# A copy of WPT's webdriver directory, and of the tools it runs with. Changes to tools/wptrunner aren't exported, because
+# WebKit keeps local changes in it.
+WEBKIT_WEBDRIVER_WPT_DIR = 'WebDriverTests/imported/w3c'
+WEBDRIVER_WPT_DIRS = ['webdriver', 'tools/webdriver']
 WPT_PR_URL = f'{WPT_GH_URL}/pull/'
 WEBKIT_EXPORT_PR_LABEL = 'webkit-export'
 
@@ -58,8 +64,45 @@ CHANGED_FILE_RE = re.compile(r'^\* [^\s:]*[/.][^\s:]*:')
 CANONICAL_LINK_RE = re.compile(r'^Canonical[ -]link:\s*(?P<link>\S+)$', re.IGNORECASE)
 CO_AUTHORED_BY_RE = re.compile(r'^Co-authored-by:', re.IGNORECASE)
 WEBKIT_ONLY_TRAILER_RE = re.compile(r'^(Originally-landed-as|Identifier|git-svn-id):')
-WEBKIT_WPT_PATH_RE = re.compile(r'(?<![/\w])(LayoutTests/)?imported/w3c/web-platform-tests/')
+WEBKIT_WPT_PATH_RE = re.compile(r'(?<![/\w])((LayoutTests/)?imported/w3c/web-platform-tests/|(WebDriverTests/)?imported/w3c/(?=webdriver\b|tools/))')
 MARKDOWN_ESCAPE_TABLE = str.maketrans({c: rf'\{c}<!---->' for c in string.punctuation})
+WEBKIT_TEST_RUNNER_HEADER_RE = re.compile(rb'\s*<!--\s*webkit-test-runner\s*\[[^\]]*\]\s*-->')
+
+
+def webkit_path(wpt_path):
+    # LayoutTests doesn't import WPT's webdriver directory, and WebDriver tests run with the copy of tools/webdriver in
+    # WebDriverTests.
+    if any(wpt_path == directory or wpt_path.startswith(f'{directory}/') for directory in WEBDRIVER_WPT_DIRS):
+        return f'{WEBKIT_WEBDRIVER_WPT_DIR}/{wpt_path}'
+    return f'{WEBKIT_WPT_DIR}/{wpt_path}'
+
+
+def diff_without_webkit_test_runner_headers(repository_path, commit, paths):
+    # WebKitTestRunner only reads a header on a test's first line, and import-w3c-tests keeps WebKit's there.
+    git = local.Git.executable()
+
+    def git_output(*args, **kwargs):
+        return run([git, *args], cwd=repository_path, capture_output=True, check=True, **kwargs).stdout
+
+    stripped_paths = []
+    trees = []
+    with tempfile.TemporaryDirectory() as directory:
+        for index, revision in enumerate((f'{commit}^', commit)):
+            env = dict(os.environ, GIT_INDEX_FILE=os.path.join(directory, f'index{index}'))
+            for line in git_output('ls-tree', revision, '--', *paths).splitlines():
+                meta, path = line.split(b'\t', 1)
+                mode, _, sha = meta.split()
+                data = git_output('cat-file', 'blob', sha)
+                first_line, newline, rest = data.partition(b'\n')
+                if WEBKIT_TEST_RUNNER_HEADER_RE.search(first_line):
+                    first_line = WEBKIT_TEST_RUNNER_HEADER_RE.sub(b'', first_line, count=1)
+                    data = first_line + newline + rest if first_line.strip() else rest
+                    sha = git_output('hash-object', '-w', '--stdin', input=data).strip()
+                    if path.decode() not in stripped_paths:
+                        stripped_paths.append(path.decode())
+                git_output('update-index', '--add', '--cacheinfo', b'%s,%s,%s' % (mode, sha, path), env=env)
+            trees.append(git_output('write-tree', env=env).strip().decode())
+    return git_output('diff', '--binary', '--no-color', '--full-index', '--no-renames', *trees), stripped_paths
 
 
 def wpt_commit_message(message, bugs):
@@ -182,8 +225,13 @@ class WebPlatformTestExporter(object):
     @property
     @memoized
     def _wpt_patch(self):
-        patch_data = self._host.scm().create_patch(self._options.git_commit, [WEBKIT_WPT_DIR], commit_message=False) or b''
+        patch_data = self._host.scm().create_patch(self._options.git_commit, [WEBKIT_WPT_DIR, WEBKIT_WEBDRIVER_WPT_DIR], commit_message=False) or b''
         patch_data = self._strip_ignored_files_from_diff(patch_data)
+        if b'webkit-test-runner' in patch_data:
+            paths = [line[len(b'diff --git a/'):].split(b' b/')[0].decode() for line in patch_data.splitlines() if line.startswith(b'diff --git a/')]
+            patch_data, stripped_paths = diff_without_webkit_test_runner_headers(self._repository.root_path, self._options.git_commit, paths)
+            for path in stripped_paths:
+                _log.info(f'Leaving out the webkit-test-runner header of {path}')
         if b'diff' not in patch_data:
             return ''
         return patch_data
@@ -213,7 +261,10 @@ class WebPlatformTestExporter(object):
 
     def _is_ignored_file(self, filename):
         filename = string_utils.decode(filename, target_type=str)
-        if not filename.startswith(WEBKIT_WPT_DIR):
+        if filename.startswith(f'{WEBKIT_WEBDRIVER_WPT_DIR}/tools/wptrunner/'):
+            _log.warning(f'Leaving out {filename}, because WebKit keeps local changes in its copy of wptrunner. Make the change in web-platform-tests directly.')
+            return True
+        if not filename.startswith(f'{WEBKIT_WPT_DIR}/') and not any(filename.startswith(f'{WEBKIT_WEBDRIVER_WPT_DIR}/{directory}/') for directory in WEBDRIVER_WPT_DIRS):
             return True
         for suffix in EXCLUDED_FILE_SUFFIXES:
             if filename.endswith(suffix):
@@ -242,12 +293,11 @@ class WebPlatformTestExporter(object):
             _log.info(f'No changes to upstream, patch data is: "{string_utils.decode(patch_data, target_type=str)}"')
             return b''
         # FIXME: We can probably try to use --relative git parameter to not do that replacement.
-        patch_data = patch_data.replace(string_utils.encode(WEBKIT_WPT_DIR) + b'/', b'')
+        patch_data = patch_data.replace(string_utils.encode(WEBKIT_WPT_DIR) + b'/', b'').replace(string_utils.encode(WEBKIT_WEBDRIVER_WPT_DIR) + b'/', b'')
 
-        # FIXME: Support stripping of <!-- webkit-test-runner --> comments.
         self.has_webkit_test_runner_specific_changes = b'webkit-test-runner' in patch_data
         if self.has_webkit_test_runner_specific_changes:
-            _log.warning("Patch contains webkit-test-runner specific changes, please remove them before creating a PR")
+            _log.warning("Unexpectedly, the patch still mentions webkit-test-runner after its first-line headers were removed. Fix the tests in WebKit so that webkit-test-runner options are only in a first-line header, then export again.")
             return b''
 
         self._filesystem.write_binary_file(patch_file, patch_data)
@@ -308,7 +358,7 @@ class WebPlatformTestExporter(object):
         # git apply keeps the case of the patch, even where the file system resolves a path in another case.
         mismatches = case_mismatches(self._filesystem, self._wpt_repo.path, self._wpt_repo.modified(staged=True))
         for path, upstream_path in sorted(mismatches.items()):
-            _log.error(f'{WEBKIT_WPT_DIR}/{path} differs only in case from {upstream_path} in web-platform-tests. Rename it to match before exporting.')
+            _log.error(f'{webkit_path(path)} differs only in case from {upstream_path} in web-platform-tests. Rename it to match before exporting.')
         if mismatches:
             return False
 
@@ -368,7 +418,8 @@ class WebPlatformTestExporter(object):
         # wpt-pr-bot identifies WebKit exports by pr_title: https://github.com/web-platform-tests/wpt-pr-bot/blob/main/lib/metadata/webkit.js
         pr_title = f'WebKit export of {self._bug.link}'
         description = f'WebKit export from bug: [{title}]({self._bug.link})\n\n<pre>\n{PullRequest.escape_html(self._commit_message)}\n</pre>'
-        pr = self.create_wpt_pull_request(self._wpt_fork_remote + ':' + self._public_branch_name, pr_title, description)
+        # Without an owner in the head, create() names the fork by the authenticated user, whatever its remote is called here.
+        pr = self.create_wpt_pull_request(self._public_branch_name, pr_title, description)
         if pr and pr._metadata and pr._metadata.get('issue'):
             pr_issue = pr._metadata['issue']
             labels = pr_issue.labels
@@ -381,7 +432,24 @@ class WebPlatformTestExporter(object):
         if self._bug_id and pr:
             self._bug.add_related_links([pr.url])
             self._bug.add_comment(f'Submitted web-platform-tests pull request: {pr.url}')
+        if pr and self._options.auto_merge:
+            self.enable_auto_merge(pr)
         return pr
+
+    def enable_auto_merge(self, pr):
+        node_id = (self._remote.request(f'pulls/{pr.number}') or {}).get('node_id')
+        # Rebasing keeps the exported commit's author, where squashing would credit whoever opened the pull request.
+        result = self._remote.graphql('''mutation {{
+  enablePullRequestAutoMerge(input: {{pullRequestId: "{}", mergeMethod: REBASE}}) {{
+    clientMutationId
+  }}
+}}'''.format(node_id)) if node_id else None
+        errors = [error.get('message') for error in (result or {}).get('errors') or []]
+        if not result or errors:
+            _log.warning(f'Could not enable auto-merge for pr #{pr.number}, which needs write access to {WPT_GH_ORG}/{WPT_GH_REPO_NAME}' + (f": {'; '.join(errors)}" if errors else ''))
+            return False
+        _log.info(f'Enabled auto-merge for pr #{pr.number}')
+        return True
 
     def create_wpt_pull_request(self, remote_branch_name, title, body):
         existing_pr = PullRequestProgram.find_existing_pull_request(self._wpt_repo, self._remote, branch=self._public_branch_name)
@@ -445,7 +513,7 @@ class WebPlatformTestExporter(object):
             lint_errors = 0
             for error in self._linter.lint():
                 _log.error("[%s] %s:%s %s",
-                           error['rule'], error['path'],
+                           error['rule'], webkit_path(error['path']),
                            error['lineno'] or '?', error['message'])
                 lint_errors += 1
             if lint_errors:
@@ -480,12 +548,14 @@ class WebPlatformTestExporter(object):
 
 def parse_args(args):
     description = f"""Script to generate a pull request to W3C web-platform-tests repository
+    It exports the changes to {WEBKIT_WPT_DIR}, {WEBKIT_WEBDRIVER_WPT_DIR}/webdriver and {WEBKIT_WEBDRIVER_WPT_DIR}/tools/webdriver.
     'Tools/Scripts/export-w3c-test-changes -c -g HEAD' will do the following:
     - Clone web-platform-tests repository if not done already and set it up for pushing branches. By default, the repository will be cloned into the parent directory of your WebKit checkout (e.g. ~/WebKit/../wpt).
     - Gather the bug and changes to apply to web-platform-tests repository based on the HEAD commit
     - Create a remote branch on https://github.com/USERNAME/{WPT_GH_REPO_NAME}.git repository based on the locally applied patch.
        * {WPT_GH_URL}.git should have already been cloned to https://github.com/USERNAME/{WPT_GH_REPO_NAME}.git.
     - Make the related pull request on {WPT_GH_URL}.git repository.
+    - Enable auto-merge on the pull request, so that it merges once wpt-pr-bot approves it and its checks pass. This needs write access to {WPT_GH_URL}; use --no-auto-merge to skip it.
     - Clean the local Git repository
     Notes:
     - As a dry run, one can start by running the script without -c. This will only create the branch on the user public GitHub repository.
@@ -512,6 +582,12 @@ def parse_args(args):
         dest='delete_existing', default=False,
         action=arguments.NoAction,
         help='Allow overwriting an existing local branch or force-pushing to an existing remote branch.',
+    )
+    parser.add_argument(
+        '--auto-merge', '--no-auto-merge',
+        dest='auto_merge', default=True,
+        action=arguments.NoAction,
+        help='Enable auto-merge on the pull request, which needs write access to web-platform-tests.',
     )
 
     options, args = parser.parse_known_args(args)

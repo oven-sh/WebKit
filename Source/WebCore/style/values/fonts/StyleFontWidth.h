@@ -28,8 +28,7 @@
 #include <WebCore/FontSelectionAlgorithm.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'font-width'> = normal | <percentage [0,∞]> | ultra-condensed | extra-condensed | condensed | semi-condensed | semi-expanded | expanded | extra-expanded | ultra-expanded
 // NOTE: Computed value is always resolved to a <percentage [0,∞]>.
@@ -73,10 +72,9 @@ template<> struct CSSValueConversion<FontWidth> { auto operator()(BuilderState&,
 // MARK: - Blending
 
 template<> struct Blending<FontWidth> {
-    FontWidth LEGACY_NODELETE blend(const FontWidth&, const FontWidth&, const BlendingContext&);
+    NODELETE FontWidth blend(const FontWidth&, const FontWidth&, const BlendingContext&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::FontWidth)

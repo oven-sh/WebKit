@@ -72,7 +72,7 @@ struct WebWheelEventData {
     MonotonicTime ioHIDEventTimestamp;
     std::optional<WebCore::FloatSize> rawPlatformDelta;
     WebWheelEventMomentumEndType momentumEndType { WebWheelEventMomentumEndType::Unknown };
-    WebEventInputSource inputSource { WebEventInputSource::UserDriven };
+    WebEventInputSource inputSource { WebEventInputSource::Default };
     float momentumFastScrollMultiplier { 1 };
 #endif
 };
@@ -133,7 +133,7 @@ public:
 
     const WebWheelEventData& wheelData() const LIFETIME_BOUND { return m_data; }
 
-    static bool LEGACY_NODELETE isWheelEventType(WebEventType);
+    NODELETE static bool isWheelEventType(WebEventType);
 
 protected:
     WebWheelEvent(WebEventData&&, WebWheelEventData&&);

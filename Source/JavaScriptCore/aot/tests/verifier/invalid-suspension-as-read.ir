@@ -1,5 +1,4 @@
 # On the wire every generator reaches its InitialYield
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidSuspension 1
 

@@ -78,20 +78,20 @@ public:
     bool ignoreForRequestCount() const { return m_ignoreForRequestCount; }
     void setIgnoreForRequestCount(bool ignoreForRequestCount) { m_ignoreForRequestCount = ignoreForRequestCount; }
 
-    void LEGACY_NODELETE setDestinationIfNotSet(FetchOptions::Destination);
+    NODELETE void setDestinationIfNotSet(FetchOptions::Destination);
 
     void updateForAccessControl(Document&);
 
-    void LEGACY_NODELETE updateReferrerPolicy(ReferrerPolicy);
+    NODELETE void updateReferrerPolicy(ReferrerPolicy);
     void updateReferrerAndOriginHeaders(FrameLoader&);
     void updateUserAgentHeader(FrameLoader&);
     void upgradeInsecureRequestIfNeeded(Document&, ContentSecurityPolicy::AlwaysUpgradeRequest = ContentSecurityPolicy::AlwaysUpgradeRequest::No);
     void setAcceptHeaderIfNone(CachedResource::Type);
     void updateAccordingCacheMode();
     void updateAcceptEncodingHeader();
-    void LEGACY_NODELETE updateCacheModeIfNeeded(CachePolicy);
+    NODELETE void updateCacheModeIfNeeded(CachePolicy);
 
-    void LEGACY_NODELETE disableCachingIfNeeded();
+    NODELETE void disableCachingIfNeeded();
 
     void removeFragmentIdentifierIfNeeded();
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -106,15 +106,16 @@ public:
     SecurityOrigin* origin() { return m_origin.get(); }
 
     bool hasFragmentIdentifier() const { return !m_fragmentIdentifier.isEmpty(); }
+    const String& fragmentIdentifier() const LIFETIME_BOUND { return m_fragmentIdentifier; }
     String&& releaseFragmentIdentifier() { return WTF::move(m_fragmentIdentifier); }
     void clearFragmentIdentifier() { m_fragmentIdentifier = { }; }
 
     static String splitFragmentIdentifierFromRequestURL(ResourceRequest&);
     static String acceptHeaderValueFromType(CachedResource::Type, bool usingSecureProtocol);
 
-    void LEGACY_NODELETE setClientIdentifierIfNeeded(ScriptExecutionContextIdentifier);
-    void LEGACY_NODELETE setSelectedServiceWorkerRegistrationIdentifierIfNeeded(ServiceWorkerRegistrationIdentifier);
-    void LEGACY_NODELETE setNavigationServiceWorkerRegistrationData(const std::optional<ServiceWorkerRegistrationData>&);
+    NODELETE void setClientIdentifierIfNeeded(ScriptExecutionContextIdentifier);
+    NODELETE void setSelectedServiceWorkerRegistrationIdentifierIfNeeded(ServiceWorkerRegistrationIdentifier);
+    NODELETE void setNavigationServiceWorkerRegistrationData(const std::optional<ServiceWorkerRegistrationData>&);
 
 private:
     ResourceRequest m_resourceRequest;

@@ -1,0 +1,77 @@
+# A leaf of 15 operations is copied into a function that calls itself, as into a loop, and stays a call in a function that is called once.
+# const distance = (a, b) => (a - b) * (a - b) + (a * 3 - b * 5) * (a + b) - (a * 7 + b);
+# function walk(n, x) { return n === 0 ? 0 : walk(n - 1, x + 1) + distance(n, x); }   answer = walk(9, 4) + distance(1, 2);
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: callee=f2
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: function=f2
+# RUN(ONCE): walk f0 mechanisms=all
+# ONCE-LABEL: code f0:Body
+# ONCE-NOT: callee=f2
+# ONCE: function=f2
+
+module m0 path="leaf.js" displayPath="leaf.js" body=f0
+entry module=m0
+variable g0 name="walk" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="distance" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @17
+    PutModuleVariable v0 variable=g1 @6
+    v2 = Builtin builtin=GlobalThis @170
+    v3 = GetModuleVariable variable=g0 @190
+    v4 = Integer integer=9 @195
+    v5 = Integer integer=4 @198
+    v6 = Call v3, -, v4, v5 calleeName="walk" @190
+    v7 = GetModuleVariable variable=g1 @210
+    v8 = Integer integer=1 @220
+    v9 = Integer integer=2 @223
+    v10 = Call v7, -, v8, v9 calleeName="distance" @210
+    v11 = Add v6, v10 @190
+    PropSet v2, v11 key="answer" @170
+    v13 = Undefined @170
+    Return v13 @170
+}
+function f1 name="walk" module=m0 position=88 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer @123
+    v3 = StrictEq v0, v2 @117
+    Branch v3 -> taken b1(), notTaken b2() @117
+  b1():
+    v4 = Integer @127
+    Jump -> next b3(v4) @127
+  b2():
+    v5 = GetModuleVariable variable=g0 @131
+    v6 = Integer integer=1 @140
+    v7 = Sub v0, v6 @136
+    v8 = Integer integer=1 @147
+    v9 = Add v1, v8 @143
+    v10 = Call v5, -, v7, v9 calleeName="walk" @131
+    v11 = GetModuleVariable variable=g1 @152
+    v12 = CheckInitialized v11 name="distance" @152
+    v13 = Call v12, -, v0, v1 calleeName="distance" @152
+    v14 = Add v10, v13 @131
+    Jump -> next b3(v14) @131
+  b3(v15):
+    Return v15 @131
+}
+function f2 name="distance" module=m0 position=17 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1 @28
+    v3 = Sub v0, v1 @38
+    v4 = Mul v2, v3 @27
+    v5 = Integer integer=3 @52
+    v6 = Mul v0, v5 @48
+    v7 = Integer integer=5 @60
+    v8 = Mul v1, v7 @56
+    v9 = Sub v6, v8 @48
+    v10 = Add v0, v1 @66
+    v11 = Mul v9, v10 @47
+    v12 = Add v4, v11 @27
+    v13 = Integer integer=7 @80
+    v14 = Mul v0, v13 @76
+    v15 = Add v14, v1 @76
+    v16 = Sub v12, v15 @27
+    Return v16 @27
+}

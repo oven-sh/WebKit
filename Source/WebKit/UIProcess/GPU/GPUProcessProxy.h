@@ -43,6 +43,7 @@
 #include <memory>
 #include <pal/SessionID.h>
 #include <wtf/NativePromise.h>
+#include <wtf/OptionSet.h>
 #include <wtf/TZoneMalloc.h>
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
@@ -57,6 +58,7 @@ namespace WebCore {
 class CaptureDevice;
 class SecurityOriginData;
 
+struct HostingContext;
 struct MockMediaDevice;
 struct ScreenProperties;
 
@@ -72,6 +74,7 @@ void enableMetalShaderValidationInNextGPUProcessForTesting();
 #endif
 
 enum class ProcessTerminationReason : uint8_t;
+enum class RotationMonitoringReason : uint8_t;
 
 class SandboxExtensionHandle;
 class WebPageProxy;
@@ -82,8 +85,16 @@ class WebsiteDataStore;
 struct CoreIPCAuditToken;
 struct GPUProcessConnectionParameters;
 struct GPUProcessCreationParameters;
-struct SecurityFlags;
+namespace SecurityFlags { struct Storage; }
 struct SharedPreferencesForWebProcess;
+
+#if ENABLE(MEDIA_STREAM)
+enum class CaptureSandboxAccess : uint8_t {
+    Audio = 1 << 0,
+    Video = 1 << 1,
+    Display = 1 << 2,
+};
+#endif
 
 class GPUProcessProxy final : public AuxiliaryProcessProxy {
     WTF_MAKE_TZONE_ALLOCATED(GPUProcessProxy);
@@ -93,13 +104,13 @@ class GPUProcessProxy final : public AuxiliaryProcessProxy {
 public:
     static void keepProcessAliveTemporarily();
     static Ref<GPUProcessProxy> getOrCreate();
-    static GPUProcessProxy* LEGACY_NODELETE singletonIfCreated();
+    NODELETE static GPUProcessProxy* singletonIfCreated();
     ~GPUProcessProxy();
 
     void createGPUProcessConnection(WebProcessProxy&, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&);
 
     void sharedPreferencesForWebProcessDidChange(WebProcessProxy&, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
-    void securityFlagsDidChange(const SecurityFlags&);
+    void securityFlagsDidChange(const SecurityFlags::Storage&);
 
     void updateProcessAssertion();
 
@@ -108,8 +119,14 @@ public:
     void enableMicrophoneMuteStatusAPI();
     void setOrientationForMediaCapture(WebCore::IntDegrees);
     void rotationAngleForCaptureDeviceChanged(const String&, WebCore::VideoFrameRotation);
-    void startMonitoringCaptureDeviceRotation(WebCore::PageIdentifier, const String&);
-    void stopMonitoringCaptureDeviceRotation(WebCore::PageIdentifier, const String&);
+#if PLATFORM(COCOA)
+    void startCapturePreview(std::optional<WebCore::CaptureDevice>&&, std::optional<WebCore::CaptureDevice>&&, WebCore::PageIdentifier, WebCore::IntSize previewSize, WebCore::IntDegrees orientation, const WebCore::SecurityOriginData&, CompletionHandler<void(WebCore::HostingContext)>&&);
+    void stopCapturePreview(WebCore::PageIdentifier, CompletionHandler<void()>&&);
+    void setCapturePreviewAudioLevelHandler(WebCore::PageIdentifier pageIdentifier, Function<void(float)>&& handler) { m_capturePreviewAudioLevelHandlers.set(pageIdentifier, WTF::move(handler)); }
+    void capturePreviewAudioLevelChanged(WebCore::PageIdentifier, float);
+#endif
+    void startMonitoringCaptureDeviceRotation(WebCore::PageIdentifier, const String&, RotationMonitoringReason);
+    void stopMonitoringCaptureDeviceRotation(WebCore::PageIdentifier, const String&, RotationMonitoringReason);
     void updateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, bool willUseEchoCancellation, WebCore::ProcessIdentifier, WebPageProxyIdentifier, CompletionHandler<void()>&&);
     void updateCaptureOrigin(const WebCore::SecurityOriginData&, WebCore::ProcessIdentifier);
     void addMockMediaDevice(const WebCore::MockMediaDevice&);
@@ -119,13 +136,14 @@ public:
     void resetMockMediaDevices();
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
     void triggerMockCaptureConfigurationChange(bool forCamera, bool forMicrophone, bool forDisplay);
-    void updateSandboxAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture);
+    void updateSandboxAccess(OptionSet<CaptureSandboxAccess>);
     void setShouldListenToVoiceActivity(const WebPageProxy&, bool);
     void setPageUsingMicrophone(WebPageProxyIdentifier identifier) { m_lastPageUsingMicrophone = identifier; }
 #endif
 
 #if HAVE(SCREEN_CAPTURE_KIT)
     void promptForGetDisplayMedia(WebCore::DisplayCapturePromptType, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&&);
+    void selectWindowForCapture(uint32_t windowID, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&&);
     void cancelGetDisplayMediaPrompt();
 #endif
 
@@ -154,7 +172,7 @@ public:
 
     void terminateForTesting();
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
-    void runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&&);
+    void runDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>>&& webFonts, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
 
 #if PLATFORM(COCOA)
     static void setEnableMetalDebugDeviceInNewGPUProcessesForTesting(bool enable) { s_enableMetalDebugDeviceInNewGPUProcessesForTesting = enable; }
@@ -190,7 +208,8 @@ public:
 
     // Draws the snapshot at the size its root was recorded at, once it is complete. May be sent as soon
     // as the root has been asked for.
-    std::optional<IPC::Connection::AsyncReplyID> sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier root, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+    std::optional<IPC::Connection::AsyncReplyID> sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier root, std::optional<WebCore::ProcessIdentifier> printProcessIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+    void printProcessDrawingCountsForTesting(CompletionHandler<void(uint64_t drawnInPrintProcess, uint64_t drawnAfterPrintProcessFailed)>&&);
 #endif
     std::optional<IPC::Connection::AsyncReplyID> sinkCompletedSnapshotToBitmap(RemoteSnapshotIdentifier, WebCore::FrameIdentifier root, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
 #if HAVE(IOSURFACE)
@@ -277,6 +296,18 @@ private:
 #endif
 #if PLATFORM(COCOA)
     bool m_hasSentTCCDSandboxExtension { false };
+
+#if ENABLE(MEDIA_STREAM)
+    HashMap<WebCore::PageIdentifier, Function<void(float)>> m_capturePreviewAudioLevelHandlers;
+
+    struct CapturePreviewSandboxAccess {
+        WebCore::PageIdentifier page;
+        bool camera { false };
+        bool microphone { false };
+        bool tccd { false };
+    };
+    std::optional<CapturePreviewSandboxAccess> m_capturePreviewSandboxAccess;
+#endif
     bool m_hasSentCameraSandboxExtension { false };
     bool m_hasSentMicrophoneSandboxExtension { false };
     bool m_hasSentDisplayCaptureSandboxExtension { false };

@@ -26,9 +26,10 @@ class WebKit::RemoteScrollingCoordinatorTransaction {
     std::unique_ptr<WebCore::ScrollingStateTree> scrollingStateTree()
     bool clearScrollLatching()
     std::optional<WebCore::FrameIdentifier> rootFrameIdentifier()
+    bool isFullCommit()
 }
 
-[CreateUsing=createAfterReconstruction] class WebCore::ScrollingStateTree {
+[CreateUsing=createAfterReconstruction, UniqueRef] class WebCore::ScrollingStateTree {
     bool hasNewRootStateNode()
     bool hasChangedProperties()
     RefPtr<WebCore::ScrollingStateFrameScrollingNode> rootStateNode()
@@ -107,9 +108,6 @@ header: <WebCore/ScrollingStatePositionedNode.h>
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::FooterHeight] int footerHeight()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::BehaviorForFixedElements] WebCore::ScrollBehaviorForFixedElements scrollBehaviorForFixedElements()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ObscuredContentInsets] WebCore::FloatBoxExtent obscuredContentInsets()
-#if HAVE(NSREFRESHCONTROLLER)
-    [OptionalTupleBit=WebCore::ScrollingStateNode::Property::TopScrollStretchForRefreshController] float topScrollStretchForRefreshController()
-#endif
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::VisualViewportIsSmallerThanLayoutViewport] bool visualViewportIsSmallerThanLayoutViewport()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::AsyncFrameOrOverflowScrollingEnabled] bool asyncFrameOrOverflowScrollingEnabled()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::WheelEventGesturesBecomeNonBlocking] bool wheelEventGesturesBecomeNonBlocking();

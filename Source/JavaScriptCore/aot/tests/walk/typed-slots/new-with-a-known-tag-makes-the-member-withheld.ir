@@ -1,0 +1,12 @@
+# the same program with typed slots withheld: Link lists no tagged maker, and every object has its maker's layout, whatever is known of the tag
+# RUN: walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+Arrivals
+# CHECK-LABEL: code f3:Body
+# CHECK: = NewObject {{*}}layout=L0
+# RUN(ALL): walk f3 mechanisms=all-TypedSlots
+# ALL-LABEL: code f3:Body
+# ALL: = NewObject {{*}}layout=L0
+# nor does a tag that nobody knows keep the construction a call
+# RUN(ANY): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+Arrivals
+# ANY-LABEL: code f2:Body
+# ANY: = NewObject {{*}}layout=L0
+# PROGRAM-OF: new-with-a-known-tag-makes-the-member.ir

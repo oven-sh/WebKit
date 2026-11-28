@@ -9,36 +9,31 @@
 
 #include "AOTFunctionData.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubHelpers.h"
 
 namespace JSC { namespace AOT {
 
-// A function object. The operand is a ClosureRequest.
 constexpr StubKey newClosure(unsigned captures) { return StubKey(StubFamily::NewClosure).withCount(captures); }
-// The operand is the number of the function.
 constexpr StubKey newSlimClosure(unsigned slimClosureKind, unsigned captures) { return StubKey(StubFamily::NewSlimClosure).withForm(slimClosureKind).withCount(captures); }
-// Creates the closure that a field deferred, capturing the object that has the field or nothing, and stores it on the first read of the slot.
-// The first operand holds the function number in its lower half and the slot offset in its upper half. The second operand is the object.
+constexpr StubKey newSlimClosureInFrame(unsigned slimClosureKind, unsigned captures) { return StubKey(StubFamily::NewSlimClosureInFrame).withForm(slimClosureKind).withCount(captures); }
 constexpr StubKey makeClosureOfField(unsigned slimClosureKind, bool capturesObject) { return StubKey(StubFamily::MakeClosureOfField).withForm(slimClosureKind).withCount(capturesObject); }
-// The closure that the closure table holds for a function without captures, made at the first request. The immediate is the number of the generic entrypoint.
+constexpr StubKey makeClosureOfFieldOverEnvironment(unsigned slimClosureKind) { return StubKey(StubFamily::MakeClosureOfField).withForm(slimClosureKind).withCount(2); }
 constexpr StubKey closureOfTable() { return StubKey(StubFamily::ClosureOfTable); }
-constexpr StubKey initializeClosure(unsigned captures) { return StubKey(StubFamily::InitializeClosure).withCount(captures); }
-constexpr StubKey materializeEnvironment() { return StubKey(StubFamily::MaterializeEnvironment); }
-// Takes any value but the empty one, and the upper half of the closure word of the function.
-constexpr StubKey valueIsClosureOf() { return StubKey(StubFamily::ValueIsClosureOf); }
-// Takes any value but the empty one. True of a closure whose word says so: ClosureWord::endsItsTailCallsBit.
-constexpr StubKey valueEndsItsTailCalls() { return StubKey(StubFamily::ValueEndsItsTailCalls); }
-// Takes the function object that the caller was entered with. The frame record of the caller lies right below the stack pointer of its own caller.
-constexpr StubKey recordCallee() { return StubKey(StubFamily::RecordCallee); }
+enum class ChangedClosure : uint8_t { Slim, Full };
+constexpr StubKey changedClosureHasNumber(ChangedClosure form) { return StubKey(StubFamily::ChangedClosureHasNumber).withForm(static_cast<uint8_t>(form)); }
+constexpr StubKey numberOfChangedClosure() { return StubKey(StubFamily::NumberOfChangedClosure); }
+constexpr StubKey checkProofOfClosure() { return StubKey(StubFamily::CheckProofOfClosure); }
+inline constexpr uint32_t noClosureNumber = UINT32_MAX;
 
-// closure is a slim closure, with or without properties.
-// isOfOtherImage: for whoever does not know that the closure is of this image. The words of this image say nothing under the number of another.
-void loadSlimClosureWord(StubAssembler&, GPRReg closure, GPRReg word, JumpList* isRenamed = nullptr, JumpList* isOfOtherImage = nullptr);
+void loadSlimClosureWord(StubAssembler&, GPRReg closure, GPRReg word);
 
 static_assert(exists(newClosure(0)) && exists(newClosure(ClosureRequest::maxNumberOfCaptures)) && !exists(newClosure(ClosureRequest::maxNumberOfCaptures + 1)));
 static_assert(exists(newSlimClosure(0, 0)) && exists(newSlimClosure(numberOfSlimClosureKinds - 1, ClosureRequest::maxSlimClosureCaptures)));
 static_assert(!exists(newSlimClosure(numberOfSlimClosureKinds, 0)) && !exists(newSlimClosure(0, ClosureRequest::maxSlimClosureCaptures + 1)));
-static_assert(exists(makeClosureOfField(0, false)) && exists(makeClosureOfField(numberOfSlimClosureKinds - 1, true)) && !exists(makeClosureOfField(0, true).withCount(2)));
-static_assert(exists(initializeClosure(ClosureRequest::maxSlimClosureCaptures)) && exists(valueIsClosureOf()));
+static_assert(exists(newSlimClosureInFrame(0, 0)) && exists(newSlimClosureInFrame(numberOfSlimClosureKinds - 1, ClosureRequest::maxSlimClosureCaptures)));
+static_assert(!exists(newSlimClosureInFrame(numberOfSlimClosureKinds, 0)) && !exists(newSlimClosureInFrame(0, ClosureRequest::maxSlimClosureCaptures + 1)));
+static_assert(exists(makeClosureOfField(0, false)) && exists(makeClosureOfField(numberOfSlimClosureKinds - 1, true)) && exists(makeClosureOfFieldOverEnvironment(numberOfSlimClosureKinds - 1)) && !exists(makeClosureOfField(0, true).withCount(3)));
+static_assert(exists(changedClosureHasNumber(ChangedClosure::Full).withOperandRegister(allocatableGPRs.back())) && exists(numberOfChangedClosure().withOperandRegister(allocatableGPRs.back())) && !exists(changedClosureHasNumber(ChangedClosure::Slim).withOperandRegister(scratchImmediateGPR)));
 
 } } // namespace JSC::AOT
 

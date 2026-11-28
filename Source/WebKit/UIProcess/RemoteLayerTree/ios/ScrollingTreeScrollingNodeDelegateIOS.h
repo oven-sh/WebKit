@@ -66,6 +66,7 @@ public:
     void scrollViewWillStartPanGesture() const;
     void scrollViewDidScroll(const WebCore::FloatPoint& scrollOffset, bool inUserInteraction);
     bool isScrollingPerformanceTestingEnabled() const;
+    String currentURL() const;
 
     void currentSnapPointIndicesDidChange(std::optional<unsigned> horizontal, std::optional<unsigned> vertical) const;
     CALayer *scrollLayer() const { return m_scrollLayer.get(); }
@@ -89,7 +90,7 @@ public:
     UIScrollView *findActingScrollParent(UIScrollView *);
     WKBaseScrollView *scrollView() const;
 
-    bool startAnimatedScrollToPosition(WebCore::FloatPoint) final;
+    bool startAnimatedScrollToPosition(WebCore::FloatPoint, WebCore::ScrollAnimationCurve) final;
     void stopAnimatedScroll(EnumSet<WebCore::AnimatedScrollType>) final;
 
     void serviceScrollAnimation(MonotonicTime) final { }

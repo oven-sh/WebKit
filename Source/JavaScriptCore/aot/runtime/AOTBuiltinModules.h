@@ -16,6 +16,7 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class JSCell;
 class JSFunction;
 class JSGlobalObject;
@@ -27,7 +28,9 @@ class VM;
 
 namespace AOT {
 
+class Image;
 struct State;
+struct Instance;
 
 class BuiltinModuleTable {
     WTF_MAKE_NONCOPYABLE(BuiltinModuleTable);
@@ -44,24 +47,25 @@ private:
 
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t registryID);
 JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willExposeBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willExposeBuiltinExportToNativeCode(JSGlobalObject*, uint32_t registryID, ASCIILiteral exportName);
+JS_EXPORT_PRIVATE JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject*);
+void fillWordsOfCompiledMethodsOfArray(Instance&);
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
 JS_EXPORT_PRIVATE JSFunction* builtinFunction(JSGlobalObject*, uint32_t id, JSObject* prototype = nullptr);
 JS_EXPORT_PRIVATE NativeExecutable* builtinExecutable(JSGlobalObject*, uint32_t id);
 std::optional<FunctionID> compiledBuiltinFunctionID(const JSCell*);
 
-// The host can run a module or a function of its library from the text. That text requires the modules of the library, and an image without ImageFlag::AdmitsLibraryText holds only what seen code reaches of them.
-JS_EXPORT_PRIVATE bool refusesLibraryText();
-// A realm that the program creates holds nothing that was compiled: there the text of the library meets only itself.
-JS_EXPORT_PRIVATE bool refusesLibraryText(JSGlobalObject*);
-bool refusesToInterpret(JSGlobalObject*, ScriptExecutable&);
-JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
-// The build found that nothing the program runs calls this function of the library, so the realm has only its text, and either the text is refused or all that runs beside the image are
-// copies of its files, which call what the files call. An image with ImageFlag::AdmitsLibraryText would run the text, and the text calls what else the build has left out.
-// The host asks this where it has something smaller to do in the function's place. Code that nobody has read may need the function: for that the text is there.
-JS_EXPORT_PRIVATE bool isNeededByNothingThatRuns(JSFunction*);
+JS_EXPORT_PRIVATE bool rejectsLibrarySource();
+JS_EXPORT_PRIVATE bool rejectsLibrarySource(JSGlobalObject*);
+bool isInterpretationDisallowed(JSGlobalObject*, ScriptExecutable&);
+JS_EXPORT_PRIVATE void allowTestRunnerFunction(VM&, FunctionExecutable&);
+JS_EXPORT_PRIVATE bool isFunctionDisallowed(JSFunction*);
+JS_EXPORT_PRIVATE bool isUnreachableLibraryFunction(JSFunction*);
+bool isClosedWorld(const Image&);
 void throwLibraryFunctionNotCompiled(JSGlobalObject*, ScriptExecutable&);
-// `builtin`: its name as a program writes it.
 JS_EXPORT_PRIVATE void throwBuiltinNotCompiled(JSGlobalObject*, const String& builtin);
+JS_EXPORT_PRIVATE void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject*);
 
 } // namespace AOT
 } // namespace JSC

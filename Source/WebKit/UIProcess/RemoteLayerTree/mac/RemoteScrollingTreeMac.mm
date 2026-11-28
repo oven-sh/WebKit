@@ -166,7 +166,7 @@ void RemoteScrollingTreeMac::didCommitTree()
 void RemoteScrollingTreeMac::startPendingScrollAnimations()
 {
     ASSERT(ScrollingThread::isCurrentThread());
-    ASSERT(m_treeLock.isLocked());
+    RELEASE_ASSERT(m_treeLock.isLocked());
 
     auto nodesWithPendingScrollAnimations = std::exchange(m_nodesWithPendingScrollAnimations, { });
     for (auto& [nodeID, data] : nodesWithPendingScrollAnimations) {
@@ -177,7 +177,7 @@ void RemoteScrollingTreeMac::startPendingScrollAnimations()
         LOG_WITH_STREAM(Scrolling, stream << "RemoteScrollingTreeMac::startPendingScrollAnimations() for node " << nodeID << " with data " << data);
 
         auto finalPosition = data.destinationPosition(targetNode->currentScrollPosition());
-        targetNode->startAnimatedScrollToPosition(finalPosition);
+        targetNode->startAnimatedScrollToPosition(finalPosition, data.animationCurve);
     }
 
     auto nodesWithPendingKeyboardScrollAnimations = std::exchange(m_nodesWithPendingKeyboardScrollAnimations, { });
@@ -230,6 +230,7 @@ void RemoteScrollingTreeMac::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNo
             .updateType = ScrollUpdateType::PositionUpdate,
             .updateLayerPositionAction = action,
             .layoutViewportOriginOrOverrideRect = layoutViewportOrigin,
+            .scrollRelativity = relativityForScrollUpdate(),
         }
     };
     addPendingScrollUpdate(WTF::move(scrollUpdate));
@@ -278,7 +279,7 @@ void RemoteScrollingTreeMac::didAddPendingScrollUpdate()
 RequestsScrollHandling RemoteScrollingTreeMac::scrollingTreeNodeRequestsScroll(ScrollingNodeID nodeID, const RequestedScrollData& request)
 {
     if (isAnimatedUpdate(request.requestType)) {
-        ASSERT(m_treeLock.isLocked());
+        RELEASE_ASSERT(m_treeLock.isLocked());
         m_nodesWithPendingScrollAnimations.set(nodeID, request);
         return RequestsScrollHandling::Handled;
     }
@@ -287,7 +288,7 @@ RequestsScrollHandling RemoteScrollingTreeMac::scrollingTreeNodeRequestsScroll(S
 
 bool RemoteScrollingTreeMac::scrollingTreeNodeRequestsKeyboardScroll(ScrollingNodeID nodeID, const RequestedKeyboardScrollData& request)
 {
-    ASSERT(m_treeLock.isLocked());
+    RELEASE_ASSERT(m_treeLock.isLocked());
     m_nodesWithPendingKeyboardScrollAnimations.set(nodeID, request);
     return true;
 }
@@ -377,16 +378,23 @@ void RemoteScrollingTreeMac::receivedEventAfterDefaultHandling(const WebCore::Pl
     m_waitingForBeganEventCondition.notifyOne();
 }
 
-WheelEventHandlingResult RemoteScrollingTreeMac::handleWheelEventAfterDefaultHandling(const PlatformWheelEvent& wheelEvent, std::optional<ScrollingNodeID> targetNodeID, std::optional<WheelScrollGestureState> gestureState)
+WheelEventHandlingResult RemoteScrollingTreeMac::handleWheelEventAfterDefaultHandling(const PlatformWheelEvent& wheelEvent, std::optional<FrameIdentifier> defaultHandlingFrameID, std::optional<ScrollingNodeID> targetNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
 {
-    LOG_WITH_STREAM(Scrolling, stream << "RemoteScrollingTreeMac::handleWheelEventAfterDefaultHandling - targetNodeID " << targetNodeID << " gestureState " << gestureState);
+    LOG_WITH_STREAM(Scrolling, stream << "RemoteScrollingTreeMac::handleWheelEventAfterDefaultHandling - defaultHandlingFrameID " << defaultHandlingFrameID << " targetNodeID " << targetNodeID << " gestureState " << gestureState << " wasHandled " << wasHandled);
 
     ASSERT(ScrollingThread::isCurrentThread());
 
-    if (!targetNodeID)
+    if (!targetNodeID && (wasHandled || !defaultHandlingFrameID))
         return WheelEventHandlingResult::unhandled();
 
     Locker locker { m_treeLock };
+
+    RefPtr hostedRootNode { defaultHandlingFrameID ? hostedRootNodeForFrame(*defaultHandlingFrameID) : nullptr };
+    if (!targetNodeID && !hostedRootNode)
+        return WheelEventHandlingResult::unhandled();
+
+    if (!targetNodeID && wheelEvent.isGestureStart())
+        gestureState = WheelScrollGestureState::NonBlocking;
 
     bool allowLatching = false;
     OptionSet<WheelEventProcessingSteps> processingSteps;
@@ -396,8 +404,14 @@ WheelEventHandlingResult RemoteScrollingTreeMac::handleWheelEventAfterDefaultHan
     }
 
     SetForScope disallowLatchingScope(m_allowLatching, allowLatching);
+    if (!targetNodeID) {
+        LOG_WITH_STREAM(Scrolling, stream << "RemoteScrollingTreeMac::handleWheelEventAfterDefaultHandling - the process of hosted root node " << hostedRootNode->scrollingNodeID() << " did not handle the event, propagating it to the parent frame");
+        return handleWheelEventWithNode(wheelEvent, processingSteps, hostedRootNode->parent().get(), EventTargeting::Propagate);
+    }
+
     RefPtr<ScrollingTreeNode> targetNode = nodeForID(*targetNodeID);
-    return handleWheelEventWithNode(wheelEvent, processingSteps, targetNode.get(), EventTargeting::NodeOnly);
+    bool hostedRootNodeCannotScroll { hostedRootNode && targetNodeID == hostedRootNode->scrollingNodeID() && !hostedRootNode->allowsHorizontalScrolling() && !hostedRootNode->allowsVerticalScrolling() };
+    return handleWheelEventWithNode(wheelEvent, processingSteps, targetNode.get(), hostedRootNodeCannotScroll ? EventTargeting::Propagate : EventTargeting::NodeOnly);
 }
 
 void RemoteScrollingTreeMac::deferWheelEventTestCompletionForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
@@ -470,7 +484,7 @@ RefPtr<ScrollingTreeNode> RemoteScrollingTreeMac::scrollingNodeForPoint(FloatPoi
     if (!rootScrollingNode)
         return nullptr;
 
-    ASSERT(m_layerHitTestMutex.isLocked());
+    RELEASE_ASSERT(m_layerHitTestMutex.isLocked());
 
     RetainPtr scrolledContentsLayer { static_cast<CALayer*>(rootScrollingNode->scrolledContentsLayer()) };
 
@@ -585,7 +599,7 @@ OptionSet<EventListenerRegionType> RemoteScrollingTreeMac::eventListenerRegionTy
     if (!rootScrollingNode)
         return { };
 
-    ASSERT(m_layerHitTestMutex.isLocked());
+    RELEASE_ASSERT(m_layerHitTestMutex.isLocked());
 
     auto rootContentsLayer = rootScrollingNode->rootContentsLayer();
 

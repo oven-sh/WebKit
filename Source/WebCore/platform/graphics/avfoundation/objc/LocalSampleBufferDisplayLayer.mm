@@ -29,9 +29,11 @@
 #if ENABLE(MEDIA_STREAM) && USE(AVFOUNDATION)
 
 #import "Color.h"
+#import "ImageTransferSessionVT.h"
 #import "IntSize.h"
 #import "Logging.h"
 #import "MediaUtilities.h"
+#import "PlanarImageConverterCV.h"
 #import "VideoFrame.h"
 #import "VideoFrameMetadata.h"
 #import <AVFoundation/AVSampleBufferDisplayLayer.h>
@@ -144,7 +146,7 @@ static void runWithoutAnimations(NOESCAPE const WTF::Function<void()>& function)
     [CATransaction commit];
 }
 
-static bool LEGACY_NODELETE isValidLayerGeometry(CGRect rect)
+NODELETE static bool isValidLayerGeometry(CGRect rect)
 {
     return std::isfinite(rect.origin.x) && std::isfinite(rect.origin.y)
         && std::isfinite(rect.size.width) && std::isfinite(rect.size.height);
@@ -243,7 +245,7 @@ void LocalSampleBufferDisplayLayer::setShouldMaintainAspectRatio(bool shouldMain
 
 void LocalSampleBufferDisplayLayer::layerStatusDidChange()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     RefPtr client = m_client.get();
     if (client && m_sampleBufferDisplayLayer.get().status == AVQueuedSampleBufferRenderingStatusFailed) {
@@ -258,7 +260,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 void LocalSampleBufferDisplayLayer::layerErrorDidChange()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RELEASE_LOG_ERROR(WebRTC, "LocalSampleBufferDisplayLayer::layerErrorDidChange (%llu) ", m_logIdentifier);
     RefPtr client = m_client.get();
     if (!client || m_didFail)
@@ -319,14 +321,14 @@ void LocalSampleBufferDisplayLayer::updateBoundsAndPosition(CGRect bounds, std::
     updateSampleLayerBoundsAndPosition(bounds);
 }
 
-void LocalSampleBufferDisplayLayer::updateSampleLayerBoundsAndPosition(std::optional<CGRect> bounds)
+void LocalSampleBufferDisplayLayer::updateSampleLayerBoundsAndPosition(std::optional<CGRect> bounds, UseRootLayerBounds useRootLayerBounds)
 {
     if (bounds && !isValidLayerGeometry(*bounds)) {
         RELEASE_LOG_ERROR(WebRTC, "LocalSampleBufferDisplayLayer::updateSampleLayerBoundsAndPosition ignoring non-finite bounds");
         bounds = std::nullopt;
     }
 
-    ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, bounds, rotation = m_videoFrameRotation, affineTransform = m_affineTransform]() mutable {
+    ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, bounds, useRootLayerBounds, rotation = m_videoFrameRotation, affineTransform = m_affineTransform] mutable {
         auto protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -338,15 +340,18 @@ void LocalSampleBufferDisplayLayer::updateSampleLayerBoundsAndPosition(std::opti
             // Without explicit bounds, only update the transform. Swapping the stale root
             // layer bounds here would produce a wrong-sized frame; the caller will provide
             // correct explicit bounds via updateBoundsAndPosition once the rotation change
-            // has propagated through the media pipeline.
-            if (!bounds)
+            // has propagated through the media pipeline. The exception is the first frame
+            // of a new layer: its root bounds are current and no later update may arrive.
+            if (!bounds && useRootLayerBounds == UseRootLayerBounds::No)
                 return;
-            auto layerBounds = *bounds;
+            auto layerBounds = bounds.value_or(rootLayer.get().bounds);
             CGPoint layerPosition { layerBounds.size.width / 2, layerBounds.size.height / 2 };
             if (rotation == VideoFrame::Rotation::Right || rotation == VideoFrame::Rotation::Left)
                 std::swap(layerBounds.size.width, layerBounds.size.height);
-            rootLayer.get().position = { bounds->size.width / 2, bounds->size.height / 2 };
-            rootLayer.get().bounds = *bounds;
+            if (bounds) {
+                rootLayer.get().position = layerPosition;
+                rootLayer.get().bounds = *bounds;
+            }
             sampleBufferDisplayLayer.get().position = layerPosition;
             sampleBufferDisplayLayer.get().bounds = layerBounds;
         });
@@ -419,8 +424,9 @@ void LocalSampleBufferDisplayLayer::enqueueVideoFrame(VideoFrame& videoFrame)
     if (!CGAffineTransformEqualToTransform(affineTransform, m_affineTransform)) {
         m_affineTransform = affineTransform;
         m_videoFrameRotation = videoFrame.rotation();
-        updateSampleLayerBoundsAndPosition({ });
+        updateSampleLayerBoundsAndPosition({ }, m_hasEnqueuedVideoFrame ? UseRootLayerBounds::No : UseRootLayerBounds::Yes);
     }
+    m_hasEnqueuedVideoFrame = true;
 
     m_processingQueue->dispatch([weakThis = ThreadSafeWeakPtr { *this }, pixelBuffer = RetainPtr { videoFrame.pixelBuffer() }, presentationTime = videoFrame.presentationTime()]() mutable {
         auto protectedThis = weakThis.get();
@@ -438,7 +444,15 @@ void LocalSampleBufferDisplayLayer::enqueueBufferInternal(CVPixelBufferRef pixel
 {
     assertIsCurrent(workQueue());
 
-    auto sampleBuffer = createVideoSampleBuffer(pixelBuffer, PAL::toCMTime(presentationTime));
+    // AVSampleBufferDisplayLayer doesn't support the pixel formats WebKit registers; 32BGRA keeps their alpha.
+    RetainPtr<CVPixelBufferRef> displayedBuffer = pixelBuffer;
+    if (PlanarImageConverter::isRegisteredPixelFormat(CVPixelBufferGetPixelFormatType(pixelBuffer))) {
+        displayedBuffer = ImageTransferSessionVT::convertPixelBuffer(pixelBuffer, kCVPixelFormatType_32BGRA, ImageTransferSessionVT::DestinationColorSpace::Unspecified);
+        if (!displayedBuffer)
+            return;
+    }
+
+    auto sampleBuffer = createVideoSampleBuffer(displayedBuffer, PAL::toCMTime(presentationTime));
     auto now = MediaTime::createWithDouble(MonotonicTime::now().secondsSinceEpoch().value() + rendererLatency);
     if (m_renderPolicy == RenderPolicy::Immediately || now >= presentationTime)
         setSampleBufferAsDisplayImmediately(sampleBuffer.get());

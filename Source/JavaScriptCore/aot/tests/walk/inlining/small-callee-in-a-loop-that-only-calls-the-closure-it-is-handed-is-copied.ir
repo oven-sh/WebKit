@@ -1,0 +1,128 @@
+# function inner(key, cb) { if (key < 0) return cb(-1, 0); var a = key * 2, b = a + 1, c = b * 3; cb(0, c - a); }
+# function middle(key, cb) { inner(key, function (err, v) { if (err) return cb(err, 0); cb(0, v + key); }); }   function once(key, cb) { inner(key, function (err, v) { cb(err, v - key); }); }
+# function run(n) { var total = 0; function done(err, v) { total += v; } for (var i = 0; i < n; i++) middle(i, done); once(n, done); return total; }
+# Callbacks in series. `middle` is copied into the loop of `run`. The call of `inner` stands in that copy, where only the smallest callees were copied: a closure was made in each turn, and `inner` called it by value.
+# `inner` has no loop of its own and does nothing with the function but call it: IN A LOOP it is copied, and what it calls of its parameters too: no closure of f5 is made.
+# OUTSIDE OF LOOPS (`once`) THE CALL STAYS AS WRITTEN: the closure of f6 is made.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: = NewClosure {{*}}function=f6
+# RUN(NEVER): walk f4 mechanisms=all
+# NEVER-NOT: = NewClosure {{*}}function=f5
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|number flags=[IsExpected]} flags=[IsRequired] variableName="total"}] ownFieldCount=1
+variable g0 name="inner" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="middle" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="once" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    PropSet v4, v1 key="kept"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="inner" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = Undefined
+    v3 = Integer
+    v4 = Less v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=-1
+    v6 = Integer
+    v7 = Call v1, -, v5, v6 calleeName="cb"
+    ReturnCall v7
+  b2():
+    v8 = Integer integer=2
+    v9 = Mul v0, v8
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    v12 = Integer integer=3
+    v13 = Mul v11, v12
+    v14 = Integer
+    v15 = Sub v13, v9
+    v16 = Call v1, -, v14, v15 calleeName="cb"
+    v17 = Undefined
+    Return v17
+}
+function f2 name="middle" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure v0, v1 function=f5
+    v4 = Call v2, -, v0, v3 calleeName="inner"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="once" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure v0, v1 function=f6
+    v4 = Call v2, -, v0, v3 calleeName="inner"
+    v5 = Undefined
+    Return v5
+}
+function f4 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2 function=f7
+    v4 = Convert v3 declared={type=f7 flags=[IsFromCompiler]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=undefined|number flags=[IsExpected]}
+    PutEnvironmentField v2, v6 layout=L0
+    v8 = Integer
+    v9 = Convert v8 declared={type=undefined|number flags=[IsExpected]}
+    Jump -> next b1(v9)
+  b1(v10):
+    LoopHint
+    v12 = Less v10, v0
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = GetModuleVariable variable=g1
+    v14 = Call v13, -, v10, v4 calleeName="middle"
+    v15 = Increment v10
+    v16 = Convert v15 declared={type=undefined|number flags=[IsExpected]}
+    Jump -> next b1(v16)
+  b3():
+    v17 = GetModuleVariable variable=g2
+    v18 = Call v17, -, v0, v4 calleeName="once"
+    v19 = GetEnvironmentField v2 layout=L0
+    Return v19
+}
+function f5 module=m0 length=2 captures=[{type=anything variableName="key"}, {type=undefined|null|function flags=[IsExpected] variableName="cb"}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function, v2: anything, v3: anything):
+    v4 = ToBoolean v2
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = Integer
+    v7 = Call v1, -, v2, v6 calleeName="cb"
+    ReturnCall v7
+  b2(v8):
+    v9 = Integer
+    v10 = Add v3, v0
+    v11 = Call v1, -, v9, v10 calleeName="cb"
+    v12 = Undefined
+    Return v12
+}
+function f6 module=m0 length=2 captures=[{type=anything variableName="key"}, {type=undefined|null|function flags=[IsExpected] variableName="cb"}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function, v2: anything, v3: anything):
+    v4 = Sub v3, v0
+    v5 = Call v1, -, v2, v4 calleeName="cb"
+    v6 = Undefined
+    Return v6
+}
+function f7 name="done" module=m0 flags=[HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything, v2: anything):
+    v3 = GetEnvironmentField v0 layout=L0
+    v4 = Add v3, v2
+    v5 = Convert v4 declared={type=undefined|number flags=[IsExpected]}
+    PutEnvironmentField v0, v5 layout=L0
+    v7 = Undefined
+    Return v7
+}

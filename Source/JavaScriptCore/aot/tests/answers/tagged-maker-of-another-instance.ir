@@ -1,0 +1,90 @@
+# interface Base { kind: number; pos: number; sum: number }
+# interface Num extends Base { kind: 1; value: number }
+# interface Str extends Base { kind: 2; text: string }
+# function NodeMaker(this: Base, kind, pos) { this.kind = kind; this.pos = pos; this.sum = mark; }
+# var mark = id(0);
+# const Node = NodeMaker;
+# function make(kind, pos) { return new Node(kind, pos); }
+# function makeWith(maker, kind) { return new maker(kind, 7); }
+# function isNode(n) { return n instanceof Node; }
+# function sumOf(n) { return n.sum; }
+# makeWith(Node, 1);
+# register(Node, make, makeWith, isNode, sumOf);
+# One heap holds two instances of the image: the shell makes a second global of the same VM, which has the module host too, and runs the entry module in both. `id` answers 1 in the first and 2 in the second.
+# The build is told that the program runs in several realms, as for `bun test --isolate`, so the image lets a second global have an instance.
+# Nobody knows the tag at either `new`, so each calls the entry of the constructor that makes `this`, without the stub that asks whose the closure is.
+# In makeWith the maker is only expected. A closure of the same function of the other instance constructs in its own instance: its object has that instance's `mark` and is an instance of that instance's Node alone.
+# At the end the shell runs the same text twice itself: every answer is the same.
+# OPTIONS: several-realms
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; globalThis.id = () => 1; second.id = () => 2; const kitOf = f => ({ Node: f[0], make: f[1], makeWith: f[2], isNode: f[3], sumOf: f[4] }); const twin = (id, register) => { function NodeMaker(kind, pos) { this.kind = kind; this.pos = pos; this.sum = mark; } var mark = id(0); const Node = NodeMaker; function make(kind, pos) { return new Node(kind, pos); } function makeWith(maker, kind) { return new maker(kind, 7); } function isNode(n) { return n instanceof Node; } function sumOf(n) { return n.sum; } makeWith(Node, 1); register(Node, make, makeWith, isNode, sumOf); }; const rows = (a, b) => { const said = []; const say = (label, run) => { try { said.push(label + " " + String(run())); } catch (error) { said.push(label + " throws " + error.name); } }; const sides = [[a, b], [b, a]]; const kinds = [1, 2, 9, "x"]; for (let side = 0; side < 2; side++) { const x = sides[side][0], y = sides[side][1]; const told = n => n.kind + "," + n.pos + "," + n.sum + "," + x.isNode(n) + "," + y.isNode(n) + "," + x.sumOf(n) + "," + y.sumOf(n); for (let k = 0; k < kinds.length; k++) { say("own maker", () => told(x.makeWith(x.Node, kinds[k]))); say("their maker", () => told(x.makeWith(y.Node, kinds[k]))); say("made here", () => told(x.make(kinds[k], 3))); say("made there", () => told(y.make(kinds[k], 3))); } say("in turn", () => { let text = ""; for (let i = 0; i < 400; i++) { const n = x.makeWith(i & 1 ? y.Node : x.Node, i % 3); text += n.sum; if (x.isNode(n)) text += "!"; } return text; }); say("same maker", () => x.Node === y.Node); } return said; }; const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const twins = { }; twin(() => 1, (...f) => { twins.first = kitOf(f); }); twin(() => 2, (...f) => { twins.second = kitOf(f); }); const got = rows(kits.first, kits.second), expected = rows(twins.first, twins.second); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("row " + n + ": " + got[n].slice(0, 120) + " and not " + expected[n].slice(0, 120)); } print(same + " of " + expected.length); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: 36 of 36
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance name="NodeMaker" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L1 originField=0}, {key="pos" declared={type=number} flags=[IsRequired] originLayout=L1 originField=1}, {key="sum" declared={type=number} flags=[IsRequired] originLayout=L1 originField=2}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=3
+layout L1 name="Base" module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="sum" declared={type=number} flags=[IsRequired]}] supertypes=[L2, L3] flags=[IsNeverAllocated] ownFieldCount=3
+layout L2 name="Num" module=m0 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="sum" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 3, 1, 2] ownFieldCount=4
+layout L3 name="Str" module=m0 fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="sum" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 3, 1, 2] ownFieldCount=4
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Node" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="mark" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="id" [isFreeName]
+    v12 = Integer
+    v13 = Call v11, -, v12 calleeName="id"
+    PutModuleVariable v13 variable=g1
+    v15 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v15 variable=g0
+    v17 = Integer integer=1
+    v18 = Call v5, -, v15, v17 calleeName="makeWith"
+    v19 = PropGet v10 key="register" [isFreeName]
+    v20 = Call v19, -, v15, v3, v5, v7, v9 calleeName="register"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="NodeMaker" module=m0 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: anything, v2: anything):
+    PropSet v0, v1 key="kind"
+    PropSet v0, v2 key="pos"
+    v5 = GetModuleVariable variable=g1
+    PropSet v0, v5 key="sum"
+    v7 = Undefined
+    Return v7
+}
+function f2 name="make" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="Node"
+    v4 = Construct v3, -, v0, v1 calleeName="Node"
+    Return v4
+}
+function f3 name="makeWith" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|f1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|function|f1, v1: anything):
+    v2 = Integer integer=7
+    v3 = Construct v0, -, v1, v2 calleeName="maker"
+    Return v3
+}
+function f4 name="isNode" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Node"
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+function f5 name="sumOf" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="sum"
+    Return v1
+}

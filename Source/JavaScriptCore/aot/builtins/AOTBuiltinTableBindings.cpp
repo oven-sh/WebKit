@@ -13,6 +13,7 @@
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "ClassInfo.h"
+#include "Structure.h"
 #include <algorithm>
 #include <atomic>
 #include <type_traits>
@@ -32,7 +33,6 @@ static bool hasSortedLists(const BuiltinBindingSet& set)
 {
     return std::ranges::is_sorted(set.classes, { }, &BuiltinClassBinding::builtinClass)
         && std::ranges::is_sorted(set.cachedGetters, { }, &BuiltinCachedGetterBinding::overload)
-        && std::ranges::is_sorted(set.customGetters, { }, &BuiltinCustomGetterBinding::overload)
         && std::ranges::is_sorted(set.directFunctions, { }, &BuiltinDirectFunctionBinding::overload)
         && std::ranges::is_sorted(set.nativeFunctions, { }, &BuiltinNativeFunctionBinding::builtin)
         && std::ranges::is_sorted(set.hostNumbers, { }, &BuiltinHostNumberBinding::builtin);
@@ -101,7 +101,7 @@ static const Binding* findBindingIn(std::span<const Binding> bindings, ID Bindin
 }
 
 template<typename Binding, typename ID>
-static const Binding* findBinding(std::span<const Binding> BuiltinBindingSet::* list, ID Binding::* key, ID id)
+static const Binding* findHostBinding(std::span<const Binding> BuiltinBindingSet::* list, ID Binding::* key, ID id)
 {
     const BuiltinBindingSet* host = registeredHost();
     return host ? findBindingIn(host->*list, key, id) : nullptr;
@@ -129,7 +129,7 @@ const ClassInfo* BuiltinBindings::instanceClassInfoOf(BuiltinClassID id)
         auto* binding = findEngineBinding(engineBuiltinBindings.classes, &EngineClassBinding::builtinClass, id);
         return binding ? binding->instanceClassInfo : nullptr;
     }
-    auto* binding = findBinding(&BuiltinBindingSet::classes, &BuiltinClassBinding::builtinClass, id);
+    auto* binding = findHostBinding(&BuiltinBindingSet::classes, &BuiltinClassBinding::builtinClass, id);
     return binding ? binding->instanceClassInfo : nullptr;
 }
 
@@ -164,7 +164,7 @@ BuiltinClassID BuiltinBindings::classOf(const ClassInfo* info)
 
 JSObject* BuiltinBindings::findPrototype(JSGlobalObject* realm, BuiltinClassID id)
 {
-    auto* binding = findBinding(&BuiltinBindingSet::classes, &BuiltinClassBinding::builtinClass, id);
+    auto* binding = findHostBinding(&BuiltinBindingSet::classes, &BuiltinClassBinding::builtinClass, id);
     return binding && binding->findPrototype ? binding->findPrototype(realm) : nullptr;
 }
 
@@ -174,24 +174,44 @@ std::span<const BuiltinClassBinding> BuiltinBindings::classesOfHost()
     return host ? host->classes : std::span<const BuiltinClassBinding>();
 }
 
+static Vector<Structure*, 192> hostInstanceStructures(const BuiltinBindingSet* host, JSGlobalObject* realm)
+{
+    if (!host || !host->findInstanceStructures)
+        return { };
+    Vector<Structure*, 192> structures(FillWith { }, host->classes.size(), nullptr);
+    host->findInstanceStructures(realm, structures.mutableSpan());
+    return structures;
+}
+
 void BuiltinBindings::forEachInstanceStructureOfHost(JSGlobalObject* realm, const ScopedLambda<void(const BuiltinClassBinding&, Structure*)>& function)
 {
     const BuiltinBindingSet* host = registeredHost();
-    if (!host || !host->findInstanceStructures)
-        return;
-    Vector<Structure*, 192> structures(host->classes.size(), [](size_t) -> Structure* {
-        return nullptr;
-    });
-    host->findInstanceStructures(realm, structures.mutableSpan());
+    auto structures = hostInstanceStructures(host, realm);
     for (size_t index = 0; index < structures.size(); ++index) {
         if (Structure* structure = structures[index])
             function(host->classes[index], structure);
     }
 }
 
+BuiltinClassID BuiltinBindings::findHostClass(JSGlobalObject* realm, Structure* structure)
+{
+    const BuiltinBindingSet* host = registeredHost();
+    auto structures = hostInstanceStructures(host, realm);
+    const ClassInfo* info = structure->classInfoForCells();
+    BuiltinClassID found;
+    for (size_t index = 0; index < structures.size(); ++index) {
+        if (structures[index] != structure) [[likely]]
+            continue;
+        const BuiltinClassBinding& binding = host->classes[index];
+        if (!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo))
+            found = binding.builtinClass;
+    }
+    return found;
+}
+
 std::optional<uint32_t> BuiltinBindings::cachedValueOffsetOf(BuiltinOverloadID id)
 {
-    auto* binding = findBinding(&BuiltinBindingSet::cachedGetters, &BuiltinCachedGetterBinding::overload, id);
+    auto* binding = findHostBinding(&BuiltinBindingSet::cachedGetters, &BuiltinCachedGetterBinding::overload, id);
     if (!binding)
         return std::nullopt;
     return binding->offsetOfCachedValue;
@@ -216,15 +236,9 @@ std::optional<uint32_t> BuiltinBindings::cachedValueOffsetOf(const ClassInfo* in
     return std::nullopt;
 }
 
-GetValueFunc::Ptr BuiltinBindings::customGetterOf(BuiltinOverloadID id)
-{
-    auto* binding = findBinding(&BuiltinBindingSet::customGetters, &BuiltinCustomGetterBinding::overload, id);
-    return binding ? binding->function : nullptr;
-}
-
 std::optional<uint16_t> BuiltinBindings::hostNumberOf(BuiltinID id)
 {
-    auto* binding = findBinding(&BuiltinBindingSet::hostNumbers, &BuiltinHostNumberBinding::builtin, id);
+    auto* binding = findHostBinding(&BuiltinBindingSet::hostNumbers, &BuiltinHostNumberBinding::builtin, id);
     return binding ? std::optional(binding->number) : std::nullopt;
 }
 
@@ -262,19 +276,8 @@ std::optional<BuiltinNativeFunction> BuiltinBindings::nativeFunctionOf(BuiltinID
         auto* binding = findEngineBinding(engineBuiltinBindings.nativeFunctions, &EngineNativeFunctionBinding::builtin, id);
         return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length, binding->name }) : std::nullopt;
     }
-    auto* binding = findBinding(&BuiltinBindingSet::nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
+    auto* binding = findHostBinding(&BuiltinBindingSet::nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
     return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length, binding->name }) : std::nullopt;
-}
-
-std::optional<uint32_t> BuiltinBindings::nativeFunctionNumberOf(BuiltinID id)
-{
-    const BuiltinBindingSet* host = registeredHost();
-    if (!host)
-        return std::nullopt;
-    const BuiltinNativeFunctionBinding* binding = findBindingIn(host->nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
-    if (!binding)
-        return std::nullopt;
-    return static_cast<uint32_t>(binding - host->nativeFunctions.data());
 }
 
 std::span<const BuiltinNativeFunctionBinding> BuiltinBindings::nativeFunctionsOfHost()

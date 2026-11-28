@@ -1,0 +1,35 @@
+# function first() {} Object.defineProperties(first, { limit: { __proto__: hidden, enumerable: true } })
+# The control of function-on-which-a-map-written-in-place-lays-accessors-and-values-is-not-reached.ir: what stands above the entry may hold a getter that has `this`, and `this` is `first`.
+# An entry of a map is written in place only where it has left its body into the map alone.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# RUN(SUMMARY): summary f0
+# SUMMARY: DefinesByDescriptor
+# SUMMARY-NOT: entry-written-in-map
+
+layout L0 fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="value" declared={type=anything}}]
+layout L1 fields=[{key="limit" declared={type=anything}}, {key="mark" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperties
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="hidden" [isFreeName]
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v5 layout=L0 fields=[2]
+    SetLiteralPrototype v6, v4
+    v8 = FinishObject v6
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = FinishObject v9
+    v11 = Call v2, v1, v0, v10 calleeName="Object.defineProperties"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

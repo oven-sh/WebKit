@@ -162,7 +162,7 @@ unsigned BunV8HeapSnapshotBuilder::analyzeNodeInternal(JSCell* cell)
     if (auto existing = m_previousSnapshot ? m_previousSnapshot->nodeForCell(cell) : std::nullopt)
         identifier = existing->identifier;
     else {
-        identifier = HeapSnapshotBuilder::getNextObjectIdentifier();
+        identifier = m_profiler.takeNextObjectIdentifier();
         m_snapshot->appendNode(HeapSnapshotNode(cell, identifier));
     }
 
@@ -379,7 +379,7 @@ unsigned BunV8HeapSnapshotBuilder::getNodeTypeIndex(JSCell* cell)
     }
     case JSType::CellType:
 #if ENABLE(AOT)
-        if (AOT::HeapHooks::isModuleEnvironment(cell))
+        if (AOT::HeapHooks::representsModuleInHeapSnapshot(cell))
             return static_cast<unsigned>(V8NodeType::Object);
 #endif
         return static_cast<unsigned>(V8NodeType::Hidden);
@@ -400,6 +400,11 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
 
     switch (cell->type()) {
     case JSType::StringType: {
+#if ENABLE(AOT)
+        // Its characters are a header, the text so far and room that nobody has written.
+        if (AOT::HeapHooks::isBufferOfGrowingText(cell))
+            return "system / GrowingText"_s;
+#endif
         auto* string = uncheckedDowncast<JSString>(cell);
         static constexpr unsigned heapSnapshotStringLimit = 1024;
         // V8 never resolves cons strings for the node name. We do, because
@@ -455,13 +460,13 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
         return makeString("system / "_s, cell->className());
 #if ENABLE(AOT)
     case JSType::CellType:
-        if (AOT::HeapHooks::isModuleEnvironment(cell))
+        if (AOT::HeapHooks::representsModuleInHeapSnapshot(cell))
             return makeString("system / "_s, cell->className());
         break;
     case JSType::CompiledClosureType:
     case JSType::SlimClosureType:
     case JSType::SlimClosureWithPropertiesType: {
-        String displayName = AOT::HeapHooks::nameOfCompiledCallee(cell);
+        String displayName = AOT::HeapHooks::compiledCalleeName(cell);
         if (!displayName.isEmpty())
             return displayName;
         break;
@@ -482,9 +487,6 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
         // "Object" in snapshots and not get the name of the prototype's parent.
         JSObject* object = asObject(cell);
         if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
-#if ENABLE(AOT)
-            AOT::HeapHooks::LookForConstructorBySnapshot look;
-#endif
             PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_profiler.vm());
             if (!object->ordinaryGetOwnPropertySlot(globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
                 name = JSObject::calculatedClassName(object);
@@ -833,7 +835,7 @@ static void appendUTF8BytesQuotedJSON(JsonByteSink& out, const WTF::String& str)
 {
     out.append('"');
     if (!str.isEmpty()) {
-        auto utf8 = str.utf8();
+        auto utf8 = makeUTF8CString(str);
         auto data = utf8.span();
         for (size_t i = 0; i < data.size(); ++i) {
             uint8_t ch = data[i];

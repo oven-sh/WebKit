@@ -1,0 +1,72 @@
+# a text grows in both of two loops, one inside the other, and the inner one has few turns: in the first walk no builder stands yet, so the inner turns are written out, and behind them their names are empty.
+# What the turns bound is kept with the try around them, joined over the turns: so the row of the outer loop knows that the inner join makes a text, the outer loop buys one builder, and in the next walk the inner loop goes round with it
+# function both(n: number) { let s = ""; for (let i = 0; i < n / 4; i++) { s += "["; for (let j = 0; j < 3; j++) s += words[j]; } return s; }
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[made]]: opaque(StringBuilder) @Cell = StackStringBuilderBegin
+# CHECK: ([[outer]]: opaque(StringBuilder) @Cell, {{*}}isLoopHead=true
+# CHECK: ([[inner]]: opaque(StringBuilder) @Cell, {{*}}isLoopHead=true
+# RUN(ONE): walk f1:Body mechanisms=all
+# ONE-COUNT-1: = StackStringBuilderBegin
+# ONE-NOT: = StackStringBuilderBegin
+# layout L906 kind=Closure
+variable g0 name="words" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/$bunfs/root/n.ts" displayPath="n.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 51, 199, 231] quotedSources=[{position=175 start=26 end=34}, {position=200 end=15}, {position=219 end=21}] quotedSourceText="globalThis.sink(both)s += words[j]"} functionSource="const words = [\x22alpha\x22, \x22beta\x22, \x22gamma\x22, \x22delta\x22];\x0afunction both(n) { let s = \x22\x22; for (let i = 0; i < n / 4; i++) { s += \x22[\x22; for (let j = 0; j < 3; j++) s += words[j]; } return s; }\x0a(globalThis).sink(both);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @14
+    PutModuleVariable v2 variable=g0 @6
+    v4 = Builtin builtin=GlobalThis @200
+    v5 = PropGet v4 key="globalThis" [isFreeName] @200
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]} @200
+    v7 = PropGet v6 key="sink" @200
+    v8 = Call v7, v6, v1 calleeKey="sink" calleeName="globalThis.sink" @219
+    v9 = Undefined @199
+    Return v9 @199
+}
+function f1 name="both" module=m0 position=51 sourceRange={start=51 end=182} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = String string="" @94
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @94
+    v3 = Integer @111
+    v4 = Convert v3 declared={type=number} @111
+    Jump -> next b1(v2, v4) @107
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint @107
+    v8 = Integer integer=4 @122
+    v9 = Div v0, v8 @122
+    v10 = Less v6, v9 @122
+    Branch v10 -> taken b2(), notTaken b6() @122
+  b2():
+    v11 = String string="[" @137
+    v12 = Add v5, v11 @137
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @132
+    v14 = Integer @155
+    v15 = Convert v14 declared={type=number} @155
+    Jump -> next b3(v13, v15) @151
+  b3(v16: undefined|null|string, v17: number):
+    LoopHint @151
+    v19 = Integer integer=3 @162
+    v20 = Less v17, v19 @162
+    Branch v20 -> taken b4(), notTaken b5() @162
+  b4():
+    v21 = GetModuleVariable variable=g0 @175
+    v22 = CheckInitialized v21 name="words" @175
+    v23 = ElemGet v22, v17 @175
+    v24 = Add v16, v23 @175
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @170
+    v26 = Increment v17 @165
+    v27 = Convert v26 declared={type=number} @165
+    Jump -> next b3(v25, v27) @165
+  b5():
+    v28 = Increment v6 @125
+    v29 = Convert v28 declared={type=number} @125
+    Jump -> next b1(v16, v29) @125
+  b6():
+    v30 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @194
+    Return v30 @194
+}
+data d0 root=Array{contents=anything elements=[String{value="alpha"}, String{value="beta"}, String{value="gamma"}, String{value="delta"}]} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

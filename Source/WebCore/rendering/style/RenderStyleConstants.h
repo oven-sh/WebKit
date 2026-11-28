@@ -138,7 +138,7 @@ constexpr auto allInternalPseudoElementTypes = EnumSet {
 
 constexpr auto allPseudoElementTypes = allPublicPseudoElementTypes | allInternalPseudoElementTypes;
 
-enum class PseudoElementBoxGeneration : bool { Normal, NotForBeforeOrAfter };
+enum class PseudoElementBoxGeneration : bool { Normal, NoGeneratedContent };
 
 inline std::optional<PseudoElementType> parentPseudoElement(PseudoElementType pseudoElementType)
 {
@@ -256,6 +256,11 @@ enum class BoxSizing : bool {
     BorderBox
 };
 
+enum class BorderRadiusPercentageBasis : bool {
+    Normal,
+    BlockSize
+};
+
 // Random visual rendering model attributes. Not inherited.
 
 enum class Overflow : uint8_t {
@@ -273,6 +278,13 @@ constexpr bool isNonVisibleOverflow(Overflow overflow)
     return overflow == Overflow::Hidden
         || overflow == Overflow::Scroll
         || overflow == Overflow::Clip;
+}
+
+// Whether this value makes its axis a scrollable axis of a scroll container.
+// https://drafts.csswg.org/css-overflow-3/#scrollable
+constexpr bool isScrollableOverflow(Overflow overflow)
+{
+    return overflow != Overflow::Visible && overflow != Overflow::Clip;
 }
 
 enum class Clear : uint8_t {
@@ -328,6 +340,7 @@ enum class FillBox : uint8_t {
     ContentBox,
     BorderArea,
     Text,
+    BorderAreaText,
     NoClip
 };
 
@@ -680,7 +693,7 @@ enum class BreakBetween : uint8_t {
     RectoPage,
     VersoPage
 };
-bool LEGACY_NODELETE alwaysPageBreak(BreakBetween);
+NODELETE bool alwaysPageBreak(BreakBetween);
     
 enum class BreakInside : uint8_t {
     Auto,
@@ -937,6 +950,7 @@ enum class CSSBoxType : uint8_t {
     BoxMissing = 0,
     MarginBox,
     BorderBox,
+    HalfBorderBox,
     PaddingBox,
     ContentBox,
     FillBox,
@@ -1041,6 +1055,14 @@ enum class ContentVisibility : uint8_t {
     Hidden,
 };
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+enum class AppleColorFilterOverride : uint8_t {
+    None,
+    Preserve,
+    Force,
+};
+#endif
+
 enum class BlockStepAlign : uint8_t {
     Auto,
     Center,
@@ -1134,7 +1156,9 @@ enum class AlignmentBaseline : uint8_t {
     Ideographic,
     Alphabetic,
     Hanging,
-    Mathematical
+    Mathematical,
+    TextTop,
+    TextBottom
 };
 
 enum class DominantBaseline : uint8_t {
@@ -1146,7 +1170,9 @@ enum class DominantBaseline : uint8_t {
     Central,
     Middle,
     TextAfterEdge,
-    TextBeforeEdge
+    TextBeforeEdge,
+    TextTop,
+    TextBottom
 };
 
 enum class VectorEffect : uint8_t {
@@ -1165,7 +1191,7 @@ enum class MaskType : uint8_t {
     Alpha
 };
 
-CSSBoxType LEGACY_NODELETE transformBoxToCSSBoxType(TransformBox);
+NODELETE CSSBoxType transformBoxToCSSBoxType(TransformBox);
 
 constexpr float defaultMiterLimit = 4;
 
@@ -1174,6 +1200,9 @@ enum class UsesSVGZoomRulesForLength : bool { No, Yes };
 WTF::TextStream& operator<<(WTF::TextStream&, AnimationDirection);
 WTF::TextStream& operator<<(WTF::TextStream&, AnimationFillMode);
 WTF::TextStream& operator<<(WTF::TextStream&, AnimationPlayState);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+WTF::TextStream& operator<<(WTF::TextStream&, AppleColorFilterOverride);
+#endif
 WTF::TextStream& operator<<(WTF::TextStream&, AspectRatioType);
 WTF::TextStream& operator<<(WTF::TextStream&, AutoRepeatType);
 WTF::TextStream& operator<<(WTF::TextStream&, BackfaceVisibility);
@@ -1181,6 +1210,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, BlockStepAlign);
 WTF::TextStream& operator<<(WTF::TextStream&, BlockStepInsert);
 WTF::TextStream& operator<<(WTF::TextStream&, BlockStepRound);
 WTF::TextStream& operator<<(WTF::TextStream&, BorderCollapse);
+WTF::TextStream& operator<<(WTF::TextStream&, BorderRadiusPercentageBasis);
 WTF::TextStream& operator<<(WTF::TextStream&, BorderStyle);
 WTF::TextStream& operator<<(WTF::TextStream&, BoxAlignment);
 WTF::TextStream& operator<<(WTF::TextStream&, BoxDecorationBreak);

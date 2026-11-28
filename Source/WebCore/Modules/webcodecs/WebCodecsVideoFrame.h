@@ -107,6 +107,8 @@ public:
     WEBCORE_EXPORT static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext&, Ref<VideoFrame>&&, BufferInit&&);
     static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext& context, WebCodecsVideoFrameData&& data) { return adoptRef(*new WebCodecsVideoFrame(context, WTF::move(data))); }
 
+    static std::optional<VideoPixelFormat> videoPixelFormatForContext(const ScriptExecutionContext&, const VideoFrame&);
+
     std::optional<VideoPixelFormat> format() const { return m_data.format; }
     size_t codedWidth() const { return m_data.codedWidth; }
     size_t codedHeight() const { return m_data.codedHeight; }
@@ -141,8 +143,8 @@ public:
     // Returns the frame to render, without its rotation if WebCodecsVideoFrameRotationEnabled is off.
     RefPtr<VideoFrame> internalFrameForRendering(ScriptExecutionContext&) const;
 
-    void LEGACY_NODELETE setDisplaySize(size_t, size_t);
-    void LEGACY_NODELETE setVisibleRect(const DOMRectInit&);
+    NODELETE void setDisplaySize(size_t, size_t);
+    NODELETE void setVisibleRect(const DOMRectInit&);
 
     const WebCodecsVideoFrameData& data() const LIFETIME_BOUND { return m_data; }
 

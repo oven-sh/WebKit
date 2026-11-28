@@ -29,17 +29,15 @@
 #include <array>
 #include <wtf/StdLibExtras.h>
 
-namespace WebCore {
-
-namespace MIMESniffer {
+namespace WebCore::MIMESniffer {
 
 template<std::size_t N>
-constexpr auto LEGACY_NODELETE span8(const char(&p)[N])
+NODELETE constexpr auto span8(const char(&p)[N])
 {
     return unsafeMakeSpan<const uint8_t, N - 1>(byteCast<uint8_t>(static_cast<const char*>(p)), N - 1);
 }
 
-static bool LEGACY_NODELETE hasSignatureForMP4(std::span<const uint8_t> sequence)
+NODELETE static bool hasSignatureForMP4(std::span<const uint8_t> sequence)
 {
     // To determine whether a byte sequence matches the signature for MP4, use the following steps:
     // Let sequence be the byte sequence to be matched, where sequence[s] is byte s in sequence and sequence[0] is the first byte in sequence.
@@ -77,7 +75,7 @@ static bool LEGACY_NODELETE hasSignatureForMP4(std::span<const uint8_t> sequence
     return false;
 }
 
-static std::optional<std::pair<uint8_t, int64_t>> LEGACY_NODELETE parseWebMVint(std::span<const uint8_t> sequence)
+NODELETE static std::optional<std::pair<uint8_t, int64_t>> parseWebMVint(std::span<const uint8_t> sequence)
 {
     size_t index = 0;
     // Let mask be 128.
@@ -123,7 +121,7 @@ static std::optional<std::pair<uint8_t, int64_t>> LEGACY_NODELETE parseWebMVint(
     return std::make_pair(numberSize, parsedNumber);
 }
 
-static bool LEGACY_NODELETE hasSignatureForWebM(std::span<const uint8_t> sequence)
+NODELETE static bool hasSignatureForWebM(std::span<const uint8_t> sequence)
 {
     // To determine whether a byte sequence matches the signature for WebM, use the following steps:
     //   1. Let sequence be the byte sequence to be matched, where sequence[s] is byte s in sequence and sequence[0] is the first byte in sequence.
@@ -177,7 +175,7 @@ static bool LEGACY_NODELETE hasSignatureForWebM(std::span<const uint8_t> sequenc
     return false;
 }
 
-static bool LEGACY_NODELETE matchMP3Header(std::span<const uint8_t> sequence)
+NODELETE static bool matchMP3Header(std::span<const uint8_t> sequence)
 {
     // To match an mp3 header, using a byte sequence sequence of length length at offset s execute these steps:
 
@@ -226,11 +224,11 @@ struct MP3Frame {
     uint8_t pad;
 };
 
-static uint32_t LEGACY_NODELETE mp3FrameSize(const MP3Frame& frame)
+NODELETE static uint32_t mp3FrameSize(const MP3Frame& frame)
 {
     // To compute an mp3 frame size, execute these steps:
-    // If version is 1, let scale be 144, else, let scale be 72.
-    auto scale = (frame.version == 1) ? 144u : 72u;
+    // If header's version & 0x01 is non-zero, let scale be 144, else, let scale be 72.
+    auto scale = (frame.version & 0x1) ? 144u : 72u;
     // Let size be bitrate * scale / freq.
     uint32_t size = frame.bitRate * scale / frame.sampleRate;
     // If pad is not zero, increment size by 1.
@@ -240,7 +238,7 @@ static uint32_t LEGACY_NODELETE mp3FrameSize(const MP3Frame& frame)
     return size;
 }
 
-static MP3Frame LEGACY_NODELETE parseMP3Frame(std::span<const uint8_t> sequence)
+NODELETE static MP3Frame parseMP3Frame(std::span<const uint8_t> sequence)
 {
     // Let version be sequence[s + 1] & 0x18 >> 3.
     uint8_t version = (sequence[1] & 0x18) >> 3;
@@ -267,7 +265,7 @@ static MP3Frame LEGACY_NODELETE parseMP3Frame(std::span<const uint8_t> sequence)
     return { version, bitRate, sampleRate, pad };
 }
 
-static bool LEGACY_NODELETE hasSignatureForMP3WithoutID3(std::span<const uint8_t> sequence)
+NODELETE static bool hasSignatureForMP3WithoutID3(std::span<const uint8_t> sequence)
 {
     // To determine whether a byte sequence matches the signature for MP3 without ID3, use the following steps:
 
@@ -361,6 +359,47 @@ String getMIMETypeFromContent(std::span<const uint8_t> sequence)
     return emptyString();
 }
 
-} // namespace MIMESniffer
+// Binary STL is an 80-byte header, a little-endian triangle count, then 50 bytes per triangle.
+NODELETE static bool isBinarySTL(std::span<const uint8_t> sequence)
+{
+    constexpr size_t headerSize = 80;
+    constexpr size_t triangleCountSize = 4;
+    constexpr size_t triangleSize = 50;
 
-} // namespace WebCore
+    if (sequence.size() < headerSize + triangleCountSize)
+        return false;
+
+    auto count = sequence.subspan(headerSize, triangleCountSize);
+    uint64_t triangleCount = count[0] | count[1] << 8 | count[2] << 16 | static_cast<uint64_t>(count[3]) << 24;
+    return sequence.size() == headerSize + triangleCountSize + triangleCount * triangleSize;
+}
+
+String getModelMIMETypeFromContent(std::span<const uint8_t> sequence)
+{
+    struct ModelSignature {
+        const std::span<const uint8_t> signature;
+        const ASCIILiteral mimeType;
+    };
+
+    // The signatures and order of USDLib's UsdStage::Open(buffer).
+    static const auto signatures = WTF::toArray<ModelSignature>({
+        { span8("PXR-USDC"), "model/vnd.pixar.usd"_s },
+        { span8("#usda "), "model/vnd.pixar.usd"_s },
+        { span8("PK\x03\x04"), "model/vnd.usdz+zip"_s },
+        { span8("glTF"), "model/gltf-binary"_s },
+        { span8("{"), "model/gltf+json"_s },
+    });
+
+    for (auto& [signature, mimeType] : signatures) {
+        if (spanHasPrefix(sequence, signature))
+            return mimeType;
+    }
+
+    // STL has no signature: recognize binary STL by its size, and ASCII STL by its leading keyword.
+    if (isBinarySTL(sequence) || spanHasPrefix(sequence, span8("solid")))
+        return "model/stl"_s;
+
+    return nullString();
+}
+
+} // namespace WebCore::MIMESniffer

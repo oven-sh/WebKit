@@ -1,0 +1,36 @@
+# function change(a, by) { const made = [a, by]; made[0] = a * by; return made; }
+# The list is made here and the index is known: the product is stored as the double it is, and boxed by nobody.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: number @Double = Mul
+# CHECK-NEXT: PutArrayElement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Double number=2.5
+    v2 = Integer integer=3
+    v3 = Call v0, -, v1, v2
+    v4 = Double number=-0
+    v5 = Integer integer=3
+    v6 = Call v0, -, v5, v4
+    v7 = Double number=Infinity
+    v8 = Integer
+    v9 = Call v0, -, v7, v8
+    v10 = Integer integer=2
+    v11 = Call v0, -, v10, v2
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="sink" [isFreeName]
+    v14 = Call v13, -, v3, v6, v9, v11
+    Return v14
+}
+function f1 name="change" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Mul v0, v1
+    v4 = Integer
+    ElemSet v2, v4, v3 mode=Strict
+    Return v2
+}

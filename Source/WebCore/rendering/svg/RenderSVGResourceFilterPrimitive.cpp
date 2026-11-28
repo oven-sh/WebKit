@@ -43,22 +43,19 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceFilterPrimitive);
 
-RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes& element, Style::ComputedStyle&& style)
+RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGResourceFilterPrimitive(Type::SVGResourceFilterPrimitive, element, WTF::move(style))
 {
 }
 
-RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(Type type, SVGFilterPrimitiveStandardAttributes& element, Style::ComputedStyle&& style)
+RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(Type type, SVGFilterPrimitiveStandardAttributes& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGHiddenContainer(type, element, WTF::move(style))
 {
     ASSERT(isRenderSVGResourceFilterPrimitive());
 }
 
-void RenderSVGResourceFilterPrimitive::markFilterEffectForRepaint(FilterEffect* effect)
+void RenderSVGResourceFilterPrimitive::markFilterEffectForRepaint(FilterEffect*)
 {
-    if (!effect)
-        return;
-
     CheckedPtr parent = dynamicDowncast<RenderSVGResourceFilter>(this->parent());
     if (!parent)
         return;

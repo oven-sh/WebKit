@@ -1,0 +1,28 @@
+# several built-ins meet, and the type stops naming any of them. A name that is stored through what comes out is added to each of them that takes no other name: it is opened there
+# same(Math); same(Function.prototype).planted = 1
+# Math takes any name as it is, so nothing has to be opened on it
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: adds FunctionPrototype "planted"
+# RUN(NEVER): test-run
+# NEVER-NOT: adds Math
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    v3 = PropGet v0 key="Math" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    v6 = Call v4, -, v2
+    v7 = Integer integer=1
+    PropSet v6, v7 key="planted"
+    Return v7
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

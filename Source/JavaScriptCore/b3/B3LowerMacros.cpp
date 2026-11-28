@@ -33,10 +33,12 @@
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3BlockInsertionSet.h"
+#include "B3BulkMemoryValue.h"
 #include "B3CCallValue.h"
 #include "B3CaseCollectionInlines.h"
 #include "B3CheckValue.h"
 #include "B3ConstDoubleValue.h"
+#include "B3ConstFloatValue.h"
 #include "B3ConstPtrValue.h"
 #include "B3FenceValue.h"
 #include "B3InsertionSetInlines.h"
@@ -1025,12 +1027,10 @@ private:
                 mergeBlock->appendNew<MemoryValue>(m_proc, Store, m_origin, size, phi, static_cast<int32_t>(JSWebAssemblyArray::offsetOfSize()));
 
                 if (arrayNew->hasInitValue()) {
-                    auto* initValue = arrayNew->initValue();
                     Wasm::StorageType storageType = rtt->elementType().type;
 
-                    // Compute payloadBase directly in mergeBlock rather than using wasmArrayPayload(),
-                    // because wasmArrayPayload() inserts into m_block (the loop exit), but payloadBase
-                    // is used inside the loop body. m_block doesn't dominate the loop body.
+                    // wasmArrayPayload() inserts into m_block, which runs after mergeBlock, so compute
+                    // the payload address here instead.
                     Value* payloadBase;
                     if (JSWebAssemblyArray::needsV128AlignmentMask(storageType)) {
                         payloadBase = mergeBlock->appendNew<Value>(m_proc, BitAnd, pointerType(), m_origin,
@@ -1042,51 +1042,20 @@ private:
                             phi, mergeBlock->appendNew<ConstPtrValue>(m_proc, m_origin, JSWebAssemblyArray::alignedOffsetOfData(elementSize)));
                     }
 
-                    // Fill loop
-                    {
-                        BasicBlock* header = m_blockInsertionSet.insertBefore(m_block);
-                        BasicBlock* body = m_blockInsertionSet.insertBefore(m_block);
+                    Value* pattern = arrayNew->initValue();
+                    if (pattern->type().isFloat())
+                        pattern = mergeBlock->appendNew<Value>(m_proc, BitwiseCast, m_origin, pattern);
 
-                        auto* extSizeMerge = mergeBlock->appendNew<Value>(m_proc, ZExt32, Int64, m_origin, size);
-                        UpsilonValue* initialRemainingUpsilon = mergeBlock->appendNew<UpsilonValue>(m_proc, m_origin, extSizeMerge);
-                        mergeBlock->setSuccessors(header);
-                        mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
-
-                        // loop header
-                        auto* remaining = header->appendNew<Value>(m_proc, Phi, pointerType(), m_origin);
-                        initialRemainingUpsilon->setPhi(remaining);
-
-                        auto* isZero = header->appendNew<Value>(m_proc, Equal, m_origin, remaining, header->appendNew<ConstPtrValue>(m_proc, m_origin, 0));
-                        header->setSuccessors({ m_block, FrequencyClass::Normal }, { body, FrequencyClass::Normal });
-                        header->appendNew<Value>(m_proc, Branch, m_origin, isZero);
-
-                        // loop body
-                        auto* decremented = body->appendNew<Value>(m_proc, Sub, pointerType(), m_origin, remaining, body->appendNew<ConstPtrValue>(m_proc, m_origin, 1));
-
-                        auto* offset = body->appendNew<Value>(m_proc, Mul, pointerType(), m_origin, decremented, body->appendNew<ConstPtrValue>(m_proc, m_origin, elementSize));
-                        auto* addr = body->appendNew<Value>(m_proc, Add, pointerType(), m_origin, payloadBase, offset);
-
-                        if (storageType.is<Wasm::PackedType>()) {
-                            switch (storageType.as<Wasm::PackedType>()) {
-                            case Wasm::PackedType::I8:
-                                body->appendNew<MemoryValue>(m_proc, Store8, m_origin, initValue, addr);
-                                break;
-                            case Wasm::PackedType::I16:
-                                body->appendNew<MemoryValue>(m_proc, Store16, m_origin, initValue, addr);
-                                break;
-                            }
-                        } else
-                            body->appendNew<MemoryValue>(m_proc, Store, m_origin, initValue, addr);
-
-                        auto* loopUpsilon = body->appendNew<UpsilonValue>(m_proc, m_origin, decremented);
-                        loopUpsilon->setPhi(remaining);
-                        body->setSuccessors(header);
-                        body->appendNew<Value>(m_proc, Jump, m_origin);
-                    }
-                } else {
-                    mergeBlock->setSuccessors(m_block);
-                    mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
+                    Value* count;
+                    if (isConstantSize)
+                        count = mergeBlock->appendNew<ConstPtrValue>(m_proc, m_origin, static_cast<uint32_t>(size->asInt32()));
+                    else
+                        count = mergeBlock->appendNew<Value>(m_proc, ZExt32, Int64, m_origin, size);
+                    bool isRef = Wasm::isRefType(storageType.unpacked());
+                    mergeBlock->appendNew<BulkMemoryValue>(m_proc, memoryFillOpcode(widthForBytes(elementSize)), m_origin, payloadBase, pattern, count, isRef);
                 }
+                mergeBlock->setSuccessors(m_block);
+                mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
 
                 m_value->replaceWithIdentity(phi);
                 before->updatePredecessorsAfter();
@@ -1179,7 +1148,13 @@ private:
             std::swap(a, b);
         // select(b, a) returns a when a is NaN and when both are zeros. That is only wrong when b is the zero that must win: -0 for min, +0 for max.
         if (isNeverNaN(b) && !isZeroWithSign(b, !isMax)) {
-            m_value->replaceWithIdentity(select(b, a));
+            Value* result = select(b, a);
+            if (m_proc.isWasm() && !givesQuietNaN(a)) {
+                // Adding -0 makes a NaN quiet and leaves every other value unchanged.
+                Value* negativeZero = m_value->type() == Float ? static_cast<Value*>(m_insertionSet.insert<ConstFloatValue>(m_index, m_origin, -0.0f)) : m_insertionSet.insert<ConstDoubleValue>(m_index, m_origin, -0.0);
+                result = m_insertionSet.insert<Value>(m_index, Add, m_origin, result, negativeZero);
+            }
+            m_value->replaceWithIdentity(result);
             m_changed = true;
             return;
         }

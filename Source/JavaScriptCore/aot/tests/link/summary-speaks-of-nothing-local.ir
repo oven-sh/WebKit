@@ -1,0 +1,39 @@
+# If a summary kept the locals of a body, Link would read as much as the walk does and would no longer be a small step between two visits of each function. If eliminating them lost an edge, what is stored or returned would count as nothing
+# function put(o, v) { const t = v; const b = { x: t }; const r = helper(b); return r; }
+# The locals between the parameter and the field, and between the call and the result, are gone: an edge leads from end to end. The body made the object and has it alone at the store, so the store is a plain edge and no record. Every value has one origin, so there is no join.
+# RUN: summary f1
+# CHECK: summary f1 operations=
+# CHECK: n0 Unknown
+# CHECK: call c0 v6 Value Variable g0 (Allocation L0)
+# CHECK: edge c0.0 -> Result 0
+# RUN(EDGE): summary f1
+# EDGE: edge Parameter 1 -> Field L0.0 "x"
+# RUN(BARE): summary f1
+# BARE-NOT: Join
+# BARE-NOT: access
+# BARE-NOT: -> Unknown
+# RUN(NOBODY): summary f3
+# NOBODY: bad argument f3
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="helper" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="x"
+    v4 = FinishObject v2
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5, -, v4 calleeName="helper"
+    Return v6
+}
+function f2 name="helper" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

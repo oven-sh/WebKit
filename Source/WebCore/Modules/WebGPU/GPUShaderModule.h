@@ -40,6 +40,7 @@ namespace WebCore {
 
 class DeferredPromise;
 class GPUDevice;
+class ScriptExecutionContext;
 
 class GPUShaderModule : public RefCountedAndCanMakeWeakPtr<GPUShaderModule> {
 public:
@@ -48,17 +49,17 @@ public:
         return adoptRef(*new GPUShaderModule(WTF::move(backing), WTF::move(descriptor), device));
     }
 
-    String LEGACY_NODELETE label() const;
+    NODELETE String label() const;
     void setLabel(String&&);
 
     using CompilationInfoPromise = DOMPromiseDeferred<IDLInterface<GPUCompilationInfo>>;
-    void getCompilationInfo(CompilationInfoPromise&&);
+    void getCompilationInfo(ScriptExecutionContext&, CompilationInfoPromise&&);
 
     ::WebGPU::ShaderModule& backing() { return m_backing; }
     const ::WebGPU::ShaderModule& backing() const { return m_backing; }
     const WebGPUShaderModuleDescriptor& descriptor() const { return m_descriptor; }
 
-    GPUDevice* LEGACY_NODELETE device() const;
+    NODELETE GPUDevice* device() const;
 
     bool hasActiveInspectorCanvasCallTracer() const;
 

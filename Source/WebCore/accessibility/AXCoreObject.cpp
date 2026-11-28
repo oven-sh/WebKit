@@ -310,7 +310,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::tabChildren()
 }
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-static bool LEGACY_NODELETE isValidChildForTable(AXCoreObject& object)
+NODELETE static bool isValidChildForTable(AXCoreObject& object)
 {
     auto role = object.role();
     // Tables can only have these roles as exposed-to-AT children.
@@ -524,8 +524,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameUnignoredChild
         if (RefPtr crossFrameChild = crossFrameChildObject())
             appendCrossFrameContent(result, *crossFrameChild);
     } else {
-        AccessibilityChildrenVector splicedResult;
-        splicedResult.reserveInitialCapacity(result.size());
+        AccessibilityChildrenVector splicedResult(ReserveCapacityTag { }, result.size());
         for (size_t i = 0; i < result.size(); i++) {
             if (RefPtr crossFrameChild = protect(result[i])->crossFrameChildObject())
                 appendCrossFrameContent(splicedResult, *crossFrameChild);
@@ -598,6 +597,18 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameChildrenInclud
     return result;
 }
 
+// Choosing between crossFrameChildrenIncludingIgnored() (a new vector) and childrenIncludingIgnored() (a reference) with a
+// conditional expression copies the children even when not crossing frames, which makes pre-order traversals of wide subtrees
+// (e.g. tables, whose rows are all children of the table) quadratic. Only make that copy when crossing frames.
+static const AXCoreObject::AccessibilityChildrenVector& childrenIncludingIgnoredMaybeCrossFrame(AXCoreObject& object, bool updateChildrenIfNeeded, bool includeCrossFrame, AXCoreObject::AccessibilityChildrenVector& crossFrameChildren)
+{
+    if (!includeCrossFrame)
+        return object.childrenIncludingIgnored(updateChildrenIfNeeded);
+
+    crossFrameChildren = object.crossFrameChildrenIncludingIgnored(updateChildrenIfNeeded);
+    return crossFrameChildren;
+}
+
 bool AXCoreObject::crossFrameIsAncestorOfObject(const AXCoreObject& axObject) const
 {
     return this == &axObject || axObject.crossFrameIsDescendantOfObject(*this);
@@ -621,7 +632,7 @@ AXCoreObject* AXCoreObject::parentObjectIncludingCrossFrame() const
 #endif
 }
 
-AXCoreObject* AXCoreObject::nextSiblingUnignored() const
+RefPtr<AXCoreObject> AXCoreObject::nextSiblingUnignored() const
 {
     RefPtr parent = parentObjectIncludingCrossFrame();
     if (!parent)
@@ -644,12 +655,12 @@ AXCoreObject* AXCoreObject::nextSiblingUnignored() const
             if (auto stitchedInto = sibling->stitchedIntoID(); stitchedInto && *stitchedInto != sibling->objectID())
                 continue;
         }
-        return sibling.unsafePtr();
+        return sibling.ptr();
     }
     return nullptr;
 }
 
-AXCoreObject* AXCoreObject::previousSiblingUnignored() const
+RefPtr<AXCoreObject> AXCoreObject::previousSiblingUnignored() const
 {
     RefPtr parent = parentObjectIncludingCrossFrame();
     if (!parent)
@@ -672,7 +683,7 @@ AXCoreObject* AXCoreObject::previousSiblingUnignored() const
             if (auto stitchedInto = sibling->stitchedIntoID(); stitchedInto && *stitchedInto != sibling->objectID())
                 continue;
         }
-        return sibling.unsafePtr();
+        return sibling.ptr();
     }
     return nullptr;
 }
@@ -700,7 +711,8 @@ RefPtr<AXCoreObject> AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded, A
 
 RefPtr<AXCoreObject> AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded , AXCoreObject* stayWithin, bool includeCrossFrame)
 {
-    const auto& children = includeCrossFrame ? crossFrameChildrenIncludingIgnored(updateChildrenIfNeeded) : childrenIncludingIgnored(updateChildrenIfNeeded);
+    AccessibilityChildrenVector crossFrameChildren;
+    const auto& children = childrenIncludingIgnoredMaybeCrossFrame(*this, updateChildrenIfNeeded, includeCrossFrame, crossFrameChildren);
 
     if (!children.isEmpty()) {
         auto role = this->role();
@@ -728,7 +740,8 @@ RefPtr<AXCoreObject> AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded , 
 #endif
 
         if (parent) {
-            const auto& siblings = includeCrossFrame ? parent->crossFrameChildrenIncludingIgnored(updateChildrenIfNeeded) : parent->childrenIncludingIgnored(updateChildrenIfNeeded);
+            AccessibilityChildrenVector crossFrameSiblings;
+            const auto& siblings = childrenIncludingIgnoredMaybeCrossFrame(*parent, updateChildrenIfNeeded, includeCrossFrame, crossFrameSiblings);
             size_t indexOfCurrent = current->indexInSiblings(siblings);
             if (indexOfCurrent != notFound && indexOfCurrent + 1 < siblings.size())
                 return siblings[indexOfCurrent + 1].copyRef();
@@ -802,7 +815,7 @@ RefPtr<AXCoreObject> AXCoreObject::previousInPreOrder(bool updateChildrenIfNeede
     return previous;
 }
 
-AXCoreObject* AXCoreObject::deepestLastChildIncludingIgnored(bool updateChildrenIfNeeded)
+RefPtr<AXCoreObject> AXCoreObject::deepestLastChildIncludingIgnored(bool updateChildrenIfNeeded)
 {
     const auto& children = childrenIncludingIgnored(updateChildrenIfNeeded);
     if (children.isEmpty())
@@ -815,7 +828,7 @@ AXCoreObject* AXCoreObject::deepestLastChildIncludingIgnored(bool updateChildren
             break;
         deepestChild = descendants[descendants.size() - 1];
     }
-    return deepestChild.unsafePtr();
+    return deepestChild;
 }
 
 size_t AXCoreObject::indexInSiblings(const AccessibilityChildrenVector& siblings) const
@@ -847,12 +860,13 @@ AXCoreObject* AXCoreObject::nextSiblingIncludingIgnored(bool updateChildrenIfNee
     if (!parent)
         return nullptr;
 
-    const auto& siblings = includeCrossFrame ? parent->crossFrameChildrenIncludingIgnored(updateChildrenIfNeeded) : parent->childrenIncludingIgnored(updateChildrenIfNeeded);
+    AccessibilityChildrenVector crossFrameSiblings;
+    const auto& siblings = childrenIncludingIgnoredMaybeCrossFrame(*parent, updateChildrenIfNeeded, includeCrossFrame, crossFrameSiblings);
     size_t indexOfThis = indexInSiblings(siblings);
     if (indexOfThis == notFound)
         return nullptr;
 
-    return indexOfThis + 1 < siblings.size() ? siblings[indexOfThis + 1].unsafePtr() : nullptr;
+    return indexOfThis + 1 < siblings.size() ? siblings[indexOfThis + 1].ptr() : nullptr;
 }
 
 RefPtr<AXCoreObject> AXCoreObject::previousSiblingIncludingIgnored(bool updateChildrenIfNeeded)
@@ -1414,7 +1428,7 @@ AXCoreObject* AXCoreObject::columnHeader()
     return nullptr;
 }
 
-AXCoreObject* AXCoreObject::rowHeader()
+RefPtr<AXCoreObject> AXCoreObject::rowHeader()
 {
     const auto& rowChildren = unignoredChildren();
     if (rowChildren.isEmpty())
@@ -1431,7 +1445,7 @@ AXCoreObject* AXCoreObject::rowHeader()
     for (const auto& child : rowChildren) {
         // We found a non-header cell, so this is not an entire row of headers -- return the original header cell.
         if (!isARIAGridRow && !child->hasElementName(ElementName::HTML_th))
-            return firstCell.unsafePtr();
+            return firstCell;
 
         // For grid rows, the first header encountered is the row header.
         if (isARIAGridRow && child->isRowHeader())
@@ -1791,12 +1805,12 @@ bool AXCoreObject::supportsActiveDescendant() const
     }
 }
 
-AXCoreObject* AXCoreObject::activeDescendant() const
+RefPtr<AXCoreObject> AXCoreObject::activeDescendant() const
 {
     auto activeDescendants = relatedObjects(AXRelation::ActiveDescendant);
     AX_ASSERT(activeDescendants.size() <= 1);
     if (!activeDescendants.isEmpty())
-        return activeDescendants[0].unsafePtr();
+        return WTF::move(activeDescendants[0]);
     return nullptr;
 }
 
@@ -1836,7 +1850,7 @@ String AXCoreObject::languageIncludingAncestors() const
 }
 
 #if PLATFORM(COCOA)
-static bool LEGACY_NODELETE isVisibleText(AccessibilityTextSource textSource)
+NODELETE static bool isVisibleText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Visible:
@@ -1856,7 +1870,7 @@ static bool LEGACY_NODELETE isVisibleText(AccessibilityTextSource textSource)
     }
 }
 
-static bool LEGACY_NODELETE isDescriptiveText(AccessibilityTextSource textSource)
+NODELETE static bool isDescriptiveText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Alternative:
@@ -2011,16 +2025,19 @@ String AXCoreObject::title(Vector<AccessibilityText>* computedText) const
     return { };
 }
 
-AXCoreObject* AXCoreObject::titleUIElement() const
+RefPtr<AXCoreObject> AXCoreObject::titleUIElement() const
 {
     auto labels = relatedObjects(AXRelation::LabeledBy);
 #if PLATFORM(COCOA)
     // We impose the restriction that if there is more than one label, then we should return none.
     // FIXME: the behavior should be the same in all platforms.
-    return labels.size() == 1 ? labels.first().unsafePtr() : nullptr;
+    if (labels.size() != 1)
+        return nullptr;
 #else
-    return labels.size() ? labels.first().unsafePtr() : nullptr;
+    if (labels.isEmpty())
+        return nullptr;
 #endif
+    return WTF::move(labels.first());
 }
 
 String AXCoreObject::expandedTextValue() const
@@ -2256,7 +2273,7 @@ LineDecorationStyle::LineDecorationStyle(RenderObject& renderer)
     const CheckedRef style = renderer.style();
     auto decor = style->textDecorationLineInEffect();
     if (decor.containsAny({ Style::TextDecorationLine::Flag::Underline, Style::TextDecorationLine::Flag::LineThrough })) {
-        auto decorationStyles = TextDecorationPainter::stylesForRenderer(renderer, decor);
+        auto decorationStyles = Paint::TextDecorationPainter::stylesForRenderer(renderer, decor);
         if (decor.hasUnderline()) {
             hasUnderline = true;
             underlineColor = decorationStyles.underline.color;

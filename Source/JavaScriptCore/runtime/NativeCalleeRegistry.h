@@ -37,8 +37,8 @@ class NativeCalleeRegistry {
     WTF_MAKE_TZONE_ALLOCATED(NativeCalleeRegistry);
     WTF_MAKE_NONCOPYABLE(NativeCalleeRegistry);
 public:
-    static void LEGACY_NODELETE initialize();
-    static NativeCalleeRegistry& LEGACY_NODELETE singleton();
+    NODELETE static void initialize();
+    NODELETE static NativeCalleeRegistry& singleton();
 
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
 
@@ -65,15 +65,13 @@ public:
         m_calleeSet.remove(callee);
     }
 
-    const UncheckedKeyHashSet<NativeCallee*>& allCallees() WTF_REQUIRES_LOCK(m_lock)
+    const HashSet<NativeCallee*>& allCallees() WTF_REQUIRES_LOCK(m_lock)
     {
         return m_calleeSet;
     }
 
     bool isValidCallee(NativeCallee* callee)  WTF_REQUIRES_LOCK(m_lock)
     {
-        if (!UncheckedKeyHashSet<NativeCallee*>::isValidValue(callee))
-            return false;
         return m_calleeSet.contains(callee);
     }
 
@@ -81,7 +79,7 @@ public:
 
 private:
     Lock m_lock;
-    UncheckedKeyHashSet<NativeCallee*> m_calleeSet WTF_GUARDED_BY_LOCK(m_lock);
+    HashSet<NativeCallee*> m_calleeSet WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

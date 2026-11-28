@@ -1,0 +1,33 @@
+# the one property changed: the import() passes attributes, which say as what the file is loaded, and nobody has read them. The module is handed out as ever
+# library.js: export function five() { return 5 }
+# main.js: import "./library.js";  async function main(options) { const { five } = await import("./library.js", options); return five(); }  main(undefined);
+# RUN: summary f1
+# CHECK: hands-out m0
+# RUN(LINK): link functions calls mechanisms=all
+# LINK-NOT: function f3 callers-known
+# LINK-NOT: call f1 v4 -> f3
+
+module m0 path="/library.js" displayPath="library.js" body=f2 exports=[{name="five" variable=g0}]
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+function f0 name="main.js" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Undefined
+    v2 = Call v0, -, v1 calleeName="main"
+    Return
+}
+function f1 name="main" module=m1 flags=[IsAsync] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ImportModule v0 module=m0 referrer=m1
+    v2 = Await v1
+    v3 = PropGet v2 key="five"
+    v4 = Call v3 calleeName="five"
+    Return v4
+}
+function f2 name="library" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f3 name="five" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=5
+    Return v0
+}

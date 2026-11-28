@@ -32,9 +32,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 class DFAMerger {
     typedef MutableRangeList<signed char, uint64_t, 128> CombinedTransitionsMutableRangeList;
@@ -46,19 +44,19 @@ class DFAMerger {
 
     template<WhichDFA whichDFA>
     struct TargetConverter {
-        uint64_t LEGACY_NODELETE convert(uint32_t target)
+        NODELETE uint64_t convert(uint32_t target)
         {
             uint64_t value = 0xffffffffffffffff;
             extend(value, target);
             return value;
         }
 
-        void LEGACY_NODELETE extend(uint64_t& destination, uint32_t target)
+        NODELETE void extend(uint64_t& destination, uint32_t target)
         {
             setHalfSignature(destination, target);
         }
     private:
-        void LEGACY_NODELETE setHalfSignature(uint64_t& signature, uint32_t value)
+        NODELETE void setHalfSignature(uint64_t& signature, uint32_t value)
         {
             unsigned shiftAmount = (whichDFA == WhichDFA::A) ? 32 : 0;
             uint64_t mask = static_cast<uint64_t>(0xffffffff) << (32 - shiftAmount);
@@ -122,17 +120,17 @@ public:
 private:
     uint32_t invalidNodeIndex = 0xffffffff;
 
-    static uint64_t LEGACY_NODELETE signatureForIndices(uint32_t aIndex, uint32_t bIndex)
+    NODELETE static uint64_t signatureForIndices(uint32_t aIndex, uint32_t bIndex)
     {
         return static_cast<uint64_t>(aIndex) << 32 | bIndex;
     }
 
-    static uint32_t LEGACY_NODELETE extractIndexA(uint64_t signature)
+    NODELETE static uint32_t extractIndexA(uint64_t signature)
     {
         return static_cast<uint32_t>(signature >> 32);
     }
 
-    static uint32_t LEGACY_NODELETE extractIndexB(uint64_t signature)
+    NODELETE static uint32_t extractIndexB(uint64_t signature)
     {
         return static_cast<uint32_t>(signature);
     }
@@ -151,7 +149,7 @@ private:
         uint32_t indexA = extractIndexA(newNodeSignature);
         uint32_t indexB = extractIndexB(newNodeSignature);
 
-        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> actions;
+        HashSet<uint64_t> actions;
         if (indexA != invalidNodeIndex) {
             const DFANode& node = m_dfaA.nodes[indexA];
             uint32_t actionsStart = node.actionsStart();
@@ -180,7 +178,7 @@ private:
     const DFA& m_dfaA;
     const DFA& m_dfaB;
     DFA m_output;
-    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodeMapping;
+    HashMap<uint64_t, uint32_t> m_nodeMapping;
     Vector<uint64_t, 0, ContentExtensionsOverflowHandler> m_unprocessedNodes;
 };
 
@@ -220,8 +218,6 @@ void DFACombiner::combineDFAs(unsigned minimumSize, NOESCAPE const Function<void
     }
 }
 
-}
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif

@@ -209,7 +209,7 @@ void CSSFontFaceSet::add(CSSFontFace& face)
     });
 
     face.addClient(*this);
-    m_cache.clear();
+    emptyCaches();
 
     if (face.cssConnection())
         m_faces.insert(m_facesPartitionIndex++, face);
@@ -257,7 +257,7 @@ void CSSFontFaceSet::remove(const CSSFontFace& face)
 {
     Ref protect { face };
 
-    m_cache.clear();
+    emptyCaches();
 
     m_fontModifiedObservers.forEach([](auto& observer) {
         observer();
@@ -305,6 +305,7 @@ void CSSFontFaceSet::purge()
 void CSSFontFaceSet::emptyCaches()
 {
     m_cache.clear();
+    m_smallCapsCache.clear();
 }
 
 void CSSFontFaceSet::clear()
@@ -314,7 +315,7 @@ void CSSFontFaceSet::clear()
     m_faces.clear();
     m_facesLookupTable.clear();
     m_locallyInstalledFacesLookupTable.clear();
-    m_cache.clear();
+    emptyCaches();
     m_constituentCSSConnections.clear();
     m_facesPartitionIndex = 0;
     m_status = Status::Loaded;
@@ -388,7 +389,7 @@ static FontSelectionRequest computeFontSelectionRequest(CSSPropertyParserHelpers
     return { weightSelectionValue, widthSelectionValue, styleSelectionValue };
 }
 
-using CodePointsMap = HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+using CodePointsMap = HashSet<uint32_t>;
 static CodePointsMap codePointsFromString(StringView stringView)
 {
     CodePointsMap result;
@@ -433,10 +434,11 @@ ExceptionOr<Vector<Ref<CSSFontFace>>> CSSFontFaceSet::matchingFacesExcludingPrei
 
     HashSet<CSSFontFace*> resultConstituents;
     auto request = computeFontSelectionRequest(*font);
+    auto variantCaps = font->variantCaps == CSSValueID::SmallCaps ? FontVariantCaps::Small : FontVariantCaps::Normal;
     for (auto codePoint : codePointsFromString(string)) {
         bool found = false;
         for (auto& family : familyOrder) {
-            RefPtr faces = fontFace(request, family);
+            RefPtr faces = fontFace(request, variantCaps, family);
             if (!faces)
                 continue;
             for (auto& constituentFace : faces->constituentFaces()) {
@@ -460,26 +462,34 @@ ExceptionOr<Vector<Ref<CSSFontFace>>> CSSFontFaceSet::matchingFacesExcludingPrei
 
 ExceptionOr<bool> CSSFontFaceSet::check(ScriptExecutionContext& context, const String& font, const String& text)
 {
+    // https://drafts.csswg.org/css-font-loading/#dom-fontfaceset-check
+    //
+    // 1. Let font face set be the FontFaceSet object this method was called on.
+    // 2. Find the matching font faces from font face set using the font and text arguments passed to the function,
+    //    and including system fonts, and let font face list be the returned list of font faces, and found faces be
+    //    the returned found faces flag. If a syntax error was returned, throw a SyntaxError exception and terminate
+    //    these steps.
     auto matchingFaces = this->matchingFacesExcludingPreinstalledFonts(context, font, text);
     if (matchingFaces.hasException())
         return matchingFaces.releaseException();
 
+    // 3. If font face list is empty, or all fonts in the font face list either have a status attribute
+    //    of "loaded" or are system fonts, return true. Otherwise, return false.
     for (auto& face : matchingFaces.releaseReturnValue()) {
-        if (face.get().status() == CSSFontFace::Status::Pending
-            || face.get().status() == CSSFontFace::Status::Loading)
+        if (face.get().fontFaceLoadStatus() != FontFaceLoadStatus::Loaded)
             return false;
     }
     return true;
 }
 
-CSSSegmentedFontFace* CSSFontFaceSet::fontFace(FontSelectionRequest request, const AtomString& family)
+CSSSegmentedFontFace* CSSFontFaceSet::fontFace(FontSelectionRequest request, FontVariantCaps variantCaps, const AtomString& family)
 {
     auto iterator = m_facesLookupTable.find(family);
     if (iterator == m_facesLookupTable.end())
         return nullptr;
     auto& familyFontFaces = iterator->value;
 
-    auto& segmentedFontFaceCache = m_cache.add(family, FontSelectionHashMap()).iterator->value;
+    auto& segmentedFontFaceCache = cache(variantCaps).add(family, FontSelectionHashMap()).iterator->value;
 
     return segmentedFontFaceCache.ensure(request, [&] {
         Ref face = CSSSegmentedFontFace::create();
@@ -488,6 +498,8 @@ CSSSegmentedFontFace* CSSFontFaceSet::fontFace(FontSelectionRequest request, con
         for (int i = familyFontFaces.size() - 1; i >= 0; --i) {
             Ref candidate = familyFontFaces[i];
             if (candidate->status() == CSSFontFace::Status::Failure)
+                continue;
+            if (!candidate->supportsSVGVariantCaps(variantCaps))
                 continue;
             candidateFontFaces.append(candidate);
         }
@@ -574,7 +586,7 @@ void CSSFontFaceSet::fontStateChanged(CSSFontFace& face, CSSFontFace::Status old
 
 void CSSFontFaceSet::fontPropertyChanged(CSSFontFace& face, CSSValue* oldFamily)
 {
-    m_cache.clear();
+    emptyCaches();
 
     if (oldFamily) {
         removeFromFacesLookupTable(face, *oldFamily);

@@ -1,0 +1,36 @@
+# AN EXPECTED CAST OF A TAIL CALL MAKES NO FAMILY. An expectation that an operation states moves no layout: a Convert [IsExpected] in front of a Return makes no family of its set. Where the Convert stands right in front of `return f()`
+# the front end folds it into the tail call's casts, and the scan took every type of a terminator for written: whether two layouts moved hung on where the Convert stood. The casts are looked at one by one, as Convert is:
+# the expected L0|L1 makes no family; the written L2|L3 of the second function makes one.
+# RUN: link families mechanisms=all
+# CHECK-NOT: [L0, L1]
+# CHECK: family F{{*}} [L2, L3]
+# CHECK-NOT: [L0, L1]
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="expected"
+    v3 = NewClosure function=f2
+    Return v3
+}
+function f1 name="expected" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Call v1, -
+    ReturnCall v2 casts=[{declared={type=L0|L1 flags=[IsExpected]}}]
+}
+function f2 name="written" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Call v1, -
+    ReturnCall v2 casts=[{declared={type=L2|L3}}]
+}

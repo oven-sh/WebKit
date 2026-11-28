@@ -30,8 +30,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextBreakingPositionCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextBreakingPositionCache::Entry);
@@ -51,7 +50,7 @@ TextBreakingPositionCache::TextBreakingPositionCache()
 {
 }
 
-static size_t LEGACY_NODELETE widthsBytes(const TextBreakingPositionCache::Entry& entry)
+NODELETE static size_t widthsBytes(const TextBreakingPositionCache::Entry& entry)
 {
     size_t bytes = 0;
     for (auto& cascadeWidths : entry.widthsByFontCascade)
@@ -161,10 +160,9 @@ void TextBreakingPositionCache::clear()
     m_cachedContentSize = 0;
 }
 
-void LEGACY_NODELETE add(Hasher& hasher, const TextBreakingPositionContext& context)
+NODELETE void add(Hasher& hasher, const TextBreakingPositionContext& context)
 {
     add(hasher, context.whitespaceCollapseBehavior, context.overflowWrap, context.lineBreak, context.wordBreak, context.nbspMode, context.locale);
 }
 
-}
 }

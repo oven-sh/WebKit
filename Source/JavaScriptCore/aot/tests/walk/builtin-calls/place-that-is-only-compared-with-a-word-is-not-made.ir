@@ -1,0 +1,51 @@
+# `s.split("/")[1] === "users"`: a place out of a list that is taken in parts, compared with a written word and used for nothing else, is not made: the characters are compared where they lie in the subject.
+# Where nothing stands at the place both bounds are -1: no length but 0, so no word but the empty one could be taken for it.
+# function isUsers(s: string) { return s.split("/")[1] === "users"; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = BoundsOfStringSplit
+# CHECK: = StringRangeEqualsLiteral {{*}}literal="users"
+# RUN(UNMADE): walk f1 mechanisms=all
+# UNMADE-LABEL: code f1:Body
+# UNMADE-NOT: SubstringOrUndefined
+# UNMADE-NOT: ValueEqualsLiteral
+# The empty word: undefined === "" is false, and -1 === -1 would say true: the place is made as ever: function isEmpty(s: string) { return s.split("/")[1] === ""; }
+# RUN(EMPTY): walk f2 mechanisms=all
+# EMPTY-LABEL: code f2:Body
+# EMPTY: = SubstringOrUndefined
+# EMPTY-NOT: StringRangeEqualsLiteral
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = String string="/shops/7"
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v2
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+function f1 name="isUsers" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @11
+    v2 = String string="/"
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @12
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4 @13
+    v6 = String string="users"
+    v7 = StrictEq v5, v6 @14
+    Return v7
+}
+function f2 name="isEmpty" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @21
+    v2 = String string="/"
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @22
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4 @23
+    v6 = String string=""
+    v7 = StrictEq v5, v6 @24
+    Return v7
+}

@@ -43,7 +43,6 @@
 
 struct OpaqueJSClass;
 struct OpaqueJSClassContextData;
-struct OpaqueJSWeakObjectMap;
 
 OBJC_CLASS JSWrapperMap;
 
@@ -204,7 +203,7 @@ constexpr bool typeExposedByDefault = true;
     macro(WebAssemblyModule,       webAssemblyModule,       webAssemblyModule,       JSWebAssemblyModule,       Module,       object, typeExposedByDefault) \
     macro(WebAssemblyRuntimeError, webAssemblyRuntimeError, webAssemblyRuntimeError, ErrorInstance,             RuntimeError, error,  typeExposedByDefault) \
     macro(WebAssemblySuspendError, webAssemblySuspendError, webAssemblySuspendError, ErrorInstance,             SuspendError, error,  typeExposedByDefault) \
-    macro(WebAssemblySuspending,   webAssemblySuspending,   webAssemblySuspending,   JSFunctionWithFields,   Suspending, object, typeExposedByDefault) \
+    macro(WebAssemblySuspending,   webAssemblySuspending,   webAssemblySuspending,   JSWebAssemblySuspendingWrapper, Suspending, object, typeExposedByDefault) \
     macro(WebAssemblyTable,        webAssemblyTable,        webAssemblyTable,        JSWebAssemblyTable,        Table,        object, typeExposedByDefault) \
     macro(WebAssemblyTag,          webAssemblyTag,          webAssemblyTag,          JSWebAssemblyTag,          Tag,          object, typeExposedByDefault) 
 #else
@@ -236,6 +235,9 @@ private:
     VM* const m_vm;
 #if ENABLE(AOT)
     AOT::Instance* m_aotInstance { nullptr };
+    AOT::Instance* m_aotTableInstance { nullptr };
+    // The object that node:vm contextified. The class of node:vm's global objects visits it.
+    JSObject* m_contextifiedObject { nullptr };
     JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
 #endif
     Debugger* m_debugger { nullptr };
@@ -542,6 +544,7 @@ public:
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
+    // Not const as upstream has it: Bun replaces the debuggable that init() makes with one of a class of its own (Bun__ensureDebugger()).
     RefPtr<JSGlobalObjectDebuggable> m_inspectorDebuggable;
 #endif
 
@@ -631,9 +634,9 @@ public:
     void installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
     void installChainedWatchpoint(InlineWatchpointSet& from, InlineWatchpointSet& to);
 
-    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& LEGACY_NODELETE typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
-    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& LEGACY_NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
-    inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& LEGACY_NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
+    NODELETE inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
+    NODELETE inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
+    NODELETE inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
 
     void addWeakTicket(DeferredWorkTimer::Ticket&);
     void clearWeakTickets();
@@ -699,7 +702,7 @@ public:
     bool isArgumentsPrototypeIteratorProtocolFastAndNonObservable();
 
 #if ENABLE(DFG_JIT) || ENABLE(AOT)
-    using ReferencedGlobalPropertyWatchpointSets = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
+    using ReferencedGlobalPropertyWatchpointSets = HashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
     ReferencedGlobalPropertyWatchpointSets m_referencedGlobalPropertyWatchpointSets;
     ConcurrentJSLock m_referencedGlobalPropertyWatchpointSetsLock;
 #endif
@@ -762,9 +765,9 @@ public:
 
     const Ref<ImportMap> m_importMap;
 
-    Ref<SymbolImpl> m_intlLegacyConstructedSymbol;
+    const Ref<SymbolImpl> m_intlLegacyConstructedSymbol;
 
-    UncheckedKeyHashMap<String, JSCJSGlobalObjectSignpostIdentifier> m_signposts;
+    HashMap<String, JSCJSGlobalObjectSignpostIdentifier> m_signposts;
 
 #if ASSERT_ENABLED
     const JSGlobalObject* m_globalObjectAtDebuggerEntry { nullptr };
@@ -801,7 +804,7 @@ public:
 #endif
 
     bool hasDebugger() const { return m_debugger; }
-    bool LEGACY_NODELETE hasInteractiveDebugger() const;
+    NODELETE bool hasInteractiveDebugger() const;
     const RuntimeFlags& runtimeFlags() const LIFETIME_BOUND { return m_runtimeFlags; }
 
 #if ENABLE(DFG_JIT)
@@ -844,7 +847,7 @@ public:
 
     JSScope* globalScopeExtension() LIFETIME_BOUND { return m_globalScopeExtension.get(); }
     void setGlobalScopeExtension(JSScope*);
-    void LEGACY_NODELETE clearGlobalScopeExtension();
+    NODELETE void clearGlobalScopeExtension();
 
     JSCallee* globalCallee() LIFETIME_BOUND { return m_globalCallee.get(); }
     JSCallee* evalCallee() LIFETIME_BOUND { return m_evalCallee.get(); }
@@ -1089,6 +1092,7 @@ public:
     Structure* syntheticModuleRecordStructure() const { return m_syntheticModuleRecordStructure.get(this); }
     Structure* moduleNamespaceObjectStructure() const { return m_moduleNamespaceObjectStructure.get(this); }
     Structure* proxyObjectStructure() const { return m_proxyObjectStructure.get(this); }
+    Structure* proxyObjectStructureConcurrently() const { return m_proxyObjectStructure.getConcurrently(); }
     Structure* callableProxyObjectStructure() const { return m_callableProxyObjectStructure.get(this); }
     Structure* proxyRevocableResultStructure() const { return m_proxyRevocableResultStructure.get(this); }
     Structure* disposableStackStructure() const { return m_disposableStackStructure.get(this); }
@@ -1156,7 +1160,7 @@ public:
     JS_EXPORT_PRIVATE void setInspectable(bool);
     JS_EXPORT_PRIVATE bool inspectable() const;
 
-    void LEGACY_NODELETE setIsITML();
+    NODELETE void setIsITML();
 
     RegExpGlobalData& regExpGlobalData() LIFETIME_BOUND { return m_regExpGlobalData; }
     static constexpr ptrdiff_t regExpGlobalDataOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_regExpGlobalData); }
@@ -1164,10 +1168,19 @@ public:
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
 #if ENABLE(AOT)
-    // Compiled code runs some jobs without queueing them. True where a job would go straight into the queue and the queue would run it.
+    // Compiled code runs some jobs without queueing them: true if the queue would run one right away.
     bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask && m_microtaskRunnability == QueuedTaskResult::Executed; }
     AOT::Instance* aotInstance() const { return m_aotInstance; }
-    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    void setAOTInstance(AOT::Instance* instance)
+    {
+        m_aotInstance = instance;
+        m_aotTableInstance = instance;
+    }
+    // The instance whose tables the interpreter reads. The VM owns the tables, so a realm without its own instance has another realm's.
+    AOT::Instance* aotTableInstance() const { return m_aotTableInstance; }
+    void setAOTTableInstance(AOT::Instance* instance) { m_aotTableInstance = instance; }
+    JSObject* contextifiedObject() const { return m_contextifiedObject; }
+    void setContextifiedObject(JSObject* object) { m_contextifiedObject = object; }
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
 #endif
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
@@ -1193,7 +1206,7 @@ public:
 
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
-    Inspector::JSGlobalObjectInspectorController& LEGACY_NODELETE inspectorController() const;
+    NODELETE Inspector::JSGlobalObjectInspectorController& inspectorController() const;
     JSGlobalObjectDebuggable& inspectorDebuggable() { return *m_inspectorDebuggable; }
 #endif
 
@@ -1202,8 +1215,8 @@ public:
     static constexpr ptrdiff_t globalLexicalBindingEpochOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     unsigned* addressOfGlobalLexicalBindingEpoch() LIFETIME_BOUND { return &m_globalLexicalBindingEpoch; }
 
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE setConsoleClient(WeakPtr<ConsoleClient>&&);
-    JS_EXPORT_PRIVATE CheckedPtr<ConsoleClient> LEGACY_NODELETE consoleClient() const;
+    NODELETE JS_EXPORT_PRIVATE void setConsoleClient(WeakPtr<ConsoleClient>&&);
+    NODELETE JS_EXPORT_PRIVATE CheckedPtr<ConsoleClient> consoleClient() const;
 
     void setName(const String&);
     const String& name() const LIFETIME_BOUND { return m_name; }
@@ -1216,7 +1229,7 @@ public:
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }
 
-    static void LEGACY_NODELETE reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
+    NODELETE static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
     static JSObject* currentScriptExecutionOwner(JSGlobalObject* global) { return global; }
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*) { return ScriptExecutionStatus::Running; }
     static void reportViolationForUnsafeEval(JSGlobalObject*, const String&) { }
@@ -1354,6 +1367,10 @@ public:
     void queueMicrotask(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue, JSValue);
 #endif
     void queueMicrotaskSlow(VM&, QueuedTask&&);
+    void queueMicrotaskSlow(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue);
+#if USE(BUN_JSC_ADDITIONS)
+    void queueMicrotaskSlow(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue, JSValue);
+#endif
 
 #if ASSERT_ENABLED
     const JSGlobalObject* globalObjectAtDebuggerEntry() const { return m_globalObjectAtDebuggerEntry; }
@@ -1372,9 +1389,6 @@ public:
 
     static inline Structure* createStructure(VM&, JSValue prototype);
     static inline Structure* createStructureForShadowRealm(VM&, JSValue prototype);
-
-    inline void registerWeakMap(OpaqueJSWeakObjectMap*);
-    inline void unregisterWeakMap(OpaqueJSWeakObjectMap*);
 
     inline std::unique_ptr<OpaqueJSClassContextData>& contextData(OpaqueJSClass*);
 
@@ -1441,7 +1455,7 @@ protected:
 private:
     friend class LLIntOffsetsExtractor;
 
-    static const GlobalObjectMethodTable* LEGACY_NODELETE baseGlobalObjectMethodTable();
+    NODELETE static const GlobalObjectMethodTable* baseGlobalObjectMethodTable();
 
     void notifyArrayBufferDetachingSlow();
     void fireWatchpointAndMakeAllArrayStructuresSlowPut(VM&);

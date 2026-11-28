@@ -47,7 +47,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGPath);
 
-RenderSVGPath::RenderSVGPath(SVGGraphicsElement& element, Style::ComputedStyle&& style)
+RenderSVGPath::RenderSVGPath(SVGGraphicsElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGShape(Type::SVGPath, element, WTF::move(style))
 {
     ASSERT(isRenderSVGPath());
@@ -167,7 +167,7 @@ void RenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) const
 
     AffineTransform nonScalingTransform;
     if (hasNonScalingStroke())
-        nonScalingTransform = nonScalingStrokeTransform();
+        nonScalingTransform = computeNonScalingStrokeTransform();
 
     GraphicsContextStateSaver stateSaver(context, true);
     useStrokeStyleToFill(context);
@@ -188,7 +188,7 @@ void RenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) const
     }
 }
 
-static inline RenderSVGResourceMarker* LEGACY_NODELETE markerForType(SVGMarkerType type, RenderSVGResourceMarker* markerStart, RenderSVGResourceMarker* markerMid, RenderSVGResourceMarker* markerEnd)
+NODELETE static inline RenderSVGResourceMarker* markerForType(SVGMarkerType type, RenderSVGResourceMarker* markerStart, RenderSVGResourceMarker* markerMid, RenderSVGResourceMarker* markerEnd)
 {
     switch (type) {
     case SVGMarkerType::Start:
@@ -236,7 +236,7 @@ void RenderSVGPath::drawMarkers(PaintInfo& paintInfo)
             GraphicsContextStateSaver stateSaver(context);
 
             context.setLineDash(DashArray(), 0);
-            auto contentTransform = marker->markerTransformation(markerPosition.origin, markerPosition.angle, strokeWidth);
+            auto contentTransform = marker->computeMarkerTransform(markerPosition.origin, markerPosition.angle, strokeWidth);
             protect(marker->layer())->paintResourceLayerForSVG(context, contentTransform);
         }
     }
@@ -261,10 +261,11 @@ FloatRect RenderSVGPath::computeMarkerBoundingBox(const SVGBoundingBoxComputatio
     if (!markerStart && !markerMid && !markerEnd)
         return { };
 
+    auto strokeWidth = strokeWidthForMarkerUnits();
     FloatRect boundaries;
     for (auto& markerPosition : m_markerPositions) {
         if (CheckedPtr marker = markerForType(markerPosition.type, markerStart.get(), markerMid.get(), markerEnd.get()))
-            boundaries.unite(marker->computeMarkerBoundingBox(options, marker->markerTransformation(markerPosition.origin, markerPosition.angle, strokeWidth())));
+            boundaries.unite(marker->computeMarkerBoundingBox(options, marker->computeMarkerTransform(markerPosition.origin, markerPosition.angle, strokeWidth)));
     }
 
     return boundaries;

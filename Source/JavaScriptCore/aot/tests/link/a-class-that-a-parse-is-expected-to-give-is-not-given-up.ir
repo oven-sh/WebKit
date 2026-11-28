@@ -1,0 +1,41 @@
+# class Item { weight: number; constructor(weight: number) { this.weight = weight; } }  const items: Item[] = [new Item(2), JSON.parse(text)];  report(items[0].weight);
+# The type written over the parse is a class. No parser makes an object of a class, so what the parse is expected to give costs the class nothing: it stays with compiled code
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] {{*}}stays-with-compiled-code
+# CHECK-NOT: parsers-may-make L0
+
+expectedresult x0 type=L0 layouts=[L0] flags=[IsMadeByParser]
+layout L0 kind=Instance name="Item" module=m0 constructor=f1 fields=[{key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]}
+    v5 = Integer integer=2
+    v6 = Construct v4, -, v5 calleeName="Item"
+    v7 = Builtin builtin=JSON
+    v8 = PropGet v7 key="parse"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="text" [isFreeName]
+    v11 = Call v8, v7, v10 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0
+    v12 = NewArray v6, v11 contents=undefined|null|L0
+    v13 = PropGet v9 key="report" [isFreeName]
+    v14 = Integer
+    v15 = ElemGet v12, v14
+    v16 = PropGet v15 key="weight"
+    v17 = Call v13, -, v16 calleeName="report"
+    Return v17
+}
+function f1 name="Item" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0}
+    PropDefine v4, v1 key="weight"
+    Return v4
+}

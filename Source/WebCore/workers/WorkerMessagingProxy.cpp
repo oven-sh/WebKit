@@ -64,6 +64,10 @@
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(WEBDRIVER_BIDI)
+#include "SecurityOriginData.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerMessagingProxy);
@@ -77,17 +81,17 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerMessagingProxy);
 // vice versa.
 class WorkerUserGestureForwarder : public ThreadSafeRefCounted<WorkerUserGestureForwarder, WTF::DestructionThread::Main> {
 public:
-    static Ref<WorkerUserGestureForwarder> LEGACY_NODELETE create(RefPtr<UserGestureToken>&& token) { return *new WorkerUserGestureForwarder(WTF::move(token)); }
+    NODELETE static Ref<WorkerUserGestureForwarder> create(RefPtr<UserGestureToken>&& token) { return *new WorkerUserGestureForwarder(WTF::move(token)); }
 
     ~WorkerUserGestureForwarder()
     {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
         m_token = nullptr;
     }
 
     RefPtr<UserGestureToken> userGestureToForward() const
     {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
         RefPtr token = m_token;
         if (!token || token->hasExpired(UserGestureToken::maximumIntervalForUserGestureForwarding))
             return nullptr;
@@ -98,7 +102,7 @@ private:
     explicit WorkerUserGestureForwarder(RefPtr<UserGestureToken>&& token)
         : m_token(WTF::move(token))
     {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
     }
 
     RefPtr<UserGestureToken> m_token;
@@ -123,8 +127,8 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject)
     , m_inspectorProxy(WorkerInspectorProxy::create(workerObject.identifier()))
     , m_workerObject(&workerObject)
 {
-    ASSERT((is<Document>(*m_scriptExecutionContext) && isMainThread())
-        || (is<WorkerGlobalScope>(*m_scriptExecutionContext) && downcast<WorkerGlobalScope>(*m_scriptExecutionContext).thread()->thread() == &Thread::currentSingleton()));
+    RELEASE_ASSERT((is<Document>(*m_scriptExecutionContext) && isMainThread())
+        || (is<WorkerGlobalScope>(*m_scriptExecutionContext) && protect(downcast<WorkerGlobalScope>(*m_scriptExecutionContext))->thread()->thread() == &Thread::currentSingleton()));
 
     // Nobody outside this class ref counts this object. The original ref
     // is balanced by the deref in workerGlobalScopeDestroyedInternal.
@@ -133,9 +137,9 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject)
 WorkerMessagingProxy::~WorkerMessagingProxy()
 {
     ASSERT(!m_workerObject);
-    ASSERT(!m_scriptExecutionContext
+    RELEASE_ASSERT(!m_scriptExecutionContext
         || (is<Document>(*m_scriptExecutionContext) && isMainThread())
-        || (is<WorkerGlobalScope>(*m_scriptExecutionContext) && downcast<WorkerGlobalScope>(*m_scriptExecutionContext).thread()->thread() == &Thread::currentSingleton()));
+        || (is<WorkerGlobalScope>(*m_scriptExecutionContext) && protect(downcast<WorkerGlobalScope>(*m_scriptExecutionContext))->thread()->thread() == &Thread::currentSingleton()));
 
     if (RefPtr workerThread = m_workerThread)
         workerThread->clearProxies();
@@ -165,7 +169,7 @@ void WorkerMessagingProxy::startWorkerGlobalScope(const URL& scriptURL, PAL::Ses
 
     m_scriptURL = scriptURL;
 
-    WorkerParameters params { scriptURL, scriptExecutionContext->url(), name, identifier, WTF::move(initializationData.userAgent), isOnline, contentSecurityPolicyResponseHeaders, shouldBypassMainWorldContentSecurityPolicy, crossOriginEmbedderPolicy, timeOrigin, referrerPolicy, workerType, credentials, scriptExecutionContext->settingsValues(), WorkerThreadMode::CreateNewThread, sessionID,
+    WorkerParameters params { scriptURL, scriptExecutionContext->url(), name, identifier, WTF::move(initializationData.userAgent), WTF::move(initializationData.navigatorPlatform), isOnline, contentSecurityPolicyResponseHeaders, shouldBypassMainWorldContentSecurityPolicy, crossOriginEmbedderPolicy, timeOrigin, referrerPolicy, workerType, credentials, scriptExecutionContext->settingsValues(), WorkerThreadMode::CreateNewThread, sessionID,
         WTF::move(initializationData.serviceWorkerData),
         initializationData.clientIdentifier,
         scriptExecutionContext->advancedPrivacyProtections(),
@@ -191,7 +195,13 @@ void WorkerMessagingProxy::startWorkerGlobalScope(const URL& scriptURL, PAL::Ses
     }
 
     workerThreadCreated(thread.get());
+#if ENABLE(WEBDRIVER_BIDI)
+    thread->WorkerOrWorkletThread::start({ }, [protectedThis = Ref { *this }](SecurityOriginData&& origin) {
+        protectedThis->workerGlobalScopeCreated(WTF::move(origin));
+    });
+#else
     thread->start();
+#endif
 
     m_inspectorProxy->workerStarted(*scriptExecutionContext, thread.ptr(), scriptURL, name);
 }
@@ -320,7 +330,7 @@ void WorkerMessagingProxy::postTaskToLoader(ScriptExecutionContext::Task&& task)
 
 RefPtr<CacheStorageConnection> WorkerMessagingProxy::createCacheStorageConnection()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (!m_scriptExecutionContext)
         return nullptr;
 
@@ -336,7 +346,7 @@ RefPtr<CacheStorageConnection> WorkerMessagingProxy::createCacheStorageConnectio
 
 RefPtr<RTCDataChannelRemoteHandlerConnection> WorkerMessagingProxy::createRTCDataChannelRemoteHandlerConnection()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RefPtr document = dynamicDowncast<Document>(*m_scriptExecutionContext);
     if (!document)
         document = Document::allDocumentsMap().get(m_loaderContextIdentifier);
@@ -349,7 +359,7 @@ RefPtr<RTCDataChannelRemoteHandlerConnection> WorkerMessagingProxy::createRTCDat
 
 RefPtr<IDBClient::IDBConnectionProxy> WorkerMessagingProxy::createIDBConnectionProxy()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RefPtr document = dynamicDowncast<Document>(*m_scriptExecutionContext);
     if (!document)
         document = Document::allDocumentsMap().get(m_loaderContextIdentifier);
@@ -467,6 +477,18 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyed()
     });
 }
 
+#if ENABLE(WEBDRIVER_BIDI)
+void WorkerMessagingProxy::workerGlobalScopeCreated(SecurityOriginData&& origin)
+{
+    if (!m_scriptExecutionContextIdentifier)
+        return;
+
+    ScriptExecutionContext::postTaskTo(*m_scriptExecutionContextIdentifier, [this, protectedThis = Ref { *this }, origin = WTF::move(origin).isolatedCopy()](auto&) {
+        m_inspectorProxy->workerBecameExecutionReady(origin);
+    });
+}
+#endif
+
 void WorkerMessagingProxy::workerGlobalScopeClosed()
 {
     if (!m_scriptExecutionContextIdentifier)
@@ -524,7 +546,7 @@ void WorkerMessagingProxy::terminateWorkerGlobalScope()
 
 void WorkerMessagingProxy::setAppBadge(std::optional<uint64_t> badge)
 {
-    ASSERT(!isMainThread());
+    assertIsCurrent(*protect(m_workerThread));
 
     if (!m_scriptExecutionContext)
         return;
@@ -545,7 +567,7 @@ void WorkerMessagingProxy::setAppBadge(std::optional<uint64_t> badge)
 
 RefPtr<FileSystemStorageConnection> WorkerMessagingProxy::createFileSystemStorageConnection()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (!m_scriptExecutionContext)
         return nullptr;
 

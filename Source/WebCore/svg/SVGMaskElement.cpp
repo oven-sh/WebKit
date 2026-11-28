@@ -59,10 +59,10 @@ inline SVGMaskElement::SVGMaskElement(const QualifiedName& tagName, Document& do
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
-        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGMaskElement::m_x>();
-        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGMaskElement::m_y>();
-        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGMaskElement::m_width>();
-        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGMaskElement::m_height>();
+        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGMaskElement::m_x>(SVGLengthMode::Width);
+        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGMaskElement::m_y>(SVGLengthMode::Height);
+        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGMaskElement::m_width>(SVGLengthMode::Width);
+        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGMaskElement::m_height>(SVGLengthMode::Height);
         PropertyRegistry::registerProperty<SVGNames::maskUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGMaskElement::m_maskUnits>();
         PropertyRegistry::registerProperty<SVGNames::maskContentUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGMaskElement::m_maskContentUnits>();
     }
@@ -145,7 +145,7 @@ void SVGMaskElement::childrenChanged(const ChildChange& change)
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGMaskElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGMaskElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourceMasker>(*this, WTF::move(style));
@@ -155,7 +155,7 @@ RenderPtr<RenderElement> SVGMaskElement::createElementRenderer(Style::ComputedSt
 FloatRect SVGMaskElement::calculateMaskContentRepaintRect(RepaintRectCalculation repaintRectCalculation)
 {
     ASSERT(renderer());
-    auto transformationMatrixFromChild = [&](const RenderLayerModelObject& child) -> std::optional<AffineTransform> {
+    auto transformFromChild = [&](const RenderLayerModelObject& child) -> std::optional<AffineTransform> {
         if (!document().settings().layerBasedSVGEngineEnabled())
             return std::nullopt;
 
@@ -177,7 +177,7 @@ FloatRect SVGMaskElement::calculateMaskContentRepaintRect(RepaintRectCalculation
         if (style->display() == Style::DisplayType::None)
             continue;
         auto r = renderer->repaintRectInLocalCoordinates(repaintRectCalculation);
-        if (auto transform = transformationMatrixFromChild(downcast<RenderLayerModelObject>(*renderer)))
+        if (auto transform = transformFromChild(downcast<RenderLayerModelObject>(*renderer)))
             r = transform->mapRect(r);
         maskRepaintRect.unite(r);
     }

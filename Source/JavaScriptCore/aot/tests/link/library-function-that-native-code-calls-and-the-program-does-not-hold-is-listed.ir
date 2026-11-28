@@ -1,0 +1,31 @@
+# new Set() walks a typed array as the language says: it calls values() above it and then next() above what that gives, and next() of array iterators is text of the library. No operation names it: Link comes by it as a value.
+# This program does not hold it, so the image would lack a function that runs. It is listed, and the front end makes a stop of the build of the list, by the function's name.
+# The control: library-function-that-native-code-calls-to-step-the-iterator-of-a-typed-array.ir holds it, and nothing is listed there.
+# sink(new Set(new Uint8Array(2)).size);
+# LIBRARY: own
+# RUN: lacked
+# CHECK: lacked ArrayIteratorPrototypeNext
+# CHECK-NOT: lacked MapIteratorPrototypeNext
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=MapIteratorPrototypeNext function=f1 visibility=Private
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=2
+    v4 = Construct v2, -, v3 calleeName="Uint8Array"
+    v5 = Builtin builtin=Set
+    v6 = Construct v5, -, v4 calleeName="Set"
+    v7 = PropGet v6 key="size"
+    v8 = Call v1, -, v7
+    v9 = Undefined
+    Return v9
+}
+function f1 name="next" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

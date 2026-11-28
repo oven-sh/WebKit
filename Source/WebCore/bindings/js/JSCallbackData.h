@@ -61,8 +61,8 @@ public:
     JSCallbackData(JSC::JSObject* callback, JSDOMGlobalObject*, void* owner);
     ~JSCallbackData();
 
-    JSDOMGlobalObject* LEGACY_NODELETE globalObject();
-    JSC::JSObject* LEGACY_NODELETE callback();
+    NODELETE JSDOMGlobalObject* globalObject();
+    NODELETE JSC::JSObject* callback();
 
     template<typename Visitor> void visitJSFunctionInGCThread(Visitor&);
 
@@ -79,7 +79,7 @@ private:
     WeakOwner m_weakOwner;
     JSC::Weak<JSC::JSObject> m_callback;
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     const uint32_t m_threadID { currentThreadID() };
 #endif
 };

@@ -1,0 +1,107 @@
+# The template of a replacement reads a legacy static off the groups.
+# -- source: main.js
+# /(b+)/.test("abbc");
+# const C = Object.getPrototypeOf(Math.random() > 2 ? class extends Map {} : class extends RegExp {});
+# const re = Object.assign(/a/, { exec: () => ({ 0: "a", index: 0, length: 1, groups: C }) });
+# print("a".replace(re, "$<$1>"));
+# -- end of source
+# RUN: run-in-shell
+# CHECK: bb
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance module=m0 position=96 constructor=f1 flags=[HasHeritage] place=96
+layout L1 kind=Instance module=m0 position=119 constructor=f2 flags=[HasHeritage] place=119
+layout L2 module=m0 position=190 fields=[{key="groups" declared={type=anything} flags=[IsRequired]}, {key="index" declared={type=anything} flags=[IsRequired]}, {key="length" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 2, 0] place=190 ownFieldCount=3
+layout L3 module=m0 position=175 fields=[{key="exec" declared={type=anything} flags=[IsRequired]}] place=175 ownFieldCount=1
+variable g0 name="C" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=1
+variable g1 module=m0 declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable] place=27
+variable g2 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=35
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewRegExp pattern="(b+)" @23
+    v1 = PropGet v0 key="test" @23
+    v2 = String string="abbc" @35
+    v3 = Call v1, v0, v2 calleeKey="test" calleeName="test" @30
+    v4 = Builtin builtin=Object @54
+    v5 = Builtin builtin=ObjectGetPrototypeOf @54
+    v6 = Builtin builtin=Math @76
+    v7 = PropGet v6 key="random" @76
+    v8 = Convert v7 declared={type=builtin(MathRandom) flags=[IsExpected]} @76
+    v9 = Call v8, v6 calleeKey="random" calleeName="Math.random" @81
+    v10 = Integer integer=2 @92
+    v11 = Greater v9, v10 @76
+    Branch v11 -> taken b1(), notTaken b2() @76
+  b1():
+    v12 = Builtin builtin=Map @110
+    v13 = ResolveHeritage v12 @110
+    v14 = NewClosure function=f1 @96
+    v15 = NewClass v14, v12, v13 layout=L0 @96
+    PutModuleVariable v15 variable=g1 @96
+    v17 = FinishClass v15 layout=L0 @96
+    Jump -> next b3(v17) @96
+  b2():
+    v18 = Builtin builtin=RegExp @133
+    v19 = ResolveHeritage v18 @133
+    v20 = NewClosure function=f2 @119
+    v21 = NewClass v20, v18, v19 layout=L1 @119
+    PutModuleVariable v21 variable=g2 @119
+    v23 = FinishClass v21 layout=L1 @119
+    Jump -> next b3(v23) @119
+  b3(v24):
+    v25 = Call v5, v4, v24 calleeName="Object.getPrototypeOf" @61
+    PutModuleVariable v25 variable=g0 @50
+    v27 = Builtin builtin=ObjectAssign @156
+    v28 = NewRegExp pattern="a" @170
+    v29 = NewClosure function=f3 @183
+    v30 = TypeTest v28 testedType=object @163
+    Branch v30 -> taken b4(| 0), notTaken b5(| 0) @163
+  b4(v31):
+    PropSet v31, v29 key="exec" calledBuiltin=ObjectAssign @163
+    Jump -> next b6(v31) @163
+  b5(v33):
+    v34 = NewObject -, v29 layout=L3 fields=[0] @163
+    v35 = FinishObject v34 @163
+    v36 = Builtin builtin=ObjectAssign [isNotReadFromHolder] @163
+    v37 = Call v36, -, v33, v35 @163
+    Jump -> next b6(v37) @163
+  b6(v38):
+    v39 = Builtin builtin=GlobalThis @238
+    v40 = PropGet v39 key="print" [isFreeName] @238
+    v41 = String string="a" @244
+    v42 = PropGet v41 key="replace" @244
+    v43 = String string="$<$1>" @260
+    v44 = Call v42, v41, v38, v43 calleeKey="replace" calleeName="replace" @248
+    v45 = Call v40, -, v44 calleeName="print" @238
+    v46 = Undefined @238
+    Return v46 @238
+}
+function f1 module=m0 position=96 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @96
+    v4 = SuperConstructList v3, v1, v2 layout=L0 @96
+    v5 = Convert v4 declared={type=L0} @96
+    Return v5 @96
+}
+function f2 module=m0 position=119 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @119
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @119
+    v5 = Convert v4 declared={type=L1} @119
+    Return v5 @119
+}
+function f3 name="exec" module=m0 position=183 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="a" @195
+    v1 = Integer @207
+    v2 = Integer integer=1 @218
+    v3 = GetModuleVariable variable=g0 @229
+    v4 = CheckInitialized v3 name="C" @229
+    v5 = NewObject -, v1, v2, v4 layout=L2 fields=[1, 2, 0] @190
+    v6 = Integer @192
+    ElemDefine v5, v6, v0 @192
+    v8 = FinishObject v5 @190
+    Return v8 @190
+}

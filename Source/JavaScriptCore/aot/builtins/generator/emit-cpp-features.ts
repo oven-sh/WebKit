@@ -65,7 +65,6 @@ export function emitCppFeatures(model: TableModel, features: readonly TableFeatu
     .sort(compareGuardedSymbols)
     .filter(isFirstWithSymbol);
   problems.throwIfAny();
-  // Code of the engine records the position of the entry in the engine's list of names. It does not know the number that the table gives it.
   const positions = new Map(namedBuiltinsOf(model).map((builtin, position) => [builtin, position]));
   const formatGuardedSymbol = ({ symbol, feature, stub, builtin }: GuardedSymbol): string =>
     `${symbol}, ${feature}, ${stub}, ${positions.get(builtin)}`;

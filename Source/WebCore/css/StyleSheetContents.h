@@ -66,7 +66,7 @@ public:
     const CSSParserContext& parserContext() const LIFETIME_BOUND { return m_parserContext; }
     
     const AtomString& defaultNamespace() LIFETIME_BOUND { return m_defaultNamespace; }
-    const AtomString& LEGACY_NODELETE namespaceURIFromPrefix(const AtomString& prefix);
+    NODELETE const AtomString& namespaceURIFromPrefix(const AtomString& prefix);
     const CSSNamespacePrefixMap& namespacePrefixMap() const { return m_namespacePrefixMap; }
 
     bool parseAuthorStyleSheet(const CachedCSSStyleSheet&, const SecurityOrigin*);
@@ -75,16 +75,16 @@ public:
     bool isCacheable() const;
     bool isCacheableWithNoBaseURLDependency() const;
 
-    bool LEGACY_NODELETE isLoading() const;
+    NODELETE bool isLoading() const;
     bool subresourcesAllowReuse(CachePolicy, FrameLoader&) const;
     WEBCORE_EXPORT bool isLoadingSubresources() const;
 
     void checkLoaded();
     void startLoadingDynamicSheet();
 
-    StyleSheetContents* LEGACY_NODELETE rootStyleSheet() const;
-    Node* LEGACY_NODELETE singleOwnerNode() const;
-    Document* LEGACY_NODELETE singleOwnerDocument() const;
+    NODELETE StyleSheetContents* rootStyleSheet() const;
+    NODELETE Node* singleOwnerNode() const;
+    NODELETE Document* singleOwnerDocument() const;
 
     ASCIILiteral charset() const { return m_parserContext.charset; }
 
@@ -98,16 +98,13 @@ public:
     void setIsUserStyleSheet(bool b) { m_isUserStyleSheet = b; }
     bool isUserStyleSheet() const { return m_isUserStyleSheet; }
     void setHasSyntacticallyValidCSSHeader(bool b) { m_hasSyntacticallyValidCSSHeader = b; }
-    bool hasSyntacticallyValidCSSHeader() const { return m_hasSyntacticallyValidCSSHeader; }
 
     void parserAddNamespace(const AtomString& prefix, const AtomString& uri);
     void parserAppendRule(Ref<StyleRuleBase>&&);
-    void parserSetEncodingFromCharsetRule(const String& encoding);
     void parserSetUsesStyleBasedEditability() { m_usesStyleBasedEditability = true; }
 
     void clearRules();
 
-    String encodingFromCharsetRule() const { return m_encodingFromCharsetRule; }
     const Vector<Ref<StyleRuleLayer>>& layerRulesBeforeImportRules() const LIFETIME_BOUND { return m_layerRulesBeforeImportRules; }
     const Vector<Ref<StyleRuleImport>>& importRules() const LIFETIME_BOUND { return m_importRules; }
     const Vector<Ref<StyleRuleNamespace>>& namespaceRules() const LIFETIME_BOUND { return m_namespaceRules; }
@@ -115,8 +112,8 @@ public:
 
     void notifyLoadedSheet(const CachedCSSStyleSheet*);
     
-    StyleSheetContents* LEGACY_NODELETE parentStyleSheet() const;
-    StyleRuleImport* LEGACY_NODELETE ownerRule() const;
+    NODELETE StyleSheetContents* parentStyleSheet() const;
+    NODELETE StyleRuleImport* ownerRule() const;
     void clearOwnerRule() { m_ownerRule = nullptr; }
     
     // Note that href is the URL that started the redirect chain that led to
@@ -126,14 +123,15 @@ public:
     const URL& baseURL() const LIFETIME_BOUND { return m_parserContext.baseURL; }
 
     bool isEmpty() const { return !ruleCount(); }
-    unsigned LEGACY_NODELETE ruleCount() const;
-    StyleRuleBase* LEGACY_NODELETE ruleAt(unsigned index) const;
+    NODELETE unsigned ruleCount() const;
+    NODELETE StyleRuleBase* ruleAt(unsigned index) const;
 
     bool usesStyleBasedEditability() const { return m_usesStyleBasedEditability; }
 
-    unsigned LEGACY_NODELETE estimatedSizeInBytes() const;
+    NODELETE unsigned estimatedSizeInBytes() const;
     
     bool wrapperInsertRule(Ref<StyleRuleBase>&&, unsigned index);
+    void adoptScopeRules(StyleRuleBase&) const;
     bool wrapperDeleteRule(unsigned index);
 
     Ref<StyleSheetContents> copy() const { return adoptRef(*new StyleSheetContents(*this)); }
@@ -150,8 +148,8 @@ public:
     void clearHasNestingRulesCache() { m_hasNestingRulesCache = { }; }
 
     bool isInMemoryCache() const { return m_inMemoryCacheCount; }
-    void LEGACY_NODELETE addedToMemoryCache();
-    void LEGACY_NODELETE removedFromMemoryCache();
+    NODELETE void addedToMemoryCache();
+    NODELETE void removedFromMemoryCache();
 
     void shrinkToFit();
 
@@ -162,20 +160,14 @@ public:
 
     friend class CSSStyleSheet;
 
-    bool hasResolvedNesting() const { return m_hasResolvedNesting; }
-    void setHasResolvedNesting(bool value) const { m_hasResolvedNesting = value; }
-
 private:
     WEBCORE_EXPORT StyleSheetContents(StyleRuleImport* ownerRule, const String& originalURL, const CSSParserContext&);
     StyleSheetContents(const StyleSheetContents&);
-
-    void clearCharsetRule();
 
     WeakPtr<StyleRuleImport> m_ownerRule;
 
     String m_originalURL;
 
-    String m_encodingFromCharsetRule;
     Vector<Ref<StyleRuleLayer>> m_layerRulesBeforeImportRules;
     Vector<Ref<StyleRuleImport>> m_importRules;
     Vector<Ref<StyleRuleNamespace>> m_namespaceRules;
@@ -183,13 +175,12 @@ private:
     CSSNamespacePrefixMap m_namespacePrefixMap;
     AtomString m_defaultNamespace;
 
-    bool m_isUserStyleSheet;
+    bool m_isUserStyleSheet { false };
     bool m_loadCompleted { false };
     bool m_hasSyntacticallyValidCSSHeader { true };
     bool m_didLoadErrorOccur { false };
     bool m_usesStyleBasedEditability { false };
     bool m_isMutable { false };
-    mutable bool m_hasResolvedNesting { false };
     mutable std::optional<bool> m_hasNestingRulesCache;
     unsigned m_inMemoryCacheCount { 0 };
 

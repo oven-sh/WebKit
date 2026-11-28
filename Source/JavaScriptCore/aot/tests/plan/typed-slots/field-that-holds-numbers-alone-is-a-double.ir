@@ -1,0 +1,29 @@
+# every writer of the field is known and every one stores a number, so Link proves the field a number and its slot holds a raw double, in the form that a field can leave. The field beside it gets a text too and holds any value
+# const o = { x: 1.5, y: 2.5 }; o.y = "two"; o.x + o.y
+# RUN: plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CHECK: mechanisms TypedOperations,UnboxedNumbers,TypedSlots
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "x" OptionalDouble Inline
+# CHECK-NEXT: slot 1 "y" JSValue Inline
+# RUN(LINK): link fields mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# LINK: field L0.0 "x" proven={{*}} writers-known
+# LINK: field L0.1 "y" proven={{*}}string{{*}} writers-known
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = Double number=2.5
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x"
+    PropDefine v2, v1 key="y"
+    v5 = FinishObject v2
+    v6 = String string="two"
+    PropSet v5, v6 key="y"
+    v8 = PropGet v5 key="x"
+    v9 = PropGet v5 key="y"
+    v10 = Add v8, v9
+    Return v10
+}

@@ -1,0 +1,65 @@
+# const rules = [{ source: "a{2}x", flags: "i" }, { source: "b{3}y", flags: "" }];
+# export function compile(sticky) { return rules.map(rule => new RegExp(rule.source, sticky ? rule.flags + "y" : rule.flags)); }
+# Nobody knows `sticky`, so both sides of the branch are gone through, and the block behind them once for each text that they bring it.
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-4: text /
+# CHECK-NOT: text /
+# RUN(A): regexp-texts mechanisms=all
+# A: text /a{2}x/i
+# RUN(B): regexp-texts mechanisms=all
+# B: text /a{2}x/iy
+# RUN(C): regexp-texts mechanisms=all
+# C: text /b{3}y/
+# RUN(D): regexp-texts mechanisms=all
+# D: text /b{3}y/y
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[{key="source" declared={type=anything}}, {key="flags" declared={type=anything}}]
+variable g0 name="rules" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="compile" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a{2}x"
+    v1 = String string="i"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = String string="b{3}y"
+    v5 = String string=""
+    v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewArray v3, v7 contents=anything
+    PutModuleVariable v8 variable=g0
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="sink" [isFreeName]
+    v12 = GetModuleVariable variable=g1
+    v13 = Call v11, -, v12
+    Return v13
+}
+function f1 name="compile" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="rules"
+    v3 = PropGet v2 key="map"
+    v4 = NewClosure v0 function=f2
+    v5 = Call v3, v2, v4 calleeKey="map"
+    ReturnCall v5
+}
+function f2 module=m0 position=20 kind=Arrow length=1 captures=[{type=anything variableName="sticky"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=RegExp
+    v3 = PropGet v1 key="source"
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = PropGet v1 key="flags"
+    v6 = String string="y"
+    v7 = Add v5, v6
+    Jump -> next b3(v7)
+  b2():
+    v8 = PropGet v1 key="flags"
+    Jump -> next b3(v8)
+  b3(v9: anything):
+    v10 = Construct v2, -, v3, v9
+    Return v10
+}

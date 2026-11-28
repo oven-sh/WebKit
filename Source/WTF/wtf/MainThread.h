@@ -52,10 +52,10 @@ WTF_EXPORT_PRIVATE void dispatchAsyncOnMainThreadWithWebThreadLockIfNeeded(void 
 WTF_EXPORT_PRIVATE void callOnWebThreadOrDispatchAsyncOnMainThread(void (^block)());
 #endif
 
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE isMainThread();
+NODELETE WTF_EXPORT_PRIVATE bool isMainThread();
 
-WTF_EXPORT_PRIVATE bool canCurrentThreadAccessThreadLocalData(Thread&);
-WTF_EXPORT_PRIVATE bool canCurrentThreadIDAccessThreadLocalData(uint32_t);
+NODELETE WTF_EXPORT_PRIVATE bool canCurrentThreadAccessThreadLocalData(Thread&);
+NODELETE WTF_EXPORT_PRIVATE bool canCurrentThreadIDAccessThreadLocalData(uint32_t);
 
 WTF_EXPORT_PRIVATE bool isMainRunLoop();
 WTF_EXPORT_PRIVATE void callOnMainRunLoop(Function<void()>&&);
@@ -72,18 +72,18 @@ inline bool isWebThread() { return isMainThread(); }
 inline bool isUIThread() { return isMainThread(); }
 #endif // USE(WEB_THREAD)
 
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE isMainThreadOrGCThread();
+NODELETE WTF_EXPORT_PRIVATE bool isMainThreadOrGCThread();
 
 // NOTE: these functions are internal to the callOnMainThread implementation.
 void initializeMainThreadPlatform();
 
 // To be used with WTF_REQUIRES_CAPABILITY(mainThread). Symbol is undefined.
 extern NamedAssertion& mainThread;
-inline void assertIsMainThread() WTF_ASSERTS_ACQUIRED_CAPABILITY(mainThread) { ASSERT(isMainThread()); }
+inline void assertIsMainThread() WTF_ASSERTS_ACQUIRED_CAPABILITY(mainThread) { ASSERT_WITH_SECURITY_IMPLICATION(isMainThread()); }
 
 // To be used with WTF_REQUIRES_CAPABILITY(mainRunLoop). Symbol is undefined.
 extern NamedAssertion& mainRunLoop;
-inline void assertIsMainRunLoop() WTF_ASSERTS_ACQUIRED_CAPABILITY(mainRunLoop) { ASSERT(isMainRunLoop()); }
+inline void assertIsMainRunLoop() WTF_ASSERTS_ACQUIRED_CAPABILITY(mainRunLoop) { ASSERT_WITH_SECURITY_IMPLICATION(isMainRunLoop()); }
 
 enum class DestructionThread : uint8_t { Any, Main, MainRunLoop };
 

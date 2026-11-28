@@ -177,6 +177,13 @@ public:
         m_queue.append(WTF::move(task));
     }
 
+    bool canEnqueueWithoutExpanding() const { return m_queue.canAppendWithoutExpanding(); }
+
+    void enqueueWithoutExpanding(QueuedTask&& task)
+    {
+        m_queue.uncheckedAppend(WTF::move(task));
+    }
+
     bool isEmpty() const
     {
         return m_queue.isEmpty();
@@ -194,8 +201,8 @@ public:
         return true;
     }
 
-    // In their order, to the end of the other queue.
-    void moveTasksBehind(size_t count, MarkedMicrotaskDeque& other)
+    // Keeps their order and appends them to the other queue.
+    void moveTasksAfter(size_t count, MarkedMicrotaskDeque& other)
     {
         Vector<QueuedTask, 8> moved;
         while (m_queue.size() > count)
@@ -255,6 +262,14 @@ public:
     inline void enqueue(QueuedTask&&);
     JS_EXPORT_PRIVATE void enqueueSlow(QueuedTask&&);
 
+    bool canEnqueueWithoutSlowPath() const { return m_isScheduledToRun && m_queue.canEnqueueWithoutExpanding(); }
+    void enqueueFast(QueuedTask&& task)
+    {
+        ASSERT(canEnqueueWithoutSlowPath());
+        ASSERT(!task.isJSMicrotaskDispatcher());
+        m_queue.enqueueWithoutExpanding(WTF::move(task));
+    }
+
     bool isEmpty() const
     {
         return m_queue.isEmpty();
@@ -265,9 +280,9 @@ public:
 #if ENABLE(AOT)
     bool allOf(NOESCAPE const Invocable<bool(const QueuedTask&)> auto& functor) const { return m_queue.allOf(functor); }
 
-    void moveTasksBehind(size_t count, MicrotaskQueue& other)
+    void moveTasksAfter(size_t count, MicrotaskQueue& other)
     {
-        m_queue.moveTasksBehind(count, other.m_queue);
+        m_queue.moveTasksAfter(count, other.m_queue);
         if (!other.m_isScheduledToRun && !other.isEmpty())
             other.scheduleToRunIfNeeded();
     }

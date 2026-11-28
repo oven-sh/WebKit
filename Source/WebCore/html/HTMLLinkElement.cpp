@@ -70,7 +70,6 @@
 #include "StyleResolveForDocument.h"
 #include "StyleScope.h"
 #include "StyleSheetContents.h"
-#include "SubresourceIntegrity.h"
 #include "TreeScopeInlines.h"
 #include <wtf/Ref.h>
 #include <wtf/Scope.h>
@@ -316,6 +315,7 @@ void HTMLLinkElement::process()
         attributeWithoutSynchronization(imagesrcsetAttr),
         attributeWithoutSynchronization(imagesizesAttr),
         nonce(),
+        attributeWithoutSynchronization(integrityAttr),
         referrerPolicy(),
         fetchPriority(),
     };
@@ -369,14 +369,12 @@ void HTMLLinkElement::process()
         if (!isActive)
             priority = DefaultResourceLoadPriority::inactiveStyleSheet;
 
-        m_integrityMetadataForPendingSheetRequest = attributeWithoutSynchronization(HTMLNames::integrityAttr);
-
         ResourceLoaderOptions options = CachedResourceLoader::defaultCachedResourceOptions();
         options.nonce = nonce();
         options.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
         if (protect(document->contentSecurityPolicy())->allowStyleWithNonce(options.nonce))
             options.contentSecurityPolicyImposition = ContentSecurityPolicyImposition::SkipPolicyCheck;
-        options.integrity = m_integrityMetadataForPendingSheetRequest;
+        options.integrity = attributeWithoutSynchronization(HTMLNames::integrityAttr);
         options.referrerPolicy = params.referrerPolicy;
         options.fetchPriority = fetchPriority();
 
@@ -598,18 +596,7 @@ void HTMLLinkElement::setCSSStyleSheet(const String& href, const URL& baseURL, A
     // Completing the sheet load may cause scripts to execute.
     Ref<HTMLLinkElement> protectedThis(*this);
 
-    if (!cachedStyleSheet.errorOccurred() && !matchIntegrityMetadata(cachedStyleSheet, m_integrityMetadataForPendingSheetRequest)) {
-        document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Cannot load stylesheet "_s, integrityMismatchDescription(cachedStyleSheet, m_integrityMetadataForPendingSheetRequest)));
-
-        m_loading = false;
-        sheetLoaded();
-        notifyLoadedSheetAndAllCriticalSubresources(true);
-        return;
-    }
-
-    CSSParserContext parserContext(document.get(), baseURL, charset);
-    if (!cachedStyleSheet.isCORSSameOrigin())
-        parserContext.loadedFromOpaqueSource = LoadedFromOpaqueSource::Yes;
+    CSSParserContext parserContext(document.get(), baseURL, charset, IsExternalStyleSheet::Yes, cachedStyleSheet.referrerPolicy(), cachedStyleSheet.isCORSSameOrigin() ? LoadedFromOpaqueSource::No : LoadedFromOpaqueSource::Yes);
     auto cachePolicy = frame->loader().subresourceCachePolicy(baseURL);
 
     if (auto restoredSheet = const_cast<CachedCSSStyleSheet&>(cachedStyleSheet).restoreParsedStyleSheet(parserContext, cachePolicy, frame->loader())) {
@@ -772,7 +759,7 @@ std::optional<LinkIconType> HTMLLinkElement::iconType() const
     return m_relAttribute.iconType;
 }
 
-static bool LEGACY_NODELETE mayFetchResource(LinkRelAttribute relAttribute)
+NODELETE static bool mayFetchResource(LinkRelAttribute relAttribute)
 {
     // https://html.spec.whatwg.org/multipage/links.html#linkTypes
     return relAttribute.isStyleSheet

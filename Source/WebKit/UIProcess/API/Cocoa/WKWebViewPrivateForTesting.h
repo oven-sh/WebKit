@@ -41,6 +41,12 @@ typedef enum {
     WKWebViewAudioRoutingArbitrationStatusActive,
 } WKWebViewAudioRoutingArbitrationStatus;
 
+typedef NS_ENUM(NSInteger, _WKNavigationResponseProcessSwapDecision) {
+    _WKNavigationResponseProcessSwapDecisionSwap,
+    _WKNavigationResponseProcessSwapDecisionResumeLoad,
+    _WKNavigationResponseProcessSwapDecisionCancelLoad,
+};
+
 struct WKAppPrivacyReportTestingData {
     BOOL hasLoadedAppInitiatedRequestTesting;
     BOOL hasLoadedNonAppInitiatedRequestTesting;
@@ -58,7 +64,20 @@ typedef NSVisualEffectView _WKPlatformVisualEffectView;
 @class _WKNowPlayingMetadata;
 @protocol _WKMediaSessionCoordinator;
 
-// What WebKit's capture permission prompt would show.
+// Opt-in additions to the CALayer tree dump. Without options, the dump only has the layer geometry.
+typedef NS_OPTIONS(NSUInteger, _WKCALayerTreeAsTextOptions) {
+    _WKCALayerTreeAsTextOptionsNone = 0,
+    _WKCALayerTreeAsTextOptionsRemoteLayersOnly = 1 << 0,
+    _WKCALayerTreeAsTextOptionsIncludeLayerIdentifiers = 1 << 1,
+    _WKCALayerTreeAsTextOptionsIncludeLayerClasses = 1 << 2,
+    _WKCALayerTreeAsTextOptionsIncludeNames = 1 << 3,
+    _WKCALayerTreeAsTextOptionsIncludeTransforms = 1 << 4,
+    _WKCALayerTreeAsTextOptionsIncludeVisibility = 1 << 5,
+    _WKCALayerTreeAsTextOptionsIncludeContents = 1 << 6,
+    _WKCALayerTreeAsTextOptionsIncludeAnimations = 1 << 7,
+};
+
+// What WebKit's capture permission prompt would show, kept current while it is up.
 WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 @interface _WKMediaCapturePermissionPromptForTesting : NSObject
 
@@ -68,8 +87,26 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 @property (nonatomic, readonly, copy) NSString *title;
 @property (nonatomic, readonly, copy, nullable) NSString *informativeText;
 @property (nonatomic, readonly, copy) NSArray<NSString *> *buttonTitles;
+@property (nonatomic, readonly) BOOL showsPreview;
 
-- (void)respondWithButtonIndex:(NSUInteger)index;
+// Each has "id" and "label". Empty without a preview.
+@property (nonatomic, readonly, copy) NSArray<NSDictionary<NSString *, NSString *> *> *cameras;
+@property (nonatomic, readonly, copy) NSArray<NSDictionary<NSString *, NSString *> *> *microphones;
+@property (nonatomic, readonly) BOOL cameraMenuEnabled;
+@property (nonatomic, readonly) BOOL microphoneMenuEnabled;
+@property (nonatomic, readonly, copy, nullable) NSString *selectedCameraID;
+@property (nonatomic, readonly, copy, nullable) NSString *selectedMicrophoneID;
+
+// Zero unless the handler was set with runsPreview.
+@property (nonatomic, readonly) NSUInteger audioLevelUpdateCount;
+@property (nonatomic, readonly) NSUInteger previewLayerCount;
+@property (nonatomic, readonly) BOOL hasPreviewLayer;
+
+- (void)selectCameraAtIndex:(NSUInteger)index;
+- (void)selectMicrophoneAtIndex:(NSUInteger)index;
+
+// nil device IDs return the prompt's current selection.
+- (void)respondWithButtonIndex:(NSUInteger)index cameraID:(nullable NSString *)cameraID microphoneID:(nullable NSString *)microphoneID;
 - (void)dismissWithoutAnswer;
 
 @end
@@ -80,6 +117,11 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 - (NSString *)_caLayerTreeAsTextForLayerWithID:(unsigned long long)layerID;
 - (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer;
+- (NSString *)_caLayerTreeAsTextWithOptions:(_WKCALayerTreeAsTextOptions)options;
+- (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer options:(_WKCALayerTreeAsTextOptions)options;
+
+- (void)_enableMirrorLayerTreeForTesting:(void (^)(CALayer * _Nullable mirrorLayer))completionHandler;
+- (void)_disableMirrorLayerTreeForTesting;
 
 - (NSDictionary<NSString *, id> *)_propertiesOfLayerWithID:(unsigned long long)layerID;
 
@@ -99,6 +141,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 - (void)_setContinuousSpellCheckingEnabledForTesting:(BOOL)enabled;
 - (void)_setGrammarCheckingEnabledForTesting:(BOOL)enabled;
 - (void)_setUseDarkAppearanceForTesting:(BOOL)useDarkAppearance;
+- (void)_setAppHighlightsVisibleForTesting:(BOOL)visible;
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem;
 
 - (void)_requestActiveNowPlayingSessionInfo:(void(^)(BOOL, BOOL, NSString*, double, double, NSInteger, NSUInteger))callback;
@@ -120,8 +163,10 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 - (void)_setIndexOfGetDisplayMediaDeviceSelectedForTesting:(nullable NSNumber *)index;
 - (void)_setSystemCanPromptForGetDisplayMediaForTesting:(BOOL)canPrompt;
+- (void)_setTabPickedForGetDisplayMediaForTesting:(nullable WKWebView *)capturedWebView;
 
-- (void)_setMediaCapturePermissionPromptHandlerForTesting:(nullable void (^)(_WKMediaCapturePermissionPromptForTesting *prompt))handler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+// With @runsPreview, the camera preview and microphone meter are active exactly as they are in a real prompt.
+- (void)_setMediaCapturePermissionPromptHandlerForTesting:(nullable void (^)(_WKMediaCapturePermissionPromptForTesting *prompt))handler runsPreview:(BOOL)runsPreview WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 - (BOOL)_beginBackSwipeForTesting;
 - (BOOL)_completeBackSwipeForTesting;
@@ -198,9 +243,10 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 - (void)_createMediaSessionCoordinatorForTesting:(id <_WKMediaSessionCoordinator>)privateCoordinator completionHandler:(void(^)(BOOL))completionHandler;
 - (void)_gpuToWebProcessConnectionCountForTesting:(void(^)(NSUInteger))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
-- (void)_runDisplayListDataTestsInGPUProcessForTesting:(void(^)(NSArray<NSString *> *failures))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+- (void)_runDisplayListDataTestsInGPUProcessWithWebFonts:(NSArray<NSData *> *)webFonts completionHandler:(void(^)(NSArray<NSString *> *failures))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 - (void)_isLayerTreeFrozenForTesting:(void (^)(BOOL frozen))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
+- (void)_isLayerTreeFrozenForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL frozen))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 - (void)_numberOfLiveDocumentsForTesting:(void (^)(NSUInteger count))completionHandler;
 
@@ -214,6 +260,8 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 // Waits for the print process with this web view's Lockdown Mode to be ready. Reports 0 if there is no such process.
 - (void)_printProcessIdentifierForTesting:(void(^)(pid_t))completionHandler;
 - (void)_setPrintProcessIdleTimeoutForTesting:(NSTimeInterval)timeout;
+- (void)_setAlwaysUsePrintProcessForRemoteSnapshottingForTesting:(BOOL)alwaysUse;
+- (void)_printProcessDrawingCountsForTesting:(void(^)(NSUInteger drawnInPrintProcess, NSUInteger drawnAfterPrintProcessFailed))completionHandler;
 
 - (void)_setConnectedToHardwareConsoleForTesting:(BOOL)connected;
 
@@ -263,10 +311,15 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 - (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID processID:(uint64_t)processID;
 - (NSString *)_progressBasedTimelinesForScrollingNodeID:(uint64_t)scrollingNodeID processID:(uint64_t)processID;
 - (NSString *)_monotonicTimelinesForProcessID:(uint64_t)processID;
+- (bool)_schedulesUpdatesForMonotonicAnimations;
 #endif
 - (bool)_displayLinkWantsHighFrameRate;
 
 - (void)_lastPageLoadNetworkActivityCompletionCodeForTesting:(void(^)(NSNumber * _Nullable completionCode))completionHandler;
+
+// Runs the handler when the UI process decides whether a navigation response swaps processes.
+// The handler must call sendReply to send the decision to the network process.
+- (void)_setNavigationResponseProcessSwapReplyHandlerForTesting:(NS_SWIFT_UI_ACTOR void (^ _Nullable)(_WKNavigationResponseProcessSwapDecision decision, void (^sendReply)(void)))handler;
 
 - (void)_topDocumentURLsInBackForwardCacheAtIndexForTesting:(NSInteger)relativeIndex completionHandler:(void(^)(NSArray<NSURL *> *topDocumentURLs))completionHandler;
 

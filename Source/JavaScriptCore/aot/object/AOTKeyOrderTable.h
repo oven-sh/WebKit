@@ -11,7 +11,6 @@
 #include "AOTObject.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramTables.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "RememberedSlot.h"
 #include <array>
@@ -19,7 +18,9 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/Ref.h>
 
 namespace JSC {
 
@@ -33,11 +34,12 @@ namespace AOT {
 struct State;
 
 struct PlacesOfPositionedKeys {
-    AOT_CLASS_THRESHOLD(uint32_t, maxNumberOfCounts, 4);
+    static constexpr uint32_t maxNumberOfCounts = 4;
 
     const Object* object;
     const PropertyTable* table;
     uint32_t structureID;
+    uint32_t extraPropertiesStructureID;
     uint32_t orderWord;
     uint32_t numberOfRemovedEntries;
     uint32_t numberOfCounts;
@@ -47,31 +49,49 @@ struct PlacesOfPositionedKeys {
     uint32_t keyAskedForIsExtraKey;
 };
 
+struct EnumeratorBelowCompiledObjects {
+    static constexpr uint32_t mostPrototypes = 6;
+    struct Prototype {
+        friend bool operator==(const Prototype&, const Prototype&) = default;
+
+        uint32_t structureID { 0 };
+        uint32_t orderWord { 0 };
+    };
+
+    uint32_t structureID { 0 };
+    uint32_t orderWord { 0 };
+    uint32_t numberOfPrototypes { 0 };
+    bool everyNameIsEnumerable { false };
+    JSPropertyNameEnumerator* enumerator { nullptr };
+    std::array<Prototype, mostPrototypes> prototypes { };
+};
+
 class KeyOrderTable final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(KeyOrderTable);
 public:
     explicit KeyOrderTable(State&);
     ~KeyOrderTable();
 
-    // What entriesInOrder() and propertiesInOrder() return stays where it is, unchanged, for as long as the table lives.
     std::span<const uint16_t> entriesInOrder(const LayoutData&, uint32_t order);
-    // The entries of an order word that lists every own key of its objects, all of which are fields, or null. After this call compiled code finds the result without calling.
-    const uint16_t* publishEntriesOfFields(const LayoutData&, uint32_t orderWord);
+    std::span<const uint16_t> entriesListedBy(const LayoutData&, uint32_t orderWord);
     std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
-    // The step that compiled code takes without consulting a table: to the next key of an order that the image lists.
-    std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderWord, uint16_t entry) const;
+    std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderAndCount, uint16_t entry) const;
     enum class Step : bool { IsPublished, IsNotPublished };
     std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
-    // For an object without extra keys that has every key of an order added at run time: most objects that have left the orders of the image get all their later fields this way.
-    std::optional<uint32_t> tryAppendToAddedOrder(const LayoutData&, uint32_t orderWord, const FieldData&);
+    std::optional<uint32_t> tryAppendToAddedOrder(const LayoutData&, uint32_t orderAndCount, const FieldData&, uint32_t numberOfExtraKeys = 0);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
+    bool shouldSearchForHeldOrder(const LayoutData&);
+    void didFindHeldOrder(const LayoutData&);
+    void didMakeHeldOrderAfterFindingOne(const LayoutData&);
 
-    // Neither lists an order with an extra key or with a field that is anything but a writable, enumerable, configurable data property.
     JSCellButterfly* keysInOrder(VM&, const LayoutData&, uint32_t orderWord, KeyListKind = KeyListKind::Strings);
+    JSCellButterfly* tryCreateKeyList(VM&, const LayoutData&, std::span<const uint16_t> entries, KeyListKind);
+    JSCellButterfly* tryCreateAndRememberKeyList(VM&, const LayoutData&, uint32_t orderWord, KeyListKind listed);
     std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord, Object::SymbolKeys = Object::SymbolKeys::Skip);
     JSPropertyNameEnumerator* enumerator(const LayoutData&, uint32_t orderWord, StructureChain* prototypeChain) const;
     void setEnumerator(VM&, const LayoutData&, uint32_t orderWord, JSPropertyNameEnumerator*, StructureChain* prototypeChain);
     void publishEnumerator(const Object&, JSPropertyNameEnumerator*);
+    void forgetPublishedEnumerators();
     void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const final;
 
@@ -91,8 +111,6 @@ public:
         }
         return std::nullopt;
     }
-    PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
-
     void rememberWhetherOrderLists(uint32_t shape, uint32_t orderAndCount, uint32_t key, bool lists)
     {
         size_t newer = indexOfListedField(shape, orderAndCount, key) & ~static_cast<size_t>(1);
@@ -101,9 +119,22 @@ public:
             m_listedFields[newer + 1] = place;
         place = { shape, orderAndCount, key, lists ? isListed : isNotListed };
     }
+    bool isOrderOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) const
+    {
+        uint64_t key = keyOfFinishedBirth(layout, orderWord);
+        return m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] == key;
+    }
+    void rememberOrderOfFinishedBirth(const LayoutData& layout, uint32_t orderWord)
+    {
+        uint64_t key = keyOfFinishedBirth(layout, orderWord);
+        m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] = key;
+    }
+    EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> structureIDPlaceShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
+    PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
 
 private:
     struct Storage;
+    struct StorageOfOrders;
     struct ListedField {
         uint32_t shape;
         uint32_t orderAndCount;
@@ -113,23 +144,41 @@ private:
     static constexpr uint32_t isNotListed = 1;
     static constexpr uint32_t isListed = 2;
     static size_t indexOfListedField(uint32_t shape, uint32_t orderAndCount, uint32_t key) { return ((shape ^ orderAndCount << 9 ^ key << 17) * 0x9e3779b1u) >> 25; }
-
-    void growTransitions();
-
-    State& m_state;
-    const ProgramTables& m_tables;
-    std::unique_ptr<Storage> m_storage;
-    RememberedSlotSet m_writes;
-    uint32_t m_numberOfTransitions { 0 };
-    std::array<ListedField, 128> m_listedFields { };
     struct FieldFoundLast {
         uint32_t shape;
         uint32_t next;
     };
+    struct KeyListsByStructure {
+        void clear();
+
+        ObjectWords& words;
+    };
+
+    struct FieldsBySlotKey {
+        uint32_t numberOfSearches { 0 };
+        Vector<uint64_t> keysAndIndexes;
+    };
+
+    static Ref<StorageOfOrders> storageOfOrdersFor(State&);
+    void growTransitions();
+    size_t indexOfFieldAt(const LayoutData&, uint32_t slotKey);
+
+    State& m_state;
+    const ProgramTables& m_tables;
+    const Ref<StorageOfOrders> m_orders;
+    std::unique_ptr<Storage> m_storage;
+    KeyListsByStructure m_keyListsByStructure;
+    RememberedSlotSet m_writes;
+    uint32_t m_numberOfTransitions { 0 };
+    std::array<ListedField, 128> m_listedFields { };
     std::array<FieldFoundLast, 64> m_fieldsFoundLast { };
     std::array<PlacesOfPositionedKeys, 8> m_placesOfPositionedKeys { };
-    size_t indexOfFieldAt(const LayoutData&, uint32_t slotKey);
-    UncheckedKeyHashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
+    std::array<EnumeratorBelowCompiledObjects, 32> m_enumeratorsBelowCompiledObjects { };
+    static constexpr size_t numberOfFinishedBirths = 128;
+    static uint64_t keyOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) { return (static_cast<uint64_t>(layout.index) + 1) << 32 | orderWord; }
+    static size_t placeOfFinishedBirth(uint64_t key) { return ((key >> 32) ^ (key >> 15)) % numberOfFinishedBirths; }
+    std::array<uint64_t, numberOfFinishedBirths> m_ordersOfFinishedBirths { };
+    HashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;
 };
 

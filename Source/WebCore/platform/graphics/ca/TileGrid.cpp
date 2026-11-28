@@ -74,7 +74,7 @@ TileGrid::TileGrid(TileController& controller)
 
 TileGrid::~TileGrid()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     for (auto& tile : m_tiles.values())
         protect(tile.layer)->setOwner(nullptr);
@@ -316,7 +316,7 @@ unsigned TileGrid::blankPixelCount() const
 {
     PlatformLayerList tiles(m_tiles.size());
     for (auto& tile : m_tiles.values()) {
-        if (auto layer = protect(tile.layer)->platformLayer())
+        SUPPRESS_FORWARD_DECL_ARG if (auto layer = protect(tile.layer)->platformLayer())
             tiles.append(layer);
     }
     return TileController::blankPixelCountForTiles(tiles, m_controller->visibleRect(), IntPoint(0, 0));
@@ -825,13 +825,6 @@ bool TileGrid::isUsingDisplayListDrawing(PlatformCALayer*) const
 {
     if (auto* layerOwner = m_controller->rootLayer()->owner())
         return layerOwner->isUsingDisplayListDrawing(nullptr);
-    return false;
-}
-
-bool TileGrid::platformCALayerNeedsPlatformContext(const PlatformCALayer* layer) const
-{
-    if (auto* layerOwner = m_controller->rootLayer()->owner())
-        return layerOwner->platformCALayerNeedsPlatformContext(layer);
     return false;
 }
 

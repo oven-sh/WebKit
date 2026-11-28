@@ -26,6 +26,7 @@
 #include "config.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 
+#include "AOTRuntimeHooks.h"
 #include "MarkedBlock.h"
 #include "Options.h"
 #include "VM.h"
@@ -75,19 +76,20 @@ static bool isPastWarmUpStartThreshold()
     return true;
 }
 
-#if USE(LIBPAS)
-
-static void configureWarmUpSupply()
+void configurePrefaultSupply()
 {
+#if USE(LIBPAS)
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
         bmalloc_prefault_supply_set_block_size(MarkedBlock::blockSize);
         bmalloc_prefault_supply_idle_timeout_in_milliseconds = Options::warmUpMarkedBlockIdleTimeout() * 1000;
         bmalloc_prefault_supply_target = warmUpMarkedBlocksIsEnabled() ? Options::warmUpMarkedBlockCount() : 0;
+        bmalloc_prefault_supply_fault_in_is_enabled = Options::useBackgroundPrefaultForLargeBuffers() && !VM::isInMiniMode();
     });
+#endif
 }
 
-#else // !USE(LIBPAS)
+#if !USE(LIBPAS)
 
 // bmalloc_prefault_supply is part of libpas. A build whose fastMalloc is mimalloc or the system
 // allocator has no libpas, so it keeps the supply JSC had before 320895@main moved it there.
@@ -274,12 +276,12 @@ private:
 
 } // anonymous namespace
 
-#endif // USE(LIBPAS)
+#endif // !USE(LIBPAS)
 
 bool warmUpMarkedBlocksAreEnabledForTesting()
 {
 #if USE(LIBPAS)
-    configureWarmUpSupply();
+    configurePrefaultSupply();
     return !!bmalloc_prefault_supply_target;
 #else
     return warmUpMarkedBlocksIsEnabled();
@@ -294,7 +296,7 @@ void didPassWarmUpStartThresholdInAnotherAllocator()
 unsigned warmUpMarkedBlockCountForTesting()
 {
 #if USE(LIBPAS)
-    configureWarmUpSupply();
+    configurePrefaultSupply();
     return bmalloc_prefault_supply_block_count();
 #else
     return WarmUpBlockProvider::singleton().blockCountForTesting();
@@ -313,6 +315,7 @@ void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool shouldFail)
 
 #else // ENABLE(MALLOC_HEAP_BREAKDOWN)
 
+void configurePrefaultSupply() { }
 void didPassWarmUpStartThresholdInAnotherAllocator() { }
 bool warmUpMarkedBlocksAreEnabledForTesting() { return false; }
 unsigned warmUpMarkedBlockCountForTesting() { return 0; }
@@ -337,9 +340,13 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 
     // MarkedBlock::tryCreate is the only caller today and always asks for a block-shaped region.
     // The guard keeps a future caller of some other size from being handed a block.
-    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
+    bool mayStartThread = true;
+#if ENABLE(AOT)
+    mayStartThread = !AOT::RuntimeHooks::isInNoHelperThreadsScope();
+#endif
+    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && mayStartThread && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
 #if USE(LIBPAS)
-        configureWarmUpSupply();
+        configurePrefaultSupply();
         return bmalloc_prefault_supply_try_allocate();
 #else
         if (void* block = WarmUpBlockProvider::singleton().tryTake())

@@ -1,0 +1,154 @@
+# `size`, `sizeOrNone` and `half` are written to take a string or a number.
+# Whatever arrives is served all the same: a list, an object with a getter that runs code, a string, undefined where it is admitted.
+# RUN: run-in-shell globalThis.report = (...values) => print(values.join(" ")); globalThis.a = [1, 2]; globalThis.t = "A"; globalThis.n = 10; globalThis.job = () => 5;
+# CHECK: 2 4 2 0 5 7 2 4 6 5 65
+# RUN(TEXT): run-in-shell globalThis.report = (...values) => print(values.join(" ")); globalThis.a = "four"; globalThis.t = "A"; globalThis.n = "8"; globalThis.job = () => "job";
+# TEXT: 4 8 4 0 job 7 4 8 12 4 65
+# RUN(GETTER): run-in-shell globalThis.report = (...values) => print(values.join(" ")); let reads = 0; globalThis.a = { get length() { reads++; return 3; } }; globalThis.t = "A"; globalThis.n = { valueOf() { return 6; } }; globalThis.job = () => reads;
+# GETTER: 3 6 3 0 7 7 3 6 9 3 65
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="size" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="both" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="count" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="down" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="run" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="sizeOrNone" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="seven" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="viaHelper" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="helper" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="viaBoth" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="half" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="code" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="a" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1 calleeName="size" [isNeverInlined]
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v1 calleeName="both" [isNeverInlined]
+    v6 = GetModuleVariable variable=g2
+    v7 = Call v6, -, v1 calleeName="count" [isNeverInlined]
+    v8 = GetModuleVariable variable=g3
+    v9 = Call v8, -, v1 calleeName="down" [isNeverInlined]
+    v10 = GetModuleVariable variable=g4
+    v11 = PropGet v0 key="job" [isFreeName]
+    v12 = Call v10, -, v11 calleeName="run" [isNeverInlined]
+    v13 = GetModuleVariable variable=g6
+    v14 = Call v10, -, v13 calleeName="run" [isNeverInlined]
+    v15 = GetModuleVariable variable=g5
+    v16 = Call v15, -, v1 calleeName="sizeOrNone" [isNeverInlined]
+    v17 = GetModuleVariable variable=g7
+    v18 = Call v17, -, v1 calleeName="viaHelper" [isNeverInlined]
+    v19 = GetModuleVariable variable=g9
+    v20 = Call v19, -, v1 calleeName="viaBoth" [isNeverInlined]
+    v21 = GetModuleVariable variable=g10
+    v22 = PropGet v0 key="n" [isFreeName]
+    v23 = Call v21, -, v22 calleeName="half" [isNeverInlined]
+    v24 = GetModuleVariable variable=g11
+    v25 = PropGet v0 key="t" [isFreeName]
+    v26 = Call v24, -, v25 calleeName="code" [isNeverInlined]
+    v27 = PropGet v0 key="report" [isFreeName]
+    v28 = Call v27, -, v3, v5, v7, v9, v12, v14, v16, v18, v20, v23, v26 calleeName="report"
+    v29 = Undefined
+    Return v29
+}
+function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f2 name="both" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="length"
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = PropGet v0 key="length"
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Increment v2
+    Jump -> next b1(v6)
+  b3():
+    Return v2
+}
+function f4 name="down" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = Sub v0, v2
+    v4 = GetModuleVariable variable=g3
+    v5 = Call v4, -, v3 calleeName="down"
+    Return v5
+  b2():
+    v6 = Integer
+    Return v6
+}
+function f5 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=function}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Call v0, - calleeName="job"
+    Return v1
+}
+function f6 name="sizeOrNone" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|string):
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer
+    Return v2
+  b2():
+    v3 = Convert v0 declared={type=string} illTypedCause=Assertion
+    v4 = PropGet v3 key="length"
+    Return v4
+}
+function f7 name="seven" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f8 name="viaHelper" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = GetModuleVariable variable=g8
+    v2 = Call v1, -, v0 calleeName="helper"
+    v3 = PropGet v0 key="length"
+    v4 = Add v2, v3
+    Return v4
+}
+function f9 name="helper" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f10 name="viaBoth" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="both"
+    v3 = PropGet v0 key="length"
+    v4 = Add v2, v3
+    Return v4
+}
+function f11 name="half" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    Return v2
+}
+function f12 name="code" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = PropGet v0 key="charCodeAt"
+    v2 = Integer
+    v3 = Call v1, v0, v2 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    Return v3
+}

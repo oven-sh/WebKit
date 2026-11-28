@@ -70,11 +70,13 @@ public:
     WEBCORE_EXPORT void setName(const String&) override;
     WEBCORE_EXPORT String debugName() const override;
 
-    WEBCORE_EXPORT std::optional<PlatformLayerIdentifier> primaryLayerID() const override;
+    NODELETE WEBCORE_EXPORT std::optional<PlatformLayerIdentifier> primaryLayerID() const override;
+    WEBCORE_EXPORT std::optional<PlatformLayerIdentifier> backdropLayerID() const override;
     WEBCORE_EXPORT std::optional<PlatformLayerIdentifier> layerIDIgnoringStructuralLayer() const final;
 
     WEBCORE_EXPORT PlatformLayer* platformLayer() const override;
     PlatformCALayer* platformCALayer() const { return primaryLayer(); }
+    PlatformCALayer* platformCALayerIgnoringStructuralLayer() const { return m_layer.get(); }
 
     WEBCORE_EXPORT bool setChildren(Vector<Ref<GraphicsLayer>>&&) override;
     WEBCORE_EXPORT void addChild(Ref<GraphicsLayer>&&) override;
@@ -221,6 +223,9 @@ public:
         bool ancestorWithTransformAnimationIntersectsCoverageRect { false };
         bool ancestorIsNonAxisAligned { false };
         bool backdropRootIsOpaque { false };
+#if ENABLE(THREADED_ANIMATIONS)
+        std::optional<MonotonicTime> renderingUpdateTimestamp;
+#endif
     };
     bool needsCommit(const CommitState&);
     void recursiveCommitChanges(CommitState&, const TransformState&, float pageScaleFactor = 1, const FloatPoint& positionRelativeToBase = FloatPoint(), bool affectedByPageScale = false);
@@ -247,6 +252,12 @@ public:
     WEBCORE_EXPORT void purgeBackBufferForTesting() override;
 
     WEBCORE_EXPORT void setShadowPath(const Path&) override;
+
+    WEBCORE_EXPORT void setHidesFromScreenCapture(bool) override;
+
+#if ENABLE(SPATIAL_PORTAL)
+    WEBCORE_EXPORT void setIsHostedInSpatialPortalScene(bool) override;
+#endif
 
 private:
     friend class FrameProcessIndicators;
@@ -282,7 +293,6 @@ private:
     WEBCORE_EXPORT bool platformCALayerUseGiantTiles() const override;
     WEBCORE_EXPORT bool platformCALayerCSSUnprefixedBackdropFilterEnabled() const override;
     WEBCORE_EXPORT void platformCALayerLogFilledVisibleFreshTile(unsigned) override;
-    WEBCORE_EXPORT bool platformCALayerNeedsPlatformContext(const PlatformCALayer*) const override;
     bool platformCALayerShouldPaintUsingCompositeCopy() const override { return shouldPaintUsingCompositeCopy(); }
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
@@ -337,9 +347,9 @@ private:
     virtual void setLayerContentsToNativeImage(PlatformCALayer&, NativeImage&);
 
     PlatformCALayer* primaryLayer() const { return m_structuralLayer.get() ? m_structuralLayer.get() : m_layer.get(); }
-    PlatformCALayer* LEGACY_NODELETE hostLayerForSublayers() const;
-    PlatformCALayer* LEGACY_NODELETE layerForSuperlayer() const;
-    PlatformCALayer* LEGACY_NODELETE animatedLayer(AnimatedProperty) const;
+    NODELETE PlatformCALayer* hostLayerForSublayers() const;
+    NODELETE PlatformCALayer* layerForSuperlayer() const;
+    NODELETE PlatformCALayer* animatedLayer(AnimatedProperty) const;
 
     WEBCORE_EXPORT void setTileCoverage(TileCoverage) override;
 
@@ -347,8 +357,8 @@ private:
     static bool isReplicatedRootClone(const CloneID& cloneID) { return cloneID[0U] & 1; }
 
     using LayerMap = HashMap<CloneID, Ref<PlatformCALayer>>;
-    LayerMap* LEGACY_NODELETE primaryLayerClones() const;
-    LayerMap* LEGACY_NODELETE animatedLayerClones(AnimatedProperty) const;
+    NODELETE LayerMap* primaryLayerClones() const;
+    NODELETE LayerMap* animatedLayerClones(AnimatedProperty) const;
     static void clearClones(LayerMap&);
 
     bool createAnimationFromKeyframes(const GraphicsLayerKeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
@@ -418,8 +428,11 @@ private:
         TransformationMatrix animatingTransform;
     };
     
-    VisibleAndCoverageRects computeVisibleAndCoverageRect(TransformState&, bool accumulateTransform, ComputeVisibleRectFlags = RespectAnimatingTransforms) const;
+    VisibleAndCoverageRects computeVisibleAndCoverageRect(TransformState&, bool accumulateTransform, ComputeVisibleRectFlags = RespectAnimatingTransforms, const TransformationMatrix* animatingTransform = nullptr) const;
     bool adjustCoverageRect(VisibleAndCoverageRects&, const FloatRect& oldVisibleRect) const;
+#if ENABLE(THREADED_ANIMATIONS)
+    bool adjustCoverageRectForTransformAnimations(VisibleAndCoverageRects&, const TransformState&, bool accumulateTransform, const CommitState&);
+#endif
 
     const FloatRect& visibleRect() const LIFETIME_BOUND { return m_visibleRect; }
     const FloatRect& coverageRect() const LIFETIME_BOUND { return m_coverageRect; }
@@ -499,7 +512,7 @@ private:
 
     bool hasCloneLayers() const { return !!m_layerClones; }
     void removeCloneLayers();
-    FloatPoint LEGACY_NODELETE positionForCloneRootLayer() const;
+    NODELETE FloatPoint positionForCloneRootLayer() const;
 
     // All these "update" methods will be called inside a BEGIN_BLOCK_OBJC_EXCEPTIONS/END_BLOCK_OBJC_EXCEPTIONS block.
     void updateNames();
@@ -509,6 +522,7 @@ private:
     void updateChildrenTransform();
     void updateMasksToBounds();
     void updateContentsVisibility();
+    void updatePrimaryLayerHidden();
     void updateContentsOpaque(float pageScaleFactor);
     void updateBackfaceVisibility();
     bool updateStructuralLayer();
@@ -546,6 +560,8 @@ private:
     void updateBackdropRoot();
     void updateShadowPath();
 
+    void updateHidesFromScreenCapture();
+
     void updateBlendMode();
 
     void updateVideoGravity();
@@ -575,7 +591,7 @@ private:
 #endif
     };
     bool ensureStructuralLayer(StructuralLayerPurpose);
-    StructuralLayerPurpose LEGACY_NODELETE structuralLayerPurpose() const;
+    NODELETE StructuralLayerPurpose structuralLayerPurpose() const;
 
     // This represents the animation of a single property. There may be multiple transform animations for
     // a single transition or keyframe animation, so index is used to distinguish these.
@@ -689,13 +705,17 @@ private:
         TonemappingEnabledChanged               = 1LLU << 48,
 #endif
         ShadowPathChanged                       = 1LLU << 49,
+        HidesFromScreenCaptureChanged           = 1LLU << 50,
+#if ENABLE(SPATIAL_PORTAL)
+        HostedInSpatialPortalSceneChanged       = 1LLU << 51,
+#endif
     };
     typedef uint64_t LayerChangeFlags;
     static ASCIILiteral layerChangeAsString(LayerChange);
     static void dumpLayerChangeFlags(TextStream&, LayerChangeFlags);
-    void LEGACY_NODELETE addUncommittedChanges(LayerChangeFlags);
+    NODELETE void addUncommittedChanges(LayerChangeFlags);
     bool hasDescendantsWithUncommittedChanges() const { return m_hasDescendantsWithUncommittedChanges; }
-    void LEGACY_NODELETE setHasDescendantsWithUncommittedChanges(bool);
+    NODELETE void setHasDescendantsWithUncommittedChanges(bool);
     enum ScheduleFlushOrNot { ScheduleFlush, DontScheduleFlush };
     void noteLayerPropertyChanged(LayerChangeFlags, ScheduleFlushOrNot = ScheduleFlush);
     void noteSublayersChanged(ScheduleFlushOrNot = ScheduleFlush);
@@ -741,6 +761,9 @@ private:
     FloatRect m_visibleRect;
     FloatRect m_previousCommittedVisibleRect;
     FloatRect m_coverageRect; // Area for which we should maintain backing store, in the coordinate space of this layer.
+#if ENABLE(THREADED_ANIMATIONS)
+    Vector<FloatRect> m_rectsForTransformAnimationTileCoverage; // Areas for which we should have tiles converage, in the coordinate space of this layer.
+#endif
     FloatSize m_sizeAtLastCoverageRectUpdate;
     FloatSize m_pixelAlignmentOffset;
 

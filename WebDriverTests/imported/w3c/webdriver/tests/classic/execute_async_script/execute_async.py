@@ -3,7 +3,7 @@ import pytest
 from webdriver.error import NoSuchAlertException
 from webdriver.transport import Response
 
-from tests.support.asserts import assert_error, assert_success
+from tests.support.classic.asserts import assert_error, assert_success
 from tests.support.sync import Poll
 from . import execute_async_script
 
@@ -43,6 +43,21 @@ def test_primitive_serialization(session, expression, expected):
     response = execute_async_script(session, "arguments[0]({});".format(expression))
     value = assert_success(response)
     assert value == expected
+
+
+@pytest.mark.parametrize("expression", [
+    "null",
+    "undefined",
+    "true",
+    "23",
+    "'foo'",
+    "42n",
+    "Symbol('foo')",
+    "{ message: Symbol('foo') }",
+])
+def test_thrown_value(session, expression):
+    response = execute_async_script(session, "throw {};".format(expression))
+    assert_error(response, "javascript error")
 
 
 @pytest.mark.parametrize("dialog_type", ["alert", "confirm", "prompt"])

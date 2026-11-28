@@ -4,6 +4,7 @@ import type { Entry, Kind, PayloadField, Schema } from "./model.ts";
 import { entriesOf } from "./model.ts";
 import { cppOperandGetterName, cppSetterName, upperFirst } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
+import { SchemaError } from "./source.ts";
 
 interface User {
   readonly name: string;
@@ -31,7 +32,19 @@ interface EntryEnum {
   readonly entrySetPrefix: string;
 }
 
-type AccessorPart = "all" | "payload" | "operands";
+interface Accessors {
+  readonly getter: string;
+  readonly setter: string;
+}
+
+interface AccessorsWithEntrySet extends Accessors {
+  readonly entrySet: readonly string[];
+}
+
+interface AccessorsOfEntries {
+  readonly payloadAndFlags: readonly AccessorsWithEntrySet[];
+  readonly operands: readonly Accessors[];
+}
 
 const opcodes: EntryEnum = {
   isTerminator: false,
@@ -47,6 +60,18 @@ const terminatorKinds: EntryEnum = {
   entrySetPrefix: "TerminatorKindSet kindsWith",
 };
 
+const bitsOfFlagsInCode = 8;
+
+function flagUsersOf(entry: Entry): User[] {
+  return entry.flags.map(flag => {
+    if (flag.bit >= bitsOfFlagsInCode) {
+      const problem = `flag ${flag.name} of ${entry.name} is bit ${flag.bit}: a record of Code has ${bitsOfFlagsInCode} bits of flags`;
+      throw new SchemaError(flag.location, problem);
+    }
+    return { name: flag.name, entry, position: `1 << ${flag.bit}` };
+  });
+}
+
 function collect(schema: Schema): NamedParts {
   const entries = entriesOf(schema);
   const byName = <Part extends User>(partsOf: (entry: Entry) => readonly Part[]): UsersByName<Part> =>
@@ -61,7 +86,7 @@ function collect(schema: Schema): NamedParts {
         return { name: field.name, entry, field, position };
       }),
     ),
-    flags: byName(entry => entry.flags.map(flag => ({ name: flag.name, entry, position: `1 << ${flag.bit}` }))),
+    flags: byName(flagUsersOf),
     operands: byName(entry =>
       entry.namedOperands.map(operand => ({ name: operand.name, entry, position: String(operand.index) })),
     ),
@@ -72,7 +97,6 @@ function collect(schema: Schema): NamedParts {
   };
 }
 
-// A lookup that this many entries declare reads one table that all its callers share. As a switch it is compiled into a jump table at each of them.
 const leastUsersOfSharedTable = 24;
 
 function lookup(name: string, users: readonly User[]): string[] {
@@ -124,54 +148,87 @@ function positionsHeader(namespace: string, table: UsersByName): string[] {
   );
 }
 
-function listAccessorLines(name: string, element: Kind, position: string): string[] {
+function listAccessors(name: string, element: Kind, position: string): Accessors {
   const type = engineTypeOf(element);
   const setter = `void ${cppSetterName(name)}(std::span<const ${type}> ${name})`;
   const isTwoWordScalar = element.tag === "Scalar" && twoWordScalars.has(element.scalar);
   if (element.tag === "Record" || element.tag === "Variant" || isTwoWordScalar) {
-    return [
-      `PayloadListView<${type}> ${name}() const LIFETIME_BOUND { return PayloadListView<${type}>(payloadListFrom(${position})); }`,
-      `${setter} { setPayloadListFrom(${position}, encodePayloadList(${name}).span()); }`,
-    ];
+    return {
+      getter: `PayloadListView<${type}> ${name}() const LIFETIME_BOUND { return PayloadListView<${type}>(payloadListFrom(${position})); }`,
+      setter: `${setter} { setPayloadListFrom(${position}, encodePayloadList(${name}).span()); }`,
+    };
   }
-  return [
-    `std::span<const ${type}> ${name}() const LIFETIME_BOUND { return payloadListOf<${type}>(${position}); }`,
-    `${setter} { setPayloadListOf<${type}>(${position}, ${name}); }`,
-  ];
+  return {
+    getter: `std::span<const ${type}> ${name}() const LIFETIME_BOUND { return payloadListOf<${type}>(${position}); }`,
+    setter: `${setter} { setPayloadListOf<${type}>(${position}, ${name}); }`,
+  };
 }
 
-function accessorLines(name: string, field: PayloadField, isOptional: boolean, tag: string): string[] {
+function payloadAccessors(name: string, field: PayloadField, isOptional: boolean, tag: string): Accessors {
   const { kind, heldAs } = field;
   const setter = cppSetterName(name);
   const position = `declaredPosition(PayloadWord::${name}(${tag}))`;
-  // Anybody may read a fact. A prediction stays one in the hands of who reads it.
   if (heldAs !== null) {
     const read = `decodePayloadWord<TypeID>(payloadWordAt(${position}))`;
-    return [
-      heldAs === "ProvenType" ? `TypeID ${name}() const { return ${read}; }` : `${heldAs} ${name}() const { return ${heldAs}(${read}); }`,
-      `void ${setter}(${heldAs} ${name}) { setPayloadWordAt(${position}, encodePayloadWord(${name}.payload())); }`,
-    ];
+    return {
+      getter:
+        heldAs === "ProvenType"
+          ? `TypeID ${name}() const { return ${read}; }`
+          : `${heldAs} ${name}() const { return ${heldAs}(${read}); }`,
+      setter: `void ${setter}(${heldAs} ${name}) { setPayloadWordAt(${position}, encodePayloadWord(${name}.payload())); }`,
+    };
   }
-  if (kind.tag === "List") return listAccessorLines(name, kind.element, position);
+  if (kind.tag === "List") return listAccessors(name, kind.element, position);
   if (kind.tag === "Scalar" && twoWordScalars.has(kind.scalar)) {
     const type = engineTypeOf(kind);
     const cast = kind.scalar === "Double" ? "std::bit_cast" : "static_cast";
-    return [
-      `${type} ${name}() const { return ${cast}<${type}>(payloadWordPairAt(${position})); }`,
-      `void ${setter}(${type} ${name}) { setPayloadWordPairAt(${position}, ${cast}<uint64_t>(${name})); }`,
-    ];
+    return {
+      getter: `${type} ${name}() const { return ${cast}<${type}>(payloadWordPairAt(${position})); }`,
+      setter: `void ${setter}(${type} ${name}) { setPayloadWordPairAt(${position}, ${cast}<uint64_t>(${name})); }`,
+    };
   }
   const type = engineTypeOf(kind, isOptional);
   if (kind.tag === "Record" || kind.tag === "Variant") {
-    return [
-      `${type} ${name}() const { return decodePayloadRecord<${type}>(*this, ${position}); }`,
-      `void ${setter}(const ${type}& ${name}) { encodePayloadRecord(*this, ${position}, ${name}); }`,
-    ];
+    return {
+      getter: `${type} ${name}() const { return decodePayloadRecord<${type}>(*this, ${position}); }`,
+      setter: `void ${setter}(const ${type}& ${name}) { encodePayloadRecord(*this, ${position}, ${name}); }`,
+    };
   }
-  return [
-    `${type} ${name}() const { return decodePayloadWord<${type}>(payloadWordAt(${position})); }`,
-    `void ${setter}(${type} ${name}) { setPayloadWordAt(${position}, encodePayloadWord(${name})); }`,
-  ];
+  return {
+    getter: `${type} ${name}() const { return decodePayloadWord<${type}>(payloadWordAt(${position})); }`,
+    setter: `void ${setter}(${type} ${name}) { setPayloadWordAt(${position}, encodePayloadWord(${name})); }`,
+  };
+}
+
+const flagsThatRestOnPassedTests = new Set(["isInsideView", "isInBounds", "isPresent"]);
+
+function flagAccessors(name: string, tag: string): Accessors {
+  const mask = `declaredPosition(FlagMask::${name}(${tag}))`;
+  const getter = `bool ${name}() const { return flags & ${mask}; }`;
+  if (flagsThatRestOnPassedTests.has(name))
+    return { getter, setter: `void ${cppSetterName(name)}(const PassedTest& passed) { flags |= ${mask}; restOn(passed); }` };
+  return {
+    getter,
+    setter: `void ${cppSetterName(name)}(bool ${name}) { flags = ${name} ? flags | ${mask} : flags & ~${mask}; }`,
+  };
+}
+
+function operandAccessors(name: string, tag: string): Accessors {
+  const getter = cppOperandGetterName(name, false);
+  const position = `declaredPosition(OperandPosition::${name}(${tag}))`;
+  return {
+    getter: `OperandID ${getter}() const { return operand(${position}); }`,
+    setter: `void ${cppSetterName(getter)}(OperandID ${name}) { setOperand(${position}, ${name}); }`,
+  };
+}
+
+function variadicOperandAccessors(name: string, tag: string): Accessors {
+  const getter = cppOperandGetterName(name, true);
+  const assertion = `RELEASE_ASSERT(VariadicOperandPosition::${name}(${tag}));`;
+  return {
+    getter: `std::span<const OperandID> ${getter}() const LIFETIME_BOUND { ${assertion} return variadicOperands(); }`,
+    setter: `void ${cppSetterName(getter)}(std::span<const OperandID> ${name}) { ${assertion} setVariadicOperands(${name}); }`,
+  };
 }
 
 function entrySet(entryEnum: EntryEnum, name: string, users: readonly User[]): string[] {
@@ -183,66 +240,56 @@ function entrySet(entryEnum: EntryEnum, name: string, users: readonly User[]): s
   );
 }
 
-function accessorsInc(parts: NamedParts, entryEnum: EntryEnum, part: AccessorPart): string[] {
+function accessorsOf(parts: NamedParts, entryEnum: EntryEnum): AccessorsOfEntries {
   const { tag } = entryEnum;
-  const groups: string[][] = [];
   const ownUsersOf = (users: readonly User[]): User[] =>
     users.filter(user => user.entry.isTerminator === entryEnum.isTerminator);
-  if (part !== "operands") {
-    for (const [name, users] of parts.payload) {
-      const own = ownUsersOf(users);
-      if (own.length === 0) continue;
-      const isOptional = users.some(user => user.field.isOptional);
-      groups.push([
-        ...indent(accessorLines(name, users[0].field, isOptional, tag)),
-        ...entrySet(entryEnum, name, own),
-      ]);
-    }
-    for (const [name, users] of parts.flags) {
-      const own = ownUsersOf(users);
-      if (own.length === 0) continue;
-      const mask = `declaredPosition(FlagMask::${name}(${tag}))`;
-      const accessors = [
-        `bool ${name}() const { return flags & ${mask}; }`,
-        `void ${cppSetterName(name)}(bool ${name}) { flags = ${name} ? flags | ${mask} : flags & ~${mask}; }`,
-      ];
-      groups.push([...indent(accessors), ...entrySet(entryEnum, name, own)]);
-    }
+  const payloadAndFlags: AccessorsWithEntrySet[] = [];
+  for (const [name, users] of parts.payload) {
+    const own = ownUsersOf(users);
+    if (own.length === 0) continue;
+    const isOptional = users.some(user => user.field.isOptional);
+    const accessors = payloadAccessors(name, users[0].field, isOptional, tag);
+    payloadAndFlags.push({ ...accessors, entrySet: entrySet(entryEnum, name, own) });
   }
-  if (part !== "payload") {
-    for (const [name, users] of parts.operands) {
-      if (ownUsersOf(users).length === 0) continue;
-      const getter = cppOperandGetterName(name, false);
-      const position = `declaredPosition(OperandPosition::${name}(${tag}))`;
-      groups.push(
-        indent([
-          `ValueID ${getter}() const { return operand(${position}); }`,
-          `void ${cppSetterName(getter)}(ValueID ${name}) { setOperand(${position}, ${name}); }`,
-        ]),
-      );
-    }
-    for (const [name, users] of parts.variadicOperands) {
-      if (ownUsersOf(users).length === 0) continue;
-      const getter = cppOperandGetterName(name, true);
-      const assertion = `RELEASE_ASSERT(VariadicOperandPosition::${name}(${tag}));`;
-      groups.push(
-        indent([
-          `std::span<const ValueID> ${getter}() const LIFETIME_BOUND { ${assertion} return variadicOperands(); }`,
-          `void ${cppSetterName(getter)}(std::span<const ValueID> ${name}) { ${assertion} setVariadicOperands(${name}); }`,
-        ]),
-      );
-    }
+  for (const [name, users] of parts.flags) {
+    const own = ownUsersOf(users);
+    if (own.length === 0) continue;
+    payloadAndFlags.push({ ...flagAccessors(name, tag), entrySet: entrySet(entryEnum, name, own) });
   }
+  const operands: Accessors[] = [];
+  for (const [name, users] of parts.operands) {
+    if (ownUsersOf(users).length > 0) operands.push(operandAccessors(name, tag));
+  }
+  for (const [name, users] of parts.variadicOperands) {
+    if (ownUsersOf(users).length > 0) operands.push(variadicOperandAccessors(name, tag));
+  }
+  return { payloadAndFlags, operands };
+}
+
+function gettersInc({ payloadAndFlags, operands }: AccessorsOfEntries): string[] {
   return blocks(
     [cppMarker],
-    part === "payload" ? [] : [`${indentation}using Instruction::setOperand;`],
-    ...groups,
-    part === "payload" ? ['#include "AOTSchemaValueOperandAccessors.inc"'] : [],
+    ...payloadAndFlags.map(accessors => [...indent([accessors.getter]), ...accessors.entrySet]),
+    indent(operands.map(accessors => accessors.getter)),
+  );
+}
+
+const inheritedOperandSetter = "using DraftWords::setOperand;";
+
+function settersInc({ payloadAndFlags, operands }: AccessorsOfEntries): string[] {
+  return blocks(
+    [cppMarker],
+    indent([inheritedOperandSetter]),
+    indent(payloadAndFlags.map(accessors => accessors.setter)),
+    indent(operands.map(accessors => accessors.setter)),
   );
 }
 
 export function emitCppAccessors(context: EmitContext): OutputFile[] {
   const parts = collect(context.schema);
+  const ofOperations = accessorsOf(parts, opcodes);
+  const ofTerminators = accessorsOf(parts, terminatorKinds);
   return [
     { name: "AOTSchemaPayloadPositions.h", lines: positionsHeader("PayloadWord", parts.payload) },
     { name: "AOTSchemaFlagMasks.h", lines: positionsHeader("FlagMask", parts.flags) },
@@ -251,8 +298,9 @@ export function emitCppAccessors(context: EmitContext): OutputFile[] {
       name: "AOTSchemaVariadicOperandPositions.h",
       lines: positionsHeader("VariadicOperandPosition", parts.variadicOperands),
     },
-    { name: "AOTSchemaValueAccessors.inc", lines: accessorsInc(parts, opcodes, "payload") },
-    { name: "AOTSchemaValueOperandAccessors.inc", lines: accessorsInc(parts, opcodes, "operands") },
-    { name: "AOTSchemaTerminatorAccessors.inc", lines: accessorsInc(parts, terminatorKinds, "all") },
+    { name: "AOTSchemaOperationGetters.inc", lines: gettersInc(ofOperations) },
+    { name: "AOTSchemaOperationSetters.inc", lines: settersInc(ofOperations) },
+    { name: "AOTSchemaTerminatorGetters.inc", lines: gettersInc(ofTerminators) },
+    { name: "AOTSchemaTerminatorSetters.inc", lines: settersInc(ofTerminators) },
   ];
 }

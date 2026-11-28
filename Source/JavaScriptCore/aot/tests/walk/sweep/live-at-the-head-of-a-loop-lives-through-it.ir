@@ -1,0 +1,33 @@
+# const a = make(), b = make(); while (!use(a)) await x; return b;
+# v2 is read at the top of a turn alone, in front of the await. It is live at the head of the loop, so it lives to the loop's end, and the await holds it for the next turn. v3 is read behind the loop.
+# v4 and v5 are made anew in each turn, and nothing behind the await reads them.
+# No operation is visited a second time for it.
+# RUN: sweep-code
+# CHECK: # live at v6 [v0, v1, v2, v3]
+# CHECK: visits of operations: 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0
+
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b1()
+#   b1() isInLoop=true isLoopHead=true:
+#     v4: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: boolean @Boolean = TypeTest v4 testedType=undefined
+#     Branch v5 -> taken b2(), notTaken b3()
+#   b2() isInLoop=true:
+#     v6: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b1()
+#   b3():
+#     Return v3
+# }
+# -- end of code

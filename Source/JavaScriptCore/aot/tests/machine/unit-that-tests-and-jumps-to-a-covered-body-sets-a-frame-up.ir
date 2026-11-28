@@ -1,0 +1,37 @@
+# what is lost today, written down and not mended: a unit that tests the stack and does nothing but jump to a body that its callers cover sets a frame up for the test alone
+# function p(v) { return q(v) }  function q(v) { return p(v) }
+# of the ring p tests, because it is counted first, and its test is the poll of the ring. q is covered and jumps without a frame
+# f1 = p, f2 = q. p is handed to sink
+# RUN: bytes f1:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f1:Body
+# CHECK: prologueChecks=1
+# RUN(FRAME): bytes f1:Body mechanisms=none+DirectCalls
+# FRAME-NOT: frame=none
+# RUN(COVERED): bytes f2:Body mechanisms=none+DirectCalls
+# COVERED-LABEL: unit f2:Body
+# COVERED: frame=none
+
+variable g0 name="p" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="q" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="p" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="q"
+    ReturnCall v2
+}
+function f2 name="q" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="p"
+    ReturnCall v2
+}

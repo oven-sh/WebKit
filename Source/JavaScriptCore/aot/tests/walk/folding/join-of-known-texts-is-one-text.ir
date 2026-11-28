@@ -1,0 +1,69 @@
+# a template whose parts are known primitives is one text, made when the program is built
+# function joined() { return [`${2}-${"px"}`]; }
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[text]]: {{*}} = String string=made "2-px"
+# CHECK: = NewArray [[text]]
+# RUN(NEVER): walk f1 mechanisms=none+Folding
+# NEVER-NOT: = Strcat
+# one part that nobody knows keeps the join: function kept(unit) { return [`${2}-${unit}`]; }
+# RUN(KEPT): walk f2 mechanisms=none+Folding
+# KEPT-LABEL: code f2:Body
+# KEPT: = Strcat
+# known parts side by side in a row of joins are one part, and the empty text drops out: function row(a) { if (typeof a === "string") return [a + "x" + 1 + "" + "y"]; }
+# RUN(ROW): walk f3 mechanisms=none+TypedOperations+Folding
+# ROW-LABEL: code f3:Body
+# ROW: [[rest]]: {{*}} = String string=made "x1y"
+# ROW: = Strcat {{*}}, [[rest]]
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = String string=made "2-px"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="joined" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = String string="-"
+    v2 = String string="px"
+    v3 = Strcat v0, v1, v2
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f2 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = String string="-"
+    v3 = Strcat v1, v2, v0
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f3 name="row" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = String string="x"
+    v4 = Add v2, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = String string=""
+    v8 = Add v6, v7
+    v9 = String string="y"
+    v10 = Add v8, v9
+    v11 = NewArray v10 contents=anything
+    Return v11
+  b2():
+    v12 = Undefined
+    Return v12
+}

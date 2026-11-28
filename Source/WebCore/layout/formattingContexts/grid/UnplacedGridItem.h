@@ -60,7 +60,7 @@ private:
         // lines against the end of the explicit grid. The leading implicit track count then shifts
         // negative resolved lines forward so the range maps to non-negative matrix indices. See
         // UnplacedGridItem::resolveDefinitePosition().
-        static GridPosition LEGACY_NODELETE create(const Style::GridPosition& start, const Style::GridPosition& end, size_t explicitTrackCount, size_t leadingImplicitTracksCount);
+        NODELETE static GridPosition create(const Style::GridPosition& start, const Style::GridPosition& end, size_t explicitTrackCount, size_t leadingImplicitTracksCount);
 
         bool isDefinite() const { return std::holds_alternative<DefinitePosition>(m_position); }
         bool isAuto() const { return std::holds_alternative<AutoPosition>(m_position); }
@@ -83,10 +83,10 @@ private:
 public:
     UnplacedGridItem(const ElementBox&, Style::GridPosition columnStart, Style::GridPosition columnEnd, Style::GridPosition rowStart, Style::GridPosition rowEnd, size_t explicitColumnCount, size_t explicitRowCount, size_t leadingImplicitColumnsCount, size_t leadingImplicitRowsCount);
 
-    bool LEGACY_NODELETE hasDefiniteRowPosition() const;
-    bool LEGACY_NODELETE hasDefiniteColumnPosition() const;
-    bool LEGACY_NODELETE hasAutoColumnPosition() const;
-    bool LEGACY_NODELETE hasAutoRowPosition() const;
+    NODELETE bool hasDefiniteRowPosition() const;
+    NODELETE bool hasDefiniteColumnPosition() const;
+    NODELETE bool hasAutoColumnPosition() const;
+    NODELETE bool hasAutoRowPosition() const;
     size_t columnSpanSize() const;
     size_t rowSpanSize() const;
 
@@ -98,7 +98,7 @@ public:
     // of the explicit grid; the resolved lines may still be negative for negative line placements
     // that count past the start edge, and the leading implicit track count is applied later in
     // GridPosition::create().
-    static std::optional<std::pair<int, int>> LEGACY_NODELETE resolveDefinitePosition(const Style::GridPosition& start, const Style::GridPosition& end, size_t explicitTrackCount);
+    NODELETE static std::optional<std::pair<int, int>> resolveDefinitePosition(const Style::GridPosition& start, const Style::GridPosition& end, size_t explicitTrackCount);
 
 private:
     CheckedRef<const ElementBox> m_layoutBox;
@@ -111,14 +111,12 @@ private:
 };
 
 // https://drafts.csswg.org/css-grid-1/#auto-placement-algo
-struct UnplacedGridItems {
-    // 1. Position anything that’s not auto-positioned.
-    Vector<UnplacedGridItem> nonAutoPositionedItems;
-    // 2. Process the items locked to a given row.
-    Vector<UnplacedGridItem> definiteRowPositionedItems;
-    // 4. Position the remaining grid items.
-    Vector<UnplacedGridItem> autoPositionedItems;
-};
+// 1. Position anything that’s not auto-positioned.
+inline bool isNonAutoPositioned(const UnplacedGridItem& item) { return item.hasDefiniteColumnPosition() && item.hasDefiniteRowPosition(); }
+// 2. Process the items locked to a given row.
+inline bool isDefiniteRowPositioned(const UnplacedGridItem& item) { return item.hasDefiniteRowPosition() && !item.hasDefiniteColumnPosition(); }
+// 4. Position the remaining grid items.
+inline bool isAutoPositioned(const UnplacedGridItem& item) { return !item.hasDefiniteRowPosition(); }
 
 }
 }

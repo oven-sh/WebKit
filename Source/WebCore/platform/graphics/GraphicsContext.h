@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
 #include <WebCore/ColorSpace.h>
 #include <WebCore/ControlPart.h>
 #include <WebCore/DashArray.h>
@@ -34,11 +35,11 @@
 #include <WebCore/FontCascade.h>
 #include <WebCore/GraphicsContextState.h>
 #include <WebCore/ImageBufferFormat.h>
-#include <WebCore/ImageDrawingOptions.h>
 #include <WebCore/ImageTypes.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/Pattern.h>
 #include <WebCore/PlatformGraphicsContext.h>
+#include <WebCore/RasterDrawingOptions.h>
 #include <WebCore/RenderingMode.h>
 #include <wtf/Function.h>
 #include <wtf/Noncopyable.h>
@@ -50,9 +51,12 @@ class AffineTransform;
 class Filter;
 class FilterResults;
 class FloatRoundedRect;
+class FreeformGradient;
 class Gradient;
 class ImageBuffer;
+class MeshGradient;
 class Path;
+class SourceImage;
 class SystemImage;
 class TextRun;
 class VideoFrame;
@@ -76,7 +80,7 @@ public:
         No,
         Yes
     };
-    WEBCORE_EXPORT GraphicsContext(IsDeferred = IsDeferred::No, const GraphicsContextState::ChangeFlags& = { }, InterpolationQuality = InterpolationQuality::Default);
+    NODELETE WEBCORE_EXPORT GraphicsContext(IsDeferred = IsDeferred::No, const GraphicsContextState::ChangeFlags& = { }, InterpolationQuality = InterpolationQuality::Default);
     WEBCORE_EXPORT GraphicsContext(IsDeferred, const GraphicsContextState&);
     WEBCORE_EXPORT virtual ~GraphicsContext();
 
@@ -95,26 +99,26 @@ public:
 
     const SourceBrush& fillBrush() const LIFETIME_BOUND { return m_state.fillBrush(); }
     const Color& fillColor() const { return fillBrush().color(); }
-    Gradient* fillGradient() const { return fillBrush().gradient(); }
+    const Gradient* fillGradient() const { return fillBrush().gradient(); }
     const AffineTransform& fillGradientSpaceTransform() const { return fillBrush().gradientSpaceTransform(); }
-    Pattern* fillPattern() const { return fillBrush().pattern(); }
+    const Pattern* fillPattern() const { return fillBrush().pattern(); }
     void setFillBrush(const SourceBrush& brush) { m_state.setFillBrush(brush); didUpdateState(m_state); }
     void setFillColor(const Color& color) { m_state.setFillColor(color); didUpdateState(m_state); }
-    void setFillGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setFillGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
-    void setFillPattern(Ref<Pattern>&& pattern) { m_state.setFillPattern(WTF::move(pattern)); didUpdateState(m_state); }
+    void setFillGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setFillGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
+    void setFillPattern(Ref<const Pattern>&& pattern) { m_state.setFillPattern(WTF::move(pattern)); didUpdateState(m_state); }
 
     WindRule fillRule() const { return m_state.fillRule(); }
     void setFillRule(WindRule fillRule) { m_state.setFillRule(fillRule); didUpdateState(m_state); }
 
     const SourceBrush& strokeBrush() const LIFETIME_BOUND { return m_state.strokeBrush(); }
     const Color& strokeColor() const { return strokeBrush().color(); }
-    Gradient* strokeGradient() const { return strokeBrush().gradient(); }
+    const Gradient* strokeGradient() const { return strokeBrush().gradient(); }
     const AffineTransform& strokeGradientSpaceTransform() const { return strokeBrush().gradientSpaceTransform(); }
-    Pattern* strokePattern() const { return strokeBrush().pattern(); }
+    const Pattern* strokePattern() const { return strokeBrush().pattern(); }
     void setStrokeBrush(const SourceBrush& brush) { m_state.setStrokeBrush(brush); didUpdateState(m_state); }
     void setStrokeColor(const Color& color) { m_state.setStrokeColor(color); didUpdateState(m_state); }
-    void setStrokeGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setStrokeGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
-    void setStrokePattern(Ref<Pattern>&& pattern) { m_state.setStrokePattern(WTF::move(pattern)); didUpdateState(m_state); }
+    void setStrokeGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setStrokeGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
+    void setStrokePattern(Ref<const Pattern>&& pattern) { m_state.setStrokePattern(WTF::move(pattern)); didUpdateState(m_state); }
 
     float strokeThickness() const { return m_state.strokeThickness(); }
     void setStrokeThickness(float thickness) { m_state.setStrokeThickness(thickness); didUpdateState(m_state); }
@@ -159,22 +163,32 @@ public:
 
     bool shadowsIgnoreTransforms() const { return m_state.shadowsIgnoreTransforms(); }
     void setShadowsIgnoreTransforms(bool shadowsIgnoreTransforms) { m_state.setShadowsIgnoreTransforms(shadowsIgnoreTransforms); didUpdateState(m_state); }
-    FloatSize LEGACY_NODELETE platformShadowOffset(const FloatSize&) const;
+    NODELETE FloatSize platformShadowOffset(const FloatSize&) const;
 
     const GraphicsContextState& state() const LIFETIME_BOUND { return m_state; }
     void mergeLastChanges(const GraphicsContextState&);
     void mergeAllChanges(const GraphicsContextState&);
 
+#if USE(CG) || USE(SKIA)
+    // Compatibility function: when all platforms implement lazy state sync, remove this.
+    void didUpdateState(GraphicsContextState&) { }
+#else
     // Called *after* any change to GraphicsContextState; generally used to propagate changes
     // to the platform context's state.
     virtual void didUpdateState(GraphicsContextState&) = 0;
+#endif
 
     void didInvalidatePlatformState(GraphicsContextState::ChangeFlags properties) { m_state.markChanged(properties); }
 
     void updatePlatformContextState() { didUpdateState(m_state); }
 
     WEBCORE_EXPORT virtual void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
-    WEBCORE_EXPORT virtual void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
+    // These return false, doing nothing, when the innermost saved state was not saved for the matching purpose.
+    WEBCORE_EXPORT virtual bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
+
+    // Saves and restores only the CTM, leaving the rest of the state, such as the clip, as it is.
+    WEBCORE_EXPORT virtual void saveTransform();
+    WEBCORE_EXPORT virtual bool restoreTransform();
 
     void unwindStateStack(unsigned count);
     WEBCORE_EXPORT void unwindStateStack();
@@ -182,10 +196,6 @@ public:
     unsigned stackSize() const { return m_stack.size(); }
 
 #if USE(CG)
-    // FIXME: Should these really be public GraphicsContext methods?
-    virtual void applyStrokePattern() = 0;
-    virtual void applyFillPattern() = 0;
-
     // FIXME: Can we make this a why instead of a what, and then have it exist cross-platform?
     virtual bool isCALayerContext() const = 0;
 #endif
@@ -221,8 +231,8 @@ public:
     using RequiresClipToRect = WebCore::RequiresClipToRect;
     virtual void fillRect(const FloatRect&, RequiresClipToRect = RequiresClipToRect::Yes) = 0;
     virtual void fillRect(const FloatRect&, const Color&) = 0;
-    virtual void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) = 0;
-    WEBCORE_EXPORT virtual void fillRect(const FloatRect&, Gradient&);
+    virtual void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) = 0;
+    WEBCORE_EXPORT virtual void fillRect(const FloatRect&, const Gradient&);
     WEBCORE_EXPORT virtual void fillRect(const FloatRect&, const Color&, CompositeOperator, BlendMode = BlendMode::Normal);
     virtual void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) = 0;
     WEBCORE_EXPORT virtual void fillRoundedRect(const FloatRoundedRect&, const Color&, BlendMode = BlendMode::Normal);
@@ -257,29 +267,30 @@ public:
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatRect&, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
 
-    WEBCORE_EXPORT void drawNativeImage(const NativeImage&, FloatPoint destination = { }, ImageDrawingOptions = { });
-    WEBCORE_EXPORT void drawNativeImage(const NativeImage&, const FloatRect& destination, ImageDrawingOptions = { });
-    WEBCORE_EXPORT virtual void drawNativeImage(const NativeImage&, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { }) = 0;
+    WEBCORE_EXPORT void drawNativeImage(const NativeImage&, FloatPoint destination = { }, RasterDrawingOptions = { });
+    WEBCORE_EXPORT void drawNativeImage(const NativeImage&, const FloatRect& destination, RasterDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawNativeImage(const NativeImage&, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions = { }) = 0;
 
     WEBCORE_EXPORT virtual void drawSystemImage(SystemImage&, const FloatRect&);
 
-    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatPoint& destination, ImageDrawingOptions = { });
-    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatRect& destination, ImageDrawingOptions = { });
-    WEBCORE_EXPORT virtual void drawImageBuffer(ImageBuffer&, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { });
+    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatPoint& destination, RasterDrawingOptions = { });
+    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatRect& destination, RasterDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawImageBuffer(ImageBuffer&, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions = { });
 
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatPoint& destination, ImageDrawingOptions = { });
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, ImageDrawingOptions = { });
-    WEBCORE_EXPORT virtual void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { });
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatPoint& destination, RasterDrawingOptions = { });
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, RasterDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions = { });
 
     WEBCORE_EXPORT virtual void drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter&, FilterResults&);
 
-    virtual void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }) = 0;
-    WEBCORE_EXPORT virtual void drawPattern(ImageBuffer&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { });
+    void drawPattern(const SourceImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions = { });
+    virtual void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions = { }) = 0;
+    WEBCORE_EXPORT virtual void drawPattern(ImageBuffer&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions = { });
 
     WEBCORE_EXPORT virtual void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&);
 
 #if ENABLE(VIDEO)
-    WEBCORE_EXPORT virtual void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImageDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, RasterDrawingOptions = { });
 #endif
 
     // Clipping
@@ -292,7 +303,9 @@ public:
     virtual void clipOut(const Path&) = 0;
     WEBCORE_EXPORT virtual void clipOutRoundedRect(const FloatRoundedRect&);
     virtual void clipPath(const Path&, WindRule = WindRule::EvenOdd) = 0;
-    WEBCORE_EXPORT virtual void clipToImageBuffer(ImageBuffer&, const FloatRect&) = 0;
+    // Clips to the path mapped by pathTransform, leaving the CTM unchanged.
+    WEBCORE_EXPORT virtual void clipTransformedPath(const AffineTransform& pathTransform, const Path&, WindRule = WindRule::EvenOdd);
+    WEBCORE_EXPORT virtual void clipToNativeImage(const NativeImage&, const FloatRect&) = 0;
     WEBCORE_EXPORT virtual IntRect clipBounds() const;
 
     // Text
@@ -313,6 +326,9 @@ public:
     // The `lineSegments` defines the start and end offset of each segment along the line.
     virtual void drawLinesForText(const FloatPoint& origin, float thickness, std::span<const FloatSegment> lineSegments, bool isPrinting, bool doubleLines, StrokeStyle) = 0;
     virtual void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) = 0;
+
+    WEBCORE_EXPORT virtual void drawFreeformGradient(FreeformGradient&, const FloatRect& destination);
+    WEBCORE_EXPORT virtual void drawMeshGradient(MeshGradient&, const FloatRect& destination);
 
     // Transparency Layers
 
@@ -360,6 +376,10 @@ public:
 
     virtual bool supportsInternalLinks() const { return false; }
 
+    // Splits the run at its bidi level boundaries and returns the pieces in visual (left to right) order, each in its resolved direction,
+    // which is how drawBidiText paints it.
+    static Vector<TextRun> visuallyOrderedSubruns(const TextRun&);
+
     // Contentful Paint Detection
 
     void setContentfulPaintDetected() { m_contentfulPaintDetected = true; }
@@ -372,11 +392,9 @@ public:
 #endif
 
 protected:
-    static Vector<TextRun> visuallyOrderedSubruns(const TextRun&);
-
     // Returns the interpolation quality a draw operation should use. InterpolationQuality::Default
     // in the options means the context image interpolation quality is used.
-    InterpolationQuality imageInterpolationQualityForOptions(ImageDrawingOptions options) const
+    InterpolationQuality imageInterpolationQualityForOptions(RasterDrawingOptions options) const
     {
         if (options.interpolationQuality() == InterpolationQuality::Default)
             return imageInterpolationQuality();
@@ -389,9 +407,9 @@ protected:
 
     FloatRect computeLineBoundsAndAntialiasingModeForText(const FloatRect&, bool printing, Color&);
 
-    float LEGACY_NODELETE dashedLineCornerWidthForStrokeWidth(float) const;
-    float LEGACY_NODELETE dashedLinePatternWidthForStrokeWidth(float) const;
-    float LEGACY_NODELETE dashedLinePatternOffsetForPatternAndStrokeWidth(float patternWidth, float strokeWidth) const;
+    NODELETE float dashedLineCornerWidthForStrokeWidth(float) const;
+    NODELETE float dashedLinePatternWidthForStrokeWidth(float) const;
+    NODELETE float dashedLinePatternOffsetForPatternAndStrokeWidth(float patternWidth, float strokeWidth) const;
     Vector<FloatPoint> centerLineAndCutOffCorners(bool isVerticalLine, float cornerWidth, FloatPoint point1, FloatPoint point2) const;
 
     struct RectsAndStrokeColor {
@@ -403,6 +421,10 @@ protected:
         Color strokeColor;
     };
     RectsAndStrokeColor computeRectsAndStrokeColorForLinesForText(const FloatPoint& origin, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle);
+
+    // Whether the innermost saved state was saved for the purpose. A restore for another purpose is ignored,
+    // since the platform context did not save its state for the innermost saved state.
+    bool canRestore(GraphicsContextState::Purpose purpose) const { return !m_stack.isEmpty() && m_state.purpose() == purpose; }
 
     GraphicsContextState m_state;
 private:

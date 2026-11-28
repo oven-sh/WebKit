@@ -1,0 +1,4 @@
+# the same program with every mechanism withheld: the callee may do anything, whatever arrives at its operators
+# RUN: link functions mechanisms=none
+# CHECK: function f1 {{*}}returns=anything throws=anything
+# PROGRAM-OF: operators-on-numbers-in-a-callee-neither-throw-nor-allocate.ir

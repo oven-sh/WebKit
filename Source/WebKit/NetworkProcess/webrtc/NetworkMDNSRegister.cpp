@@ -72,13 +72,13 @@ void NetworkMDNSRegister::deref() const
     m_connection->deref();
 }
 
-bool NetworkMDNSRegister::hasRegisteredName(const String& name) const
+String NetworkMDNSRegister::registeredAddress(const String& name) const
 {
-    return m_registeredNames.contains(name);
+    return m_registeredNames.get(name);
 }
 
 #if ENABLE_MDNS
-static HashMap<NetworkMDNSRegister::PendingRegistrationRequestIdentifier, std::unique_ptr<NetworkMDNSRegister::PendingRegistrationRequest>>& LEGACY_NODELETE pendingRegistrationRequestMap()
+NODELETE static HashMap<NetworkMDNSRegister::PendingRegistrationRequestIdentifier, std::unique_ptr<NetworkMDNSRegister::PendingRegistrationRequest>>& pendingRegistrationRequestMap()
 {
     static NeverDestroyed<HashMap<NetworkMDNSRegister::PendingRegistrationRequestIdentifier, std::unique_ptr<NetworkMDNSRegister::PendingRegistrationRequest>>> map;
     return map.get();
@@ -122,7 +122,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
 {
     auto name = makeString(WTF::UUID::createVersion4(), ".local"_s);
 
-    m_registeredNames.add(name);
+    m_registeredNames.add(name, ipAddress);
     m_perDocumentRegisteredNames.ensure(documentIdentifier, [] {
         return Vector<String>();
     }).iterator->value.append(name);
@@ -145,7 +145,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
     } else
         service = iterator->value.get();
 
-    auto ip = inet_addr(ipAddress.utf8().legacyCStringPointer());
+    auto ip = inet_addr(makeUTF8CString(ipAddress).legacyCStringPointer());
 
     // FIXME: Add IPv6 support.
     if (ip == ( in_addr_t)(-1)) {
@@ -166,7 +166,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
         kDNSServiceFlagsUnique,
 #endif
         0,
-        addResult.iterator->value->name.utf8().legacyCStringPointer(),
+        makeUTF8CString(addResult.iterator->value->name).legacyCStringPointer(),
         kDNSServiceType_A,
         kDNSServiceClass_IN,
         4,

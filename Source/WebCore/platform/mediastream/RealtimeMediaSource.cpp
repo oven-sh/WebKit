@@ -80,7 +80,28 @@ struct VideoFrameAdaptor {
 #endif
 };
 
-static RealtimeMediaSource::Type LEGACY_NODELETE toSourceType(CaptureDevice::DeviceType type)
+DisplaySurfaceType toDisplaySurfaceType(CaptureDevice::DeviceType type)
+{
+    switch (type) {
+    case CaptureDevice::DeviceType::Screen:
+        return DisplaySurfaceType::Monitor;
+    case CaptureDevice::DeviceType::Window:
+        return DisplaySurfaceType::Window;
+    case CaptureDevice::DeviceType::BrowserTab:
+        return DisplaySurfaceType::Browser;
+    case CaptureDevice::DeviceType::Microphone:
+    case CaptureDevice::DeviceType::Speaker:
+    case CaptureDevice::DeviceType::Camera:
+    case CaptureDevice::DeviceType::SystemAudio:
+    case CaptureDevice::DeviceType::Canvas:
+    case CaptureDevice::DeviceType::Unknown:
+        break;
+    }
+    ASSERT_NOT_REACHED();
+    return DisplaySurfaceType::Invalid;
+}
+
+NODELETE static RealtimeMediaSource::Type toSourceType(CaptureDevice::DeviceType type)
 {
     switch (type) {
     case CaptureDevice::DeviceType::Microphone:
@@ -90,6 +111,7 @@ static RealtimeMediaSource::Type LEGACY_NODELETE toSourceType(CaptureDevice::Dev
     case CaptureDevice::DeviceType::Canvas:
     case CaptureDevice::DeviceType::Screen:
     case CaptureDevice::DeviceType::Window:
+    case CaptureDevice::DeviceType::BrowserTab:
         return RealtimeMediaSource::Type::Video;
     case CaptureDevice::DeviceType::Unknown:
     case CaptureDevice::DeviceType::Speaker:
@@ -175,15 +197,15 @@ void RealtimeMediaSource::removeVideoFrameObserver(VideoFrameObserver& observer)
 
 void RealtimeMediaSource::addObserver(RealtimeMediaSourceObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.add(observer);
 }
 
 void RealtimeMediaSource::removeObserver(RealtimeMediaSourceObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.remove(observer);
-    if (m_observers.isEmptyIgnoringNullReferences())
+    if (m_observers.computeIsEmpty())
         stopBeingObserved();
 }
 
@@ -226,7 +248,7 @@ void RealtimeMediaSource::setInterruptedForTesting(bool interrupted)
 
 void RealtimeMediaSource::forEachObserver(NOESCAPE const Function<void(RealtimeMediaSourceObserver&)>& apply)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     Ref protectedThis { *this };
     m_observers.forEach(apply);
 }
@@ -247,7 +269,7 @@ void RealtimeMediaSource::notifyMutedObservers()
 
 void RealtimeMediaSource::notifySettingsDidChangeObservers(OptionSet<RealtimeMediaSourceSettings::Flag> flags)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     ++m_settingsCapabilitiesUpdateCount;
     settingsDidChange(flags);
@@ -481,7 +503,7 @@ void RealtimeMediaSource::requestToEnd(RealtimeMediaSourceObserver& callingObser
 
 void RealtimeMediaSource::end(RealtimeMediaSourceObserver* callingObserver)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (m_isEnded)
         return;
@@ -860,7 +882,7 @@ void RealtimeMediaSource::setSizeFrameRateAndZoom(const VideoPresetConstraints& 
         setZoom(*constraints.zoom);
 }
 
-static bool LEGACY_NODELETE booleanSettingFromConstraint(const BooleanConstraint& boolConstraint)
+NODELETE static bool booleanSettingFromConstraint(const BooleanConstraint& boolConstraint)
 {
     bool setting = true;
     boolConstraint.getExact(setting) || boolConstraint.getIdeal(setting);

@@ -1,0 +1,35 @@
+# In front of a loop that stores by name into an object that nobody knows stands the search of the property's address. The site of the store may say it: the code in front asks the site's record, for the structure and for a word of the object's own, and calls the search where it says anything else.
+# function move(to, from, n) { for (let i = 0; i < n; i++) { to.n = from.m; from.m = i; } }  sink(move);
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Load16Z({{*}}offset = 4, AOTInstance_siteCaches
+# CHECK: = Load16Z({{*}}offset = 4, AOTInstance_siteCaches
+# CHECK: = Patch({{*}}Reads:{ObjectFields, NamedProperties}
+# CHECK: = Patch({{*}}Writes:{ObjectFields, NamedProperties}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="move" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v2
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="m" @30
+    PropSet v0, v7 key="n" @40
+    PropSet v1, v4 key="m" @50
+    v10 = Increment v4
+    Jump -> next b1(v10)
+  b3():
+    Return
+}

@@ -30,6 +30,7 @@
 #include "GPUDevice.h"
 #include "InspectorInstrumentation.h"
 #include <WebCore/WebGPUCppAPI.h>
+#include <wtf/Borrow.h>
 #include <wtf/Locker.h>
 #include <wtf/NeverDestroyed.h>
 
@@ -133,7 +134,7 @@ void GPURenderPipeline::updateFragmentShader(const String& source, CompletionHan
     updateShader(source, false, WTF::move(completionHandler));
 }
 
-static bool LEGACY_NODELETE isInspectorHighlightableCanvasFormat(WebGPU::TextureFormat format)
+NODELETE static bool isInspectorHighlightableCanvasFormat(WebGPU::TextureFormat format)
 {
     switch (format) {
     case WebGPU::TextureFormat::Rgba8unorm:
@@ -147,7 +148,7 @@ static bool LEGACY_NODELETE isInspectorHighlightableCanvasFormat(WebGPU::Texture
     }
 }
 
-static bool LEGACY_NODELETE usesBlendConstant(const WebGPU::BlendComponent& component)
+NODELETE static bool usesBlendConstant(const WebGPU::BlendComponent& component)
 {
     return component.srcFactor == WebGPU::BlendFactor::Constant
         || component.srcFactor == WebGPU::BlendFactor::OneMinusConstant
@@ -155,7 +156,7 @@ static bool LEGACY_NODELETE usesBlendConstant(const WebGPU::BlendComponent& comp
         || component.dstFactor == WebGPU::BlendFactor::OneMinusConstant;
 }
 
-static bool LEGACY_NODELETE usesBlendConstant(const std::optional<WebGPU::BlendState>& blendState)
+NODELETE static bool usesBlendConstant(const std::optional<WebGPU::BlendState>& blendState)
 {
     return blendState && (usesBlendConstant(blendState->color) || usesBlendConstant(blendState->alpha));
 }
@@ -188,8 +189,9 @@ void GPURenderPipeline::createPipelineForInspectorHighlight(unsigned canvasColor
     descriptor.vertex.module = *vertexShaderModule;
     descriptor.fragment->module = *fragmentShaderModule;
     bool changedBlendState = false;
-    for (size_t i = 0; i < descriptor.fragment->targets.size() && i < 8; ++i) {
-        auto& target = descriptor.fragment->targets[i];
+    Borrow targets { descriptor.fragment->targets };
+    for (size_t i = 0; i < targets->size() && i < 8; ++i) {
+        auto& target = targets[i];
         if (!(canvasColorAttachmentMask & (1 << i))) {
             // The blend constant is shared by every color attachment in a render pass, so changing it for highlighting must not affect a non-canvas target.
             if (target && usesBlendConstant(target->blend)) {

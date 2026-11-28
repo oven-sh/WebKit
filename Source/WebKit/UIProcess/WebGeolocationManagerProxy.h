@@ -56,12 +56,14 @@ class WebGeolocationManagerProxy : public API::ObjectImpl<API::Object::Type::Geo
 #endif
 {
 public:
+    USING_CAN_MAKE_WEAKPTR(IPC::MessageReceiver);
+
     static ASCIILiteral supplementName();
 
     static Ref<WebGeolocationManagerProxy> create(WebProcessPool*);
     ~WebGeolocationManagerProxy();
 
-    // WebContextSupplement, IPC::MessageReceiver.
+    // WebContextSupplement, IPC::MessageReceiver, CoreLocationGeolocationProvider::Client.
     void ref() const final { API::ObjectImpl<API::Object::Type::GeolocationManager>::ref(); }
     void deref() const final { API::ObjectImpl<API::Object::Type::GeolocationManager>::deref(); }
 
@@ -75,6 +77,8 @@ public:
 
     void webProcessIsGoingAway(WebProcessProxy&);
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
+
+    bool webProcessHasStartedUpdatingLocation(const WebCore::RegistrableDomain&, const WebProcessProxy&) const;
 
 private:
     explicit WebGeolocationManagerProxy(WebProcessPool*);
@@ -113,8 +117,8 @@ private:
 #endif
     };
 
-    bool LEGACY_NODELETE isUpdating(const PerDomainData&) const;
-    bool LEGACY_NODELETE isHighAccuracyEnabled(const PerDomainData&) const;
+    NODELETE bool isUpdating(const PerDomainData&) const;
+    NODELETE bool isHighAccuracyEnabled(const PerDomainData&) const;
     void providerStartUpdating(PerDomainData&, const WebCore::RegistrableDomain&);
     void providerStopUpdating(PerDomainData&);
     void providerSetEnabledHighAccuracy(PerDomainData&, bool enabled);

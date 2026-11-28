@@ -63,23 +63,23 @@ class ExecutableAllocatorBase {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(ExecutableAllocatorBase);
 public:
-    bool LEGACY_NODELETE isValid() const { return false; }
+    NODELETE bool isValid() const { return false; }
 
-    static bool LEGACY_NODELETE underMemoryPressure() { return false; }
+    NODELETE static bool underMemoryPressure() { return false; }
 
-    static double LEGACY_NODELETE memoryPressureMultiplier(size_t) { return 1.0; }
+    NODELETE static double memoryPressureMultiplier(size_t) { return 1.0; }
 
     static void dumpProfile() { }
 
     RefPtr<ExecutableMemoryHandle> allocate(size_t, JITCompilationEffort) { return nullptr; }
 
-    static void LEGACY_NODELETE disableJIT() { };
+    NODELETE static void disableJIT() { };
     
     bool isValidExecutableMemory(const AbstractLocker&, void*) { return false; }
 
-    static size_t LEGACY_NODELETE committedByteCount() { return 0; }
+    NODELETE static size_t committedByteCount() { return 0; }
 
-    Lock& LEGACY_NODELETE getLock() const WTF_RETURNS_LOCK(m_lock)
+    NODELETE Lock& getLock() const WTF_RETURNS_LOCK(m_lock)
     {
         return m_lock;
     }
@@ -94,8 +94,8 @@ private:
 
 #if ENABLE(JIT)
 
-JS_EXPORT_PRIVATE void* LEGACY_NODELETE startOfFixedExecutableMemoryPoolImpl();
-JS_EXPORT_PRIVATE void* LEGACY_NODELETE endOfFixedExecutableMemoryPoolImpl();
+NODELETE JS_EXPORT_PRIVATE void* startOfFixedExecutableMemoryPoolImpl();
+NODELETE JS_EXPORT_PRIVATE void* endOfFixedExecutableMemoryPoolImpl();
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 // Set the language-specific SEH handler invoked when exception dispatch
@@ -336,8 +336,8 @@ class ExecutableAllocator : private ExecutableAllocatorBase {
 public:
     using Base = ExecutableAllocatorBase;
 
-    JS_EXPORT_PRIVATE static ExecutableAllocator& LEGACY_NODELETE singleton();
-    static void LEGACY_NODELETE initialize();
+    NODELETE JS_EXPORT_PRIVATE static ExecutableAllocator& singleton();
+    NODELETE static void initialize();
     static void initializeUnderlyingAllocator();
 
     bool isValid() const;

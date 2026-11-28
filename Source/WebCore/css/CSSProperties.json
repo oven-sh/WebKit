@@ -262,6 +262,7 @@
                 "color-property": true,
                 "color-property-traits-color-custom": true,
                 "color-property-traits-visited-link-color-custom": true,
+                "medium-priority": true,
                 "parser-grammar": "auto | <color>"
             },
             "specification": {
@@ -1772,19 +1773,13 @@
             "initial": "baseline",
             "values": [
                 "baseline",
-                {
-                    "value": "text-bottom",
-                    "status": "unimplemented"
-                },
+                "text-bottom",
                 "alphabetic",
                 "ideographic",
                 "middle",
                 "central",
                 "mathematical",
-                {
-                    "value": "text-top",
-                    "status": "unimplemented"
-                },
+                "text-top",
                 {
                     "value": "after-edge",
                     "status": "deprecated"
@@ -1792,7 +1787,7 @@
                 {
                     "value": "text-after-edge",
                     "status": "deprecated",
-                    "comment": "Should alias to 'text-bottom' once it is implemented."
+                    "comment": "Legacy SVG alias for 'text-bottom'."
                 },
                 {
                     "value": "hanging",
@@ -1805,7 +1800,7 @@
                 {
                     "value": "text-before-edge",
                     "status": "deprecated",
-                    "comment": "Should alias to 'text-top' once it is implemented."
+                    "comment": "Legacy SVG alias for 'text-top'."
                 }
             ],
             "codegen-properties": {
@@ -2974,6 +2969,7 @@
                     "resolver": "bottom-left"
                 },
                 "disables-native-appearance": true,
+                "style-extractor-initial-value-if": "hidesThemeBorderRadius",
                 "computed-style-has-explicitly-set-policy": "all-border-radius",
                 "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "surroundData"],
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.radii"],
@@ -2999,6 +2995,7 @@
                     "resolver": "bottom-right"
                 },
                 "disables-native-appearance": true,
+                "style-extractor-initial-value-if": "hidesThemeBorderRadius",
                 "computed-style-has-explicitly-set-policy": "all-border-radius",
                 "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "surroundData"],
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.radii"],
@@ -3810,6 +3807,25 @@
                 "url": "https://www.w3.org/TR/css3-background/#the-border-width"
             }
         },
+        "border-shape": {
+            "animation-type": "by computed value",
+            "initial": "none",
+            "values": [
+                "none"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssBorderShapeEnabled",
+                "disables-native-appearance": true,
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::BorderShape",
+                "parser-grammar": "none | [ <basic-shape> <geometry-box>? ]{1,2}@(no-single-item-opt)"
+            },
+            "specification": {
+                "category": "css-borders",
+                "url": "https://drafts.csswg.org/css-borders-4/#border-shape-func"
+            }
+        },
         "border-spacing": {
             "animation-type": "discrete",
             "inherited": true,
@@ -3923,6 +3939,25 @@
                 "url": "https://www.w3.org/TR/css3-background/#the-border-color"
             }
         },
+        "-internal-border-radius-percentage-basis": {
+            "animation-type": "not animatable (internal)",
+            "initial": "normal",
+            "values": [
+                "normal",
+                "block-size"
+            ],
+            "codegen-properties": {
+                "computed-style-initial-constexpr": true,
+                "computed-style-storage-path": ["m_nonInheritedFlags"],
+                "computed-style-storage-container": "struct",
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "BorderRadiusPercentageBasis",
+                "computed-style-name-for-methods": "BorderRadiusPercentageBasis",
+                "parser-grammar": "<<values>>",
+                "internal-only": true
+            },
+            "status": "non-standard"
+        },
         "border-top-left-radius": {
             "animation-type": "by computed value",
             "initial": "0px",
@@ -3935,6 +3970,7 @@
                     "resolver": "top-left"
                 },
                 "disables-native-appearance": true,
+                "style-extractor-initial-value-if": "hidesThemeBorderRadius",
                 "computed-style-has-explicitly-set-policy": "all-border-radius",
                 "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "surroundData"],
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.radii"],
@@ -3973,6 +4009,7 @@
                     "resolver": "top-right"
                 },
                 "disables-native-appearance": true,
+                "style-extractor-initial-value-if": "hidesThemeBorderRadius",
                 "computed-style-has-explicitly-set-policy": "all-border-radius",
                 "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "surroundData"],
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.radii"],
@@ -4337,6 +4374,7 @@
                 "none",
                 "content-box",
                 "margin-box",
+                "half-border-box",
                 "stroke-box",
                 "border-box",
                 "fill-box",
@@ -4758,15 +4796,15 @@
                     "border-top-left-radius",
                     "corner-top-left-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-top-left-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-top-right": {
@@ -4775,15 +4813,15 @@
                     "border-top-right-radius",
                     "corner-top-right-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-top-right-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-bottom-right": {
@@ -4792,15 +4830,15 @@
                     "border-bottom-right-radius",
                     "corner-bottom-right-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-bottom-right-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-bottom-left": {
@@ -4809,15 +4847,15 @@
                     "border-bottom-left-radius",
                     "corner-bottom-left-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-bottom-left-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-start-start": {
@@ -4826,15 +4864,15 @@
                     "border-start-start-radius",
                     "corner-start-start-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-start-start-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-start-end": {
@@ -4843,15 +4881,15 @@
                     "border-start-end-radius",
                     "corner-start-end-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-start-end-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-end-start": {
@@ -4860,15 +4898,15 @@
                     "border-end-start-radius",
                     "corner-end-start-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-end-start-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-end-end": {
@@ -4877,170 +4915,190 @@
                     "border-end-end-radius",
                     "corner-end-end-shape"
                 ],
-                "parser-function": "consumeCornerSingleShorthand",
-                "shorthand-style-extractor-pattern": "CornerSingle",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "normal | [ <'border-end-end-radius'> ]",
+                "parser-grammar-unused": "<'corner-top-left-shape'> || <'border-top-left-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-top": {
             "codegen-properties": {
                 "longhands": [
-                    "border-top-left-radius", "corner-top-left-shape",
-                    "border-top-right-radius", "corner-top-right-shape"
+                    "border-top-left-radius",
+                    "border-top-right-radius",
+                    "corner-top-left-shape",
+                    "corner-top-right-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-right": {
             "codegen-properties": {
                 "longhands": [
-                    "border-top-right-radius", "corner-top-right-shape",
-                    "border-bottom-right-radius", "corner-bottom-right-shape"
+                    "border-top-right-radius",
+                    "border-bottom-right-radius",
+                    "corner-top-right-shape",
+                    "corner-bottom-right-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-bottom": {
             "codegen-properties": {
                 "longhands": [
-                    "border-bottom-left-radius", "corner-bottom-left-shape",
-                    "border-bottom-right-radius", "corner-bottom-right-shape"
+                    "border-bottom-left-radius",
+                    "border-bottom-right-radius",
+                    "corner-bottom-left-shape",
+                    "corner-bottom-right-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-left": {
             "codegen-properties": {
                 "longhands": [
-                    "border-top-left-radius", "corner-top-left-shape",
-                    "border-bottom-left-radius", "corner-bottom-left-shape"
+                    "border-top-left-radius",
+                    "border-bottom-left-radius",
+                    "corner-top-left-shape",
+                    "corner-bottom-left-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-block-start": {
             "codegen-properties": {
                 "longhands": [
-                    "border-start-start-radius", "corner-start-start-shape",
-                    "border-start-end-radius", "corner-start-end-shape"
+                    "border-start-start-radius",
+                    "border-start-end-radius",
+                    "corner-start-start-shape",
+                    "corner-start-end-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-block-end": {
             "codegen-properties": {
                 "longhands": [
-                    "border-end-start-radius", "corner-end-start-shape",
-                    "border-end-end-radius", "corner-end-end-shape"
+                    "border-end-start-radius",
+                    "border-end-end-radius",
+                    "corner-end-start-shape",
+                    "corner-end-end-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-inline-start": {
             "codegen-properties": {
                 "longhands": [
-                    "border-start-start-radius", "corner-start-start-shape",
-                    "border-end-start-radius", "corner-end-start-shape"
+                    "border-start-start-radius",
+                    "border-end-start-radius",
+                    "corner-start-start-shape",
+                    "corner-end-start-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner-inline-end": {
             "codegen-properties": {
                 "longhands": [
-                    "border-start-end-radius", "corner-start-end-shape",
-                    "border-end-end-radius", "corner-end-end-shape"
+                    "border-start-end-radius",
+                    "border-end-end-radius",
+                    "corner-start-end-shape",
+                    "corner-end-end-shape"
                 ],
-                "parser-function": "consumeCornerPairShorthand",
-                "shorthand-style-extractor-pattern": "CornerPair",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-top-shape'> || <'border-top-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "corner": {
             "codegen-properties": {
                 "longhands": [
-                    "border-top-left-radius", "corner-top-left-shape",
-                    "border-top-right-radius", "corner-top-right-shape",
-                    "border-bottom-right-radius", "corner-bottom-right-shape",
-                    "border-bottom-left-radius", "corner-bottom-left-shape"
+                    "border-top-left-radius",
+                    "border-top-right-radius",
+                    "border-bottom-right-radius",
+                    "border-bottom-left-radius",
+                    "corner-top-left-shape",
+                    "corner-top-right-shape",
+                    "corner-bottom-right-shape",
+                    "corner-bottom-left-shape"
                 ],
-                "parser-function": "consumeCornerQuadShorthand",
-                "shorthand-style-extractor-pattern": "CornerQuad",
+                "parser-function": "consumeCornerShorthand",
+                "shorthand-style-extractor-pattern": "CornerShapeAndRadius",
                 "settings-flag": "cssCornersShorthandEnabled",
-                "parser-grammar-unused": "[ normal | <length-percentage [0,inf]> ]#",
+                "parser-grammar-unused": "<'corner-shape'> || <'border-radius'>",
                 "parser-grammar-unused-reason": "Needs support for hand-written shorthand grammars."
             },
             "specification": {
                 "category": "css-borders",
-                "url": "https://drafts.csswg.org/css-borders-4/#corner-shaping"
+                "url": "https://drafts.csswg.org/css-borders-4/#corner-shorthands"
             }
         },
         "counter-increment": {
@@ -5250,14 +5308,24 @@
             "initial": "auto",
             "values": [
                 "auto",
+                "text-bottom",
                 "ideographic",
                 "alphabetic",
                 "hanging",
                 "mathematical",
                 "central",
                 "middle",
-                "text-before-edge",
-                "text-after-edge"
+                "text-top",
+                {
+                    "value": "text-before-edge",
+                    "status": "deprecated",
+                    "comment": "Legacy SVG alias for 'text-top'."
+                },
+                {
+                    "value": "text-after-edge",
+                    "status": "deprecated",
+                    "comment": "Legacy SVG alias for 'text-bottom'."
+                }
             ],
             "codegen-properties": {
                 "computed-style-storage-path": ["m_svgData", "nonInheritedFlags"],
@@ -8280,16 +8348,16 @@
             }
         },
         "page": {
-            "animation-type": "not animatable (needs triage)",
-            "animation-type-comment": "Current spec animation type is 'discrete'",
-            "initial": "0",
+            "animation-type": "discrete",
+            "initial": "auto",
             "values": [
                 "auto"
             ],
             "codegen-properties": {
-                "skip-style-builder": true,
-                "skip-style-extractor": true,
-                "skip-computed-style": true,
+                "computed-style-name-for-methods": "PageName",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::PageName",
                 "parser-grammar": "auto | <custom-ident>"
             },
             "specification": {
@@ -8745,7 +8813,8 @@
                 "computed-style-storage-path": ["m_svgData", "strokeData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::SVGStrokeDashoffset",
-                "parser-grammar": "<length-percentage> | <number>"
+                "parser-grammar": "<number> | <length-percentage>",
+                "parser-grammar-comment": "Current spec grammar is '<length-percentage> | <number>'. <number> goes first so that 0 is a <number> (css-values-4 lengths)."
             },
             "specification": {
                 "category": "svg",
@@ -8873,7 +8942,8 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::StrokeWidth",
-                "parser-grammar": "<length-percentage [0,inf]> | <number [0,inf]>",
+                "parser-grammar": "<number [0,inf]> | <length-percentage [0,inf]>",
+                "parser-grammar-comment": "Current spec grammar is '<length-percentage [0,inf]> | <number [0,inf]>'. <number> goes first so that 0 is a <number> (css-values-4 lengths).",
                 "applies-to-highlight-pseudo-elements": "yes"
             },
             "status": "supported",
@@ -11079,7 +11149,7 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "miscData", "flexibleBox"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::FlexBasis",
-                "parser-grammar": "auto | content | <width-or-height-keyword> | <calc-size> | <length-percentage [0,inf]>"
+                "parser-grammar": "auto | content | <width-or-height-keyword> | <calc-size> | <fit-content-size> | <stretch-size> | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-flexbox",
@@ -13155,9 +13225,6 @@
                     "scroll-margin-bottom",
                     "scroll-margin-left"
                 ],
-                "aliases": [
-                    "scroll-snap-margin"
-                ],
                 "shorthand-pattern": "CoalescingQuad",
                 "parser-grammar-unused": "<'scroll-margin-top'>{1,4}",
                 "parser-grammar-unused-reason": "Needs support for shorthand grammars."
@@ -13172,9 +13239,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-bottom"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "bottom"
@@ -13195,9 +13259,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-left"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "left"
@@ -13218,9 +13279,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-right"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "right"
@@ -13241,9 +13299,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-top"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "top"
@@ -15463,8 +15518,24 @@
                 "url": "https://drafts.csswg.org/css-values-5/#calc-size"
             }
         },
+        "<fit-content-size>": {
+            "grammar": "fit-content( <length-percentage [0,inf]> )@(settings-flag=cssFitContentFunctionEnabled)",
+            "exported": true,
+            "specification": {
+                "category": "css-sizing",
+                "url": "https://drafts.csswg.org/css-sizing-4/#funcdef-width-fit-content"
+            }
+        },
+        "<stretch-size>": {
+            "grammar": "stretch( <length-percentage [0,inf]> )@(settings-flag=cssStretchFunctionEnabled)",
+            "exported": true,
+            "specification": {
+                "category": "css-sizing",
+                "url": "https://drafts.csswg.org/css-sizing-4/#funcdef-width-stretch"
+            }
+        },
         "<width-or-height>": {
-            "grammar":  "auto | <width-or-height-keyword> | <calc-size> | <length-percentage [0,inf] anchor-size=allowed>",
+            "grammar":  "auto | <width-or-height-keyword> | <calc-size> | <fit-content-size> | <stretch-size> | <length-percentage [0,inf] anchor-size=allowed>",
             "exported": true,
             "comment": "Doesn't match current specification",
             "specification": {
@@ -15473,7 +15544,7 @@
             }
         },
         "<max-width-or-height>": {
-            "grammar": "none | <width-or-height-keyword> | <calc-size> | <length-percentage [0,inf] anchor-size=allowed>",
+            "grammar": "none | <width-or-height-keyword> | <calc-size> | <fit-content-size> | <stretch-size> | <length-percentage [0,inf] anchor-size=allowed>",
             "comment": "Doesn't match current specification",
             "specification": {
                 "category": "css-sizing",
@@ -15540,15 +15611,16 @@
                 "url": "https://www.w3.org/TR/compositing-1/#ltblendmodegt"
             }
         },
-        "<box>": {
-            "grammar": "border-box | padding-box | content-box",
-            "specification": {
-                "category": "css-backgrounds",
-                "url": "https://www.w3.org/TR/css-backgrounds-3/#typedef-box"
-            }
+        "<visual-box>": {
+          "grammar": "border-box | content-box | padding-box",
+          "exported": true,
+          "specification": {
+            "category": "css-box-4",
+            "url": "https://drafts.csswg.org/css-box-4/#typedef-visual-box"
+          }
         },
         "<shape-box>": {
-            "grammar": "<box> | margin-box",
+            "grammar": "<visual-box> | margin-box | half-border-box",
             "exported": true,
             "specification": {
                 "category": "css-shapes",
@@ -15562,14 +15634,6 @@
                 "category": "css-masking",
                 "url": "https://drafts.fxtf.org/css-masking-1/#typedef-geometry-box"
             }
-        },
-        "<visual-box>": {
-          "grammar": "border-box | content-box | padding-box",
-          "exported": true,
-          "specification": {
-            "category": "css-box-4",
-            "url": "https://drafts.csswg.org/css-box-4/#typedef-visual-box"
-          }
         },
         "<clip-source>": {
             "grammar": "<url>",
@@ -15621,7 +15685,7 @@
             }
         },
         "<-webkit-origin-box>": {
-            "grammar": "<box> | border | content | padding | -webkit-text",
+            "grammar": "<visual-box> | border | content | padding | -webkit-text",
             "status": "non-standard"
         },
         "<-webkit-clip-box>": {
@@ -15653,7 +15717,7 @@
             }
         },
         "<single-background-clip>": {
-            "grammar": "<box> | border-area | text | -webkit-text",
+            "grammar": "<visual-box> | [ border-area || text ]@(type=CSSValuePair) | -webkit-text",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -15662,7 +15726,7 @@
             "comment": "-webkit-text is non-standard."
         },
         "<single-background-origin>": {
-            "grammar": "<box>",
+            "grammar": "<visual-box>",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -15698,7 +15762,7 @@
             "comment": "Internally used to represent vertical part of standard <bg-position>"
         },
         "<single-mask-clip>": {
-            "grammar": "<box> | no-clip",
+            "grammar": "<visual-box> | no-clip",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -15707,7 +15771,7 @@
             "comment": "Out of spec. 'mask-clip' is currently defined to '[ <coord-box> | no-clip ]#'."
         },
         "<single-mask-origin>": {
-            "grammar": "<box> | border | content | padding | -webkit-text",
+            "grammar": "<visual-box> | border | content | padding | -webkit-text",
             "exported": true,
             "specification": {
                 "category": "css-masking",

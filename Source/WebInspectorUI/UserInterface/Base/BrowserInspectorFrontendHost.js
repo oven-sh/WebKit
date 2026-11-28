@@ -305,6 +305,10 @@ if (!window.InspectorFrontendHost) {
         {
         }
 
+        requestDisableSiteIsolation()
+        {
+        }
+
         getCurrentX(context)
         {
             return 0.0;

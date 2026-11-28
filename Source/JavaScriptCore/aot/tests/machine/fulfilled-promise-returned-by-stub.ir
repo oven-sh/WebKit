@@ -1,0 +1,24 @@
+# async function load(x) { return 1; }  sink(load);
+# One stub makes, fulfills and returns the promise. It returns the value itself where the caller does nothing with the result but await it.
+# RUN: bytes f1:Body mechanisms=all
+# REQUIRES: x86_64
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Function
+# CHECK-NOT: Call Stub NewPromise
+# CHECK: Jump Stub ReturnFulfilledPromise
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}

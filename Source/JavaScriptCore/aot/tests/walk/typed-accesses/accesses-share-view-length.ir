@@ -1,0 +1,37 @@
+# var view = new Int32Array(4); function sum(i, j) { return (view[i] + view[j]) | 0; }
+# Both reads go to the view of one variable and nothing in between runs other code: its length is read once, off the mirror of the variable.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetMirroredLength {{*}} variable=g0
+# CHECK: [[length]]: {{*}} = NarrowInteger
+# CHECK: = IsBelowLength {{*}}, [[length]]
+# CHECK: = IsBelowLength {{*}}, [[length]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="sum" module=m0 declared={type=anything} initialization=Function function=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=4
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v5, -, v6
+    Return v7
+}
+function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = GetModuleVariable variable=g0
+    v3 = ElemGet v2, v0
+    v4 = GetModuleVariable variable=g0
+    v5 = ElemGet v4, v1
+    v6 = Add v3, v5
+    v7 = Integer
+    v8 = BitOr v6, v7
+    Return v8
+}

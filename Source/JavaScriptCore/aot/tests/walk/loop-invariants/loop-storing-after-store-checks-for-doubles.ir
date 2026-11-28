@@ -1,0 +1,61 @@
+# function fill(list, s) { for (let k = 1; k < 6; k++) { list[k] = s * 0.5; list[k - 1] = s * 0.25; } return list; }
+# The second number may be NaN, which leaves the iteration, and what the first has stored is put back then. A store that goes by the kind of its list is not put back, so there was no version of the loop.
+# RUN(VERSION): walk f1 mechanisms=all
+# VERSION: = HasArrayStorage {{*}} arrayStorage=Double [isWritable]
+# VERSION: PutDoubleIndex
+# VERSION: PutDoubleIndex
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 0.75,0.75,0.75,0.75,0.75,1.5
+# SHELL: NaN,NaN,NaN,NaN,NaN,NaN
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Double number=0.5
+    v4 = Double number=1.5
+    v5 = Double number=2.5
+    v6 = Double number=3.5
+    v7 = Double number=4.5
+    v8 = Double number=5.5
+    v9 = NewArray v3, v4, v5, v6, v7, v8
+    v10 = Integer integer=3
+    v11 = Call v0, -, v9, v10 calleeName="fill"
+    v12 = Call v2, -, v11 calleeName="sink"
+    v13 = Double number=-Infinity
+    v14 = Integer
+    v15 = Mul v13, v14
+    v16 = Call v0, -, v9, v15 calleeName="fill"
+    v17 = Call v2, -, v16 calleeName="sink"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Integer integer=6
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Double number=0.5
+    v9 = Mul v1, v8
+    ElemSet v0, v4, v9 mode=Sloppy
+    v11 = Integer integer=1
+    v12 = Sub v4, v11
+    v13 = Double number=0.25
+    v14 = Mul v1, v13
+    ElemSet v0, v12, v14 mode=Sloppy
+    v16 = Increment v4
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v17)
+  b3():
+    Return v0
+}

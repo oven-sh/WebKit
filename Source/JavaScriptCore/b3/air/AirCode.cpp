@@ -89,7 +89,11 @@ Code::Code(Procedure& proc)
             RegisterSet all = bank == GP ? RegisterSet::allGPRs() : RegisterSet::allFPRs();
             all.exclude(RegisterSet::stackRegisters());
             all.exclude(RegisterSet::reservedHardwareRegisters());
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            all.remove(extendedOffsetAddrRegister());
+#endif
             auto calleeSave = RegisterSet::calleeSaveRegisters();
+            calleeSave.exclude(m_policy.registers.unsavedCalleeSaves);
             calleeSave.merge(m_policy.registers.savedByCallee);
             all.forEach(
                 [&] (Reg reg) {

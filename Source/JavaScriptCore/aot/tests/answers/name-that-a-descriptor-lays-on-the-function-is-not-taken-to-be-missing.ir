@@ -1,0 +1,71 @@
+# function Counter(step) { this.step = step; }
+# var described = { key: "of", value: function of(step) { return new Counter(step); } };   described.configurable = true;
+# Object.defineProperty(Counter, described.key, described);
+# let total = 0;   for (let i = 0; i < count; i++) total += Counter.of(i & 3).step;   print(total);
+# RUN(ANSWER): run-in-shell globalThis.count = 10;
+# ANSWER: 13
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key="step" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 fields=[{key="key" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="of"
+    v3 = NewObject layout=L1
+    PropDefine v3, v2 key="key"
+    v5 = NewClosure v1 function=f2
+    PropDefine v3, v5 key="value"
+    v7 = FinishObject v3
+    v8 = Boolean boolean=true
+    PropSet v7, v8 key="configurable"
+    v10 = PropGet v7 key="key"
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = Builtin builtin=Object
+    v13 = Call v11, v12, v1, v10, v7 calleeName="Object.defineProperty"
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="count" [isFreeName]
+    v16 = Builtin builtin=Number
+    v17 = Call v16, -, v15 calleeName="Number"
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Integer
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Integer
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v20, v22)
+  b1(v23, v24):
+    LoopHint
+    v26 = Less v24, v18
+    Branch v26 -> taken b2(), notTaken b3()
+  b2():
+    v27 = PropGet v1 key="of"
+    v28 = Integer integer=3
+    v29 = BitAnd v24, v28
+    v30 = Call v27, v1, v29 calleeKey="of" calleeName="Counter.of"
+    v31 = PropGet v30 key="step"
+    v32 = Add v23, v31
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Increment v24
+    v35 = Convert v34 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v33, v35)
+  b3():
+    v36 = PropGet v14 key="print" [isFreeName]
+    v37 = Call v36, -, v23
+    v38 = Undefined
+    Return v38
+}
+function f1 name="Counter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="step"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="of" module=m0 flags=[HasExplicitName] length=1 captures=[{type=f1 flags=[IsFromCompiler] variableName="Counter"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: f1, v1: anything):
+    v2 = Construct v0, -, v1 calleeName="Counter"
+    Return v2
+}

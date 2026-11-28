@@ -1,0 +1,87 @@
+# const depth = Symbol("depth");
+# const width = Symbol("width");
+# function pick() { const got = id(width); return typeof got === "symbol" ? got : depth; }
+# function reader() { const chosen = pick(); return box => box[chosen]; }
+# const box = { [depth]: "deep", [width]: "wide" };
+# print(reader()(box));
+# print("went on");
+# The same as a-key-that-is-not-the-symbol-that-link-names-goes-by-value.ir, with a captured variable as the key.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So nothing passes the program's test for a symbol, and `depth` is the only symbol that Link names. The program used to print "deep" instead of "wide".
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: wide
+# ALL-NEXT: went on
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: wide
+# CALLS-NEXT: went on
+
+layout L0 module=m0 fields=[{key=symbol("depth")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("width")@m0:1 declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="pick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="depth" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="width" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=Symbol
+    v3 = String string="depth"
+    v4 = Call v2, -, v3 calleeName="Symbol" callNumber=0
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=Symbol
+    v7 = String string="width"
+    v8 = Call v6, -, v7 calleeName="Symbol" callNumber=1
+    PutModuleVariable v8 variable=g2
+    v10 = ToPropertyKey v4
+    v11 = String string="deep"
+    v12 = NewObject layout=L0
+    ElemDefine v12, v10, v11
+    v14 = ToPropertyKey v8
+    v15 = String string="wide"
+    ElemDefine v12, v14, v15
+    v17 = FinishObject v12
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="print" [isFreeName]
+    v20 = Call v1 calleeName="reader"
+    v21 = Call v20, -, v17
+    v22 = Call v19, -, v21 calleeName="print"
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="print" [isFreeName]
+    v25 = String string="went on"
+    v26 = Call v24, -, v25 calleeName="print"
+    v27 = Undefined
+    Return v27
+}
+function f1 name="pick" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="id" [isFreeName]
+    v2 = GetModuleVariable variable=g2
+    v3 = CheckInitialized v2 name="width"
+    v4 = Call v1, -, v3 calleeName="id"
+    v5 = TypeTest v4 testedType=symbol
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    v7 = NarrowByTest v4, v6
+    Jump -> next b3(v7)
+  b2(v8):
+    v9 = GetModuleVariable variable=g1
+    v10 = CheckInitialized v9 name="depth"
+    Jump -> next b3(v10)
+  b3(v11):
+    Return v11
+}
+function f2 name="reader" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="pick"
+    v2 = NewClosure v1 function=f3
+    Return v2
+}
+function f3 module=m0 kind=Arrow length=1 captures=[{type=anything variableName="chosen"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|object):
+    v2 = ElemGet v1, v0
+    Return v2
+}
+entry module=m0

@@ -437,6 +437,7 @@ private:
         OP3_ROUNDSD_VsdWsdIb    = 0x0B,
         OP3_VPBLENDW_VxHxWxIb   = 0x0E,
         OP3_PALIGNR_VdqWdqIb    = 0x0F,
+        OP3_VCVTPH2PS_VxWx      = 0x13,
         OP3_PEXTRB_MbVdqIb      = 0x14,
         OP3_PEXTRW_MwVdqIb      = 0x15,
         OP3_PEXTRD_EyVdqIb      = 0x16,
@@ -446,6 +447,7 @@ private:
         OP3_VBROADCASTSD_VxWd   = 0x19,
         OP3_PABSB_VdqWdq        = 0x1C,
         OP3_PABSW_VdqWdq        = 0x1D,
+        OP3_VCVTPS2PH_WxVxIb    = 0x1D,
         OP3_PABSD_VdqWdq        = 0x1E,
         OP3_VPMOVSXBW_VxUx      = 0x20,
         OP3_PINSRB_VdqRdqpIb    = 0x20,
@@ -553,6 +555,7 @@ private:
 
         GROUP14_OP_PSLLD = 6,
         GROUP14_OP_PSLLQ = 6,
+        GROUP14_OP_PSLLW = 6,
 
         GROUP16_OP_PREFETCHT0 = 1,
         GROUP14_OP_PSRAQ = 4,
@@ -843,12 +846,12 @@ public:
 
     void andb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_AND_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_AND_EvGb, src, base, offset);
     }
 
     void andb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_AND_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_AND_EvGb, src, base, index, scale, offset);
     }
 
     void andl_ir(int imm, RegisterID dst)
@@ -1157,12 +1160,12 @@ public:
 
     void orb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_OR_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_OR_EvGb, src, base, offset);
     }
 
     void orb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_OR_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_OR_EvGb, src, base, index, scale, offset);
     }
 
     void orl_ir(int imm, RegisterID dst)
@@ -1337,12 +1340,12 @@ public:
 
     void subb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_SUB_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_SUB_EvGb, src, base, offset);
     }
 
     void subb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_SUB_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_SUB_EvGb, src, base, index, scale, offset);
     }
 
     void subl_ir(int imm, RegisterID dst)
@@ -1358,7 +1361,18 @@ public:
             m_formatter.immediate32(imm);
         }
     }
-    
+
+    void sbbl_ir(int imm, RegisterID dst)
+    {
+        if (CAN_SIGN_EXTEND_8_32(imm)) {
+            m_formatter.oneByteOp(OP_GROUP1_EvIb, GROUP1_OP_SBB, dst);
+            m_formatter.immediate8(imm);
+        } else {
+            m_formatter.oneByteOp(OP_GROUP1_EvIz, GROUP1_OP_SBB, dst);
+            m_formatter.immediate32(imm);
+        }
+    }
+
     void subl_im(int imm, int offset, RegisterID base)
     {
         if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -1573,12 +1587,12 @@ public:
 
     void xorb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_XOR_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_XOR_EvGb, src, base, offset);
     }
 
     void xorb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_XOR_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_XOR_EvGb, src, base, index, scale, offset);
     }
 
     void xorb_im(int imm, int offset, RegisterID base)
@@ -2004,6 +2018,11 @@ public:
         m_formatter.oneByteOp(OP_CMP_GvEv, src, base, offset);
     }
 
+    void cmpl_mr(int offset, RegisterID base, RegisterID index, int scale, RegisterID src)
+    {
+        m_formatter.oneByteOp(OP_CMP_GvEv, src, base, index, scale, offset);
+    }
+
     void cmpl_ir(int imm, RegisterID dst)
     {
         if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -2082,6 +2101,11 @@ public:
     void cmpq_mr(int offset, RegisterID base, RegisterID src)
     {
         m_formatter.oneByteOp64(OP_CMP_GvEv, src, base, offset);
+    }
+
+    void cmpq_mr(int offset, RegisterID base, RegisterID index, int scale, RegisterID src)
+    {
+        m_formatter.oneByteOp64(OP_CMP_GvEv, src, base, index, scale, offset);
     }
 
     void cmpq_ir(int imm, RegisterID dst)
@@ -2560,6 +2584,15 @@ public:
         // 66 0F 38 00 /r PSHUFB xmm1, xmm2/m128 | SSSE3
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, OP3_PSHUFB_VdqWdq, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void palignr_i8rr(uint8_t bytes, XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/palignr
+        // 66 0F 3A 0F /r ib PALIGNR xmm1, xmm2/m128, imm8 | SSSE3
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_3A, OP3_PALIGNR_VdqWdqIb, (RegisterID)vd, (RegisterID)vn);
+        m_formatter.immediate8(bytes);
     }
 
     void pshuflw_i8rr(uint8_t controlBits, XMMRegisterID vn, XMMRegisterID vd)
@@ -3577,6 +3610,41 @@ public:
         m_formatter.oneByteOp64RIPRelative(OP_MOV_GvEv, dst);
     }
 
+    void cmpq_rip(RegisterID left)
+    {
+        m_formatter.oneByteOp64RIPRelative(OP_CMP_GvEv, left);
+    }
+
+    void movsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_MOVSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void addsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_ADDSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void subsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_SUBSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void mulsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_MULSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void divsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_DIVSD_VsdWsd, (RegisterID)dst);
+    }
+
     // Flow control:
 
     AssemblerLabel call()
@@ -4068,6 +4136,13 @@ public:
         m_formatter.immediate8(bytes);
     }
 
+    void psllw_i8r(uint8_t shift, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PSRLW_UdqIb, GROUP14_OP_PSLLW, (RegisterID)dst);
+        m_formatter.immediate8(shift);
+    }
+
     void psrlw_i8r(uint8_t shift, XMMRegisterID dst)
     {
         m_formatter.prefix(PRE_SSE_66);
@@ -4107,6 +4182,12 @@ public:
     {
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.twoByteOp(OP2_PCMPEQB_VdqWdq, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void pcmpeqw_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PCMPEQW_VdqWdq, (RegisterID)dst, (RegisterID)src);
     }
 
     void subsd_rr(XMMRegisterID src, XMMRegisterID dst)
@@ -4570,6 +4651,16 @@ public:
         m_formatter.immediate8(laneIndex);
     }
 
+    void vpinsrw_i8mrr(uint8_t laneIndex, int offset, RegisterID base, RegisterID index, int scale, XMMRegisterID xmm2, XMMRegisterID xmm1)
+    {
+        ASSERT(laneIndex < 8);
+        // https://www.felixcloutier.com/x86/pinsrw
+        // VEX.128.66.0F.W0 C4 /r ib VPINSRW xmm1, xmm2, r32/m16, imm8
+        // B    NA    ModRM:reg (w)    VEX.vvvv (r)    ModRM:r/m (r)    imm8
+        m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_66, OP2_PINSRW_VdqRdqp, (RegisterID)xmm1, (RegisterID)xmm2, offset, base, index, scale);
+        m_formatter.immediate8(laneIndex);
+    }
+
     void vpinsrw_i8rrr(uint8_t laneIndex, RegisterID rm, XMMRegisterID xmm2, XMMRegisterID xmm1)
     {
         ASSERT(laneIndex < 8);
@@ -4831,6 +4922,16 @@ public:
         m_formatter.immediate8(laneIndex);
     }
 
+    void vpextrw_i8rm(uint8_t laneIndex, XMMRegisterID src, int offset, RegisterID base, RegisterID index, int scale)
+    {
+        // https://www.felixcloutier.com/x86/pextrw
+        // VEX.128.66.0F3A.W0 15 /r ib VPEXTRW reg/m16, xmm2, imm8
+        // B    NA    ModRM:r/m (w)    ModRM:reg (r)    imm8    NA
+        ASSERT(laneIndex < 8);
+        m_formatter.vexNdsLigThreeByteOp(PRE_SSE_66, VexImpliedBytes::ThreeBytesOp3A, VexW::W0, OP3_PEXTRW_MwVdqIb, (RegisterID)src, (RegisterID)0, offset, base, index, scale);
+        m_formatter.immediate8(laneIndex);
+    }
+
     void vpextrd_i8rr(uint8_t laneIndex, XMMRegisterID vn, RegisterID rd)
     {
         // https://www.felixcloutier.com/x86/pextrb:pextrd:pextrq
@@ -4903,6 +5004,15 @@ public:
         // VEX.128.F2.0F.WIG 70 /r ib VPSHUFLW xmm1, xmm2/m128, imm8
         // A    NA    ModRM:reg (w)    ModRM:r/m (r)    imm8    NA
         m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F2, OP2_PSHUFLW_VdqWdqIb, (RegisterID)xmm1, (RegisterID)0, (RegisterID)xmm2);
+        m_formatter.immediate8(controlBits);
+    }
+
+    void vpshufhw_i8rr(uint8_t controlBits, XMMRegisterID xmm2, XMMRegisterID xmm1)
+    {
+        // https://www.felixcloutier.com/x86/pshufhw
+        // VEX.128.F3.0F.WIG 70 /r ib VPSHUFHW xmm1, xmm2/m128, imm8
+        // A    NA    ModRM:reg (w)    ModRM:r/m (r)    imm8    NA
+        m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F3, OP2_PSHUFHW_VdqWdqIb, (RegisterID)xmm1, (RegisterID)0, (RegisterID)xmm2);
         m_formatter.immediate8(controlBits);
     }
 
@@ -5743,6 +5853,23 @@ public:
         // VEX.128.0F.WIG 5A /r VCVTPS2PD xmm1, xmm2/m64
         // A    NA    ModRM:reg (w)    ModRM:r/m (r)    NA    NA
         m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_00, OP2_CVTPS2PD_VsdWsd, (RegisterID)xmm1, (RegisterID)0, (RegisterID)xmm2);
+    }
+
+    void vcvtph2ps_rr(XMMRegisterID xmm2, XMMRegisterID xmm1)
+    {
+        // https://www.felixcloutier.com/x86/vcvtph2ps
+        // VEX.128.66.0F38.W0 13 /r VCVTPH2PS xmm1, xmm2/m64
+        // A    NA    ModRM:reg (w)    ModRM:r/m (r)    NA    NA
+        m_formatter.vexNdsLigThreeByteOp(PRE_SSE_66, VexImpliedBytes::ThreeBytesOp38, VexW::W0, OP3_VCVTPH2PS_VxWx, (RegisterID)xmm1, (RegisterID)0, (RegisterID)xmm2);
+    }
+
+    void vcvtps2ph_i8rr(RoundingType rounding, XMMRegisterID xmm2, XMMRegisterID xmm1)
+    {
+        // https://www.felixcloutier.com/x86/vcvtps2ph
+        // VEX.128.66.0F3A.W0 1D /r ib VCVTPS2PH xmm1/m64, xmm2, imm8
+        // A    NA    ModRM:r/m (w)    ModRM:reg (r)    imm8    NA
+        m_formatter.vexNdsLigThreeByteOp(PRE_SSE_66, VexImpliedBytes::ThreeBytesOp3A, VexW::W0, OP3_VCVTPS2PH_WxVxIb, (RegisterID)xmm2, (RegisterID)0, (RegisterID)xmm1);
+        m_formatter.immediate8(static_cast<uint8_t>(rounding));
     }
 
     void vpacksswb_rrr(XMMRegisterID xmm3, XMMRegisterID xmm2, XMMRegisterID xmm1)
@@ -6658,7 +6785,7 @@ public:
     // writable region of memory; to modify the code in an execute-only execuable
     // pool the 'repatch' and 'relink' methods should be used.
 
-    void linkJump(AssemblerLabel from, AssemblerLabel to)
+    ALWAYS_INLINE void linkJump(AssemblerLabel from, AssemblerLabel to)
     {
         ASSERT(from.isSet());
         ASSERT(to.isSet());
@@ -6666,8 +6793,8 @@ public:
         char* code = static_cast<char*>(m_formatter.data());
         ASSERT(!WTF::unalignedLoad<int32_t>(std::bit_cast<int32_t*>(code + from.offset()) - 1));
         setRel32(code + from.offset(), code + to.offset());
-        if (m_recordsJumps) [[unlikely]]
-            m_linkedJumps.append(X86LinkedJump { from.offset(), to.offset() });
+        if (from.offset() == to.offset() && m_recordsJumps) [[unlikely]]
+            m_jumpsToNextInstruction.append(from.offset());
     }
 
     void setRecordsJumps(bool recordsJumps)
@@ -6676,17 +6803,30 @@ public:
         m_recordsJumps = recordsJumps;
     }
 
+    // X86JumpShortener::startOfRareCode.
+    void setStartOfRareCode(uint32_t offset) { m_startOfRareCode = offset; }
+
+    static constexpr uint32_t maxShortReturnLength = X86JumpShortener::longJumpLength(X86JumpKind::Unconditional);
+    void noteShortReturnEndingHere(uint32_t length)
+    {
+        RELEASE_ASSERT(length && length <= maxShortReturnLength && length <= codeSize());
+        uint32_t start = static_cast<uint32_t>(codeSize()) - length;
+        RELEASE_ASSERT(m_shortReturns.isEmpty() || m_shortReturns.last().start < start);
+        m_shortReturns.append(X86ShortReturn { start, length });
+    }
+
     void assignJumpKinds()
     {
         RELEASE_ASSERT(m_recordsJumps);
-        assignX86JumpKinds(m_linkedJumps, m_emittedJumps.span());
+        collectX86LinkedJumps({ static_cast<const uint8_t*>(m_formatter.data()), codeSize() }, m_emittedJumps.span(), m_jumpsToNextInstruction, m_linkedJumps);
     }
 
     Vector<X86JumpShift> shortenJumps()
     {
         RELEASE_ASSERT(m_recordsJumps);
         Vector<X86JumpShift> shifts;
-        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts);
+        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts, m_startOfRareCode, m_shortReturns.span());
+        m_shortReturns.clear();
         m_formatter.m_buffer.setCodeSize(size);
         m_indexOfLastWatchpoint = INT_MIN;
         m_indexOfTailOfLastWatchpoint = INT_MIN;
@@ -6977,10 +7117,13 @@ public:
 
 private:
 
-    AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
+    ALWAYS_INLINE AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
     {
-        if (m_recordsJumps) [[unlikely]]
+        if (m_recordsJumps) [[unlikely]] {
+            if (m_emittedJumps.size() == m_emittedJumps.capacity())
+                m_emittedJumps.reserveCapacity(std::max(initialEmittedJumpCapacity, 2 * m_emittedJumps.capacity()));
             m_emittedJumps.append(X86EmittedJump { end.offset(), kind, condition });
+        }
         return end;
     }
 
@@ -7067,7 +7210,7 @@ private:
 
         class SingleInstructionBufferWriter : public AssemblerBuffer::LocalWriter {
         public:
-            SingleInstructionBufferWriter(AssemblerBuffer& buffer)
+            ALWAYS_INLINE SingleInstructionBufferWriter(AssemblerBuffer& buffer)
                 : AssemblerBuffer::LocalWriter(buffer, maxInstructionSize)
             {
             }
@@ -7368,6 +7511,7 @@ private:
         void oneByteOpAddr(OneByteOpcodeID opcode, int reg, uint32_t address)
         {
             SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexIfNeeded(reg, 0, 0);
             writer.putByteUnchecked(opcode);
             writer.memoryModRMAddr(reg, address);
         }
@@ -7527,6 +7671,15 @@ private:
             writer.memoryModRM(dest, base, offset);
         }
 
+        void vexNdsLigThreeByteOp(OneByteOpcodeID simdPrefix, VexImpliedBytes impliedBytes, VexW vexW, ThreeByteOpcodeID opcode, RegisterID dest, RegisterID a, int offset, RegisterID base, RegisterID index, int scale)
+        {
+            SingleInstructionBufferWriter writer(m_buffer);
+            ASSERT(impliedBytes != VexImpliedBytes::TwoBytesOp);
+            writer.threeBytesVexNds(simdPrefix, impliedBytes, vexW, dest, a, index, base);
+            writer.putByteUnchecked(opcode);
+            writer.memoryModRM(dest, base, index, scale, offset);
+        }
+
         void threeByteOp(TwoByteOpcodeID twoBytePrefix, ThreeByteOpcodeID opcode)
         {
             SingleInstructionBufferWriter writer(m_buffer);
@@ -7627,6 +7780,16 @@ private:
         {
             SingleInstructionBufferWriter writer(m_buffer);
             writer.emitRexW(reg, 0, 0);
+            writer.putByteUnchecked(opcode);
+            writer.putModRm(ModRmMemoryNoDisp, reg, SingleInstructionBufferWriter::noBase);
+            writer.putIntUnchecked(0);
+        }
+
+        void twoByteOpRIPRelative(TwoByteOpcodeID opcode, int reg)
+        {
+            SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexIfNeeded(reg, 0, 0);
+            writer.putByteUnchecked(OP_2BYTE_ESCAPE);
             writer.putByteUnchecked(opcode);
             writer.putModRm(ModRmMemoryNoDisp, reg, SingleInstructionBufferWriter::noBase);
             writer.putIntUnchecked(0);
@@ -7816,8 +7979,12 @@ private:
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
     bool m_recordsJumps { false };
+    uint32_t m_startOfRareCode { UINT32_MAX };
+    static constexpr size_t initialEmittedJumpCapacity = 64;
     Vector<X86EmittedJump> m_emittedJumps;
+    Vector<uint32_t> m_jumpsToNextInstruction;
     Vector<X86LinkedJump> m_linkedJumps;
+    Vector<X86ShortReturn, 4> m_shortReturns;
 };
 
 } // namespace JSC

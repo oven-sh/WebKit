@@ -1,0 +1,57 @@
+# function plus(list) { let total = 0; for (let i = 0; i < list.length; i++) total += list[i]; return total; }      sink(plus);
+# Nothing is known of `list`, so the loop is built by kinds: a copy for a list of numbers, one for any list, one for bytes, one for the other views, and the loop as written.
+# Whoever chooses the copy for a list of numbers asks the list for storage that holds numbers alone. The front of that copy asked the same question of the same cell once more, with nothing in between that writes:
+# five instructions at each entry. An equal question that has been answered on the way is found again, as an equal comparison is.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK-NOT: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: = GetArrayStorage
+# CHECK: number {{*}}= GetArrayElement {{*}}arrayStorage=Double level=Proven
+# A list whose kind changes between two calls, one that a turn's own conversion empties, texts, holes, views.
+# RUN(SHELL): run-in-shell const odd = [1, 2, 3]; odd[5] = 6; const grows = [1, 2]; const turns = { valueOf() { odd.length = 0; return 4; } }; globalThis.sink = plus => { for (const list of [[1, 2, 3], [1.5, 2, -0], [], [1, "2", 3], [1, , 3], odd, [NaN], [1, turns, 3], "123", [2147483647, 2147483647], new Uint8Array([7, 8]), new Float64Array([0.5, 0.25]), grows, (grows.push(0.5), grows), (grows.push("x"), grows), [1n]]) { try { const said = plus(list); print(typeof said + " " + (Object.is(said, -0) ? "-0" : String(said))); } catch (e) { print(e.name); } } };
+# SHELL: number 6
+# SHELL-NEXT: number 3.5
+# SHELL-NEXT: number 0
+# SHELL-NEXT: string 123
+# SHELL-NEXT: number NaN
+# SHELL-NEXT: number NaN
+# SHELL-NEXT: number NaN
+# SHELL-NEXT: number 8
+# SHELL-NEXT: string 0123
+# SHELL-NEXT: number 4294967294
+# SHELL-NEXT: number 15
+# SHELL-NEXT: number 0.75
+# SHELL-NEXT: string 3.5x
+# SHELL-NEXT: string 3.5x
+# SHELL-NEXT: string 3.5x
+# SHELL-NEXT: TypeError
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="plus" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}

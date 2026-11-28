@@ -1,0 +1,35 @@
+# const info = rest; try { const t = make(); } catch { log(info); }   with nothing reading t, and make() an allocation
+# v3 is unused and throws only for lack of memory, so it goes. Nothing in b1 throws then, so its handler edge goes, and b2 with it. v2 was read by b2 alone, so it goes too.
+# RUN: sweep-code
+# CHECK: b0(
+# CHECK: dropped v0, v1, v2
+# CHECK-NOT: CreateRest
+# CHECK: b1()
+# CHECK: dropped handler, v3
+# CHECK-NOT: CreateRest
+# CHECK: # dropped b2
+# CHECK: b3()
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
+#     Jump -> next b1()
+#   b1() handler=b2():
+#     v3: anything @Cell = CreateRest firstArgument=1 traits=[mayThrow, mayCollect, mayTouchMemory]
+#     Jump -> next b3()
+#   b2() role=CatchHandler:
+#     v4: anything @JSValue = CatchValue traits=[mayCollect, mayTouchMemory]
+#     v5: anything @JSValue = Call v1, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b3()
+#   b3():
+#     Return
+# }
+# -- end of code

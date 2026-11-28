@@ -49,13 +49,14 @@ using namespace WebCore;
 
 RemoteScrollingCoordinatorTransaction::RemoteScrollingCoordinatorTransaction() = default;
 
-RemoteScrollingCoordinatorTransaction::RemoteScrollingCoordinatorTransaction(std::unique_ptr<WebCore::ScrollingStateTree>&& scrollingStateTree, bool clearScrollLatching, std::optional<WebCore::FrameIdentifier> frameID, FromDeserialization fromDeserialization)
+RemoteScrollingCoordinatorTransaction::RemoteScrollingCoordinatorTransaction(std::unique_ptr<WebCore::ScrollingStateTree>&& scrollingStateTree, bool clearScrollLatching, std::optional<WebCore::FrameIdentifier> frameID, bool isFullCommit, FromDeserialization fromDeserialization)
     : m_scrollingStateTree(WTF::move(scrollingStateTree))
     , m_clearScrollLatching(clearScrollLatching)
+    , m_isFullCommit(isFullCommit)
     , m_rootFrameID(frameID)
 {
     if (!m_scrollingStateTree)
-        m_scrollingStateTree = makeUnique<WebCore::ScrollingStateTree>();
+        m_scrollingStateTree = WebCore::ScrollingStateTree::create().moveToUniquePtr();
     if (fromDeserialization == FromDeserialization::Yes)
         CheckedRef { *m_scrollingStateTree }->attachDeserializedNodes();
 }
@@ -320,7 +321,7 @@ String RemoteScrollingCoordinatorTransaction::description() const
 
 void RemoteScrollingCoordinatorTransaction::dump() const
 {
-    SAFE_WTFLOGALWAYS("%s", description().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(description()));
 }
 #endif // !defined(NDEBUG) || !LOG_DISABLED
 

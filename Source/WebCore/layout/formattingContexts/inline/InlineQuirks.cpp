@@ -35,8 +35,7 @@
 #include "LayoutElementBox.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 InlineQuirks::InlineQuirks(const InlineFormattingContext& inlineFormattingContext)
     : m_inlineFormattingContext(inlineFormattingContext)
@@ -107,7 +106,7 @@ bool InlineQuirks::inlineBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox)
         return inlineLevelBox.layoutBox().style().originalDisplay().isListItemType();
     }
     // Non-root inline boxes (e.g. <span>).
-    auto& boxGeometry = formattingContext().geometryForBox(inlineLevelBox.layoutBox());
+    auto& boxGeometry = formattingContext().geometryForBox(protect(inlineLevelBox.layoutBox()));
     if (boxGeometry.horizontalBorderAndPadding()) {
         // Horizontal border and padding make the inline box stretch the line (e.g. <span style="padding: 10px;"></span>).
         return true;
@@ -120,7 +119,8 @@ std::optional<LayoutUnit> InlineQuirks::initialLetterAlignmentOffset(const Box& 
     ASSERT(floatBox.isFloatingPositioned());
     if (!floatBox.style().lineBoxContain().contains(Style::WebkitLineBoxContainValue::InitialLetter))
         return { };
-    auto& primaryFontMetrics = lineBoxStyle.fontCascade().metricsOfPrimaryFont();
+    CheckedRef fontCascade = lineBoxStyle.fontCascade();
+    auto& primaryFontMetrics = fontCascade->metricsOfPrimaryFont();
     auto lineHeight = [&]() -> InlineLayoutUnit {
         if (lineBoxStyle.textAutosizingAdjustedLineHeight().isNormal())
             return primaryFontMetrics.ascent(FontBaseline::Alphabetic) + primaryFontMetrics.descent(FontBaseline::Alphabetic);
@@ -133,10 +133,10 @@ std::optional<LayoutUnit> InlineQuirks::initialLetterAlignmentOffset(const Box& 
 
 std::optional<InlineRect> InlineQuirks::adjustedRectForLineGridLineAlign(const InlineRect& rect) const
 {
-    auto& rootBoxStyle = formattingContext().root().style();
+    CheckedRef rootBoxStyle = formattingContext().root().style();
     auto& parentBlockLayoutState = formattingContext().layoutState().parentBlockLayoutState();
 
-    if (rootBoxStyle.lineAlign() == LineAlign::None)
+    if (rootBoxStyle->lineAlign() == LineAlign::None)
         return { };
     if (!parentBlockLayoutState.lineGrid())
         return { };
@@ -144,7 +144,7 @@ std::optional<InlineRect> InlineQuirks::adjustedRectForLineGridLineAlign(const I
     // This implement the legacy -webkit-line-align property.
     // It snaps line edges to a grid defined by an ancestor box.
     auto& lineGrid = *parentBlockLayoutState.lineGrid();
-    auto offset = InlineLayoutUnit { lineGrid.layoutOffset.width() + lineGrid.gridOffset.width() };
+    auto offset = InlineLayoutUnit { lineGrid.layoutOffset.width() - lineGrid.gridOffset.width() };
     auto columnWidth = lineGrid.columnWidth;
     auto leftShift = fmodf(columnWidth - fmodf(rect.left() + offset, columnWidth), columnWidth);
     auto rightShift = -fmodf(rect.right() + offset, columnWidth);
@@ -161,10 +161,10 @@ std::optional<InlineRect> InlineQuirks::adjustedRectForLineGridLineAlign(const I
 
 std::optional<InlineLayoutUnit> InlineQuirks::adjustmentForLineGridLineSnap(const LineBox& lineBox) const
 {
-    auto& rootBoxStyle = formattingContext().root().style();
+    CheckedRef rootBoxStyle = formattingContext().root().style();
     auto& inlineLayoutState = formattingContext().layoutState();
 
-    if (rootBoxStyle.lineSnap() == LineSnap::None)
+    if (rootBoxStyle->lineSnap() == LineSnap::None)
         return { };
     if (!inlineLayoutState.parentBlockLayoutState().lineGrid())
         return { };
@@ -197,7 +197,7 @@ std::optional<InlineLayoutUnit> InlineQuirks::adjustmentForLineGridLineSnap(cons
     auto logicalHeight = ascent + lineBox.rootInlineBox().descent();
     auto currentBaselinePosition = rootInlineBoxTop + ascent + lineGrid.layoutOffset.height();
 
-    if (rootBoxStyle.lineSnap() == LineSnap::Contain) {
+    if (rootBoxStyle->lineSnap() == LineSnap::Contain) {
         if (logicalHeight <= lineGridFontHeight)
             firstTextTop += (lineGridFontHeight - logicalHeight) / 2;
         else {
@@ -221,44 +221,16 @@ std::optional<InlineLayoutUnit> InlineQuirks::adjustmentForLineGridLineSnap(cons
     return gridLineHeight - remainder;
 }
 
-bool InlineQuirks::shouldCollapseLineBoxHeight(const LineRunList& lineContent, size_t numberOfOutsideListMarkers) const
+bool InlineQuirks::hasSoftWrapOpportunityAroundImages(std::optional<IntrinsicWidthMode> intrinsicWidthMode) const
 {
-    // This quirk is needed as we put the marker in seemingly random places in the list item's subtree.
-    // (instead of having a well defined place and layout behavior).
-    if (!lineContent.size() || numberOfOutsideListMarkers != 1)
-        return false;
-
-    auto& marker = lineContent[0];
-    auto* markerBox = dynamicDowncast<Layout::ElementBox>(marker.layoutBox());
-    ASSERT(markerBox);
-    if (!markerBox)
-        return false;
-
-    size_t emptyInlineBoxCount = 0;
-    for (auto& run : lineContent) {
-        if (run.isListMarker())
-            continue;
-        if (Line::Run::isContentfulOrHasDecoration(run, formattingContext()))
-            return false;
-        if (run.isInlineBoxStart())
-            ++emptyInlineBoxCount;
-    }
-
-    // This is to handle non-contentful lines introduced by block boxes. They are supposed to be collapsed so that
-    // the block content can be placed next to the list marker.
-    // Regular inline content would never produced a line with inline box only runs. Also inline content like <li><span><br>
-    // is not supposed to produce a collapsed line box.
-    // The underlying issue is the assumption that we shouldn’t collapse when rootBox is a list item (see below).
-    if (emptyInlineBoxCount && emptyInlineBoxCount == lineContent.size() - 1)
+    // https://quirks.spec.whatwg.org/#the-table-cell-width-calculation-quirk
+    // "In quirks mode, for the purpose of calculating the min-content width of an inline formatting context for which a table cell cell is the containing block,
+    // if cell has a computed value of the width property that is auto, img elements that are inline-level replaced elements in that inline formatting context
+    // must not have a soft wrap opportunity before or after them."
+    if (intrinsicWidthMode != IntrinsicWidthMode::Minimum || !formattingContext().layoutState().inQuirksMode())
         return true;
-
     auto& rootBox = formattingContext().root();
-    if (rootBox.isAnonymous() || rootBox.isListItem())
-        return false;
-
-    return true;
+    return !rootBox.isTableCell() || !rootBox.style().width().isAuto();
 }
 
 }
-}
-

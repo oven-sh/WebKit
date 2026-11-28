@@ -57,19 +57,20 @@ PlatformXRSystemProxy::~PlatformXRSystemProxy()
 
 void PlatformXRSystemProxy::enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::DeviceList&)>&& completionHandler)
 {
-    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::EnumerateImmersiveXRDevices(), [this, weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](Vector<XRDeviceInfo>&& devicesInfos) mutable {
-        if (!weakThis)
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::EnumerateImmersiveXRDevices(), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](Vector<XRDeviceInfo>&& devicesInfos) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
             return;
 
         PlatformXR::DeviceList devices;
         for (auto& deviceInfo : devicesInfos) {
-            if (auto device = deviceByIdentifier(deviceInfo.identifier))
+            if (auto device = protectedThis->deviceByIdentifier(deviceInfo.identifier))
                 devices.append(*device);
             else
-                devices.append(XRDeviceProxy::create(WTF::move(deviceInfo), *this));
+                devices.append(XRDeviceProxy::create(WTF::move(deviceInfo), *protectedThis));
         }
-        m_devices.swap(devices);
-        completionHandler(m_devices);
+        protectedThis->m_devices.swap(devices);
+        completionHandler(protectedThis->m_devices);
     });
 }
 
@@ -121,13 +122,18 @@ std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createLayerProjectio
 }
 
 #if ENABLE(WEBXR_LAYERS)
-std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout)
+std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout, PlatformXR::LayerUpdateMode updateMode)
 {
-    auto result = protect(m_page)->sendSync(Messages::PlatformXRSystem::CreateCompositionLayer(type, size, layout));
+    auto result = protect(m_page)->sendSync(Messages::PlatformXRSystem::CreateCompositionLayer(type, size, layout, updateMode));
     if (!result.succeeded())
         return std::nullopt;
     auto [layerInfo] = result.takeReply();
     return layerInfo;
+}
+
+void PlatformXRSystemProxy::deleteLayer(PlatformXR::LayerHandle handle)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteLayer(handle));
 }
 #endif
 
@@ -170,7 +176,7 @@ void PlatformXRSystemProxy::sessionDidInitializeRendering(XRDeviceIdentifier dev
 RefPtr<XRDeviceProxy> PlatformXRSystemProxy::deviceByIdentifier(XRDeviceIdentifier identifier)
 {
     for (auto& device : m_devices) {
-        auto* deviceProxy = static_cast<XRDeviceProxy*>(device.ptr());
+        auto* deviceProxy = downcast<XRDeviceProxy>(device.ptr());
         if (deviceProxy->identifier() == identifier)
             return deviceProxy;
     }
@@ -223,6 +229,23 @@ void PlatformXRSystemProxy::requestTransientInputHitTestSource(const PlatformXR:
 void PlatformXRSystemProxy::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
 {
     protect(m_page)->send(Messages::PlatformXRSystem::DeleteTransientInputHitTestSource(source));
+}
+#endif
+
+#if ENABLE(WEBXR_ANCHORS)
+void PlatformXRSystemProxy::createAnchor(const PlatformXR::Pose& pose, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>)>&& completionHandler)
+{
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::CreateAnchor(pose), [protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](std::expected<PlatformXR::AnchorIdentifier, WebCore::ExceptionData> exceptionOrIdentifier) mutable {
+        if (exceptionOrIdentifier)
+            completionHandler(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>(WTF::move(exceptionOrIdentifier.value())));
+        else
+            completionHandler(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>(exceptionOrIdentifier.error().toException()));
+    });
+}
+
+void PlatformXRSystemProxy::deleteAnchor(PlatformXR::AnchorIdentifier identifier)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteAnchor(identifier));
 }
 #endif
 

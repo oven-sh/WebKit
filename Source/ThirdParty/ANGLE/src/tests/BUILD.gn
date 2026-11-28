@@ -233,6 +233,7 @@ angle_test("angle_unittests") {
     ":angle_test_expectations",
     "$angle_root:angle_static",
     "$angle_root:libfeature_support",
+    "$angle_root/util:angle_test_blob_cache",
     "$angle_root/util:angle_util_static",
   ]
 
@@ -331,6 +332,7 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
       "$angle_root:angle_gl_enum_utils",
       "$angle_root:angle_image_util",
       "$angle_root:translator",
+      "$angle_root/util:angle_test_blob_cache",
     ]
 
     if (angle_enable_cl) {
@@ -552,6 +554,10 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
       sources += angle_white_box_tests_win_sources
     }
 
+    if (angle_enable_gl) {
+      sources += angle_white_box_tests_gl_sources
+    }
+
     configs += [ "${angle_root}:libANGLE_config" ]
 
     deps = [
@@ -733,16 +739,6 @@ if (build_angle_perftests) {
 
     if (angle_build_mesa) {
       data_deps += [ "$angle_root/third_party/mesa" ]
-    }
-
-    if (is_win || is_linux || is_chromeos) {
-      data_deps += [ "${angle_root}/third_party/glmark2:glmark2_angle" ]
-    }
-    if (is_win && target_cpu != "arm64") {
-      data_deps += [ "${angle_root}/third_party/glmark2:glmark2_wgl" ]
-    }
-    if ((is_linux || is_chromeos) && angle_use_x11) {
-      data_deps += [ "${angle_root}/third_party/glmark2:glmark2_glx" ]
     }
   }
 }

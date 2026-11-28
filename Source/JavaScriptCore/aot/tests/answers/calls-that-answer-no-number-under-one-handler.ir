@@ -1,0 +1,53 @@
+# function keep(call, a, .., m) { let r; try { const x: number = call(); const y: number = call(); const z: number = call(); r = x + y + z; } catch (error) { r = error; } return r + a + .. + m; }
+# Fourteen values live to the end. Every call answers a number; then the first and the second answer none and the call behind that throws, which the try catches; then the third answers none.
+# RUN(ANSWER): run-in-shell globalThis.register = keep => { for (let bad = 0; bad < 4; bad++) { let calls = 0; const call = () => { calls++; if (calls === bad) return "s"; if (bad && calls === bad + 1) throw "t"; return calls; }; print(keep(call, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m")); } };
+# ANSWER: 6abcdefghijklm
+# ANSWER-NEXT: tabcdefghijklm
+# ANSWER-NEXT: tabcdefghijklm
+# ANSWER-NEXT: 3sabcdefghijklm
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = String string="return globalThis.register"
+    v2 = Construct v0, -, v1
+    v3 = Call v2
+    v4 = NewClosure function=f1
+    v5 = Call v3, -, v4
+    v6 = Undefined
+    Return v6
+}
+function f1 name="keep" module=m0 flags=[IsChecked] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v14 = Call v0, -
+    v15 = Convert v14 declared={type=number} illTypedCause=FromLooseType
+    v16 = Call v0, -
+    v17 = Convert v16 declared={type=number} illTypedCause=FromLooseType
+    v18 = Call v0, -
+    v19 = Convert v18 declared={type=number} illTypedCause=FromLooseType
+    v20 = Add v15, v17
+    v21 = Add v20, v19
+    Jump -> next b3(v21)
+  b2() role=CatchHandler:
+    v22 = CatchValue
+    Jump -> next b3(v22)
+  b3(v23):
+    v24 = Add v23, v1
+    v25 = Add v24, v2
+    v26 = Add v25, v3
+    v27 = Add v26, v4
+    v28 = Add v27, v5
+    v29 = Add v28, v6
+    v30 = Add v29, v7
+    v31 = Add v30, v8
+    v32 = Add v31, v9
+    v33 = Add v32, v10
+    v34 = Add v33, v11
+    v35 = Add v34, v12
+    v36 = Add v35, v13
+    Return v36
+}
+entry module=m0

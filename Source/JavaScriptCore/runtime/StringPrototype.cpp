@@ -67,15 +67,15 @@ JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharAt);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCodePointAt);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncMatchAll);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplace);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplaceAll);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToUpperCase);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLocaleCompare);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLocaleCompare);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleLowerCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleUpperCase);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);
@@ -85,9 +85,9 @@ JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncEndsWith);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncNormalize);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIsWellFormed);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIsWellFormed);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToWellFormed);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncAt);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncConcat);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncRepeat);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncAnchor);
@@ -1027,9 +1027,9 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSlice, (JSGlobalObject* globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(stringSlice<double>(globalObject, vm, string, length, start, end)));
 }
 
-// Return true in case of early return (resultLength got to limitLength).
+// Return true in case of early return (resultLength got to limitLength, or there is no more room).
 template<typename CharacterType, typename Indice>
-static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringImpl* string, char16_t separatorCharacter, unsigned limitLength)
+static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringImpl* string, char16_t separatorCharacter, unsigned limitLength, bool& hasOverflowed)
 {
     // 12. Let q = p.
     size_t matchPosition;
@@ -1043,7 +1043,10 @@ static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringIm
         //    through q (exclusive).
         // 2. Call the [[DefineOwnProperty]] internal method of A with arguments ToString(lengthA),
         //    Property Descriptor {[[Value]]: T, [[Writable]]: true, [[Enumerable]]: true, [[Configurable]]: true}, and false.
-        result.append(matchPosition);
+        if (!result.tryAppend(matchPosition)) [[unlikely]] {
+            hasOverflowed = true;
+            return true;
+        }
         // 3. Increment lengthA by 1.
         // 4. If lengthA == lim, return A.
         if (result.size() == limitLength)
@@ -1086,13 +1089,20 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     constexpr unsigned atomStringsArrayLimit = 100;
     const bool subjectCanBeKey = input->impl()->isAtomOrInImage();
 
+    bool hasOverflowed = false;
     auto cacheAndCreateArray = [&]() -> JSArray* {
+        if (hasOverflowed) [[unlikely]] {
+            result.clear();
+            throwOutOfMemoryError(globalObject, scope);
+            return { };
+        }
         if (result.isEmpty())
             return constructEmptyArray(globalObject, nullptr);
 
         unsigned resultSize = result.size();
         if (limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime() && resultSize < MIN_SPARSE_ARRAY_INDEX) [[likely]] {
-            bool makeAtomStringsArray = subjectCanBeKey && input->impl()->isAtom() && resultSize < atomStringsArrayLimit;
+            const bool isWorthCaching = subjectCanBeKey && StringSplitCache::isWorthCaching(*input->impl());
+            bool makeAtomStringsArray = isWorthCaching && (input->impl()->isAtom() || StringSplitCache::canBeKey(separator->impl())) && resultSize < atomStringsArrayLimit;
             Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
 
             auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultSize);
@@ -1111,13 +1121,23 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                 JSString* string = nullptr;
                 const bool isPotentiallyIdentifier = start < end && isASCIIIdentifierStart(view->codeUnitAt(start));
                 if (makeAtomStringsArray && isPotentiallyIdentifier) {
-                    auto subView = view->substring(start, end - start);
-                    auto identifier = subView.is8Bit() ? Identifier::fromString(vm, subView.span8()) : Identifier::fromString(vm, subView.span16());
+                    // A subject in an image can be a key of the cache without being an atom: that one is atomized like any other piece.
+                    if (!start && end == view->length() && input->impl()->isAtom()) {
+                        // The whole subject, which already holds an atom.
+                        if (!thisString->isDefinitelyAtom()) [[unlikely]]
+                            thisString->markAsAtom();
+                        string = vm.atomStringToJSStringMap.ensureValue(input->impl(), [&] {
+                            return thisString;
+                        });
+                    } else {
+                        auto subView = view->substring(start, end - start);
+                        auto identifier = subView.is8Bit() ? Identifier::fromString(vm, subView.span8()) : Identifier::fromString(vm, subView.span16());
 
-                    DeferGC defer(vm);
-                    string = vm.atomStringToJSStringMap.ensureValue(identifier.impl(), [&] {
-                        return jsString(vm, identifier.string());
-                    });
+                        DeferGC defer(vm);
+                        string = vm.atomStringToJSStringMap.ensureValue(identifier.impl(), [&] {
+                            return jsString(vm, identifier.string());
+                        });
+                    }
                 } else {
                     string = jsSubstring(globalObject, thisString, start, end - start);
                     RETURN_IF_EXCEPTION(scope, { });
@@ -1130,7 +1150,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                 Structure* replacementStructure = vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
                 newButterfly->setStructure(vm, replacementStructure);
             }
-            if (subjectCanBeKey && StringSplitCache::isWorthCaching(*input->impl()))
+            if (isWorthCaching)
                 vm.ensureStringSplitCache().setForString(input, separator, newButterfly);
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, newButterfly->toButterfly());
@@ -1216,10 +1236,10 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     if (separatorLength == 1) {
         char16_t separatorCharacter = separatorImpl->at(0);
         if (stringImpl->is8Bit()) {
-            if (splitStringByOneCharacterImpl<Latin1Character>(result, stringImpl, separatorCharacter, limit))
+            if (splitStringByOneCharacterImpl<Latin1Character>(result, stringImpl, separatorCharacter, limit, hasOverflowed))
                 RELEASE_AND_RETURN(scope, cacheAndCreateArray());
         } else {
-            if (splitStringByOneCharacterImpl<char16_t>(result, stringImpl, separatorCharacter, limit))
+            if (splitStringByOneCharacterImpl<char16_t>(result, stringImpl, separatorCharacter, limit, hasOverflowed))
                 RELEASE_AND_RETURN(scope, cacheAndCreateArray());
         }
     } else {
@@ -1234,10 +1254,10 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
             // 1. Let T be a String value equal to the substring of S consisting of the characters at positions p (inclusive)
             //    through q (exclusive).
             // 2. Call CreateDataProperty(A, ToString(lengthA), T).
-            result.append(matchPosition);
+            hasOverflowed = !result.tryAppend(matchPosition);
             // 3. Increment lengthA by 1.
             // 4. If lengthA == lim, return A.
-            if (result.size() == limit)
+            if (hasOverflowed || result.size() == limit)
                 RELEASE_AND_RETURN(scope, cacheAndCreateArray());
 
             // 5. Let p = e.
@@ -1249,7 +1269,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     // 15. Let T be a String value equal to the substring of S consisting of the characters at positions p (inclusive)
     //     through s (exclusive).
     // 16. Call CreateDataProperty(A, ToString(lengthA), T).
-    result.append(input->length());
+    hasOverflowed = !result.tryAppend(input->length());
     RELEASE_AND_RETURN(scope, cacheAndCreateArray());
 }
 
@@ -1329,6 +1349,17 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSplit, (JSGlobalObject* globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(stringSplitFast(globalObject, thisString, separatorString, limit)));
 }
 
+static void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
+{
+    auto message = constructErrorMessage(globalObject, value, "is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!message) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    throwTypeError(globalObject, scope, message);
+}
+
 JSValue stringMatchSlow(JSGlobalObject* globalObject, JSString* thisString, JSValue regexpValue)
 {
     VM& vm = globalObject->vm();
@@ -1344,9 +1375,7 @@ JSValue stringMatchSlow(JSGlobalObject* globalObject, JSString* thisString, JSVa
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(matcher);
     if (callData.type == CallData::Type::None) [[unlikely]] {
-        auto description = errorDescriptionForValue(globalObject, matcher);
-        RETURN_IF_EXCEPTION(scope, { });
-        throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+        throwNotAFunctionError(globalObject, scope, matcher);
         return { };
     }
     auto args = WTF::toArray<EncodedJSValue>({
@@ -1387,9 +1416,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatch, (JSGlobalObject* globalObject, Ca
         if (!matcher.isUndefinedOrNull()) {
             auto callData = JSC::getCallData(matcher);
             if (callData.type == CallData::Type::None) [[unlikely]] {
-                auto description = errorDescriptionForValue(globalObject, matcher);
-                RETURN_IF_EXCEPTION(scope, { });
-                return throwVMTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+                throwNotAFunctionError(globalObject, scope, matcher);
+                return { };
             }
             auto args = WTF::toArray<EncodedJSValue>({
                 JSValue::encode(thisValue),
@@ -1419,9 +1447,7 @@ JSValue stringSearchSlow(JSGlobalObject* globalObject, JSString* thisString, JSV
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(searcher);
     if (callData.type == CallData::Type::None) [[unlikely]] {
-        auto description = errorDescriptionForValue(globalObject, searcher);
-        RETURN_IF_EXCEPTION(scope, { });
-        throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+        throwNotAFunctionError(globalObject, scope, searcher);
         return { };
     }
     auto args = WTF::toArray<EncodedJSValue>({
@@ -1469,9 +1495,7 @@ JSValue stringMatchAllSlow(JSGlobalObject* globalObject, JSString* thisString, J
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(matchAllMethod);
     if (callData.type == CallData::Type::None) [[unlikely]] {
-        auto description = errorDescriptionForValue(globalObject, matchAllMethod);
-        RETURN_IF_EXCEPTION(scope, { });
-        throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+        throwNotAFunctionError(globalObject, scope, matchAllMethod);
         return { };
     }
     auto args = WTF::toArray<EncodedJSValue>({
@@ -1509,9 +1533,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSearch, (JSGlobalObject* globalObject, C
         if (!searcher.isUndefinedOrNull()) {
             auto callData = JSC::getCallData(searcher);
             if (callData.type == CallData::Type::None) [[unlikely]] {
-                auto description = errorDescriptionForValue(globalObject, searcher);
-                RETURN_IF_EXCEPTION(scope, { });
-                return throwVMTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+                throwNotAFunctionError(globalObject, scope, searcher);
+                return { };
             }
             auto args = WTF::toArray<EncodedJSValue>({
                 JSValue::encode(thisValue),
@@ -1590,9 +1613,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatchAll, (JSGlobalObject* globalObject,
         if (!matcher.isUndefinedOrNull()) {
             auto callData = JSC::getCallData(matcher);
             if (callData.type == CallData::Type::None) [[unlikely]] {
-                auto description = errorDescriptionForValue(globalObject, matcher);
-                RETURN_IF_EXCEPTION(scope, { });
-                return throwVMTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+                throwNotAFunctionError(globalObject, scope, matcher);
+                return { };
             }
             auto args = WTF::toArray<EncodedJSValue>({
                 JSValue::encode(thisValue),
@@ -1718,6 +1740,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToLowerCase, (JSGlobalObject* globalObje
     RETURN_IF_EXCEPTION(scope, { });
 
     String lowercasedString = s->convertToLowercaseWithoutLocale();
+    if (lowercasedString.isNull()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (lowercasedString.impl() == s->impl())
         return JSValue::encode(sVal);
 
@@ -1754,6 +1778,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToUpperCase, (JSGlobalObject* globalObje
     RETURN_IF_EXCEPTION(scope, { });
 
     String uppercasedString = s->convertToUppercaseWithoutLocale();
+    if (uppercasedString.isNull()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (uppercasedString.impl() == s->impl())
         return JSValue::encode(sVal);
 
@@ -1873,6 +1899,8 @@ static EncodedJSValue toLocaleCase(JSGlobalObject* globalObject, CallFrame* call
     if (locale.isNull()) {
         // Case mapping is locale-independent here, so skip ICU and use the root conversion.
         String converted = mode == CaseConversionMode::Lower ? s->convertToLowercaseWithoutLocale() : s->convertToUppercaseWithoutLocale();
+        if (converted.isNull()) [[unlikely]]
+            return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
         if (converted.impl() == s->impl())
             return JSValue::encode(sVal);
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(converted))));
@@ -1890,7 +1918,9 @@ static EncodedJSValue toLocaleCase(JSGlobalObject* globalObject, CallFrame* call
     if (!StringImpl::isValidLength<char16_t>(s->length()) || !buffer.tryReserveInitialCapacity(s->length())) [[unlikely]]
         return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     auto convertCase = mode == CaseConversionMode::Lower ? u_strToLower : u_strToUpper;
-    auto status = callBufferProducingFunction(convertCase, buffer, StringView { s }.upconvertedCharacters().get(), s->length(), locale.utf8().legacyCStringPointer());
+    auto status = callBufferProducingFunction(convertCase, buffer, StringView { s }.upconvertedCharacters().get(), s->length(), makeUTF8CString(locale).legacyCStringPointer());
+    if (isICUMemoryAllocationError(status)) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (U_FAILURE(status))
         return throwVMTypeError(globalObject, scope, String::fromLatin1(u_errorName(status)));
 
@@ -1959,7 +1989,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncTrimEnd, (JSGlobalObject* globalObject, 
     return JSValue::encode(trimString<TrimKind::TrimEnd>(globalObject, thisValue));
 }
 
-static inline unsigned LEGACY_NODELETE clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
+NODELETE static inline unsigned clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
 {
     if (value < min)
         return min;
@@ -2327,10 +2357,13 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToWellFormed, (JSGlobalObject* globalObj
     if (WTF::isWellFormedUTF16(characters))
         return JSValue::encode(stringValue);
 
-    Vector<char16_t, 16> buffer(characters.size());
-    WTF::toWellFormedUTF16(characters, buffer.mutableSpan());
+    std::span<char16_t> buffer;
+    auto result = StringImpl::tryCreateUninitialized(characters.size(), buffer);
+    if (!result) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+    WTF::toWellFormedUTF16(characters, buffer);
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String::adopt(WTF::move(buffer)))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, result.releaseNonNull())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncAt, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -2799,7 +2832,7 @@ static JSString* createHTML(JSGlobalObject* globalObject, JSValue thisValue, ASC
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    RELEASE_AND_RETURN(scope, jsString(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(result).toString()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncAnchor, (JSGlobalObject* globalObject, CallFrame* callFrame))

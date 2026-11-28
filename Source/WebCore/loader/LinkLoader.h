@@ -53,13 +53,14 @@ struct LinkLoadParameters {
     String imageSrcSet;
     String imageSizes;
     String nonce;
+    String integrity;
     ReferrerPolicy referrerPolicy { ReferrerPolicy::EmptyString };
     RequestPriority fetchPriority { RequestPriority::Auto };
 };
 
 class LinkLoader : public CachedResourceClient, public RefCounted<LinkLoader> {
 public:
-    static Ref<LinkLoader> LEGACY_NODELETE create(LinkLoaderClient&);
+    NODELETE static Ref<LinkLoader> create(LinkLoaderClient&);
     virtual ~LinkLoader();
 
     void loadLink(const LinkLoadParameters&, Document&);

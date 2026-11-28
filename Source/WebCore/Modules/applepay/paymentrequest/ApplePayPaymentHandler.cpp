@@ -76,11 +76,12 @@
 #include "Settings.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/VM.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
-static inline PaymentCoordinator& LEGACY_NODELETE paymentCoordinator(Document& document)
+NODELETE static inline PaymentCoordinator& paymentCoordinator(Document& document)
 {
     ASSERT(document.page());
     return document.page()->paymentCoordinator();
@@ -177,9 +178,8 @@ static ExceptionOr<ApplePayLineItem> convertAndValidate(const PaymentItem& item,
 
 static ExceptionOr<Vector<ApplePayLineItem>> convertAndValidate(const Vector<PaymentItem>& lineItems, const String& expectedCurrency)
 {
-    Vector<ApplePayLineItem> result;
-    result.reserveInitialCapacity(lineItems.size());
-    for (auto& lineItem : lineItems) {
+    Vector<ApplePayLineItem> result(ReserveCapacityTag { }, lineItems.size());
+    for (auto& lineItem : borrow(lineItems)) {
         auto convertedLineItem = convertAndValidate(lineItem, expectedCurrency);
         if (convertedLineItem.hasException())
             return convertedLineItem.releaseException();
@@ -188,7 +188,7 @@ static ExceptionOr<Vector<ApplePayLineItem>> convertAndValidate(const Vector<Pay
     return { WTF::move(result) };
 }
 
-static ApplePaySessionPaymentRequest::ShippingType LEGACY_NODELETE convert(PaymentShippingType type)
+NODELETE static ApplePaySessionPaymentRequest::ShippingType convert(PaymentShippingType type)
 {
     switch (type) {
     case PaymentShippingType::Shipping:
@@ -226,7 +226,7 @@ ExceptionOr<void> ApplePayPaymentHandler::convertData(Document& document, JSC::J
     return { };
 }
 
-static void LEGACY_NODELETE mergePaymentOptions(const PaymentOptions& options, ApplePaySessionPaymentRequest& request)
+NODELETE static void mergePaymentOptions(const PaymentOptions& options, ApplePaySessionPaymentRequest& request)
 {
     auto requiredShippingContactFields = request.requiredShippingContactFields();
     requiredShippingContactFields.email |= options.requestPayerEmail;
@@ -348,7 +348,7 @@ ExceptionOr<Vector<ApplePayShippingMethod>> ApplePayPaymentHandler::computeShipp
         auto& currency = details.total.amount.currency;
 
         shippingOptions.reserveInitialCapacity(details.shippingOptions->size());
-        for (auto& shippingOption : *details.shippingOptions) {
+        for (auto& shippingOption : borrow(*details.shippingOptions)) {
             auto shippingMethodOrException = convertAndValidate(shippingOption, currency);
             if (shippingMethodOrException.hasException())
                 return shippingMethodOrException.releaseException();
@@ -558,7 +558,7 @@ static ExceptionOr<void> validate(const ApplePayModifier& applePayModifier)
 
 #if ENABLE(APPLE_PAY_MULTI_MERCHANT_PAYMENTS)
     if (auto& multiTokenContexts = applePayModifier.multiTokenContexts) {
-        for (auto& tokenContext : *multiTokenContexts) {
+        for (auto& tokenContext : borrow(*multiTokenContexts)) {
             if (!isValidDecimalMonetaryValue(tokenContext.amount))
                 return Exception(ExceptionCode::TypeError, makeString('"', tokenContext.amount, "\" is not a valid amount."_s));
         }
@@ -587,9 +587,7 @@ ExceptionOr<std::optional<std::tuple<PaymentDetailsModifier, ApplePayModifier>>>
     auto& serializedModifierData = m_paymentRequest->serializedModifierData();
     ASSERT(details.modifiers->size() == serializedModifierData.size());
     for (size_t i = 0; i < details.modifiers->size(); ++i) {
-        auto& modifier = details.modifiers->at(i);
-
-        auto convertedIdentifier = convertAndValidatePaymentMethodIdentifier(modifier.supportedMethods);
+        auto convertedIdentifier = convertAndValidatePaymentMethodIdentifier(borrow(*details.modifiers)[i].supportedMethods);
         if (!convertedIdentifier || !handlesIdentifier(*convertedIdentifier))
             continue;
 
@@ -598,7 +596,7 @@ ExceptionOr<std::optional<std::tuple<PaymentDetailsModifier, ApplePayModifier>>>
 
         JSC::JSLockHolder lock(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
-        auto data = JSONParse(&lexicalGlobalObject, serializedModifierData[i]);
+        auto data = JSONParse(&lexicalGlobalObject, borrow(serializedModifierData)[i]);
         if (scope.exception())
             return Exception(ExceptionCode::ExistingExceptionError);
 
@@ -614,7 +612,7 @@ ExceptionOr<std::optional<std::tuple<PaymentDetailsModifier, ApplePayModifier>>>
         if (applePayModifier.paymentMethodType && *applePayModifier.paymentMethodType != m_selectedPaymentMethodType)
             continue;
 
-        return { { { modifier, WTF::move(applePayModifier) } } };
+        return { { { borrow(*details.modifiers)[i], WTF::move(applePayModifier) } } };
     }
 
     return { std::nullopt };
@@ -874,18 +872,6 @@ ExceptionOr<void> ApplePayPaymentHandler::paymentMethodUpdated(Vector<Ref<AppleP
     protect(paymentCoordinator())->completePaymentMethodSelection(WTF::move(update));
     return { };
 }
-
-#if ENABLE(APPLE_PAY_PAYMENT_ORDER_DETAILS)
-
-static ExceptionOr<ApplePayPaymentOrderDetails> convertAndValidate(ApplePayPaymentOrderDetails&& orderDetails)
-{
-    if (auto& webServiceURL = orderDetails.webServiceURL; !URL { webServiceURL }.isValid())
-        return Exception(ExceptionCode::TypeError, makeString('"', webServiceURL, "\" is not a valid URL."_s));
-
-    return WTF::move(orderDetails);
-}
-
-#endif // ENABLE(APPLE_PAY_PAYMENT_ORDER_DETAILS)
 
 static ExceptionOr<ApplePayPaymentCompleteDetails> convertAndValidate(ApplePayPaymentCompleteDetails&& details)
 {

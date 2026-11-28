@@ -40,6 +40,22 @@ JSValue callMethodInEngine(Instance* instance, BuiltinID function, JSValue recei
     return result;
 }
 
+JSValue constructInEngine(Instance* instance, BuiltinID constructor, JSValue argument)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callee = objectOf(instance, constructor);
+    auto constructData = JSC::getConstructData(callee);
+    if (constructData.type == CallData::Type::None) {
+        throwException(globalObject, scope, createNotAConstructorError(globalObject, callee));
+        return { };
+    }
+    MarkedArgumentBuffer arguments;
+    arguments.append(argument);
+    RELEASE_AND_RETURN(scope, JSValue(construct(globalObject, callee, constructData, arguments, callee)));
+}
+
 static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue receiver, JSValue first, JSValue second, JSValue third)
 {
     MarkedArgumentBuffer list;
@@ -66,7 +82,7 @@ static bool isOriginalStructureOfLazyClass(JSGlobalObject* realm, Structure* str
 {
     if (structure->typeInfo().type() == JSDateType)
         return structure == realm->dateStructureConcurrently();
-    return realm->isOriginalTypedArrayStructure(structure, false);
+    return realm->isOriginalTypedArrayStructure(structure, false) || realm->isOriginalTypedArrayStructure(structure, true);
 }
 
 void markPristineIfOriginal(Instance& instance, JSObject* object)

@@ -39,21 +39,23 @@ class RenderMathMLToken : public RenderMathMLBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLToken);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLToken);
 public:
-    RenderMathMLToken(Type, MathMLTokenElement&, Style::ComputedStyle&&);
-    RenderMathMLToken(Type, Document&, Style::ComputedStyle&&);
+    RenderMathMLToken(Type, MathMLTokenElement&, UniqueRef<Style::ComputedStyle>&&);
+    RenderMathMLToken(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMathMLToken();
 
-    MathMLTokenElement& LEGACY_NODELETE element();
+    NODELETE MathMLTokenElement& element();
 
     virtual void updateTokenContent();
     void updateFromElement() override;
 
+    // Whether a math variant glyph is painted instead of the children.
+    bool hasMathVariantGlyph() const;
+
 protected:
     void paint(PaintInfo&, const LayoutPoint&) override;
-    void paintChildren(PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect) override;
     std::optional<LayoutUnit> firstLineBaseline() const override;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
 
 private:
     bool isRenderMathMLToken() const final { return true; }

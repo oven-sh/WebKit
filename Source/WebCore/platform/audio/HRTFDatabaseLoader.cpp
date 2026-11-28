@@ -41,7 +41,7 @@
 namespace WebCore {
 
 // Keeps track of loaders on a per-sample-rate basis.
-static HashMap<double, ThreadSafeWeakPtr<HRTFDatabaseLoader>>& LEGACY_NODELETE loaderMap()
+NODELETE static HashMap<double, ThreadSafeWeakPtr<HRTFDatabaseLoader>>& loaderMap()
 {
     static NeverDestroyed<HashMap<double, ThreadSafeWeakPtr<HRTFDatabaseLoader>>> loaderMap;
     return loaderMap;
@@ -49,7 +49,7 @@ static HashMap<double, ThreadSafeWeakPtr<HRTFDatabaseLoader>>& LEGACY_NODELETE l
 
 Ref<HRTFDatabaseLoader> HRTFDatabaseLoader::createAndLoadAsynchronouslyIfNecessary(float sampleRate)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (RefPtr<HRTFDatabaseLoader> loader = loaderMap().get(sampleRate).get()) {
         ASSERT(sampleRate == loader->databaseSampleRate());
@@ -72,7 +72,7 @@ HRTFDatabaseLoader::HRTFDatabaseLoader(float sampleRate)
 
 HRTFDatabaseLoader::~HRTFDatabaseLoader()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     waitForLoaderThreadCompletion();
     m_hrtfDatabase = nullptr;

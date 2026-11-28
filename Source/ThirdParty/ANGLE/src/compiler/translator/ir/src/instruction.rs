@@ -3253,9 +3253,10 @@ mod promote {
             UnaryOpCode::UnpackUnorm4x8 | UnaryOpCode::UnpackSnorm4x8 => TYPE_ID_VEC4,
             UnaryOpCode::Length | UnaryOpCode::Determinant => TYPE_ID_FLOAT,
             UnaryOpCode::Transpose => get_transposed_type(ir_meta, operand_type),
-            UnaryOpCode::Isnan | UnaryOpCode::Isinf | UnaryOpCode::Any | UnaryOpCode::All => {
-                TYPE_ID_BOOL
+            UnaryOpCode::Isnan | UnaryOpCode::Isinf => {
+                change_base_type(ir_meta, operand_type, BasicType::Bool)
             }
+            UnaryOpCode::Any | UnaryOpCode::All => TYPE_ID_BOOL,
             UnaryOpCode::BitCount | UnaryOpCode::FindLSB | UnaryOpCode::FindMSB => {
                 change_base_type(ir_meta, operand_type, BasicType::Int)
             }
@@ -5859,7 +5860,7 @@ impl<Container: InstructionContainer> Builder<Container> {
         result: TypedRegisterId,
         value: TypedId,
     ) -> TypedId {
-        debug_assert_ne!(value.id, Id::Register(result.id));
+        debug_assert!(value.id != Id::Register(result.id));
         match (value.id, self.container.get_last_instruction_result_register_mut()) {
             (Id::Register(value), Some(last_result)) if value == *last_result => {
                 ir_meta.replace_instruction(result.id, value);

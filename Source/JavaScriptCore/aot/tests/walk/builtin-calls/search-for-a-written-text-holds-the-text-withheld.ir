@@ -1,0 +1,12 @@
+# the same functions with calls of built-ins withheld: each method is called by value with the text as a cell
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = StringStartsWithLiteral
+# CHECK: = Call v
+# RUN(UNIT): walk f3 mechanisms=none+TypedOperations+DirectCalls
+# UNIT-NOT: = StringIndexOfCharacter
+# RUN(LAST): walk f5 mechanisms=none+TypedOperations+DirectCalls
+# LAST-NOT: = StringLastIndexOfLiteral
+# RUN(ATOM): walk f9 mechanisms=all-BuiltinCalls
+# ATOM-NOT: = StringIndexOfLiteral
+# PROGRAM-OF: search-for-a-written-text-holds-the-text.ir

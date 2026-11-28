@@ -120,6 +120,13 @@
 #endif
 }
 
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+- (BOOL)_wk_isHidingInteractionRegions
+{
+    return self.dragging || self._wk_isScrollAnimating || self.decelerating;
+}
+#endif
+
 - (void)_wk_stopScrollingAndZooming
 {
 #if HAVE(UI_SCROLL_VIEW_APIS_ADDED_IN_RADAR_112474145)
@@ -410,6 +417,11 @@ WebCore::FloatBoxExtent floatBoxExtent(const UIEdgeInsets& insets)
         WebCore::narrowPrecisionToFloatFromCGFloat(insets.bottom),
         WebCore::narrowPrecisionToFloatFromCGFloat(insets.left)
     };
+}
+
+UIEdgeInsets uiEdgeInsets(const WebCore::FloatBoxExtent& extent)
+{
+    return UIEdgeInsetsMake(extent.top(), extent.left(), extent.bottom(), extent.right());
 }
 
 } // namespace WebKit

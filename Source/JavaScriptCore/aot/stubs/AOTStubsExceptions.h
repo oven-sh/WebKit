@@ -22,7 +22,8 @@ constexpr StubKey throwStackOverflow(bool isAtPrologue = false) { return StubKey
 constexpr StubKey catchException() { return StubKey(StubFamily::Catch); }
 constexpr StubKey rejectInFrame(bool liesBelowSpilledArguments) { return StubKey(StubFamily::RejectInFrame).withForm(static_cast<uint8_t>(liesBelowSpilledArguments ? RejectedFrameForm::BelowSpilledArguments : RejectedFrameForm::Plain)); }
 
-// Neither falls through. Both are entered with the stack as at the entry of a stub: the return address is the site that threw.
+constexpr StubKey rejectAwaitedCall() { return StubKey(StubFamily::RejectAwaitedCall); }
+
 void emitUnwind(StubAssembler&);
 void emitThrowStackOverflow(StubAssembler&);
 

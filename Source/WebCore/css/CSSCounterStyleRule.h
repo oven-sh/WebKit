@@ -53,7 +53,6 @@ public:
     String symbols() const { return m_descriptors.symbolsCSSText(); }
     String additiveSymbols() const { return m_descriptors.additiveSymbolsCSSText(); }
     String speakAs() const { return { }; }
-    bool newValueInvalidOrEqual(CSSPropertyID, const RefPtr<CSSValue> newValue) const;
 
 private:
     explicit StyleRuleCounterStyle(CSSCounterStyleDescriptors&&);
@@ -64,7 +63,7 @@ private:
 
 class CSSCounterStyleRule final : public CSSRule {
 public:
-    static Ref<CSSCounterStyleRule> LEGACY_NODELETE create(StyleRuleCounterStyle&, CSSStyleSheet*);
+    NODELETE static Ref<CSSCounterStyleRule> create(StyleRuleCounterStyle&, CSSStyleSheet*);
     virtual ~CSSCounterStyleRule();
 
     String cssText() const final;
@@ -93,12 +92,11 @@ public:
     void setFallback(const String&);
     void setSymbols(const String&);
     void setAdditiveSymbols(const String&);
-    void LEGACY_NODELETE setSpeakAs(const String&);
+    NODELETE void setSpeakAs(const String&);
 
 private:
     CSSCounterStyleRule(StyleRuleCounterStyle&, CSSStyleSheet* parent);
 
-    bool setterInternal(CSSPropertyID, const String&);
     RefPtr<CSSValue> cssValueFromText(CSSPropertyID, const String&);
     const CSSCounterStyleDescriptors& descriptors() const LIFETIME_BOUND { return m_counterStyleRule->descriptors(); }
     CSSCounterStyleDescriptors& mutableDescriptors() LIFETIME_BOUND { return m_counterStyleRule->mutableDescriptors(); }

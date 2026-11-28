@@ -30,8 +30,6 @@
 
 #include "BufferIdentifierSet.h"
 #include "GPUConnectionToWebProcess.h"
-#include "ImageBufferRemoteDisplayListBackend.h"
-#include "ImageBufferRemotePDFDocumentBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "PrepareBackingStoreBuffersData.h"
@@ -59,7 +57,6 @@
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferRemoteIOSurfaceBackend.h"
-#include "ImageBufferShareableMappedIOSurfaceBackend.h"
 #endif
 
 namespace WebKit {
@@ -106,8 +103,13 @@ RemoteRenderingBackendProxy::~RemoteRenderingBackendProxy()
 
 void RemoteRenderingBackendProxy::ensureGPUProcessConnection()
 {
-    if (m_connection)
+    if (m_connection && m_gpuProcessIPCConnection && m_gpuProcessIPCConnection->isValid())
         return;
+    if (m_connection) {
+        gpuProcessConnectionDidClose();
+        if (m_connection)
+            return;
+    }
     constexpr unsigned connectionBufferSizeLog2 = 21u;
     auto connectionPair = IPC::StreamClientConnection::create(connectionBufferSizeLog2, WebProcess::singleton().gpuProcessTimeoutDuration());
     if (!connectionPair)
@@ -123,6 +125,7 @@ void RemoteRenderingBackendProxy::ensureGPUProcessConnection()
         Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
         gpuProcessConnection->createRenderingBackend(m_identifier, WTF::move(serverHandle));
         m_gpuProcessConnection = gpuProcessConnection.get();
+        m_gpuProcessIPCConnection = &gpuProcessConnection->connection();
         m_sharedResourceCache = gpuProcessConnection->sharedResourceCache();
     });
 }
@@ -182,10 +185,29 @@ bool RemoteRenderingBackendProxy::isCurrent() const
     return dispatcher && dispatcher->isCurrent();
 }
 
+void RemoteRenderingBackendProxy::gpuProcessConnectionDidClose(IPC::Connection& connection)
+{
+    assertIsCurrent(*this);
+    if (m_gpuProcessIPCConnection != &connection)
+        return;
+    gpuProcessConnectionDidClose();
+}
+
 void RemoteRenderingBackendProxy::didClose(IPC::Connection&)
+{
+    gpuProcessConnectionDidClose();
+}
+
+void RemoteRenderingBackendProxy::gpuProcessConnectionDidClose()
 {
     if (!m_connection)
         return;
+    Ref protectedThis { *this };
+    if (RefPtr gpuProcessIPCConnection = m_gpuProcessIPCConnection) {
+        ensureOnMainRunLoop([gpuProcessIPCConnection = WTF::move(gpuProcessIPCConnection)] {
+            WebProcess::singleton().gpuProcessConnectionDidClose(*gpuProcessIPCConnection);
+        });
+    }
     disconnectGPUProcess();
     m_remoteResourceCacheProxy->disconnect();
 
@@ -254,13 +276,7 @@ void RemoteRenderingBackendProxy::disconnectGPUProcess()
     m_connection = nullptr;
     m_isResponsive = false;
     m_gpuProcessConnection = nullptr;
-}
-
-bool RemoteRenderingBackendProxy::canMapRemoteImageBufferBackendBackingStore()
-{
-    // When DOM rendering happens in WebContent process, we need to paint 2D contexts
-    // into the tiles. In this case ImageBuffers should be created as mappable.
-    return !WebProcess::singleton().shouldUseRemoteRenderingFor(RenderingPurpose::DOM);
+    m_gpuProcessIPCConnection = nullptr;
 }
 
 RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat bufferFormat)
@@ -268,9 +284,6 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::createImageBuffer(co
     // Whoever needs to touch the pixels allocates them. Backends this process maps or
     // shares onward are allocated here and their handle travels with CreateImageBuffer;
     // the rest are allocated by the GPU process and are opaque to us.
-    // Note this only needs an IOSurface where canMapRemoteImageBufferBackendBackingStore()
-    // is true, which is exactly when this process is allowed to create one; see
-    // WebPage::platformInitialize()'s shouldBlockIOKit.
     ImageBuffer::Parameters parameters { size, resolutionScale, colorSpace, bufferFormat, purpose };
     ImageBufferCreationContext creationContext;
 
@@ -278,10 +291,7 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::createImageBuffer(co
     switch (renderingMode) {
     case RenderingMode::Accelerated:
 #if HAVE(IOSURFACE)
-        if (canMapRemoteImageBufferBackendBackingStore())
-            imageBuffer = RemoteImageBufferProxy::create<ImageBufferShareableMappedIOSurfaceBackend>(parameters, *this, creationContext);
-        else
-            imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteIOSurfaceBackend>(parameters, *this);
+        imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteIOSurfaceBackend>(parameters, *this);
 #endif
         [[fallthrough]];
 
@@ -291,12 +301,9 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::createImageBuffer(co
         break;
 
     case RenderingMode::PDFDocument:
-        imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemotePDFDocumentBackend>(parameters, *this);
-        break;
-
     case RenderingMode::DisplayList:
-        imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteDisplayListBackend>(parameters, *this);
-        break;
+        // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     if (imageBuffer) {
@@ -350,6 +357,17 @@ std::unique_ptr<RemoteSerializedImageBufferProxy> RemoteRenderingBackendProxy::m
     return result;
 }
 
+Ref<RemoteNativeImageProxy> RemoteRenderingBackendProxy::sinkIntoNativeImage(RemoteImageBufferProxy& imageBuffer)
+{
+    auto identifier = imageBuffer.renderingResourceIdentifier();
+    bool success = m_imageBuffers.remove(identifier);
+    ASSERT_UNUSED(success, success);
+    bool hasAlpha = !pixelFormatIsOpaque(imageBuffer.pixelFormat());
+    Ref nativeImage = m_remoteResourceCacheProxy->createNativeImage(imageBuffer.backendSize(), imageBuffer.colorSpace().platformColorSpace(), hasAlpha);
+    send(Messages::RemoteRenderingBackend::SinkImageBufferIntoNativeImage(identifier, nativeImage->renderingResourceIdentifier()));
+    return nativeImage;
+}
+
 // The pixels exist in the GPU process, so this process cannot allocate a backing
 // store here: it either re-adopts the one it handed over, or stands in for the
 // GPU process's one with a backend that has no pixels of its own.
@@ -358,8 +376,6 @@ static std::unique_ptr<ImageBufferBackend> createBackendForSerializedBuffer(cons
     switch (renderingMode) {
     case RenderingMode::Accelerated:
 #if HAVE(IOSURFACE)
-        if (handle && std::holds_alternative<MachSendRight>(*handle))
-            return ImageBufferShareableMappedIOSurfaceBackend::create(parameters, WTF::move(*handle));
         if (!handle)
             return ImageBufferRemoteIOSurfaceBackend::create(parameters);
 #endif
@@ -369,9 +385,9 @@ static std::unique_ptr<ImageBufferBackend> createBackendForSerializedBuffer(cons
             return ImageBufferShareableBitmapBackend::create(parameters, std::get<ShareableBitmap::Handle>(WTF::move(*handle)));
         return nullptr;
     case RenderingMode::PDFDocument:
-        return ImageBufferRemotePDFDocumentBackend::create(parameters);
     case RenderingMode::DisplayList:
-        return ImageBufferRemoteDisplayListBackend::create(parameters);
+        // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
+        RELEASE_ASSERT_NOT_REACHED();
     }
     return nullptr;
 }
@@ -422,9 +438,9 @@ void RemoteRenderingBackendProxy::createSnapshot(RemoteSnapshotIdentifier snapsh
     sendSync(Messages::RemoteRenderingBackend::CreateSnapshot(snapshotIdentifier, rootFrameIdentifier, size));
 }
 
-UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, RemoteSnapshotIdentifier snapshotIdentifier, RenderingMode renderingMode)
+UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, const FloatSize& scale, RemoteSnapshotIdentifier snapshotIdentifier, RenderingMode renderingMode)
 {
-    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, renderingMode, *this);
+    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, scale, renderingMode, *this);
     send(Messages::RemoteRenderingBackend::CreateSnapshotRecorder(recorder->identifier(), snapshotIdentifier));
     return recorder;
 }
@@ -547,7 +563,7 @@ void RemoteRenderingBackendProxy::releaseFontCustomPlatformData(RenderingResourc
     send(Messages::RemoteRenderingBackend::ReleaseFontCustomPlatformData(identifier));
 }
 
-void RemoteRenderingBackendProxy::cacheGradient(Ref<Gradient>&& gradient, RemoteGradientIdentifier identifier)
+void RemoteRenderingBackendProxy::cacheGradient(Ref<const Gradient>&& gradient, RemoteGradientIdentifier identifier)
 {
     send(Messages::RemoteRenderingBackend::CacheGradient(WTF::move(gradient), identifier));
 }
@@ -557,6 +573,30 @@ void RemoteRenderingBackendProxy::releaseGradient(RemoteGradientIdentifier ident
     if (!m_connection)
         return;
     send(Messages::RemoteRenderingBackend::ReleaseGradient(identifier));
+}
+
+void RemoteRenderingBackendProxy::cacheFreeformGradient(Ref<FreeformGradient>&& gradient, RemoteFreeformGradientIdentifier identifier)
+{
+    send(Messages::RemoteRenderingBackend::CacheFreeformGradient(WTF::move(gradient), identifier));
+}
+
+void RemoteRenderingBackendProxy::releaseFreeformGradient(RemoteFreeformGradientIdentifier identifier)
+{
+    if (!m_connection)
+        return;
+    send(Messages::RemoteRenderingBackend::ReleaseFreeformGradient(identifier));
+}
+
+void RemoteRenderingBackendProxy::cacheMeshGradient(Ref<MeshGradient>&& gradient, RemoteMeshGradientIdentifier identifier)
+{
+    send(Messages::RemoteRenderingBackend::CacheMeshGradient(WTF::move(gradient), identifier));
+}
+
+void RemoteRenderingBackendProxy::releaseMeshGradient(RemoteMeshGradientIdentifier identifier)
+{
+    if (!m_connection)
+        return;
+    send(Messages::RemoteRenderingBackend::ReleaseMeshGradient(identifier));
 }
 
 void RemoteRenderingBackendProxy::cacheFilter(Ref<Filter>&& filter)
@@ -690,12 +730,21 @@ void RemoteRenderingBackendProxy::didMarkLayersAsVolatile(MarkSurfacesAsVolatile
     completionHandler(didMarkAllLayersAsVolatile);
 }
 
-void RemoteRenderingBackendProxy::finalizeRenderingUpdate()
+void RemoteRenderingBackendProxy::finalizeRenderingUpdate(UsesRenderingUpdateBackpressure usesBackpressure)
 {
     if (!m_connection)
         return;
-    send(Messages::RemoteRenderingBackend::FinalizeRenderingUpdate(m_renderingUpdateID));
+
     m_renderingUpdateID.increment();
+
+    if (usesBackpressure == UsesRenderingUpdateBackpressure::Yes) {
+        send(Messages::RemoteRenderingBackend::FinalizeRenderingUpdate(m_renderingUpdateID));
+        return;
+    }
+
+    if (RefPtr connection = this->connection())
+        connection->flushBatch();
+    m_didRenderingUpdateID = m_renderingUpdateID;
 }
 
 void RemoteRenderingBackendProxy::didPaintLayers()
@@ -744,6 +793,12 @@ RefPtr<IPC::StreamClientConnection> RemoteRenderingBackendProxy::connection()
         return nullptr;
 
     return m_connection;
+}
+
+RefPtr<IPC::Connection> RemoteRenderingBackendProxy::gpuProcessIPCConnection()
+{
+    ensureGPUProcessConnection();
+    return m_gpuProcessIPCConnection;
 }
 
 RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::cachedImageBuffer(const ImageBuffer& imageBuffer) const

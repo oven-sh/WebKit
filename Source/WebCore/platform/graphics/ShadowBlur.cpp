@@ -34,6 +34,7 @@
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
+#include "NativeImage.h"
 #include "PixelBuffer.h"
 #include "Timer.h"
 #include <numbers>
@@ -55,7 +56,7 @@ enum {
 };
 
 #if USE(CG)
-static inline int LEGACY_NODELETE roundUpToMultipleOf32(int d)
+NODELETE static inline int roundUpToMultipleOf32(int d)
 {
     return (1 + (d >> 5)) << 5;
 }
@@ -74,7 +75,7 @@ public:
 
     RefPtr<ImageBuffer> getScratchBuffer(const IntSize& size) WTF_REQUIRES_LOCK(lock())
     {
-        ASSERT(lock().isHeld());
+        ASSERT_WITH_SECURITY_IMPLICATION(lock().isHeld());
         auto releaseLayerImage = makeScopeExit([this] {
             if (m_imageBuffer)
                 scheduleScratchBufferPurge();
@@ -96,7 +97,7 @@ public:
 
     bool setCachedShadowValues(const FloatSize& radius, const Color& color, const FloatRect& shadowRect, const CornerRadii& radii, const FloatSize& layerSize) WTF_REQUIRES_LOCK(lock())
     {
-        ASSERT(lock().isHeld());
+        ASSERT_WITH_SECURITY_IMPLICATION(lock().isHeld());
         if (!m_lastWasInset && m_lastRadius == radius && m_lastColor == color && m_lastShadowRect == shadowRect &&  m_lastRadii == radii && m_lastLayerSize == layerSize)
             return false;
 
@@ -112,7 +113,7 @@ public:
 
     bool setCachedInsetShadowValues(const FloatSize& radius, const Color& color, const FloatRect& bounds, const FloatRect& shadowRect, const CornerRadii& radii) WTF_REQUIRES_LOCK(lock())
     {
-        ASSERT(lock().isHeld());
+        ASSERT_WITH_SECURITY_IMPLICATION(lock().isHeld());
         if (m_lastWasInset && m_lastRadius == radius && m_lastColor == color && m_lastInsetBounds == bounds && shadowRect == m_lastShadowRect && radii == m_lastRadii)
             return false;
 
@@ -127,7 +128,7 @@ public:
     }
 
     static ScratchBuffer& singleton() WTF_REQUIRES_LOCK(lock());
-    static Lock& LEGACY_NODELETE lock() WTF_RETURNS_LOCK(s_lock) { return s_lock; }
+    NODELETE static Lock& lock() WTF_RETURNS_LOCK(s_lock) { return s_lock; }
 
 private:
     void scheduleScratchBufferPurge()
@@ -156,7 +157,7 @@ private:
 
     void clearScratchBuffer() WTF_REQUIRES_LOCK(lock())
     {
-        ASSERT(lock().isHeld());
+        ASSERT_WITH_SECURITY_IMPLICATION(lock().isHeld());
         m_imageBuffer = nullptr;
         m_lastRadius = FloatSize();
         m_lastLayerSize = FloatSize();
@@ -185,7 +186,7 @@ ScratchBuffer& ScratchBuffer::singleton()
     return scratchBuffer;
 }
 
-static float LEGACY_NODELETE radiusToLegacyRadius(float radius)
+NODELETE static float radiusToLegacyRadius(float radius)
 {
     return radius > 8 ? 8 + 4 * sqrt((radius - 8) / 2) : radius;
 }
@@ -477,22 +478,27 @@ std::optional<ShadowBlur::LayerImageProperties> ShadowBlur::calculateLayerBoundi
 
 void ShadowBlur::drawShadowBuffer(GraphicsContext& graphicsContext, ImageBuffer& layerImage, const FloatPoint& layerOrigin, const FloatSize& layerSize)
 {
+    // The layer image is not drawn to after this.
+    RefPtr layerNativeImage = layerImage.createNativeImageReference();
+    if (!layerNativeImage)
+        return;
+
     GraphicsContextStateSaver stateSaver(graphicsContext);
 
     IntSize bufferSize = layerImage.backendSize();
     if (bufferSize != layerSize) {
-        // The rect passed to clipToImageBuffer() has to be the size of the entire buffer,
+        // The rect passed to clipToNativeImage() has to be the size of the entire buffer,
         // but we may not have cleared it all, so clip to the filled part first.
         graphicsContext.clip(FloatRect(layerOrigin, layerSize));
     }
-    graphicsContext.clipToImageBuffer(layerImage, FloatRect(layerOrigin, bufferSize));
+    graphicsContext.clipToNativeImage(*layerNativeImage, FloatRect(layerOrigin, bufferSize));
     graphicsContext.setFillColor(m_color);
 
     graphicsContext.clearDropShadow();
     graphicsContext.fillRect(FloatRect(layerOrigin, layerSize));
 }
 
-static void LEGACY_NODELETE computeSliceSizesFromRadii(const IntSize& twiceRadius, const CornerRadii& radii, int& leftSlice, int& rightSlice, int& topSlice, int& bottomSlice)
+NODELETE static void computeSliceSizesFromRadii(const IntSize& twiceRadius, const CornerRadii& radii, int& leftSlice, int& rightSlice, int& topSlice, int& bottomSlice)
 {
     leftSlice = twiceRadius.width() + std::max(radii.topLeft().width(), radii.bottomLeft().width());
     rightSlice = twiceRadius.width() + std::max(radii.topRight().width(), radii.bottomRight().width());

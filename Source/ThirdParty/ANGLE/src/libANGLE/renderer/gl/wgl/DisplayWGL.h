@@ -11,6 +11,7 @@
 
 #include <unordered_map>
 
+#include "common/SimpleMutex.h"
 #include "libANGLE/renderer/gl/DisplayGL.h"
 
 #include <GL/wglext.h>
@@ -61,10 +62,11 @@ class DisplayWGL : public DisplayGL, public ThreadSafeDisplayGL
     egl::Error waitClient(const gl::Context *context) override;
     egl::Error waitNative(const gl::Context *context, EGLint engine) override;
 
-    egl::Error makeCurrent(egl::Display *display,
-                           egl::Surface *drawSurface,
+    egl::Error makeCurrent(egl::Surface *drawSurface,
                            egl::Surface *readSurface,
                            gl::Context *context) override;
+    egl::Error beforeDestroyContext(const gl::Context *context) override;
+    egl::Error afterDestroyContext() override;
 
     egl::Error registerD3DDevice(IUnknown *device, HANDLE *outHandle);
     void releaseD3DDevice(HANDLE handle);
@@ -101,9 +103,11 @@ class DisplayWGL : public DisplayGL, public ThreadSafeDisplayGL
 
     struct CurrentNativeContext
     {
-        HDC dc     = nullptr;
-        HGLRC glrc = nullptr;
+        HDC dc            = nullptr;
+        HGLRC glrc        = nullptr;
+        bool needsRestore = false;
     };
+    angle::SimpleMutex mCurrentNativeContextsMutex;
     angle::HashMap<uint64_t, CurrentNativeContext> mCurrentNativeContexts;
 
     HMODULE mOpenGLModule;

@@ -40,7 +40,7 @@ namespace JSC {
 
 class AbstractSlotVisitor;
 class CodeBlock;
-class JITWorklistThread;
+class JITWorkerSlot;
 class VM;
 
 class JITPlan : public ThreadSafeRefCounted<JITPlan> {
@@ -52,7 +52,7 @@ public:
 
     VM* vm() const { return m_vm; }
     CodeBlock* codeBlock() const { return m_codeBlock; }
-    JITWorklistThread* thread() const { return m_thread.get(); }
+    JITWorkerSlot* workerSlot() const { return m_workerSlot.get(); }
 
     JITCompilationMode mode() const { return m_mode; }
 
@@ -62,7 +62,7 @@ public:
     bool isUnlinked() const { return ::JSC::isUnlinked(m_mode); }
 
     enum class Tier { Baseline = 0, DFG = 1, FTL = 2, Count = 3 };
-    Tier LEGACY_NODELETE tier() const;
+    NODELETE Tier tier() const;
     JITType jitType() const
     {
         switch (tier()) {
@@ -79,7 +79,7 @@ public:
 
     JITCompilationKey key();
 
-    void compileInThread(JITWorklistThread*);
+    void compileInThread(JITWorkerSlot*);
 
     virtual size_t codeSize() const = 0;
 
@@ -96,8 +96,8 @@ public:
     virtual bool iterateCodeBlocksForGC(AbstractSlotVisitor&, NOESCAPE const Function<void(CodeBlock*)>&);
     virtual bool checkLivenessAndVisitChildren(AbstractSlotVisitor&);
 
-    bool LEGACY_NODELETE isInSafepoint() const;
-    bool LEGACY_NODELETE safepointKeepsDependenciesLive() const;
+    NODELETE bool isInSafepoint() const;
+    NODELETE bool safepointKeepsDependenciesLive() const;
 
     template<typename Functor>
     void addMainThreadFinalizationTask(const Functor& functor)
@@ -124,8 +124,8 @@ public:
     }
 
 protected:
-    bool LEGACY_NODELETE computeCompileTimes() const;
-    bool LEGACY_NODELETE reportCompileTimes() const;
+    NODELETE bool computeCompileTimes() const;
+    NODELETE bool reportCompileTimes() const;
 
     enum CompilationPath { FailPath, BaselinePath, DFGPath, FTLPath, CancelPath };
     virtual CompilationPath compileInThreadImpl() = 0;
@@ -138,7 +138,7 @@ protected:
     MonotonicTime m_timeBeforeFTL;
     VM* m_vm;
     CodeBlock* m_codeBlock;
-    CheckedPtr<JITWorklistThread> m_thread;
+    CheckedPtr<JITWorkerSlot> m_workerSlot;
     Vector<Ref<SharedTask<void()>>> m_mainThreadFinalizationTasks;
     UTF8CString m_signpostMessage; // Non-null iff Options::useCompilerSignpost()
 };

@@ -30,8 +30,6 @@
 
 #include "GPUConnectionToWebProcessMessages.h"
 #include "IPCEvent.h"
-#include "ImageBufferRemoteDisplayListBackend.h"
-#include "ImageBufferRemotePDFDocumentBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "RemoteImageBufferMessages.h"
@@ -48,7 +46,6 @@
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferRemoteIOSurfaceBackend.h"
-#include "ImageBufferShareableMappedIOSurfaceBackend.h"
 #endif
 
 #if PLATFORM(COCOA)
@@ -218,7 +215,7 @@ void RemoteImageBufferProxy::didFailToCreateBackend()
 
 // The backing store of a backend this process cannot map lives in the GPU process,
 // which hands out its handle on request. Everything else was built in the constructor.
-void RemoteImageBufferProxy::ensureBackendHandle() const
+void RemoteImageBufferProxy::ensureBackendHandle()
 {
     auto* backend = ImageBuffer::backend();
     if (!backend || backend->canMapBackingStore())
@@ -235,6 +232,13 @@ void RemoteImageBufferProxy::ensureBackendHandle() const
     auto [handle] = sendResult.takeReply();
     if (!handle)
         return;
+    // The GPU process falls back to shared memory when it cannot allocate an
+    // accelerated backing store, and this is the first we hear of it.
+    if (auto* bitmapHandle = std::get_if<ShareableBitmap::Handle>(&*handle)) {
+        if (auto bitmapBackend = ImageBufferShareableBitmapBackend::create(parameters(), WTF::move(*bitmapHandle)))
+            setBackend(WTF::move(bitmapBackend));
+        return;
+    }
     sharing->setBackendHandle(WTF::move(*handle));
 }
 
@@ -358,7 +362,22 @@ RefPtr<NativeImage> RemoteImageBufferProxy::createNativeImageReference() const
 
 RefPtr<NativeImage> RemoteImageBufferProxy::sinkIntoNativeImage()
 {
-    return copyNativeImage();
+    auto* backend = ImageBuffer::backend();
+    if (!backend)
+        return nullptr;
+    // Mappable buffers keep a local copy, so that readers in this process do not need to fetch the
+    // pixels and images cached in this process survive a GPU process relaunch.
+    if (backend->canMapBackingStore() || !hasOneRef())
+        return copyNativeImage();
+    RefPtr renderingBackend = m_renderingBackend;
+    if (!renderingBackend) [[unlikely]]
+        return nullptr;
+    sendPendingDrawsIfNecessary();
+    m_context.abandon();
+    Ref nativeImage = renderingBackend->sinkIntoNativeImage(*this);
+    disconnect();
+    m_renderingBackend = nullptr;
+    return nativeImage;
 }
 
 RefPtr<ImageBuffer> RemoteImageBufferProxy::sinkIntoBufferForDifferentThread()
@@ -371,26 +390,6 @@ RefPtr<ImageBuffer> RemoteImageBufferProxy::sinkIntoBufferForDifferentThread()
 
     copyBuffer->context().drawImageBuffer(*this, FloatPoint { }, { CompositeOperator::Copy });
     return copyBuffer;
-}
-
-RefPtr<NativeImage> RemoteImageBufferProxy::filteredNativeImage(Filter& filter)
-{
-    if (!m_renderingBackend) [[unlikely]]
-        return nullptr;
-    // FilteredNativeImage reads the buffer in the GPU process, so send any
-    // buffered line strokes into the stream first.
-    sendPendingDrawsIfNecessary();
-    auto sendResult = sendSync(Messages::RemoteImageBuffer::FilteredNativeImage(filter));
-    if (!sendResult.succeeded())
-        return nullptr;
-    auto [handle] = sendResult.takeReply();
-    if (!handle)
-        return nullptr;
-    handle->takeOwnershipOfMemory(MemoryLedger::Graphics);
-    auto bitmap = ShareableBitmap::create(WTF::move(*handle));
-    if (!bitmap)
-        return nullptr;
-    return NativeImage::create(bitmap->createPlatformImage(DontCopyBackingStore, ShouldInterpolate::No));
 }
 
 RefPtr<PixelBuffer> RemoteImageBufferProxy::getPixelBuffer(const PixelBufferFormat& destinationFormat, const IntRect& sourceRect, const ImageBufferAllocator& allocator) const

@@ -1,0 +1,7 @@
+# the same functions with the calls of built-ins withheld: the call goes by the value of its callee
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls
+# NEVER-NOT: FulfillFreshPromise
+# PROGRAM-OF: promise-resolve-of-what-has-no-then-is-an-allocation-and-a-store.ir

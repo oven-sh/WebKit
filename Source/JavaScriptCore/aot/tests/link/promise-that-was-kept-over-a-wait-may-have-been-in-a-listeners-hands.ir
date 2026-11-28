@@ -1,0 +1,85 @@
+# WITH NO CALL WRITTEN: the host hands a promise that was rejected with nobody waiting to the listeners of `unhandledRejection` and `rejectionHandled`. A listener has `anything` in hand, and may lay a `constructor` and a `then`
+# of its own on it, or another prototype. The wait then goes on with whatever that `then` says.
+# If Link took every promise for one that is as its class makes it, `later` would be proven to get the object that `kept` returns, and the program would die in it, or answer with something else than plain Bun.
+# From the moment on at which somebody can be handed something from outside (here: a function has gone to native code) no promise of the program counts as untouched, BUT ONE: what a call of an async function has just made,
+# where the wait stands right behind the call. The body has no name for its own promise, and the host hands nothing out in the middle of a job.
+# The twin without a listener: promise-of-a-program-that-lets-nothing-go-stays-as-it-was-made.ir.
+# process.on("unhandledRejection", (reason, promise) => { promise.then = resolve => resolve(7); });
+# async function fresh(o) { return o; }  async function kept(o) { return o; }  async function use(a, b) { atOnce(await fresh(a)); const held = kept(b); await 0; later(await held); }
+# function atOnce(v) { return v.x; }  function later(v) { return v.y; }  use({ x: "a" }, { y: "b" });
+# RUN: link functions mechanisms=all
+# CHECK: function f4 callers-known one-callee {{*}}result=string
+# CHECK-NEXT: parameter 0 {{*}}proven=L0
+# CHECK: function f5 callers-known
+# CHECK-NEXT: parameter 0
+# RUN(LATER): link functions mechanisms=all
+# LATER-NOT: proven=L1
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = String string="b"
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=Process
+    v7 = PropGet v6 key="on"
+    v8 = String string="unhandledRejection"
+    v9 = NewClosure function=f6
+    v10 = Call v7, v6, v8, v9 calleeKey="on"
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v2, v5 calleeName="use"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="fresh" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="kept" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="use" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0 calleeName="fresh"
+    v4 = Await v3
+    v5 = NewClosure function=f4
+    v6 = Call v5, -, v4 calleeName="atOnce"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v1 calleeName="kept"
+    v9 = Integer integer=0
+    v10 = Await v9
+    v11 = Await v8
+    v12 = NewClosure function=f5
+    v13 = Call v12, -, v11 calleeName="later"
+    Return v13
+}
+function f4 name="atOnce" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f5 name="later" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f6 name="listener" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f7
+    PropSet v1, v2 key="then"
+    v4 = Undefined
+    Return v4
+}
+function f7 name="then" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=7
+    v2 = Call v0, -, v1
+    Return v2
+}

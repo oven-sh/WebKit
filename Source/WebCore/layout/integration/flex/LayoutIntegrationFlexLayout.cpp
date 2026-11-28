@@ -38,8 +38,7 @@
 #include "RenderObjectInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 FlexLayout::FlexLayout(RenderFlexibleBox& flexBox)
     : m_flexBox(flexBox)
@@ -49,7 +48,7 @@ FlexLayout::FlexLayout(RenderFlexibleBox& flexBox)
 void FlexLayout::prepareOutOfFlowBoxForPositionedLayout(RenderBox& outOfFlowBox)
 {
     ASSERT(outOfFlowBox.isOutOfFlowPositioned());
-    outOfFlowBox.containingBlock()->addOutOfFlowBox(outOfFlowBox);
+    protect(outOfFlowBox.containingBlock())->addOutOfFlowBox(outOfFlowBox);
     CheckedPtr layer = outOfFlowBox.layer();
     // The static position setStaticPositionForPositionedLayout computes after layout is this content-box corner plus
     // alignment offsets that need the box's size. Starting from the same corner means a box with no offset is already
@@ -58,14 +57,14 @@ void FlexLayout::prepareOutOfFlowBoxForPositionedLayout(RenderBox& outOfFlowBox)
     if (layer->staticInlinePosition() != staticInlinePosition) {
         layer->setStaticInlinePosition(staticInlinePosition);
         if (outOfFlowBox.style().hasStaticInlinePosition(flexBox().writingMode().isHorizontal()))
-            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 
     LayoutUnit staticBlockPosition = flexBox().borderAndPaddingBefore();
     if (layer->staticBlockPosition() != staticBlockPosition) {
         layer->setStaticBlockPosition(staticBlockPosition);
         if (outOfFlowBox.style().hasStaticBlockPosition(flexBox().writingMode().isHorizontal()))
-            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 }
 
@@ -119,8 +118,7 @@ LayoutUnit FlexLayout::mainAxisAvailableSpace() const
 
 FlexLayoutItems FlexLayout::buildFlexLayoutItems(RelayoutChildren relayoutChildren, const FlexLayoutConstraints& constraints)
 {
-    FlexLayoutItems flexLayoutItems;
-    flexLayoutItems.reserveInitialCapacity(m_flexItems.size());
+    FlexLayoutItems flexLayoutItems(ReserveCapacityTag { }, m_flexItems.size());
     auto contentBoxLogicalWidth = flexBox().contentBoxLogicalWidth();
     for (auto& renderer : m_flexItems) {
         // buildFlexItemList has just collected these from the container's children, so none of them is gone.
@@ -133,7 +131,7 @@ FlexLayoutItems FlexLayout::buildFlexLayoutItems(RelayoutChildren relayoutChildr
 
         auto everHadLayout = flexItem->everHadLayout();
         if (flexItem->shouldInvalidateContentWidths())
-            flexItem->invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+            flexItem->invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
         flexBox().updateBlockChildDirtyBitsBeforeLayout(relayoutChildren, flexItem.get());
         flexLayoutItems.append({ flexItem.get(), constraints.isHorizontalFlow, margins, everHadLayout, relayoutChildren == RelayoutChildren::Yes });
     }
@@ -192,16 +190,7 @@ LayoutOptionalOutsets FlexLayout::adjustAllowedLayoutOverflow(LayoutOptionalOuts
     return allowance;
 }
 
-void FlexLayout::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForFlexItem, bool usePrintRect)
-{
-    for (auto& renderer : m_flexItems) {
-        CheckedPtr flexItem = renderer.get();
-        if (flexItem && !flexBox().paintChild(*flexItem, paintInfo, paintOffset, paintInfoForFlexItem, usePrintRect, RenderBlock::PaintBlockType::PaintAsInlineBlock))
-            return;
-    }
-}
-
-bool FlexLayout::hitTest(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction hitTestAction)
+bool FlexLayout::hitTest(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction hitTestAction) const
 {
     if (hitTestAction != HitTestAction::Foreground)
         return false;
@@ -211,10 +200,10 @@ bool FlexLayout::hitTest(const HitTestRequest& request, HitTestResult& result, c
     auto hitTestChild = [&](RenderBox& child) {
         if (child.hasSelfPaintingLayer())
             return false;
-        auto location = flexBox().flipForWritingModeForChild(child, scrolledOffset);
+        auto location = flexBox().blockStartRelativeToPhysicalForChild(child, scrolledOffset);
         if (!child.hitTest(request, result, locationInContainer, location))
             return false;
-        flexBox().updateHitTestResult(result, flexBox().flipForWritingMode(toLayoutPoint(locationInContainer.point() - adjustedLocation)));
+        flexBox().updateHitTestResult(result, flexBox().physicalToBlockStartRelative(toLayoutPoint(locationInContainer.point() - adjustedLocation)));
         return true;
     };
 
@@ -347,7 +336,7 @@ FlexLayout::FlexItemsAtMaxContentWidthScope::~FlexItemsAtMaxContentWidthScope()
             flexItem->setOverridingBorderBoxLogicalHeight(*height);
 
         if (flexLayoutState().hasFlexItemCompletedLayout(flexItem)) {
-            flexItem->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            flexItem->setChildNeedsLayout(MarkingBehavior::OnlyThis);
             flexItemsNeedLayout = true;
         }
     }
@@ -357,7 +346,7 @@ FlexLayout::FlexItemsAtMaxContentWidthScope::~FlexItemsAtMaxContentWidthScope()
     // Computing a box's intrinsic widths may not mark it for layout, but the items were just laid out at their max-content widths.
     // Its layout usually follows anyway; grid and flex parents can ask a laid-out container again.
     RenderObject::SetLayoutNeededForbiddenScope allowSetNeedsLayout(m_flexLayout.flexBox(), false);
-    m_flexLayout.flexBox().setChildNeedsLayout();
+    protect(m_flexLayout.flexBox())->setChildNeedsLayout();
 }
 
 std::optional<LayoutUnit> FlexLayout::maximumContentSizeForMultilineColumn()
@@ -499,7 +488,7 @@ LayoutUnit FlexLayout::staticMainAxisPositionForPositionedFlexItem(const RenderB
     auto mainAxisContentSize = FlexFormattingUtils::isColumnFlow(flexBox()) ? flexBox().contentBoxLogicalHeight() : flexBox().contentBoxLogicalWidth();
     auto availableSpace = mainAxisContentSize - flexItemMainExtent;
     auto isReverse = utils.isColumnOrRowReverse();
-    LayoutUnit offset = FlexFormattingUtils::initialJustifyContentOffset(flexBox().style(), availableSpace, { }, isReverse);
+    LayoutUnit offset = FlexFormattingUtils::initialJustifyContentOffset(protect(flexBox().style()), availableSpace, { }, isReverse);
     if (isReverse)
         offset = availableSpace - offset;
     return offset;
@@ -511,6 +500,9 @@ LayoutUnit FlexLayout::staticCrossAxisPositionForPositionedFlexItem(const Render
     auto availableSpace = utils.availableAlignmentSpaceForFlexItem(FlexFormattingUtils::crossAxisContentExtent(flexBox()), flexItem, utils.crossAxisExtentForFlexItem(flexItem));
     auto safety = utils.overflowAlignmentForFlexItem(flexItem);
     auto align = FlexFormattingUtils::alignmentForFlexItem(flexItem);
+    // An out-of-flow item has no baseline-sharing group, so baseline values use their fallback alignment: start for first baseline and end for last baseline.
+    if (align == ItemPosition::LastBaseline)
+        align = ItemPosition::FlexEnd;
     if (availableSpace < 0 && safety == OverflowAlignment::Safe)
         align = ItemPosition::FlexStart;
     return FlexFormattingUtils::alignmentOffset(availableSpace, align, { }, { }, FlexFormattingUtils::isWrapReverse(flexBox()));
@@ -611,15 +603,31 @@ bool FlexLayout::hasDefiniteSizeForPercentResolution(const RenderBox& flexItem)
         return FlexFormattingUtils::alignmentForFlexItem(flexItem) == ItemPosition::Stretch;
 
     // Flexbox 9.8 rule 2: definite flex-basis makes post-flexing main size definite.
-    // A percentage (or stretch) flex-basis is definite only when the container's block size is, which is rule 1 below.
+    // A percentage (or stretch) flex-basis is definite only when the container's block size is, which is rule 1 below,
+    // or when it is used as content and the aspect-ratio makes that definite, which is checked after rule 1.
     auto* flexLayoutState = m_flexLayoutState ? &*m_flexLayoutState : nullptr;
     auto flexBasis = FlexFormattingUtils::flexBasisForFlexItem(flexItem);
     if (!flexBasis.isPercentOrCalculated() && !flexBasis.isStretch() && FlexIntegrationUtils::flexItemMainSizeIsDefinite(flexItem, flexBasis, flexLayoutState))
         return true;
 
     // Flexbox 9.8 rule 1: definite container main size makes post-flexing sizes definite.
-    return FlexIntegrationUtils::canResolvePercentAgainstContainerBlockSize(flexItem, RenderBox::UpdatePercentageHeightDescendants::Yes, flexLayoutState);
+    if (FlexIntegrationUtils::canResolvePercentAgainstContainerBlockSize(flexItem, RenderBox::UpdatePercentageHeightDescendants::Yes, flexLayoutState))
+        return true;
+
+    // At this point, the container main size is assumed to be indefinite.
+    // FIXME: Extend this to replaced items and to items whose height behaves as auto. Their percentage
+    // children still resolve against the aspect-ratio size from RenderBlock::availableLogicalHeightForPercentageComputation.
+    if (is<RenderReplaced>(flexItem) || flexItem.logicalHeightBehavesAsAuto())
+        return false;
+
+    // Flexbox 9.8 rule 2 + Flexbox 9.2.3.B: check if a non-fixed flexBasis can also be definite.
+    // A flex item has a definite inline size if it has a preferred aspect ratio, a used flex basis of 'content', and a definite cross size.
+    // https://drafts.csswg.org/css-flexbox/#algo-main-item
+    // https://drafts.csswg.org/css-flexbox/#flex-basis-property
+    // If a value would resolve against a containing block with an indefinite size, the used value for flex-basis is content.
+    bool usedFlexBasisIsContent = flexBasis.isPercentOrCalculated() || flexBasis.isStretch() || flexBasis.isContent();
+
+    return usedFlexBasisIsContent && FlexIntegrationUtils::flexItemHasComputableAspectRatioAndCrossSizeIsConsideredDefinite(flexItem, flexLayoutState);
 }
 
-}
 }

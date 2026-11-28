@@ -32,9 +32,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 
-namespace WebCore {
-
-namespace Style {
+namespace WebCore::Style {
 
 class Resolver;
 
@@ -69,7 +67,7 @@ public:
     void invalidate();
     void clearEntriesAffectedByViewportUnits();
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
 
 private:
@@ -84,5 +82,4 @@ private:
     unsigned m_additionsSinceLastSweep { 0 };
 };
 
-}
 }

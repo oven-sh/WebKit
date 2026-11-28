@@ -1,0 +1,81 @@
+# a product of two proven numbers is written twice, once with its operands the other way round: one record is built, and the sum takes it twice
+# of operands that anybody hands over each product converts them for itself, and whoever converts can count: both stay
+# behind an await the product is built again: it costs an instruction, and a word of the saved frame costs more
+# each function is handed to sink, so nothing is known of its parameters but what its own tests show
+# f1 = twice, f2 = converts, f3 = later
+# function twice(a, b) { if (typeof a !== "number" || typeof b !== "number") return 0; return a * b + b * a; }
+# function converts(a, b) { return a * b + b * a; }
+# async function later(a, b, p) { if (typeof a !== "number" || typeof b !== "number") return 0; const first = a * b; await p; return first + a * b; }
+# sink(twice, converts, later);
+# the records are by hand, and behind each test they read the value that the edge hands on. The front end writes the parameter itself there, of which the walk proves nothing
+# an edge narrows with typed operations alone, so they stand in every RUN
+# RUN: walk f1 mechanisms=none+Folding+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Mul
+# CHECK-NOT: = Mul
+# CHECK: = Add
+# with every mechanism the stretch on two numbers that arrive boxed is walked twice, on doubles and on integers: one record in each
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = Mul {{*}}form=Numbers
+# ALL-NOT: = Mul {{*}}form=Numbers
+# ALL: = Mul {{*}}form=CheckedIntegers
+# ALL-NOT: = Mul
+# RUN(OTHER): walk f2 mechanisms=none+Folding+TypedOperations
+# OTHER-LABEL: code f2:Body
+# OTHER-COUNT-2: = Mul
+# RUN(LATER): walk f3:CoroutineBody mechanisms=none+Folding+TypedOperations
+# LATER-COUNT-2: = Mul {{*}}form=Numbers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="twice" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Mul v3, v5
+    v7 = Mul v5, v3
+    v8 = Add v6, v7
+    Return v8
+  b3():
+    v9 = Integer
+    Return v9
+}
+function f2 name="converts" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Mul v0, v1
+    v3 = Mul v1, v0
+    v4 = Add v2, v3
+    Return v4
+}
+function f3 name="later" module=m0 flags=[IsAsync] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = TypeTest v1 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Mul v4, v6
+    v8 = Await v2
+    v9 = Mul v4, v6
+    v10 = Add v7, v9
+    Return v10
+  b3():
+    v11 = Integer
+    Return v11
+}

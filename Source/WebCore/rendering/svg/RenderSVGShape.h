@@ -34,6 +34,7 @@
 #include "SVGMarkerData.h"
 #include "SVGPaintServerCache.h"
 #include <memory>
+#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -62,7 +63,7 @@ public:
         GlobalCoordinateSpace,
         LocalCoordinateSpace
     };
-    RenderSVGShape(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
+    RenderSVGShape(Type, SVGGraphicsElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGShape();
 
     inline SVGGraphicsElement& graphicsElement() const;
@@ -102,7 +103,7 @@ public:
 
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
 
-    AffineTransform nonScalingStrokeTransform() const;
+    AffineTransform computeNonScalingStrokeTransform() const;
 
     void invalidateNonScalingStrokeCaches();
 
@@ -112,14 +113,14 @@ protected:
     Path& ensurePath() LIFETIME_BOUND;
 
     virtual void updateShapeFromElement() = 0;
-    virtual bool LEGACY_NODELETE isEmpty() const;
+    NODELETE virtual bool isEmpty() const;
     virtual bool shapeDependentStrokeContains(const FloatPoint&, PointCoordinateSpace = GlobalCoordinateSpace);
     virtual bool shapeDependentFillContains(const FloatPoint&, const WindRule) const;
     float strokeWidth() const;
     float strokeWidthForMarkerUnits() const;
 
     inline bool hasNonScalingStroke() const;
-    Path* nonScalingStrokePath(const Path*, const AffineTransform&) const;
+    Path nonScalingStrokePath(const Path&, const AffineTransform&) const;
 
     virtual FloatRect adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation, FloatRect strokeBoundingBox) const { return strokeBoundingBox; }
 
@@ -149,7 +150,7 @@ private:
     void strokeShape(const Style::ComputedStyle&, GraphicsContext&);
     void fillStrokeMarkers(PaintInfo&);
 
-    SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
+    SVGPaintServerCache* svgPaintServerCache() const final { return m_svgPaintServerCache.ptr(); }
 
     virtual void drawMarkers(PaintInfo&) { }
 
@@ -169,7 +170,7 @@ protected:
     ShapeType m_shapeType : 3 { ShapeType::Empty };
 private:
     std::unique_ptr<Path> m_path;
-    mutable SVGPaintServerCache m_svgPaintServerCache;
+    const UniqueRef<SVGPaintServerCache> m_svgPaintServerCache { makeUniqueRef<SVGPaintServerCache>() };
 };
 
 } // namespace WebCore

@@ -1,0 +1,15 @@
+# writeFileSync(import.meta.dir + "/main.js", text); await import("./main.js")
+# A test writes the file anew before it is first loaded, and the front end says so in its record. What runs then is a text that nobody has read: it names what module of the library it likes, and evaluates texts,
+# as the text of a file that was not there when the run was built.
+# RUN: image
+# CHECK: flags {{*}}AllowsLibrarySource
+# RUN(TEXTS): image
+# TEXTS: flags {{*}}AdmitsUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" flags=[IsChangedOnDiskByRun] body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,54 @@
+# Nothing is listed of a text that hangs on what the build cannot know: what unseen code hands over, what the host lays on the global object, the clock, chance.
+# export function fromCaller(word) { return new RegExp("^" + word); }      export const fromHost = new RegExp("^" + process.argv0);
+# export const fromChance = new RegExp("a{" + Math.random() + "}"), fromClock = new RegExp("b{" + Date.now() + "}");
+# A list with such a value among its elements has no text either: export const joined = new RegExp(["a", process.argv0].join("|"));
+# DIAGNOSTIC: RegExpPatternNotConstant 5
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fromCaller" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Builtin builtin=RegExp
+    v4 = String string="^"
+    v5 = PropGet v0 key="process" [isFreeName]
+    v6 = PropGet v5 key="argv0"
+    v7 = Add v4, v6
+    v8 = Construct v3, -, v7
+    v9 = String string="a{"
+    v10 = Builtin builtin=Math
+    v11 = PropGet v10 key="random"
+    v12 = Call v11, v10 calleeKey="random"
+    v13 = Add v9, v12
+    v14 = String string="}"
+    v15 = Add v13, v14
+    v16 = Construct v3, -, v15
+    v17 = String string="b{"
+    v18 = Builtin builtin=Date
+    v19 = PropGet v18 key="now"
+    v20 = Call v19, v18 calleeKey="now"
+    v21 = Add v17, v20
+    v22 = Add v21, v14
+    v23 = Construct v3, -, v22
+    v24 = String string="a"
+    v25 = NewArray v24, v6 contents=anything
+    v26 = PropGet v25 key="join"
+    v27 = String string="|"
+    v28 = Call v26, v25, v27 calleeKey="join"
+    v29 = Construct v3, -, v28
+    v30 = Call v1, -, v2, v8, v16, v23, v29
+    Return v30
+}
+function f1 name="fromCaller" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=RegExp
+    v2 = String string="^"
+    v3 = Add v2, v0
+    v4 = Construct v1, -, v3
+    Return v4
+}

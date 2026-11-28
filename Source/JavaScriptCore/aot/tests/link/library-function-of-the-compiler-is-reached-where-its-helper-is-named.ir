@@ -1,0 +1,37 @@
+# A member of %CompilerHelpers% has no function object: the walk writes a direct call of the function that its row names, which no summary shows. If Link did not reach that function where the helper is named, the queue would stop at a unit that is not in the plan
+# print(createElement("a"));
+# No realm holds a function of the compiler, so nothing but an operation that names its helper leads there: `arrayFromLength` stays out.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f1 callers-known
+# CHECK: function f2 unreached
+# A copy of the function in the place of the call needs no unit.
+# RUN(UNITS): units-with-code f1:Body f2:Body mechanisms=all-Inlining
+# UNITS: unit f1:Body {{*}} bytes
+# UNITS: unit f2:Body has no code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/helpers.ts" displayPath="/$bun/js/prelude/helpers.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=DecoratorsCreateElement function=f1
+runtimefunction id=WrittenListsArrayFromLength function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="a"
+    v3 = Builtin builtin=CompilerHelpersCreateElement [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Call v1, -, v4 calleeName="print"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="createElement" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="arrayFromLength" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=WrittenListsArrayFromLength thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

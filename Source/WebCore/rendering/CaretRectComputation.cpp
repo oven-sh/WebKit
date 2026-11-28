@@ -32,7 +32,6 @@
 #include "InlineIteratorTextBox.h"
 #include "InlineIteratorSVGTextBox.h"
 #include "LayoutIntegrationLineLayout.h"
-#include "LineSelection.h"
 #include "RenderBlockFlow.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
@@ -132,10 +131,10 @@ static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxI
 {
     CheckedRef root = lineBox->formattingContextRoot();
     auto writingMode = root->writingMode();
-    auto lineSelectionRect = LineSelection::logicalRect(*lineBox);
+    auto lineRect = lineBox->contentAreaLogicalRectAdjustedForAdjacentLineBoxes();
 
-    int height = lineSelectionRect.height();
-    int top = lineSelectionRect.y();
+    int height = lineRect.height();
+    int top = lineRect.y();
 
     // Distribute the caret's width to either side of the offset.
     float left = logicalLeftPosition;
@@ -144,8 +143,8 @@ static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxI
     int caretWidthRightOfOffset = caretWidth() - caretWidthLeftOfOffset;
     left = roundf(left);
 
-    float lineLeft = lineSelectionRect.x();
-    float lineRight = lineSelectionRect.maxX();
+    float lineLeft = lineRect.x();
+    float lineRight = lineRect.maxX();
 
     bool rightAligned = false;
     switch (root->style().textAlign()) {
@@ -210,7 +209,7 @@ static LayoutRect computeCaretRectForText(const InlineBoxAndOffset& boxAndOffset
         LayoutRect selectionRect;
         // Get logical x coordinate relative to text run.
         auto textRun = textBox->textRun(InlineIterator::TextRunMode::Editing);
-        textBox->fontCascade().adjustSelectionRectForText(textBox->renderer().canUseSimplifiedTextMeasuring().value_or(false), textRun, selectionRect, startOffset, endOffset);
+        protect(textBox->fontCascade())->adjustSelectionRectForText(textBox->renderer().canUseSimplifiedTextMeasuring(), textRun, selectionRect, startOffset, endOffset);
         selectionRect.shiftXEdgeTo(selectionRect.maxX());
 
         // Convert to box coordinates.
@@ -291,7 +290,7 @@ static LayoutRect computeCaretRectForBox(const RenderBox& renderer, const Inline
     // <rdar://problem/3777804> Deleting all content in a document can result in giant tall-as-window insertion point
     //
     // FIXME: ignoring :first-line, missing good reason to take care of
-    auto fontHeight = renderer.style().metricsOfPrimaryFont().height();
+    auto fontHeight = protect(renderer.style())->metricsOfPrimaryFont().height();
     if (fontHeight > rect.height() || (!renderer.isBlockLevelReplacedOrAtomicInline() && !renderer.isRenderTable()))
         rect.setHeight(fontHeight);
 
@@ -335,7 +334,7 @@ static LayoutRect computeCaretRectForInline(const RenderBoxModelObject& renderer
     LayoutRect caretRect = computeCaretRectForEmptyElement(renderer, renderer.borderAndPaddingLogicalWidth(), 0, CaretRectMode::Normal);
 
     if (auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(renderer))
-        caretRect.moveBy(LayoutPoint { firstInlineBox->visualRectIgnoringBlockDirection().location() });
+        caretRect.moveBy(LayoutPoint { firstInlineBox->blockStartRelativePhysicalRect().location() });
 
     return caretRect;
 }

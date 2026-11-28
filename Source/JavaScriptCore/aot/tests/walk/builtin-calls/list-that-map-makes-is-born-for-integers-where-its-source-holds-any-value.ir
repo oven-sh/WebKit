@@ -1,0 +1,53 @@
+# A list that is made like its source holds what its source held: filter, slice. What map makes holds what the mapper gives, which the source says nothing of: so the text of map says
+# what its list is like: nothing (the fourth operand of $newArrayWithSpecies: undefined). Where the source has storage for any value such a list is born for integers, the kind that is left at the least price,
+# and the stores of the text, which go by the kind that they find, widen it in line. No name of a built-in is asked.
+# The library here is a stand-in.
+# LIBRARY: own
+# RUN: bytes f1 mechanisms=all
+# CHECK: Call Stub NewArrayWithLength.Int32
+# RUN(ANY): bytes f1 mechanisms=all
+# ANY-NOT: Stub NewArrayWithLength.Contiguous
+# It is the text's word and no choice of the walk: with every mechanism withheld the list is born the same.
+# RUN(WITHHELD): bytes f1 mechanisms=none
+# WITHHELD: Call Stub NewArrayWithLength.Int32
+# RUN(NEVER): bytes f1 mechanisms=none
+# NEVER-NOT: Stub NewArrayWithLength.Contiguous
+# RUN(FILTER): bytes f2 mechanisms=all
+# FILTER: Call Stub NewArrayWithLength.Contiguous
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f2
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Undefined
+    v4 = ArraySpeciesCreate v2, v0, v2, v3
+    Return v4
+}
+function f2 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ArraySpeciesCreate v2, v0
+    Return v3
+}
+function f3 name="user" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0 contents=anything
+    v3 = PropGet v2 key="map"
+    v4 = Call v3, v2, v1 calleeKey="map" calleeName="list.map"
+    v5 = PropGet v2 key="filter"
+    v6 = Call v5, v2, v1 calleeKey="filter" calleeName="list.filter"
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+}

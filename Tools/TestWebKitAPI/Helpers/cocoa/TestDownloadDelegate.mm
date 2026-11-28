@@ -25,6 +25,7 @@
 
 #import "config.h"
 #import "Helpers/cocoa/TestDownloadDelegate.h"
+#import "Helpers/PlatformUtilities.h"
 #import "Helpers/Utilities.h"
 
 #import <WebKit/WKNavigationDelegatePrivate.h>
@@ -128,6 +129,15 @@
         _decidePolicyForNavigationAction(navigationAction, decisionHandler);
     else
         decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+- (void)allowAnyTLSCertificate
+{
+    EXPECT_FALSE(self.didReceiveAuthenticationChallenge);
+    self.didReceiveAuthenticationChallenge = ^(WKDownload *, NSURLAuthenticationChallenge *challenge, void (^callback)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        EXPECT_WK_STREQ(challenge.protectionSpace.authenticationMethod, NSURLAuthenticationMethodServerTrust);
+        callback(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
 }
 
 - (void)waitForDownloadDidFinish

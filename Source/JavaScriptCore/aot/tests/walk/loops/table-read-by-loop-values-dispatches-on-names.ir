@@ -1,0 +1,101 @@
+# type S = "idle" | "run" | "done"; const T: Record<S, S> = { idle: "run", run: "done", done: "idle" }; let s: S = "idle";
+# function typed(turns: number) { let n = 0; for (let k = 0; k < turns; k++) { s = T[s]; n += s.length; } return n; }
+# function local(turns: number) { let n = 0; let t: string = "idle"; for (let k = 0; k < turns; k++) { t = U[t]; n++; } return n + t.length; }
+# A table that a loop reads by its own values: what the variable is declared to hold is asked beside what it is before its declaration (absent), and where nothing is declared the key comes round as what the read finds. The names are told apart.
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: SwitchString {{*}}strings=
+# CHECK-LABEL: code f2:Body
+# CHECK: SwitchString {{*}}strings=
+layout L0 module=m0 fields=[{key="done" declared={type=undefined|null|"done"|"idle"|"run" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="idle" declared={type=undefined|null|"done"|"idle"|"run" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="run" declared={type=undefined|null|"done"|"idle"|"run" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 2, 0] place=255 ownFieldCount=3
+variable g0 name="T" module=m0 declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=4
+variable g1 name="s" module=m0 declared={type=undefined|null|absent|"done"|"idle"|"run" flags=[OmitsNull, OmitsUndefined]} place=5
+variable g2 name="U" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=6
+module m0 path="main.ts" displayPath="main.ts" body=f0
+data d0 root=Object{layout=L0 members=[{key="idle" value=String{value="run"}}, {key="run" value=String{value="done"}}, {key="done" value=String{value="idle"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="idle" value=String{value="run"}}, {key="run" value=String{value="done"}}, {key="done" value=String{value="idle"}}]} module=m0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Data data=d0 @58
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @58
+    PutModuleVariable v5 variable=g0 @40
+    v7 = String string="idle" @113
+    v8 = Convert v7 declared={type=undefined|null|"done"|"idle"|"run" flags=[OmitsNull, OmitsUndefined]} @113
+    PutModuleVariable v8 variable=g1 @106
+    v10 = Data data=d1 @255
+    PutModuleVariable v10 variable=g2 @251
+    v12 = Builtin builtin=GlobalThis @458
+    v13 = PropGet v12 key="globalThis" [isFreeName] @458
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]} @458
+    v15 = PropGet v14 key="sink" @458
+    v16 = Call v15, v14, v1, v3 calleeKey="sink" calleeName="globalThis.sink" @477
+    v17 = Undefined @457
+    Return v17 @457
+}
+function f1 name="typed" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer @169
+    v2 = Convert v1 declared={type=number} @169
+    v3 = Integer @185
+    v4 = Convert v3 declared={type=number} @185
+    Jump -> next b1(v2, v4) @181
+  b1(v5: number, v6: number):
+    LoopHint @181
+    v8 = Less v6, v0 @188
+    Branch v8 -> taken b2(), notTaken b3() @188
+  b2():
+    v9 = GetModuleVariable variable=g1 @206
+    v10 = CheckInitialized v9 name="s" @206
+    v11 = GetModuleVariable variable=g0 @210
+    v12 = CheckInitialized v11 name="T" @210
+    v13 = GetModuleVariable variable=g1 @212
+    v14 = CheckInitialized v13 name="s" @212
+    v15 = ElemGet v12, v14 @210
+    v16 = Convert v15 declared={type=undefined|null|"done"|"idle"|"run" flags=[OmitsNull, OmitsUndefined]} @206
+    PutModuleVariable v16 variable=g1 @206
+    v18 = GetModuleVariable variable=g1 @221
+    v19 = CheckInitialized v18 name="s" @221
+    v20 = PropGet v19 key="length" @221
+    v21 = Add v5, v20 @221
+    v22 = Convert v21 declared={type=number} @216
+    v23 = Increment v6 @199
+    v24 = Convert v23 declared={type=number} @199
+    Jump -> next b1(v22, v24) @199
+  b3():
+    v25 = Convert v5 declared={type=number} @240
+    Return v25 @240
+}
+function f2 name="local" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer @347
+    v2 = Convert v1 declared={type=number} @347
+    v3 = String string="idle" @366
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @366
+    v5 = Integer @387
+    v6 = Convert v5 declared={type=number} @387
+    Jump -> next b1(v2, v4, v6) @383
+  b1(v7: number, v8: undefined|null|string, v9: number):
+    LoopHint @383
+    v11 = Less v9, v0 @390
+    Branch v11 -> taken b2(), notTaken b3() @390
+  b2():
+    v12 = GetModuleVariable variable=g2 @413
+    v13 = CheckInitialized v12 name="U" @413
+    v14 = ElemGet v13, v8 @413
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @408
+    v16 = Increment v7 @427
+    v17 = Convert v16 declared={type=number} @427
+    v18 = Increment v9 @401
+    v19 = Convert v18 declared={type=number} @401
+    Jump -> next b1(v17, v15, v19) @401
+  b3():
+    v20 = PropGet v8 key="length" @445
+    v21 = Add v7, v20 @441
+    v22 = Convert v21 declared={type=number} @441
+    Return v22 @441
+}

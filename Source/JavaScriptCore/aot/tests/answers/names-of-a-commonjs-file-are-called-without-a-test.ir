@@ -1,0 +1,175 @@
+# tsout.js: exports.LIMIT = 7;  function add(a, b) { return a + b; }  exports.add = add;  function scale(v) { return add(v, v) * exports.LIMIT; }  exports.scale = scale;
+# main.js: var lib_1 = require("./tsout.js");  function run(count) { var total = 0; for (var i = 0; i < count; i++) total += (0, lib_1.scale)(i & 7) + (0, lib_1.add)(i & 3, lib_1.LIMIT); return total; }
+# What tsc writes for CommonJS, as the front end sends it: each name is a variable of the file.
+# RUN(ANSWER): run-in-shell globalThis.count = 10;
+# ANSWER: between undefined
+# ANSWER-NEXT: between undefined
+# ANSWER-NEXT: 489
+# ANSWER-NEXT: 15
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="add"}] ownFieldCount=1
+layout L1 module=m1
+layout L2 kind=Environment module=m1 fields=[{key=@"0" declared={type=anything} flags=[IsRequired, IsImmutable] variableName="lib_1"}] ownFieldCount=1
+module m0 path="/tsout.js" displayPath="tsout.js" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="/main.js" displayPath="main.js" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g0 requests=[{target=m0 kind=Require completes=true}]
+entry module=m1
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="LIMIT" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="add" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="scale" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="reset" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = NewClosure v0 function=f2
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Integer integer=7
+    PutModuleVariable v6 variable=g1
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v5 variable=g3
+    v10 = NewClosure function=f6
+    v11 = Call v10, -
+    v12 = Undefined
+    PutModuleVariable v12 variable=g4
+    v14 = Call v10, -
+    PutModuleVariable v2 variable=g4
+    v16 = Undefined
+    Return v16
+}
+function f1 name="add" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="scale" module=m0 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = Call v2, -, v1, v1 calleeName="add"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g1
+    v6 = Convert v5 declared={type=7 flags=[IsExpected]}
+    v7 = Mul v4, v6
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    Return v8
+}
+function f3 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    v5 = NewClosure v4 function=f4
+    v6 = Convert v5 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = NewClosure v4 function=f5
+    v8 = Convert v7 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    EvaluateModule module=m0 referrer=m1 [isBare, isCallOfRequire]
+    v10 = Boolean boolean=true
+    v11 = Convert v10 declared={type=undefined|null|object flags=[IsExpected]}
+    PutEnvironmentField v4, v11 layout=L2
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="count" [isFreeName]
+    v15 = Builtin builtin=Number
+    v16 = Call v15, -, v14 calleeName="Number"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Call v6, -, v17 calleeName="run"
+    v19 = PropGet v13 key="print" [isFreeName]
+    v20 = Call v19, -, v18
+    v21 = Call v8, -, v17 calleeName="runReset"
+    v22 = Call v19, -, v21
+    v23 = Undefined
+    Return v23
+}
+function f4 name="run" module=m1 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: env L2, v1: anything):
+    v2 = Undefined
+    v3 = Integer
+    v4 = Convert v3 declared={type=undefined|number flags=[IsExpected]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=undefined|i32 flags=[IsExpected]}
+    Jump -> next b1(v4, v6)
+  b1(v7, v8):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Convert v1 declared={type=number flags=[IsExpected]}
+    v12 = Less v10, v11
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = GetEnvironmentField v0 layout=L2
+    v14 = RequireObjectCoercible v13 name="scale"
+    v15 = GetModuleVariable variable=g3
+    v16 = Convert v15 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    v17 = Integer integer=7
+    v18 = BitAnd v10, v17
+    v19 = Call v16, -, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = GetEnvironmentField v0 layout=L2
+    v22 = RequireObjectCoercible v21 name="add"
+    v23 = GetModuleVariable variable=g2
+    v24 = Convert v23 declared={type=undefined|null|function|f1 flags=[IsExpected]}
+    v25 = Integer integer=3
+    v26 = BitAnd v10, v25
+    v27 = GetEnvironmentField v0 layout=L2
+    v28 = RequireObjectCoercible v27 name="LIMIT"
+    v29 = GetModuleVariable variable=g1
+    v30 = Convert v29 declared={type=7 flags=[IsExpected]}
+    v31 = Call v24, -, v26, v30
+    v32 = Convert v31 declared={type=number flags=[IsExpected]}
+    v33 = Add v20, v32
+    v34 = Add v7, v33
+    v35 = Convert v34 declared={type=undefined|number flags=[IsExpected]}
+    v36 = Increment v10
+    v37 = Convert v36 declared={type=undefined|i32 flags=[IsExpected]}
+    Jump -> next b1(v35, v37)
+  b3():
+    v38 = Convert v7 declared={type=number flags=[IsExpected]}
+    Return v38
+}
+function f5 name="runReset" module=m1 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: env L2, v1: anything):
+    v2 = Undefined
+    v3 = Integer
+    v4 = Convert v3 declared={type=undefined|number flags=[IsExpected]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=undefined|i32 flags=[IsExpected]}
+    Jump -> next b1(v4, v6)
+  b1(v7, v8):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Convert v1 declared={type=number flags=[IsExpected]}
+    v12 = Less v10, v11
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = GetEnvironmentField v0 layout=L2
+    v14 = RequireObjectCoercible v13 name="reset"
+    v15 = GetModuleVariable variable=g4
+    v16 = Convert v15 declared={type=undefined|null|function|f1 flags=[IsExpected]}
+    v17 = Integer integer=1
+    v18 = BitAnd v10, v17
+    v19 = Call v16, -, v18, v17
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Add v7, v20
+    v22 = Convert v21 declared={type=undefined|number flags=[IsExpected]}
+    v23 = Increment v10
+    v24 = Convert v23 declared={type=undefined|i32 flags=[IsExpected]}
+    Jump -> next b1(v22, v24)
+  b3():
+    v25 = Convert v7 declared={type=number flags=[IsExpected]}
+    Return v25
+}
+function f6 name="between" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g4
+    v1 = TypeOf v0
+    v2 = String string="between "
+    v3 = Add v2, v1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="print" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = Undefined
+    Return v7
+}

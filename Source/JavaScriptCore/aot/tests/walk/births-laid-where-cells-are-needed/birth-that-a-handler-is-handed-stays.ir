@@ -1,0 +1,30 @@
+# const p = [a]; if (c) { try { f(); } catch { return p; } } return a;
+# The edge to the handler hands the cell on, so b1 needs it; b1 stands under that handler, and nothing is laid there. The birth stays.
+# RUN: sweep-code
+# CHECK: b0(
+# CHECK-NEXT: v3: Array @Cell = NewArray v0
+# CHECK-NEXT: Branch v2
+# CHECK-NOT: NewArray
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     Branch v2 -> taken b1(), notTaken b3()
+#   b1() handler=b2(v3):
+#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b3()
+#   b2(v5: Array @Cell) role=CatchHandler:
+#     v6: Array @JSValue = Box v5
+#     Return v6
+#   b3():
+#     Return v0
+# }
+# -- end of code

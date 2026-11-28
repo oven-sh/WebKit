@@ -1,0 +1,85 @@
+# The walk leaves the test of a position out where a relation that has passed shows that the position lies inside its list, or where the element was found present.
+# Two provers say so: groundsShowPositionInside(), which Walker::showPositionInside() and the verifier ask, and testsShowElementPresent(), which Walker::showElementPresentBehindTest() asks.
+# Every caller of today hands in the very relation over the position and the length, so neither prover refuses once over all the programs of the tree: here each is asked by itself for what it must refuse.
+# RUN(RIGHT): position-inside position=v2 length=v5 below=v7 from-zero-up=v11
+# RIGHT: shown
+# RUN(KNOWN): position-inside position=v13 length=v5 below=v14
+# KNOWN: shown
+# RUN(OTHERLENGTH): position-inside position=v2 length=v5 below=v8 from-zero-up=v11
+# OTHERLENGTH: not shown
+# RUN(OTHERPOSITION): position-inside position=v2 length=v5 below=v10 from-zero-up=v11
+# OTHERPOSITION: not shown
+# RUN(UPTO): position-inside position=v2 length=v5 below=v9 from-zero-up=v11
+# UPTO: not shown
+# RUN(FAILED): position-inside position=v2 length=v5 not-below=v7 from-zero-up=v11
+# FAILED: not shown
+# RUN(NEGATIVE): position-inside position=v2 length=v5 below=v7
+# NEGATIVE: not shown
+# RUN(OTHERSIGN): position-inside position=v2 length=v5 below=v7 from-zero-up=v12
+# OTHERSIGN: not shown
+# RUN(NOTHING): position-inside position=v2 length=v5 from-zero-up=v11
+# NOTHING: not shown
+# RUN(ROOM): position-inside position=v2 length=v18 below=v20 length-holds-bound=v21 from-zero-up=v11
+# ROOM: shown
+# RUN(BOUNDALONE): position-inside position=v2 length=v18 below=v20 from-zero-up=v11
+# BOUNDALONE: not shown
+# RUN(ROOMALONE): position-inside position=v2 length=v18 length-holds-bound=v21 from-zero-up=v11
+# ROOMALONE: not shown
+# RUN(OTHERROOM): position-inside position=v2 length=v18 below=v20 length-holds-bound=v22 from-zero-up=v11
+# OTHERROOM: not shown
+# RUN(ROOMWITHINBOUND): position-inside position=v2 length=v18 below=v20 length-holds-bound=v23 from-zero-up=v11
+# ROOMWITHINBOUND: not shown
+# RUN(UPTOBOUND): position-inside position=v2 length=v18 below=v24 length-holds-bound=v21 from-zero-up=v11
+# UPTOBOUND: not shown
+# RUN(PRESENT): element-present list=v0 position=v2 passed=v15
+# PRESENT: shown
+# RUN(ABSENT): element-present list=v0 position=v2 failed=v15
+# ABSENT: not shown
+# RUN(ELSEWHERE): element-present list=v0 position=v2 passed=v16
+# ELSEWHERE: not shown
+# RUN(OTHERLIST): element-present list=v0 position=v2 passed=v17
+# OTHERLIST: not shown
+# RUN(ONEOFTWO): element-present list=v0 position=v2 passed=v15 passed=v16
+# ONEOFTWO: not shown
+# RUN(NOTEST): element-present list=v0 position=v2 passed=v7
+# NOTEST: not shown
+# -- code
+# code f1:Body {
+#   constants:
+#     v4: 0 @Int64 = Integer
+#   b0(v0: Array @Cell, v1: Array @Cell, v2: int[-2147483648, 2147483647] @Int64, v3: int[-2147483648, 2147483647] @Int64) entry=0:
+#     v5: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v6: int[0, 4294967295] @Int64 = GetArrayLength v1 traits=[mayTouchMemory]
+#     v7: boolean @Boolean = Less v2, v5 form=Integers
+#     v8: boolean @Boolean = Less v2, v6 form=Integers
+#     v9: boolean @Boolean = LessEq v2, v5 form=Integers
+#     v10: boolean @Boolean = Less v3, v5 form=Integers
+#     v11: boolean @Boolean = GreaterEq v2, v4 form=Integers
+#     v12: boolean @Boolean = GreaterEq v3, v4 form=Integers
+#     v13: int[0, 4294967295] @Int64 = GetArrayLength v1 traits=[mayTouchMemory]
+#     v14: boolean @Boolean = Less v13, v5 form=Integers
+#     v15: boolean @Boolean = IsElementPresent v0, v2 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
+#     v16: boolean @Boolean = IsElementPresent v0, v3 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
+#     v17: boolean @Boolean = IsElementPresent v1, v2 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
+#     v18: int[0, 4294967295] @Int64 = GetArrayCapacity v0 traits=[mayTouchMemory]
+#     v19: int[0, 4294967295] @Int64 = GetArrayCapacity v1 traits=[mayTouchMemory]
+#     v20: boolean @Boolean = Less v2, v3 form=Integers
+#     v21: boolean @Boolean = LessEq v3, v18 form=Integers
+#     v22: boolean @Boolean = LessEq v3, v19 form=Integers
+#     v23: boolean @Boolean = LessEq v18, v3 form=Integers
+#     v24: boolean @Boolean = LessEq v2, v3 form=Integers
+#     Return v7
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

@@ -1,0 +1,139 @@
+# A plain value that the prototype of a class holds under the name of a field is part of what `$isPlainInstanceOf` answers for: whoever stores another there BEHIND THE ARMING of the class makes the answer false, for every object of the class.
+# (ClassTable::didChangeMember() ends all guards of the name, the guard of stores too, which the door lists under the name of every field.) The library leans on it: it reads such a value once, not at every request.
+# A class of the library that a door asks about is armed where its own file ends, in front of any code of the program. A class of the program is armed at its first use: what was stored before that is what the class is (REPLACEDBEFORETHEARMING).
+# function Message(minor) { this.code = 1; if (minor) this.minor = minor; }
+# Message.prototype.minor = 1;
+# Message.prototype.end = function () { return 1; };
+# function ask(message) { return $isPlainInstanceOf(message, Message) ? "yes " + message.minor : "no " + message.minor; }            in a file of the library
+# const Messages = keep(Message), asks = keep(ask);
+# first(Messages);
+# const message = new Messages();
+# print(asks(message));
+# change(Messages);
+# print(asks(message), "|", asks(new Messages()));
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f2
+# FORM: = IsPlainInstanceOf v0 conditions=[{{*}}kind=MemberPassedByStores layout=L0 key="minor"
+# RUN(QUIET): run-in-shell keep = x => x; never = () => false; first = function () { }; change = function () { };
+# QUIET: yes 1
+# QUIET-NEXT: yes 1 | yes 1
+# QUIET-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell keep = x => x; never = () => false; first = function () { }; change = function (Messages) { Messages.prototype.minor = 0; };
+# REPLACED: yes 1
+# REPLACED-NEXT: no 0 | no 0
+# RUN(REPLACEDBYTHESAME): run-in-shell keep = x => x; never = () => false; first = function () { }; change = function (Messages) { Messages.prototype.minor = 1; };
+# REPLACEDBYTHESAME: yes 1
+# REPLACEDBYTHESAME-NEXT: no 1 | no 1
+# RUN(DELETED): run-in-shell keep = x => x; never = () => false; first = function () { }; change = function (Messages) { delete Messages.prototype.minor; };
+# DELETED: yes 1
+# DELETED-NEXT: no undefined | no undefined
+# RUN(OTHERNAME): run-in-shell keep = x => x; never = () => false; first = function () { }; change = function (Messages) { Messages.prototype.other = 0; };
+# OTHERNAME: yes 1
+# OTHERNAME-NEXT: yes 1 | yes 1
+# RUN(REPLACEDBEFORETHEARMING): run-in-shell keep = x => x; never = () => false; first = function (Messages) { Messages.prototype.minor = 0; }; change = function () { };
+# REPLACEDBEFORETHEARMING: yes 0
+# REPLACEDBEFORETHEARMING-NEXT: yes 0 | yes 0
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Message" module=m0 constructor=f1 fields=[{key="code" declared={type=anything} flags=[IsRequired]}, {key="minor" declared={type=anything}}] flags=[IsConstructorFunction] place=0 ownFieldCount=2
+variable g0 name="Message" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = GetModuleVariable variable=g0 @74
+    v3 = PropGet v2 key="prototype" @74
+    v4 = Integer integer=1 @100
+    PropSet v3, v4 key="minor" @82
+    v6 = GetModuleVariable variable=g0 @103
+    v7 = PropGet v6 key="prototype" @103
+    v8 = NewClosure function=f3 @127
+    PropSet v7, v8 key="end" @111
+    v10 = Builtin builtin=GlobalThis @291
+    v11 = PropGet v10 key="keep" [isFreeName] @291
+    v12 = GetModuleVariable variable=g0 @296
+    v13 = Call v11, -, v12 calleeName="keep" @291
+    v14 = Builtin builtin=GlobalThis @313
+    v15 = PropGet v14 key="keep" [isFreeName] @313
+    v16 = Call v15, -, v1 calleeName="keep" @313
+    v17 = Builtin builtin=GlobalThis @324
+    v18 = PropGet v17 key="first" [isFreeName] @324
+    v19 = Call v18, -, v13 calleeName="first" @324
+    v20 = Construct v13 calleeName="Messages" @361
+    v21 = Builtin builtin=GlobalThis @373
+    v22 = PropGet v21 key="print" [isFreeName] @373
+    v23 = Call v16, -, v20 calleeName="asks" @379
+    v24 = Call v22, -, v23 calleeName="print" @373
+    v25 = Builtin builtin=GlobalThis @395
+    v26 = PropGet v25 key="change" [isFreeName] @395
+    v27 = Call v26, -, v13 calleeName="change" @395
+    v28 = Builtin builtin=GlobalThis @413
+    v29 = PropGet v28 key="print" [isFreeName] @413
+    v30 = Call v16, -, v20 calleeName="asks" @419
+    v31 = String string="|" @434
+    v32 = Construct v13 calleeName="Messages" @448
+    v33 = Call v16, -, v32 calleeName="asks" @439
+    v34 = Call v29, -, v30, v31, v33 calleeName="print" @413
+    v35 = Undefined @413
+    Return v35 @413
+}
+function f1 name="Message" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Integer integer=1 @38
+    PropSet v0, v2 key="code" @26
+    v4 = ToBoolean v1 @45
+    Branch v4 -> taken b1(| 0), notTaken b2() @45
+  b1(v5):
+    PropSet v0, v1 key="minor" @52
+    Jump -> next b2() @52
+  b2():
+    v7 = Undefined @52
+    Return v7 @52
+}
+function f2 name="ask" module=m2 position=154 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @185
+    v2 = Undefined @185
+    v3 = GetModuleVariable variable=g0 @213
+    v4 = IsPlainInstanceOf v0, v3 @185
+    v5 = ToBoolean v4 @185
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @185
+  b1(v6):
+    v7 = String string="yes " @224
+    v8 = PropGet v0 key="minor" @233
+    v9 = Add v7, v8 @233
+    Jump -> next b3(v9) @233
+  b2(v10):
+    v11 = String string="no " @249
+    v12 = PropGet v0 key="minor" @257
+    v13 = Add v11, v12 @257
+    Jump -> next b3(v13) @257
+  b3(v14):
+    Return v14 @257
+}
+function f3 module=m2 position=127 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @148
+    Return v0 @148
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

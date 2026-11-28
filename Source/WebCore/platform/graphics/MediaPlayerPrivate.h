@@ -54,7 +54,7 @@ enum class MediaPlaybackTargetType : uint8_t;
 // virtual ref()/deref() methods. See NullMediaPlayerPrivate for an example.
 class MediaPlayerPrivateInterface : public AbstractRefCounted {
 public:
-    WEBCORE_EXPORT MediaPlayerPrivateInterface();
+    NODELETE WEBCORE_EXPORT MediaPlayerPrivateInterface();
     WEBCORE_EXPORT virtual ~MediaPlayerPrivateInterface();
 
     virtual constexpr MediaPlayerType mediaPlayerType() const = 0;
@@ -106,8 +106,6 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     virtual NSArray *timedMetadata() const { return nil; }
-    virtual String accessLog() const { return emptyString(); }
-    virtual String errorLog() const { return emptyString(); }
 #endif
     virtual long platformErrorCode() const { return 0; }
 
@@ -221,6 +219,7 @@ public:
     virtual void setPreload(MediaPlayer::Preload) { }
 
     virtual bool hasAvailableVideoFrame() const { return readyState() >= MediaPlayer::ReadyState::HaveCurrentData; }
+    virtual bool videoFrameHasAlpha() const { return false; }
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 

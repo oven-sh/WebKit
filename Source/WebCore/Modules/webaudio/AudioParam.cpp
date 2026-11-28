@@ -37,6 +37,7 @@
 #include "Logging.h"
 #include "VectorMath.h"
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -45,7 +46,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioParam);
 
-static void LEGACY_NODELETE replaceNaNValues(std::span<float> values, float defaultValue)
+NODELETE static void replaceNaNValues(std::span<float> values, float defaultValue)
 {
     for (auto& value : values) {
         if (std::isnan(value))
@@ -330,7 +331,7 @@ void AudioParam::calculateFinalValues(std::span<float> values, bool sampleAccura
     ASSERT(values.size() <= AudioUtilities::renderQuantumSize);
     m_summingBus->setChannelMemory(0, values.first(sampleAccurate ? values.size() : 1));
 
-    for (auto& output : m_renderingOutputs) {
+    for (auto& output : borrow(m_renderingOutputs)) {
         ASSERT(output);
 
         // Render audio from this output.
@@ -372,7 +373,7 @@ void AudioParam::calculateTimelineValues(std::span<float> values)
 void AudioParam::connect(AudioNodeOutput* output)
 {
     ASSERT(context());
-    ASSERT(context()->isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
 
     ASSERT(output);
     if (!output)
@@ -388,7 +389,7 @@ void AudioParam::connect(AudioNodeOutput* output)
 void AudioParam::disconnect(AudioNodeOutput* output)
 {
     ASSERT(context());
-    ASSERT(context()->isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
 
     ASSERT(output);
     if (!output)

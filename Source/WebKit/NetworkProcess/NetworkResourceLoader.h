@@ -152,7 +152,7 @@ public:
     // NetworkLoadClient.
     void didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent) final;
     bool isSynchronous() const final;
-    bool isAllowedToAskUserForCredentials() const final { return m_isAllowedToAskUserForCredentials; }
+    bool isAllowedToAskUserForCredentials() const final;
     void willSendRedirectedRequest(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&) final;
     void didReceiveInformationalResponse(WebCore::ResourceResponse&&) final;
     void didReceiveResponse(WebCore::ResourceResponse&&, PrivateRelayed, ResponseCompletionHandler&&) final;
@@ -198,12 +198,12 @@ public:
     void startWithServiceWorker();
     void serviceWorkerDidNotHandle(ServiceWorkerFetchTask*);
     void setServiceWorkerRegistration(WebCore::SWServerRegistration& serviceWorkerRegistration) { m_serviceWorkerRegistration = serviceWorkerRegistration; }
-    void LEGACY_NODELETE setWorkerStart(MonotonicTime);
+    NODELETE void setWorkerStart(MonotonicTime);
 
-    void LEGACY_NODELETE setWorkerRouterEvaluationStart(MonotonicTime);
-    void LEGACY_NODELETE setWorkerCacheLookupStart(MonotonicTime);
-    void LEGACY_NODELETE setWorkerMatchedRouterSource(WebCore::RouterSourceEnum);
-    void LEGACY_NODELETE setWorkerFinalRouterSource(WebCore::RouterSourceEnum);
+    NODELETE void setWorkerRouterEvaluationStart(MonotonicTime);
+    NODELETE void setWorkerCacheLookupStart(MonotonicTime);
+    NODELETE void setWorkerMatchedRouterSource(WebCore::RouterSourceEnum);
+    NODELETE void setWorkerFinalRouterSource(WebCore::RouterSourceEnum);
 
     std::optional<WebCore::ResourceError> doCrossOriginOpenerHandlingOfResponse(const WebCore::ResourceResponse&);
     std::optional<WebCore::ResourceError> doCrossOriginEmbedderPolicyHandlingOfNavigationResponse(const WebCore::ResourceResponse&);
@@ -216,7 +216,7 @@ public:
     void failWhileHandlingResponse(const WebCore::ResourceError&);
     void setIsFromPrevalentDomainIfNeeded(WebCore::ResourceResponse&) const;
 
-    bool LEGACY_NODELETE isAppInitiated();
+    NODELETE bool isAppInitiated();
 
 #if ENABLE(CONTENT_FILTERING)
     bool continueAfterServiceWorkerReceivedData(const WebCore::SharedBuffer&);
@@ -312,6 +312,8 @@ private:
     void handleEarlyHintsResponse(WebCore::ResourceResponse&&);
     WebCore::ResourceRequest constructPreconnectRequest(const WebCore::ResourceRequest&, const URL&);
     void startPreconnectTask(const URL& baseURL, const WebCore::LinkHeader&, const WebCore::ContentSecurityPolicy&);
+    void startPreconnectTaskAfterContentRuleListCheck(NetworkLoadParameters&&, const URL& mainDocumentURL);
+    void startPreconnectTaskIgnoringContentRuleLists(NetworkLoadParameters&&);
 
     void logSlowCacheRetrieveIfNeeded(const NetworkCache::Cache::RetrieveInfo&);
 
@@ -329,7 +331,7 @@ private:
     void sendReportToEndpoints(const URL& baseURL, std::span<const String> endpointURIs, std::span<const String> endpointTokens, Ref<WebCore::FormData>&& report, WebCore::ViolationReportType) final;
     String httpUserAgent() const final { return originalRequest().httpUserAgent(); }
     void initializeReportingEndpoints(const WebCore::ResourceResponse&);
-    WebCore::FrameIdentifier LEGACY_NODELETE frameIdentifierForReport() const;
+    NODELETE WebCore::FrameIdentifier frameIdentifierForReport() const;
 
     enum class IsFromServiceWorker : bool { No, Yes };
     void willSendRedirectedRequestInternal(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, IsFromServiceWorker, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
@@ -340,7 +342,7 @@ private:
     void startRequest(const WebCore::ResourceRequest&);
     bool abortIfServiceWorkersOnly();
 
-    bool LEGACY_NODELETE shouldSendResourceLoadMessages() const;
+    NODELETE bool shouldSendResourceLoadMessages() const;
 
     void sendDidReceiveDataMessage(const WebCore::FragmentedSharedBuffer&);
 
@@ -352,6 +354,10 @@ private:
 
 #if ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
     bool isLocalFileLoadAllowed(const URL&);
+#endif
+
+#if USE(QUICK_LOOK)
+    void removeQuickLookTemporaryFilesIfNeeded(const String& folder);
 #endif
 
     NetworkResourceLoadParameters m_parameters;
@@ -421,6 +427,7 @@ private:
     bool m_shouldCaptureExtraNetworkLoadMetrics { false };
     bool m_isKeptAlive { false };
     bool m_didSendResponse { false };
+    bool m_isDone { false };
     bool m_hasReceivedEarlyHints { false };
     bool m_canUseCompressionDictionary { false };
 
@@ -444,6 +451,11 @@ private:
     MemoryCompactRobinHoodHashMap<String, String> m_reportingEndpoints;
 
     std::unique_ptr<WebCore::ResourceResponse> m_redirectionForCurrentNavigation;
+
+#if USE(QUICK_LOOK)
+    String m_temporaryQuickLookFilename;
+    FileSystem::FileHandle m_temporaryQuickLookFileHandle;
+#endif
 };
 
 } // namespace WebKit

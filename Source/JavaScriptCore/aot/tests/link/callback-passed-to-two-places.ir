@@ -1,0 +1,42 @@
+# If a closure that is handed to two functions counted as escaped, no callback would ever be called directly or have a proven parameter. If its parameter took what one of the two callers passes, a boolean would be taken for a string
+# function f(v) { return v; }  function first(cb) { return cb("a"); }  function second(cb) { return cb(true); }  first(f); second(f);
+# At each of the two places the closures of one function arrive, so each call has its one callee, and the parameter holds the join of what both pass.
+# RUN: link calls functions mechanisms=all
+# CHECK: call f2 v2 -> f1
+# CHECK: call f3 v2 -> f1
+# CHECK: function f1 callers-known one-callee {{*}}result=true|string
+# CHECK-NEXT: parameter 0 {{*}}proven=true|string
+# CHECK: referrers f0, f2, f3
+# CHECK: function f2 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=f1
+# CHECK: function f3 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0 calleeName="first"
+    v3 = NewClosure function=f3
+    v4 = Call v3, -, v0 calleeName="second"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="f" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = Call v0, -, v1 calleeName="cb"
+    Return v2
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Boolean boolean=true
+    v2 = Call v0, -, v1 calleeName="cb"
+    Return v2
+}

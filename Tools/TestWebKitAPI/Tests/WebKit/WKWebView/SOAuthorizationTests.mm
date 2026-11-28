@@ -476,7 +476,7 @@ WTF_ATTRIBUTE_PRINTF_MATCHES(1, "%s")
 static String generateHTML(const char* templateHTML, const String& substitute)
 {
     StringPrintStream stream;
-    SAFE_PRINTSTREAM_PRINTF(stream, templateHTML, substitute.utf8());
+    SAFE_PRINTSTREAM_PRINTF(stream, templateHTML, makeUTF8CString(substitute));
     return stream.toString();
 }
 
@@ -484,7 +484,7 @@ WTF_ATTRIBUTE_PRINTF_MATCHES(1, "%s %s %s")
 static String generateOpenerHTML(const char* templateHTML, const String& substitute, const String& optionalSubstitute1 = emptyString(), const String& optionalSubstitute2 = emptyString())
 {
     StringPrintStream stream;
-    SAFE_PRINTSTREAM_PRINTF(stream, templateHTML, substitute.utf8(), optionalSubstitute1.utf8(), optionalSubstitute2.utf8());
+    SAFE_PRINTSTREAM_PRINTF(stream, templateHTML, makeUTF8CString(substitute), makeUTF8CString(optionalSubstitute1), makeUTF8CString(optionalSubstitute2));
     return stream.toString();
 }
 
@@ -1452,6 +1452,51 @@ TEST(SOAuthorizationRedirect, InterceptionSucceedSuppressActiveSession)
     EXPECT_WK_STREQ(redirectURL.get().absoluteString, finalURL);
 }
 
+TEST(SOAuthorizationRedirect, InterceptionSucceedSuppressActiveSessionWithLateCancel)
+{
+    resetState();
+    SWIZZLE_SOAUTH(PAL::getSOAuthorizationClassSingleton());
+
+    RetainPtr<NSURL> testURL = [NSBundle.test_resourcesBundle URLForResource:@"simple" withExtension:@"html"];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
+    RetainPtr delegate = adoptNS([[TestSOAuthorizationDelegate alloc] init]);
+    configureSOAuthorizationWebView(webView.get(), delegate.get(), OpenExternalSchemesPolicy::Allow);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:testURL.get()]];
+    Util::run(&authorizationPerformed);
+    checkAuthorizationOptions(false, emptyString(), 0);
+    EXPECT_TRUE(policyForAppSSOPerformed);
+
+    // Keep the first authorization alive so that it can deliver a callback after its session is gone.
+    RetainPtr<SOAuthorization> firstAuthorization = gAuthorization;
+
+    // Suppress the last active session.
+    authorizationPerformed = false;
+    policyForAppSSOPerformed = false;
+    [webView loadRequest:[NSURLRequest requestWithURL:testURL.get()]];
+    Util::run(&authorizationCancelled);
+    Util::run(&authorizationPerformed);
+    checkAuthorizationOptions(false, emptyString(), 0);
+    EXPECT_TRUE(policyForAppSSOPerformed);
+    EXPECT_NE(firstAuthorization.get(), gAuthorization);
+
+    // AppSSO delivers the cancellation of the suppressed authorization asynchronously, after the new session has started.
+    // It should not abort the new session.
+    [gDelegate authorizationDidCancel:firstAuthorization.get()];
+
+    RetainPtr<NSURL> redirectURL = [NSBundle.test_resourcesBundle URLForResource:@"simple2" withExtension:@"html"];
+    RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.get() statusCode:302 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Location" : [redirectURL absoluteString] }]);
+    [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] init]).get()];
+    Util::run(&navigationCompleted);
+#if PLATFORM(IOS) || PLATFORM(VISION)
+    navigationCompleted = false;
+    Util::run(&navigationCompleted);
+#endif
+    EXPECT_FALSE(appSSONavigationFailed);
+    EXPECT_WK_STREQ(redirectURL.get().absoluteString, finalURL);
+}
+
 TEST(SOAuthorizationRedirect, InterceptionSucceedSuppressWaitingSession)
 {
     resetState();
@@ -2414,7 +2459,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedCloseByItself)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto responseHtmlCString = generateHTML(newWindowResponseTemplate, "window.close();"_s).utf8();
+    auto responseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, "window.close();"_s));
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] initWithBytes:responseHtmlCString.data() length:responseHtmlCString.length()]).get()];
@@ -2452,7 +2497,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedCloseByParent)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
@@ -2490,7 +2535,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedCloseByWebKit)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
@@ -2529,7 +2574,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedWithOtherHttpStatusCode)
     authorizationPerformed = false;
     policyForAppSSOPerformed = false;
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.get() statusCode:400 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
     Util::run(&newWindowCreated);
     Util::run(&navigationCompleted);
@@ -2569,7 +2614,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedWithCookie)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Set-Cookie" : @"sessionid=38afes7a8;" }]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
@@ -2612,7 +2657,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedTwice)
         [messageHandler resetExpectations:@[@"Hello.", @"WindowClosed."]];
 
         RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-        auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+        auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
         // The secret WKWebView needs to be destroyed right the way.
         @autoreleasepool {
             [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
@@ -2679,7 +2724,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedSuppressActiveSession)
     Util::run(&navigationCompleted);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
@@ -2717,7 +2762,7 @@ TEST(SOAuthorizationPopUp, InterceptionSucceedNewWindowNavigation)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, emptyString()).utf8();
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, emptyString()));
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(resonseHtmlCString.span())).get()];
@@ -2813,7 +2858,7 @@ TEST(SOAuthorizationPopUp, SOAuthorizationLoadPolicyAllowAsync)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto resonseHtmlCString = generateHTML(newWindowResponseTemplate, "window.close();"_s).utf8(); // The pop up closes itself.
+    auto resonseHtmlCString = makeUTF8CString(generateHTML(newWindowResponseTemplate, "window.close();"_s)); // The pop up closes itself.
     // The secret WKWebView needs to be destroyed right the way.
     @autoreleasepool {
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] initWithBytes:resonseHtmlCString.data() length:resonseHtmlCString.length()]).get()];
@@ -3004,7 +3049,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSuccess)
     [messageHandler extendExpectations:@[@"http://www.example.com", @"Hello."]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, emptyString()).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, emptyString()));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
     Util::run(&allMessagesReceived);
 }
@@ -3039,7 +3084,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSuccessBackForwardList)
     [messageHandler extendExpectations:@[@"http://www.example.com", @"Hello."]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:exampleURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, emptyString()).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, emptyString()));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
     Util::run(&allMessagesReceived);
 
@@ -3074,7 +3119,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSucceedWithOtherHttpStatusCode)
 
     // Will fallback to web path.
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.get() statusCode:400 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, emptyString()).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, emptyString()));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
     Util::run(&allMessagesReceived);
     // Make sure we don't load the request of the iframe to the main frame.
@@ -3107,7 +3152,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSucceedWithCookie)
     [messageHandler extendExpectations:@[@"http://www.example.com", @"Hello.", @"http://www.example.com", @"Cookies: sessionid=38afes7a8"]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Set-Cookie" : @"sessionid=38afes7a8;" }]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, "parent.postMessage('Cookies: ' + document.cookie, '*');"_s).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, "parent.postMessage('Cookies: ' + document.cookie, '*');"_s));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] initWithBytes:iframeHtmlCString.data() length:iframeHtmlCString.length()]).get()];
     Util::run(&allMessagesReceived);
 }
@@ -3138,7 +3183,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSucceedWithCookieButCSPDeny)
     [messageHandler extendExpectations:@[@"http://www.example.com", @"SOAuthorizationDidCancel"]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Set-Cookie" : @"sessionid=38afes7a8;", @"Content-Security-Policy" : @"frame-ancestors 'none';" }]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, "parent.postMessage('Cookies: ' + document.cookie, '*');"_s).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, "parent.postMessage('Cookies: ' + document.cookie, '*');"_s));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] initWithBytes:iframeHtmlCString.data() length:iframeHtmlCString.length()]).get()];
     Util::run(&allMessagesReceived);
 }
@@ -3169,7 +3214,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSucceedWithCookieButXFrameDeny)
     [messageHandler extendExpectations:@[@"http://www.example.com", @"SOAuthorizationDidCancel"]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Set-Cookie" : @"sessionid=38afes7a8;", @"X-Frame-Options" : @"DENY" }]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, "parent.postMessage('Cookies: ' + document.cookie, '*');"_s).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, "parent.postMessage('Cookies: ' + document.cookie, '*');"_s));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] initWithBytes:iframeHtmlCString.data() length:iframeHtmlCString.length()]).get()];
     Util::run(&allMessagesReceived);
 }
@@ -3207,7 +3252,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSuccessTwice)
         [messageHandler extendExpectations:@[@"http://www.example.com", @"Hello."]];
 
         RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-        auto iframeHtmlCString = generateHTML(iframeTemplate, emptyString()).utf8();
+        auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, emptyString()));
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
         Util::run(&allMessagesReceived);
     }
@@ -3238,7 +3283,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSuccessAgentCluster)
     [messageHandler extendExpectations:@[@"Hello.", @"Received a WebAssembly.Module."]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, "onmessage = (event) => parent.postMessage(event.data instanceof WebAssembly.Module ? 'Received a WebAssembly.Module.' : 'Received something else.', '*'); onmessageerror = () => parent.postMessage('Could not receive a WebAssembly.Module.', '*');"_s).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, "onmessage = (event) => parent.postMessage(event.data instanceof WebAssembly.Module ? 'Received a WebAssembly.Module.' : 'Received something else.', '*'); onmessageerror = () => parent.postMessage('Could not receive a WebAssembly.Module.', '*');"_s));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
     Util::run(&allMessagesReceived);
 }
@@ -3318,7 +3363,7 @@ TEST(SOAuthorizationSubFrame, SOAuthorizationLoadPolicyAllowAsync)
     [messageHandler extendExpectations:@[@"http://www.example.com", @"Hello."]];
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, emptyString()).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, emptyString()));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
     Util::run(&allMessagesReceived);
 }
@@ -3441,7 +3486,7 @@ TEST(SOAuthorizationSubFrame, InterceptionSuccessMessageOrder)
     EXPECT_TRUE(policyForAppSSOPerformed);
 
     RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
-    auto iframeHtmlCString = generateHTML(iframeTemplate, emptyString()).utf8();
+    auto iframeHtmlCString = makeUTF8CString(generateHTML(iframeTemplate, emptyString()));
     [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
     Util::run(&allMessagesReceived);
 }

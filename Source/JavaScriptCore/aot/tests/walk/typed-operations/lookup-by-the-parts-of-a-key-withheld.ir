@@ -1,0 +1,8 @@
+# the same function with typed operations withheld: the text is joined, and the read goes by it
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = Add
+# CHECK: = ElemGet
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: ElemGetByKeyParts
+# PROGRAM-OF: lookup-by-the-parts-of-a-key.ir

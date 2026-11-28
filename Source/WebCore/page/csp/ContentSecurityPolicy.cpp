@@ -106,20 +106,9 @@ ContentSecurityPolicy::ContentSecurityPolicy(URL&& protectedURL, ContentSecurity
     updateSourceSelf(SecurityOrigin::create(m_protectedURL).get());
 }
 
-static ReportingClient* LEGACY_NODELETE reportingClientForContext(ScriptExecutionContext& scriptExecutionContext)
-{
-    if (auto* document = dynamicDowncast<Document>(scriptExecutionContext))
-        return document;
-
-    if (auto* workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext))
-        return workerGlobalScope;
-
-    return nullptr;
-}
-
 ContentSecurityPolicy::ContentSecurityPolicy(URL&& protectedURL, ScriptExecutionContext& scriptExecutionContext)
     : m_scriptExecutionContext(scriptExecutionContext)
-    , m_reportingClient { reportingClientForContext(scriptExecutionContext) }
+    , m_reportingClient { scriptExecutionContext.reportingClient() }
     , m_protectedURL { WTF::move(protectedURL) }
 {
     ASSERT(scriptExecutionContext.securityOrigin());
@@ -414,10 +403,7 @@ bool ContentSecurityPolicy::allPoliciesAllow(NOESCAPE const ViolatedDirectiveCal
 static Vector<ResourceCryptographicDigest> parseSubResourceIntegrityIntoDigests(const String& subResourceIntegrity)
 {
     auto encodedDigests = parseIntegrityMetadata(subResourceIntegrity);
-    if (!encodedDigests)
-        return { };
-
-    return WTF::compactMap(*encodedDigests, [](auto& encodedDigest) {
+    return WTF::compactMap(encodedDigests, [](auto& encodedDigest) {
         return decodeEncodedResourceCryptographicDigest(encodedDigest);
     });
 }
@@ -427,7 +413,7 @@ static Vector<ContentSecurityPolicyHash> generateHashesForContent(const StringVi
     if (algorithms.isEmpty())
         return { };
 
-    auto utf8Content = content.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    auto utf8Content = makeUTF8CString(content);
     Vector<ContentSecurityPolicyHash> hashes;
     for (auto algorithm : algorithms) {
         auto hash = cryptographicDigestForBytes(algorithm, byteCast<uint8_t>(utf8Content.span()));
@@ -884,8 +870,7 @@ String ContentSecurityPolicy::createURLForReporting(const URL& url, const String
     bool directiveIsSafe = violatedDirective != ContentSecurityPolicyDirectiveNames::frameSrc
         && violatedDirective != ContentSecurityPolicyDirectiveNames::objectSrc
         && violatedDirective != ContentSecurityPolicyDirectiveNames::blockAllMixedContent;
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto securityOrigin = static_cast<SecurityOriginData>(*m_selfSource).securityOrigin();
+    auto securityOrigin = static_cast<SecurityOriginData>(*m_selfSource).securityOrigin();
 
     if (!url.isValid())
         return { };

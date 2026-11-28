@@ -89,11 +89,20 @@ Element* DocumentFullscreen::fullscreenElement() const
 {
     for (auto& element : document().topLayerElements() | std::views::reverse) {
         if (element->hasFullscreenFlag())
-            return element.unsafePtr();
+            return element.ptr();
     }
 
     return nullptr;
 }
+
+#if ENABLE(DOCUMENT_PIP)
+// https://wicg.github.io/document-picture-in-picture/#fullscreening-the-pip-window
+static bool isInDocumentPictureInPictureWindow(const Document& document)
+{
+    RefPtr page = document.page();
+    return page && page->isDocumentPictureInPicture();
+}
+#endif
 
 // MARK: - fullscreenEnabled attribute.
 // https://fullscreen.spec.whatwg.org/#dom-document-fullscreenenabled
@@ -102,6 +111,10 @@ bool DocumentFullscreen::fullscreenEnabled(Document& document)
 {
     if (!document.isFullyActive())
         return false;
+#if ENABLE(DOCUMENT_PIP)
+    if (isInDocumentPictureInPictureWindow(document))
+        return false;
+#endif
     return protect(document.fullscreen())->enabledByPermissionsPolicy();
 }
 
@@ -124,6 +137,11 @@ static ASCIILiteral fullscreenElementReadyCheck(DocumentFullscreen::FullscreenCh
 
     if (element.isPopoverShowing())
         return "Cannot request fullscreen on an open popover."_s;
+
+#if ENABLE(DOCUMENT_PIP)
+    if (isInDocumentPictureInPictureWindow(protect(element.document())))
+        return "Cannot request fullscreen in a Document Picture-in-Picture window."_s;
+#endif
 
     if (checkType == DocumentFullscreen::FullscreenCheckType::EnforceIFrameAllowFullscreenRequirement && !PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Fullscreen, protect(element.document())))
         return "Fullscreen API is disabled by permissions policy."_s;
@@ -159,8 +177,8 @@ void DocumentFullscreen::requestFullscreen(Ref<Element>&& element, FullscreenChe
             if (!renderer)
                 continue;
 
-            auto area = renderer->videoBox().area();
-            if (!area || area.hasOverflowed())
+            auto area = renderer->videoBox().area<RecordOverflow>();
+            if (area.hasOverflowed() || !area)
                 continue;
 
             video->webkitRequestFullscreen();
@@ -236,7 +254,14 @@ void DocumentFullscreen::requestFullscreen(Ref<Element>&& element, FullscreenChe
 
     m_pendingFullscreenElement = element.ptr();
 
-    protect(protect(document())->eventLoop())->queueTask(TaskSource::MediaElement, [weakThis = WeakPtr { *this }, element = WTF::move(element), scope = CompletionHandlerScope(WTF::move(completionHandler)), hasKeyboardAccess, checkType, handleError, identifier, mode] mutable {
+    page->chrome().client().beginRequestFullscreen();
+    auto endRequestFullscreen = makeScopeExit([weakPage = WeakPtr { *page }] {
+        if (RefPtr page = weakPage)
+            page->chrome().client().endRequestFullscreen();
+    });
+
+    protect(protect(document())->eventLoop())->queueTask(TaskSource::MediaElement, [weakThis = WeakPtr { *this }, element = WTF::move(element), scope = CompletionHandlerScope(WTF::move(completionHandler)), endRequestFullscreenToMove = WTF::move(endRequestFullscreen), hasKeyboardAccess, checkType, handleError, identifier, mode] mutable {
+        auto endRequestFullscreen = WTF::move(endRequestFullscreenToMove);
         auto completionHandler = scope.release();
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
@@ -374,7 +399,7 @@ void DocumentFullscreen::elementEnterFullscreen(Element& element)
 
     document->hidePopoversForTopLayerElement(element, FireEvents::No);
 
-    auto containingBlockBeforeStyleResolution = SingleThreadWeakPtr<RenderBlock> { };
+    auto containingBlockBeforeStyleResolution = SingleThreadWeakPtr<RenderBoxModelObject> { };
     if (CheckedPtr renderer = element.renderer())
         containingBlockBeforeStyleResolution = renderer->containingBlock();
 
@@ -721,7 +746,7 @@ void DocumentFullscreen::fullyExitFullscreen()
     });
 }
 
-static bool LEGACY_NODELETE hasJSEventListener(Node& node, const AtomString& eventType)
+NODELETE static bool hasJSEventListener(Node& node, const AtomString& eventType)
 {
     for (const auto& listener : node.eventListeners(eventType)) {
         if (listener->callback().type() == EventListener::JSEventListenerType)

@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <WebGPU/WebGPUCpp.h>
 #import <utility>
 #import <wtf/CompletionHandler.h>
@@ -52,7 +56,7 @@ public:
 
     ~XRView();
 
-    void LEGACY_NODELETE setLabel(String&&) final;
+    NODELETE void setLabel(String&&) final;
 
     bool isValid() const final { return true; }
     Device& device() { return m_device; }

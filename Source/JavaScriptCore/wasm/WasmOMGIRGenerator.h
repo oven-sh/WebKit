@@ -49,6 +49,8 @@ namespace JSC::Wasm {
 class IPIntCallee;
 class Module;
 
+bool isResumable(const ModuleInformation&, FunctionCodeIndex, uint32_t passedGlobal);
+
 std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(CompilationContext&, IPIntCallee&, OptimizingJITCallee&, const FunctionData&, const RTT&, Vector<UnlinkedWasmToWasmCall>&, Module&, CalleeGroup&, const ModuleInformation&, MemoryMode, CompilationMode, FunctionCodeIndex functionIndex, uint32_t loopIndexForOSREntry);
 
 } // namespace JSC::Wasm

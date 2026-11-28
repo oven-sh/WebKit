@@ -78,8 +78,7 @@
 #include <WebCore/StyleColorScheme.h>
 #endif
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class AppleColorFilterData;
 class CustomPropertyData;
@@ -233,6 +232,9 @@ public:
 #if ENABLE(SMART_IMAGE_RESIZER)
     PREFERRED_TYPE(bool) unsigned isAffectedBySmartImageResizer : 1;
 #endif
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    PREFERRED_TYPE(AppleColorFilterOverride) unsigned appleColorFilterOverride : 2;
+#endif
 #if HAVE(CORE_MATERIAL)
     PREFERRED_TYPE(AppleVisualEffect) unsigned usedAppleVisualEffectForSubtree : 5;
 #endif
@@ -242,5 +244,4 @@ private:
     InheritedRareData(const InheritedRareData&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -37,6 +37,7 @@
 #import "NetworkStorageManager.h"
 #import "NetworkStorageSession.h"
 #import "SandboxExtension.h"
+#import "SecurityFlags.h"
 #import "WebCookieManager.h"
 #import <WebCore/PublicSuffixStore.h>
 #import <WebCore/ResourceRequestCFNet.h>
@@ -101,7 +102,7 @@ static void blockNetworkAccessIfNeeded(IPC::Connection* parentProcessConnection)
     OSObjectPtr xpcConnection = protect(parentProcessConnection)->xpcConnection();
     auto [signingIdentifier, isPlatformBinary] = codeSigningIdentifierAndPlatformBinaryStatus(xpcConnection.get());
     if (isPlatformBinary && signingIdentifier != "com.apple.textkit.nsattributedstringagent"_s) {
-        RELEASE_LOG(Process, "Not blocking network access since parent process %s is a platform binary", signingIdentifier.utf8());
+        RELEASE_LOG(Process, "Not blocking network access since parent process %s is a platform binary", makeUTF8CString(signingIdentifier));
         return;
     }
 
@@ -123,6 +124,8 @@ static void blockNetworkAccessIfNeeded(IPC::Connection* parentProcessConnection)
 
 void NetworkProcess::platformInitializeNetworkProcessCocoa(const NetworkProcessCreationParameters& parameters)
 {
+    RELEASE_LOG(Process, "SecurityFlags: radar184485266 is %" PUBLIC_LOG_STRING, SecurityFlags::radar184485266() ? "enforced" : "disabled");
+
     m_isParentProcessFullWebBrowserOrRunningTest = parameters.isParentProcessFullWebBrowserOrRunningTest;
 #if PLATFORM(IOS_FAMILY)
     m_containerTemporaryDirectory = parameters.containerTemporaryDirectory;
@@ -207,8 +210,7 @@ HashSet<String> NetworkProcess::hostNamesWithHSTSCache(PAL::SessionID sessionID)
 {
     HashSet<String> hostNames;
     if (CheckedPtr networkSession = downcast<NetworkSessionCocoa>(this->networkSession(sessionID))) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *host in protect(networkSession->hstsStorage()).get().nonPreloadedHosts)
+        for (NSString *host in protect(networkSession->hstsStorage()).get().nonPreloadedHosts)
             hostNames.add(host);
     }
     return hostNames;

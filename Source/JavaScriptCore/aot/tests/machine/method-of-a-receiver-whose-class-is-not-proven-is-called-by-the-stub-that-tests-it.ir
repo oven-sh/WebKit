@@ -1,0 +1,50 @@
+# function late(o, look) { const map = new Map(); look(map); map.set(o.k, 1); return [map]; }  function declared(map: Map, k) { return [map.get(k)]; }
+# The stub of a method of a built-in class tests that the receiver is a cell, that the cell is of the class, and that the object is as it was made.
+# Where the first two are proven the stub is entered behind them, by name and by value: `o.k` may run other code between the read of `set` and the call, so that call goes by value.
+# RUN(LATE): bytes f1:Body mechanisms=all
+# LATE-LABEL: unit f1:Body
+# LATE: Stub CallMethodOfProvenBuiltinClassByValue.MapSet count 2
+# A type that is only written proves nothing: the stub is entered at its head.
+# RUN(DECLARED): bytes f2:Body mechanisms=all
+# DECLARED-LABEL: unit f2:Body
+# DECLARED-NOT: Stub CallMethodOfProven
+# DECLARED: Stub CallMethodOfTable.MapGetAnyValue immediate (Name "get")
+# RUN(ANSWERS): run-in-shell globalThis.sink = (late, declared) => { let held; print(late({ k: 1 }, map => { })[0].get(1)); print(late({ get k() { held.set = () => { print("own"); }; return 2; } }, map => { held = map; })[0].has(2)); print(late({ k: 3 }, map => { map.set = () => { print("own at the read"); }; })[0].has(3)); print(declared(new Map([[1, "a"]]), 1)); print(declared({ get() { return "likeness"; } }, 1)); };
+# ANSWERS: 1
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: own at the read
+# ANSWERS-NEXT: false
+# ANSWERS-NEXT: a
+# ANSWERS-NEXT: likeness
+# ANSWERS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="late" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Call v1, -, v3
+    v5 = PropGet v3 key="set"
+    v6 = PropGet v0 key="k"
+    v7 = Integer integer=1
+    v8 = Call v5, v3, v6, v7 calleeKey="set"
+    v9 = NewArray v3 contents=anything
+    Return v9
+}
+function f2 name="declared" module=m0 length=2 thisType={type=anything} parameters=[{type=Map flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map, v1: anything):
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}

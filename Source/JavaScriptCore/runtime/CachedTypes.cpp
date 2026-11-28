@@ -188,7 +188,7 @@ private:
 };
 
 // Like OrderHashSet. OrderHasher::finish() never yields the two reserved values.
-using OrderHashRankMap = UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using OrderHashRankMap = HashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
 } // namespace
 
@@ -833,8 +833,8 @@ public:
         friend class Encoder;
 
     public:
-        uint8_t* LEGACY_NODELETE buffer() const { return m_buffer; }
-        ptrdiff_t LEGACY_NODELETE offset() const { return m_offset; }
+        NODELETE uint8_t* buffer() const { return m_buffer; }
+        NODELETE ptrdiff_t offset() const { return m_offset; }
 
     private:
         Allocation(uint8_t* buffer, ptrdiff_t offset)
@@ -1128,7 +1128,7 @@ public:
             ptrdiff_t callRecord { 0 };
             ptrdiff_t constructRecord { 0 };
         };
-        UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, Placement> placements;
+        HashMap<const UnlinkedFunctionExecutable*, Placement> placements;
         // What is being encoded right now.
         unsigned module { 0 };
         LinkClass linkClass { LinkClass::EarlyHead };
@@ -1334,14 +1334,14 @@ private:
         }
 
         // FIXME: Port call sites for span() / mutableSpan() and remove.
-        const uint8_t* LEGACY_NODELETE buffer() const { return m_buffer.span().data(); }
-        uint8_t* LEGACY_NODELETE buffer() { return m_buffer.mutableSpan().data(); }
+        NODELETE const uint8_t* buffer() const { return m_buffer.span().data(); }
+        NODELETE uint8_t* buffer() { return m_buffer.mutableSpan().data(); }
         size_t size() const { return static_cast<size_t>(m_offset); }
 
         std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
         std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
 
-        bool LEGACY_NODELETE getOffset(const void* address, ptrdiff_t& result) const
+        NODELETE bool getOffset(const void* address, ptrdiff_t& result) const
         {
             auto* addr = static_cast<const uint8_t*>(address);
             auto* bufferStart = buffer();
@@ -1352,7 +1352,7 @@ private:
             return false;
         }
 
-        void LEGACY_NODELETE alignEnd()
+        NODELETE void alignEnd()
         {
             ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
@@ -1440,7 +1440,7 @@ private:
     ptrdiff_t m_baseOffset;
     Page* m_currentPage;
     Vector<Page> m_pages;
-    UncheckedKeyHashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
+    HashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
     HashMap<String, ptrdiff_t> m_stringsByContents; // keyed by contents (StringHash), not identity
     LeafExecutableMap m_leafExecutables;
     Deque<DeferredBody> m_bodies;
@@ -1451,7 +1451,7 @@ private:
     bool m_updatable;
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
-    UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
+    HashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
 #if USE(BUN_JSC_ADDITIONS)
     std::unique_ptr<LinkState> m_link;
 #endif
@@ -1599,7 +1599,7 @@ public:
     {
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return m_offset == s_invalidOffset;
     }
@@ -1643,14 +1643,14 @@ public:
     }
 
 protected:
-    const uint8_t* LEGACY_NODELETE buffer() const
+    NODELETE const uint8_t* buffer() const
     {
         ASSERT(!isEmpty());
         return std::bit_cast<const uint8_t*>(this) + m_offset;
     }
 
     template<typename T>
-    const T* LEGACY_NODELETE buffer() const
+    NODELETE const T* buffer() const
     {
         ASSERT(!(std::bit_cast<uintptr_t>(buffer()) % alignof(T)));
         return std::bit_cast<const T*>(buffer());
@@ -1863,10 +1863,10 @@ public:
         return decode(decoder, unusedIsNewAllocation, std::forward<Args>(args)...);
     }
 
-    const T* LEGACY_NODELETE operator->() const { return get(); }
+    NODELETE const T* operator->() const { return get(); }
 
 private:
-    const T* LEGACY_NODELETE get() const
+    NODELETE const T* get() const
     {
         RELEASE_ASSERT(!this->isEmpty());
         return this->template buffer<T>();
@@ -1958,7 +1958,7 @@ class CachedWriteBarrier : public CachedObject<WriteBarrier<Source>> {
     friend struct CachedWriteBarrierOffsets;
 
 public:
-    bool LEGACY_NODELETE isEmpty() const { return m_ptr.isEmpty(); }
+    NODELETE bool isEmpty() const { return m_ptr.isEmpty(); }
     const CachedPtr<T, Source>& ptr() const { return m_ptr; }
 
     void encode(Encoder& encoder, const WriteBarrier<Source> src)
@@ -2145,12 +2145,11 @@ private:
 
 template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>, typename TableTraits = WTF::HashTableTraits>
 class CachedHashMap : public CachedObject<HashMap<SourceType<Key>, SourceType<Value>, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>> {
-    template<typename K, typename V, WTF::ShouldValidateKey shouldValidateKey>
-    using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits, shouldValidateKey>;
+    template<typename K, typename V>
+    using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>;
 
 public:
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
+    void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>>& map)
     {
         Vector<const typename std::remove_reference_t<decltype(map)>::KeyValuePairType*> entries;
         entries.reserveInitialCapacity(map.size());
@@ -2162,8 +2161,7 @@ public:
 
     // A private-name environment: its entries are shared with an identical environment written earlier (decode rebuilds
     // the map from the entries, so their order does not matter).
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void encodeShared(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
+    void encodeShared(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>>& map)
     {
         Vector<std::pair<const UniquedStringImpl*, uint16_t>> entries;
         entries.reserveInitialCapacity(map.size());
@@ -2180,8 +2178,7 @@ public:
             encoder.addSharedPrivateNameEnvironment(hash, WTF::move(entries), m_entries.elementsOffset(encoder));
     }
 
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void decode(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map) const
+    void decode(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>>& map) const
     {
         SourceType<decltype(m_entries)> decodedEntries;
         m_entries.decode(decoder, decodedEntries);
@@ -2193,8 +2190,8 @@ public:
     }
 
     // Straight into `map`, leaving out the entries whose encoded value `keep` rejects without decoding their key.
-    template<WTF::ShouldValidateKey shouldValidateKey, typename Keep>
-    void decodeIf(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map, const Keep& keep) const
+    template<typename Keep>
+    void decodeIf(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>>& map, const Keep& keep) const
     {
         auto entries = m_entries.elements();
         auto decodeEntry = [&](const auto& entry) {
@@ -2379,8 +2376,8 @@ public:
     }
 
     static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
-    std::span<const Latin1Character> LEGACY_NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
-    std::span<const char16_t> LEGACY_NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
+    NODELETE std::span<const Latin1Character> span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
+    NODELETE std::span<const char16_t> span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
     // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
@@ -2597,9 +2594,9 @@ private:
 };
 
 template<typename T, typename HashArg = DefaultHash<T>>
-class CachedHashSet : public CachedObject<UncheckedKeyHashSet<SourceType<T>, HashArg>> {
+class CachedHashSet : public CachedObject<HashSet<SourceType<T>, HashArg>> {
 public:
-    void encode(Encoder& encoder, const UncheckedKeyHashSet<SourceType<T>, HashArg>& set)
+    void encode(Encoder& encoder, const HashSet<SourceType<T>, HashArg>& set)
     {
         SourceType<decltype(m_entries)> entriesVector(set.size());
         unsigned i = 0;
@@ -2609,7 +2606,7 @@ public:
         m_entries.encode(encoder, entriesVector);
     }
 
-    void decode(Decoder& decoder, UncheckedKeyHashSet<SourceType<T>, HashArg>& set) const
+    void decode(Decoder& decoder, HashSet<SourceType<T>, HashArg>& set) const
     {
         SourceType<decltype(m_entries)> entriesVector;
         m_entries.decode(decoder, entriesVector);
@@ -2756,7 +2753,7 @@ private:
     uint32_t m_bits;
 };
 
-typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<PrivateNameEntry>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<PrivateNameEntry>, IdentifierRepHash, HashTraits<PackedRefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
@@ -2803,7 +2800,7 @@ private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
     uint8_t m_unused[2] { };
-    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<VariableEnvironmentEntry>, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
+    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<VariableEnvironmentEntry>, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<PackedRefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
     CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
 };
 
@@ -3086,9 +3083,11 @@ public:
     RegExp* decode(Decoder& decoder) const
     {
         String pattern { m_patternString.decode(decoder) };
-        if (!m_parsed)
-            return RegExp::create(decoder.vm(), pattern, m_flags);
-        return RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern);
+        RegExp* regExp = m_parsed
+            ? RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern)
+            : RegExp::create(decoder.vm(), pattern, m_flags);
+        regExp->setIsComingFromLiteral();
+        return regExp;
     }
 
 private:
@@ -4402,7 +4401,7 @@ enum class CachedCodeBlockTag {
     CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
-static CachedCodeBlockTag LEGACY_NODELETE tagFromSourceCodeType(SourceCodeType type)
+NODELETE static CachedCodeBlockTag tagFromSourceCodeType(SourceCodeType type)
 {
     switch (type) {
     case SourceCodeType::ProgramType:
@@ -4838,7 +4837,7 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_members.pending().record->slotsView();
     self->m_ecmaName = v.name->decode(*m_members.pending().decoder);
-    WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
+    WTF::atomicStore<MemoryOrder::Release>(&self->m_nameIsDeferred, false); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
@@ -5328,7 +5327,8 @@ protected:
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
-    static constexpr uint32_t cachedTypesFormatRevision = 14;
+    // 15: upstream's op_call_varargs_with_spread (325231@main; opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 15;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5339,7 +5339,7 @@ protected:
         UNUSED_PARAM(encoder);
     }
 
-    CachedCodeBlockTag LEGACY_NODELETE tag() const { return m_tag; }
+    NODELETE CachedCodeBlockTag tag() const { return m_tag; }
 
     bool isUpToDate(Decoder& decoder) const
     {
@@ -5801,7 +5801,7 @@ static void digestCodeOf(VM& vm, OrderHasher& hasher, CachedCodeDigest& result, 
 BytecodeOrderRecording bytecodeOrderRecording()
 {
     BytecodeOrderRecording result;
-    UncheckedKeyHashMap<std::pair<const uint8_t*, uint32_t>, unsigned> sources;
+    HashMap<std::pair<const uint8_t*, uint32_t>, unsigned> sources;
     // The first VM's first (a program's main thread), then each Worker's.
     for (auto& recorder : BytecodeOrderRecorder::endRecordingInProcess()) {
         auto recorded = recorder->take();

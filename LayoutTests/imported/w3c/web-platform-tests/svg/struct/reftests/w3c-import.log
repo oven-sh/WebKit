@@ -13,6 +13,8 @@ None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/WEB_FEATURES.yml
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/conditional-processing-never-rendered-resources-expected.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/conditional-processing-never-rendered-resources.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/currentScale-change-repaint-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/currentScale-change-repaint.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/currentScale-expected.svg
@@ -31,7 +33,13 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/inner-svg-transform.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/nested-svg-through-display-contents-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/nested-svg-through-display-contents.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-css-transform-in-html-scale-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-css-transform-in-html-scale.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-transform-expected.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-transform-in-html-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-transform-in-html-scale-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-transform-in-html-scale.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-transform-in-html.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/outer-svg-transform.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/requiredextensions-empty-string-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/requiredextensions-empty-string.svg
@@ -79,6 +87,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-resource-with-revalidation.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-svg-resource-no-fragment-id-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-svg-resource-no-fragment-id.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-then-data-url-href-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-then-data-url-href.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-use-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-external-use.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/struct/reftests/use-foreignObject-expected.html

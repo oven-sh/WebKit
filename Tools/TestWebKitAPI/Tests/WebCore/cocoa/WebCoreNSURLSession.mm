@@ -180,6 +180,7 @@ private:
 
 class WebCoreNSURLSessionTest : public testing::Test {
 public:
+    RetainPtr<TestNSURLSessionLoaderDelegate> frameLoadDelegate;
     RetainPtr<WebView> view;
     LocalFrame* frame { nullptr };
     RetainPtr<TestNSURLSessionDataDelegate> delegate;
@@ -192,7 +193,8 @@ public:
         JSC::initialize();
 #endif
         view = adoptNS([[WebView alloc] initWithFrame:NSZeroRect]);
-        [view setFrameLoadDelegate:adoptNS([[TestNSURLSessionLoaderDelegate alloc] init]).get()];
+        frameLoadDelegate = adoptNS([[TestNSURLSessionLoaderDelegate alloc] init]);
+        [view setFrameLoadDelegate:frameLoadDelegate.get()];
 
         didLoadMainResource = false;
         [view setMainFrameURL:documentURL.absoluteString];
@@ -207,6 +209,7 @@ public:
     virtual void TearDown()
     {
         loader = nullptr;
+        [view setFrameLoadDelegate:nil];
     }
 };
 
@@ -257,8 +260,7 @@ TEST_F(WebCoreNSURLSessionTest, RangeResponseDeliversLastByteAtChunkBoundary)
     constexpr uint64_t expectedLength = rangeEnd + 1; // 100 bytes.
     constexpr size_t totalLength = 132;
 
-    Vector<uint8_t> resourceBytes;
-    resourceBytes.reserveInitialCapacity(totalLength);
+    Vector<uint8_t> resourceBytes(ReserveCapacityTag { }, totalLength);
     for (size_t i = 0; i < totalLength; ++i)
         resourceBytes.append(static_cast<uint8_t>(i & 0xFF));
 

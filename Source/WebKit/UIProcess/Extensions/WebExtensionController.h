@@ -89,7 +89,7 @@ class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExte
 
 public:
     static Ref<WebExtensionController> create(Ref<WebExtensionControllerConfiguration> configuration) { return adoptRef(*new WebExtensionController(configuration)); }
-    static RefPtr<WebExtensionController> LEGACY_NODELETE get(WebExtensionControllerIdentifier);
+    NODELETE static RefPtr<WebExtensionController> get(WebExtensionControllerIdentifier);
 
     void ref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::ref(); }
     void deref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::deref(); }
@@ -300,6 +300,10 @@ private:
 
     std::unique_ptr<RunLoop::Timer> m_purgeOldMatchedRulesTimer;
     RefPtr<HTTPCookieStoreObserver> m_cookieStoreObserver;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionControllerAdditions.h>)
+#include <WebKitAdditions/WebExtensionControllerAdditions.h>
+#endif
 };
 
 template<typename T>

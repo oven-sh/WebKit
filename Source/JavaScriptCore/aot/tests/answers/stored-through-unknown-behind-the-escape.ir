@@ -1,0 +1,20 @@
+# const other = publish(globalThis); other.asked = 1; print(typeof asked);
+# RUN(SHELL): run-in-shell globalThis.publish = handed => handed;
+# SHELL: number
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1, -, v0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="asked"
+    v5 = PropGet v0 key="asked" [isFreeName, isForTypeOf]
+    v6 = TypeOf v5
+    v7 = PropGet v0 key="print" [isFreeName]
+    v8 = Call v7, -, v6
+    Return
+}

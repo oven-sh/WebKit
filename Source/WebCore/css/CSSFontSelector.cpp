@@ -300,7 +300,7 @@ void CSSFontSelector::dispatchInvalidationCallbacks()
 
 void CSSFontSelector::opportunisticallyStartFontDataURLLoading(const FontCascadeDescription& description, const AtomString& familyName)
 {
-    const auto& segmentedFontFace = m_cssFontFaceSet->fontFace(description.fontSelectionRequest(), familyName);
+    RefPtr segmentedFontFace = m_cssFontFaceSet->fontFace(description.fontSelectionRequest(), description.variantCaps(), familyName);
     if (!segmentedFontFace)
         return;
 
@@ -310,7 +310,7 @@ void CSSFontSelector::opportunisticallyStartFontDataURLLoading(const FontCascade
 
     auto trustedType = context->settingsValues().downloadableBinaryFontTrustedTypes;
 
-    for (auto& face : segmentedFontFace->constituentFaces())
+    for (Ref face : segmentedFontFace->constituentFaces())
         face->opportunisticallyStartFontDataURLLoading(trustedType);
 }
 
@@ -440,7 +440,7 @@ static const MathFontList& mathFontList()
 FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescription, const FontFamily& fontFamily)
 {
     // If this ASSERT() fires, it usually means you forgot a document.updateStyleIfNeeded() somewhere.
-    ASSERT(!m_buildIsUnderway || m_computingRootStyleFontCount);
+    ASSERT(!m_buildIsUnderway);
 
     const auto& familyName = fontFamily.name;
 
@@ -484,7 +484,7 @@ FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescr
     if (resolveGenericFamilyFirst)
         resolveAndAssignGenericFamily();
     RefPtr document = dynamicDowncast<Document>(m_context.get());
-    if (RefPtr face = m_cssFontFaceSet->fontFace(fontDescriptionForLookup->fontSelectionRequest(), familyForLookup)) {
+    if (RefPtr face = m_cssFontFaceSet->fontFace(fontDescriptionForLookup->fontSelectionRequest(), fontDescriptionForLookup->variantCaps(), familyForLookup)) {
         if (document && document->settings().webAPIStatisticsEnabled())
             ResourceLoadObserver::singleton().logFontLoad(*document, familyForLookup.string(), true);
         return { face->fontRanges(*fontDescriptionForLookup, fontPaletteValues, fontFeatureValues), isGenericFontFamily };

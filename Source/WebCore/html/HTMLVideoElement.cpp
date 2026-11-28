@@ -61,6 +61,9 @@
 #include "Settings.h"
 #include "ShareableBitmap.h"
 #include "VideoFrameMetadata.h"
+#include "VideoTrack.h"
+#include "VideoTrackConfiguration.h"
+#include "VideoTrackList.h"
 #include <wtf/NativePromise.h>
 #include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -105,10 +108,7 @@ inline HTMLVideoElement::HTMLVideoElement(const QualifiedName& tagName, Document
     m_defaultPosterURL = AtomString { document.settings().defaultVideoPosterURL() };
 }
 
-HTMLVideoElement::~HTMLVideoElement()
-{
-    LazyLoadElementObserver::unobserve(*this, protect(document()));
-}
+HTMLVideoElement::~HTMLVideoElement() = default;
 
 Ref<HTMLVideoElement> HTMLVideoElement::create(const QualifiedName& tagName, Document& document, bool createdByParser)
 {
@@ -131,10 +131,10 @@ Ref<HTMLVideoElement> HTMLVideoElement::create(Document& document)
 
 bool HTMLVideoElement::rendererIsNeeded(const Style::ComputedStyle& style)
 {
-    return HTMLElement::rendererIsNeeded(style); 
+    return HTMLElement::rendererIsNeeded(style);
 }
 
-RenderPtr<RenderElement> HTMLVideoElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLVideoElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderVideo>(*this, WTF::move(style));
 }
@@ -147,6 +147,7 @@ void HTMLVideoElement::didAttachRenderers()
         if (!m_imageLoader)
             lazyInitialize(m_imageLoader, makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this));
         m_imageLoader->updateFromElement();
+        resumePosterLoadIfAlreadyVisible();
         if (CheckedPtr renderer = this->renderer())
             protect(renderer->imageResource())->setCachedImage(protect(m_imageLoader->image()));
     }
@@ -190,7 +191,7 @@ void HTMLVideoElement::computeAcceleratedRenderingStateAndUpdateMediaPlayer()
     // 311380@main added the viewport intersection to this condition. Some clients keep
     // displaying the video layer they host after scrolling it out of view or hiding their
     // web view, so for those ignore it as it was before.
-    bool isIntersectingViewport = m_isIntersectingViewport || protect(document())->quirks().shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk();
+    bool isIntersectingViewport = this->isIntersectingViewport() || protect(document())->quirks().shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk();
     bool canBeAccelerated = player->supportsAcceleratedRendering() && (isInFullScreen || (isIntersectingViewport && renderer && protect(renderer->view())->compositor().hasAcceleratedCompositing()));
     if (canBeAccelerated == m_renderingCanBeAccelerated)
         return;
@@ -232,7 +233,10 @@ void HTMLVideoElement::attributeChanged(const QualifiedName& name, const AtomStr
             if (!m_imageLoader)
                 lazyInitialize(m_imageLoader, makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this));
             m_imageLoader->updateFromElementIgnoringPreviousError();
+            resumePosterLoadIfAlreadyVisible();
         } else {
+            if (m_imageLoader && m_imageLoader->isDeferred() && posterImageURL().isEmpty())
+                m_imageLoader->updateFromElementIgnoringPreviousError();
             if (CheckedPtr renderer = this->renderer()) {
                 protect(renderer->imageResource())->clearCachedImage();
                 renderer->updateFromElement();
@@ -241,8 +245,10 @@ void HTMLVideoElement::attributeChanged(const QualifiedName& name, const AtomStr
     } else {
         HTMLMediaElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 
-        if (name == projectionAttr && oldValue != newValue && document().settings().spatialVideoRenderingEnabled())
+        if (name == projectionAttr && oldValue != newValue && document().settings().spatialVideoRenderingEnabled()) {
+            configureMediaControls();
             scheduleEvent(eventNames().webkitprojectionchangedEvent);
+        }
 
         if ((name == fieldofviewAttr || name == yawAttr || name == pitchAttr) && document().settings().spatialVideoRenderingEnabled())
             scheduleEvent(eventNames().webkitcameraviewchangedEvent);
@@ -264,6 +270,25 @@ void HTMLVideoElement::spatialCameraDidMove(double yaw, double pitch, double fie
     m_cameraFieldOfView = fieldOfView;
 
     scheduleEvent(eventNames().webkitcameramovedEvent);
+}
+
+bool HTMLVideoElement::hasSpatialVideoProjection() const
+{
+    if (!document().settings().spatialVideoRenderingEnabled())
+        return false;
+
+    auto declared = attributeWithoutSynchronization(projectionAttr).string().trim(isASCIIWhitespace<char16_t>);
+    if (!declared.isEmpty())
+        return !equalLettersIgnoringASCIICase(declared, "none"_s);
+
+    RefPtr videoTracks = this->videoTracks();
+    if (!videoTracks)
+        return false;
+    RefPtr selectedTrack = videoTracks->selectedItem();
+    if (!selectedTrack)
+        return false;
+    Ref configuration = selectedTrack->configuration();
+    return !!configuration->immersiveVideoMetadata();
 }
 
 double HTMLVideoElement::defaultYaw() const
@@ -294,6 +319,11 @@ double HTMLVideoElement::pitch() const
 double HTMLVideoElement::fieldOfView() const
 {
     return m_cameraFieldOfView.value_or(defaultFieldOfView());
+}
+
+void HTMLVideoElement::setSpatialVideoRendererActive(bool active)
+{
+    m_spatialVideoRendererActive = active;
 }
 
 bool HTMLVideoElement::supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenMode videoFullscreenMode) const
@@ -509,7 +539,7 @@ ExceptionOr<void> HTMLVideoElement::webkitEnterFullscreen()
     if (isFullscreen())
         return { };
 
-    // Generate an exception if this isn't called in response to a user gesture, or if the 
+    // Generate an exception if this isn't called in response to a user gesture, or if the
     // element does not support fullscreen, or the element is changing fullscreen mode.
     if (!protect(mediaSession())->fullscreenPermitted() || !supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenModeStandard) || isChangingVideoFullscreenMode())
         return Exception { ExceptionCode::InvalidStateError };
@@ -560,9 +590,6 @@ void HTMLVideoElement::didMoveToNewDocument(Document& oldDocument, Document& new
 {
     if (m_imageLoader)
         m_imageLoader->elementDidMoveToNewDocument(oldDocument);
-
-    LazyLoadElementObserver::unobserve(*this, oldDocument);
-    LazyLoadElementObserver::observe(*this);
 
     HTMLMediaElement::didMoveToNewDocument(oldDocument, newDocument);
 }
@@ -615,7 +642,7 @@ bool HTMLVideoElement::webkitSupportsPresentationMode(VideoPresentationMode mode
     return false;
 }
 
-static inline HTMLMediaElementEnums::VideoFullscreenMode LEGACY_NODELETE toFullscreenMode(HTMLVideoElement::VideoPresentationMode mode)
+NODELETE static inline HTMLMediaElementEnums::VideoFullscreenMode toFullscreenMode(HTMLVideoElement::VideoPresentationMode mode)
 {
     switch (mode) {
     case HTMLVideoElement::VideoPresentationMode::Fullscreen:
@@ -894,15 +921,29 @@ void HTMLVideoElement::stop()
     HTMLMediaElement::stop();
 }
 
-void HTMLVideoElement::lazyLoadIntersectionCallbackInvoked(bool isIntersecting)
+void HTMLVideoElement::viewportIntersectionChanged()
 {
-    if (m_isIntersectingViewport == isIntersecting)
-        return;
-
-    m_isIntersectingViewport = isIntersecting;
-
-    isVisibleInViewportChanged();
     scheduleUpdateAcceleratedRenderingState();
+}
+
+void HTMLVideoElement::runLazyLoadResumptionSteps()
+{
+    HTMLMediaElement::runLazyLoadResumptionSteps();
+    loadDeferredPosterImage();
+}
+
+void HTMLVideoElement::loadDeferredPosterImage()
+{
+    if (m_imageLoader)
+        m_imageLoader->loadDeferredImage();
+}
+
+void HTMLVideoElement::resumePosterLoadIfAlreadyVisible()
+{
+    // A <video> is already observed from create(), so the observe() inside the image loader's
+    // deferral no-ops and no entry arrives for an on-screen video. Resume it here instead.
+    if (isIntersectingViewport())
+        loadDeferredPosterImage();
 }
 
 static void processVideoFrameMetadataTimestamps(VideoFrameMetadata& metadata, Performance& performance)

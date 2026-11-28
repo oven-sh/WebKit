@@ -56,13 +56,13 @@ namespace WebCore {
 
 using BlobURLOriginMap = HashMap<String, Ref<SecurityOrigin>>;
 
-static BlobURLOriginMap& LEGACY_NODELETE originMap()
+NODELETE static BlobURLOriginMap& originMap()
 {
     static MainThreadNeverDestroyed<BlobURLOriginMap> map;
     return map;
 }
 
-static HashCountedSet<String>& LEGACY_NODELETE blobURLReferencesMap()
+NODELETE static HashCountedSet<String>& blobURLReferencesMap()
 {
     static MainThreadNeverDestroyed<HashCountedSet<String>> map;
     return map;
@@ -118,7 +118,7 @@ void ThreadableBlobRegistry::registerInternalBlobURL(const URL& url, Vector<Blob
 
 static void unregisterBlobURLOriginIfNecessaryOnMainThread(const URL& url)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (!isBlobURLContainingNullOrigin(url))
         return;
 

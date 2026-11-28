@@ -95,8 +95,8 @@ public:
 #endif
     Inspector::Protocol::ErrorStringOr<void> setShowPaintRects(bool);
     Inspector::Protocol::ErrorStringOr<void> setEmulatedMedia(const String&);
-    Inspector::Protocol::ErrorStringOr<String> snapshotNode(Inspector::Protocol::DOM::NodeId);
-    Inspector::Protocol::ErrorStringOr<String> snapshotRect(int x, int y, int width, int height, Inspector::Protocol::Page::CoordinateSystem);
+    void snapshotNode(Inspector::Protocol::DOM::NodeId, const String& targetId, Ref<SnapshotNodeCallback>&&);
+    void snapshotRect(int x, int y, int width, int height, Inspector::Protocol::Page::CoordinateSystem, Ref<SnapshotRectCallback>&&);
 #if ENABLE(WEB_ARCHIVE) && USE(CF)
     void archive(Ref<ArchiveCallback>&&);
 #endif
@@ -130,10 +130,13 @@ public:
 
     static void evaluateBootstrapScript(LocalFrame&, const String& source);
 
+    // Returns false if the setting isn't backed by page Settings.
+    WEBCORE_EXPORT static bool applySettingOverride(Page&, Inspector::Protocol::Page::Setting, std::optional<bool>);
+
 private:
     double timestamp();
 
-    InspectorOverlay& LEGACY_NODELETE overlay() const;
+    NODELETE InspectorOverlay& overlay() const;
 
     void overridePrefersReducedMotion(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&&);
     void overridePrefersContrast(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&&);

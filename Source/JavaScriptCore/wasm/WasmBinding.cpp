@@ -41,14 +41,39 @@ namespace JSC { namespace Wasm {
 
 using JIT = CCallHelpers;
 
+bool isForImage(const CCallHelpers& jit)
+{
+    return jit.policy().recordsProcessAddresses;
+}
+
+void loadImagePointer(CCallHelpers& jit, GPRReg instance, uint32_t slot, GPRReg dest)
+{
+    jit.loadPtr(CCallHelpers::Address(instance, JSWebAssemblyInstance::offsetOfImageCodePointers()), dest);
+    jit.loadPtr(CCallHelpers::Address(dest, safeCast<int32_t>(slot * sizeof(void*))), dest);
+}
+
+void callOperation(CCallHelpers& jit, CodePtr<OperationPtrTag> operation)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (isForImage(jit)) {
+        if (std::optional<uint32_t> slot = ImagePointerTable::slotOfOperation(operation.taggedPtr())) {
+            GPRReg scratch = jit.scratchRegister();
+            jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratch);
+            jit.call(CCallHelpers::Address(scratch, safeCast<int32_t>(*slot * sizeof(void*))), OperationPtrTag);
+            return;
+        }
+    }
+#endif
+    jit.callOperation<OperationPtrTag>(operation);
+}
+
 void emitPrepareToCageMemoryBase(CCallHelpers& jit, GPRReg instance, GPRReg scratch)
 {
 #if GIGACAGE_ENABLED
-    if (!jit.policy().recordsProcessAddresses)
+    if (!isForImage(jit))
         return;
     auto loadPointer = [&](uint32_t slot) {
-        jit.loadPtr(CCallHelpers::Address(instance, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratch);
-        jit.loadPtr(CCallHelpers::Address(scratch, safeCast<int32_t>(slot * sizeof(void*))), scratch);
+        loadImagePointer(jit, instance, slot, scratch);
     };
     loadPointer(ImagePointerTable::primitiveGigacageDisableRequest);
     auto isDisabled = jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(scratch));

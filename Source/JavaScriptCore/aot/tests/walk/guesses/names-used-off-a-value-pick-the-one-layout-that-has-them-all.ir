@@ -1,0 +1,86 @@
+# class Box { constructor(w, h) { this.width = w; this.height = h; } }
+# function area(o) { return o.width * o.height; }  function wide(o) { return o.width; }  function other(o) { return o.width + o.depth; }  function marked(o) { return o.label + o.mark; }
+# sink(area, wide, other, marked, new Box(1, 2), { width: 3, label: "a", mark: "b" });
+# Nothing is written of `o` and no compiled caller passes it anything. But whatever arrives at `area` is asked for `width` and for `height`, and of the layouts of which the program makes objects one alone has both:
+# that one is expected, and tested where it is used. `width` alone is had by two, and `width` with `depth` by none: of those parameters nothing is expected and the reads stay closed.
+# `label` and `mark` one layout alone has too, but it is that of a literal. The names of an instance come from its constructor alone; those of a record say nothing of who made it: any literal, a parse or a spread
+# makes an object with the same names. On a large program such a guess was wrong 87 times in 100, one of an instance 2.5 times. So nothing is expected there either
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetSlot {{*}}key="width" receivers=[L0]
+# CHECK: = GetSlot {{*}}key="height" receivers=[L0]
+# RUN(NOTHING): walk f2 f3 f4 mechanisms=none+TypedOperations+Guesses
+# NOTHING-NOT: ShapeTest
+# NOTHING-NOT: GetSlot
+# RUN(ANSWER): run-in-shell globalThis.sink = (area, wide, other, marked, box, record) => { print(area(box)); print(area(record)); print(area({ width: 5, height: 6, more: 1 })); print(wide(record)); print(other(box)); print(marked(record)); print(marked({ label: 1, mark: 2 })); try { area(null); } catch (error) { print(error instanceof TypeError); } };
+# ANSWER: 2
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: 30
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: ab
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Box" module=m0 constructor=f5 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="height" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}, {key="mark" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClass v6 layout=L0
+    v8 = FinishClass v7 layout=L0
+    v9 = Integer integer=1
+    v10 = Integer integer=2
+    v11 = Construct v8, -, v9, v10
+    v12 = Integer integer=3
+    v13 = String string="a"
+    v14 = String string="b"
+    v15 = NewObject -, v12, v13, v14 layout=L1 fields=[0, 1, 2]
+    v16 = FinishObject v15
+    v17 = Call v1, -, v2, v3, v4, v5, v11, v16 calleeName="sink"
+    Return v17
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="width"
+    v2 = PropGet v0 key="height"
+    v3 = Mul v1, v2
+    Return v3
+}
+function f2 name="wide" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="width"
+    Return v1
+}
+function f3 name="other" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="width"
+    v2 = PropGet v0 key="depth"
+    v3 = Add v1, v2
+    Return v3
+}
+function f4 name="marked" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="label"
+    v2 = PropGet v0 key="mark"
+    v3 = Add v1, v2
+    Return v3
+}
+function f5 name="Box" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v4, v1 key="width"
+    PropSet v4, v2 key="height"
+    Return v4
+}

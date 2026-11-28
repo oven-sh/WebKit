@@ -49,6 +49,7 @@
 #include "WebAuthenticationConstants.h"
 #include "WebAuthenticationUtils.h"
 #include <pal/crypto/CryptoDigest.h>
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 
 namespace fido {
@@ -61,7 +62,7 @@ using namespace cbor;
 // hasAtLeastFourCodepoints returns true if |pin| contains
 // four or more code points. This reflects the "4 Unicode characters"
 // requirement in CTAP2.
-static bool LEGACY_NODELETE hasAtLeastFourCodepoints(const String& pin)
+NODELETE static bool hasAtLeastFourCodepoints(const String& pin)
 {
     return pin.length() >= 4;
 }
@@ -75,9 +76,9 @@ static Vector<uint8_t> decryptForProtocol(PINUVAuthProtocol protocol, const Cryp
             return { };
 
         CryptoAlgorithmAesCbcCfbParams params;
-        params.iv = toBufferSource(ciphertext.subspan(0, 16));
+        params.iv = toBufferSource(borrow(ciphertext)->subspan(0, 16));
 
-        Vector<uint8_t> ct(ciphertext.subspan(16));
+        Vector<uint8_t> ct(borrow(ciphertext)->subspan(16));
 
         auto result = CryptoAlgorithmAESCBC::platformDecrypt(params, key, ct, CryptoAlgorithmAESCBC::Padding::No);
         if (result.hasException())
@@ -109,7 +110,7 @@ std::optional<UTF8CString> validateAndConvertToUTF8(const String& pin)
 {
     if (!hasAtLeastFourCodepoints(pin))
         return std::nullopt;
-    auto result = pin.utf8();
+    auto result = makeUTF8CString(pin);
     if (result.length() < kMinBytes || result.length() > kMaxBytes)
         return std::nullopt;
     return result;
@@ -277,7 +278,7 @@ static Vector<uint8_t> deriveProtocolSharedSecret(PINUVAuthProtocol protocol, Ve
     Vector<uint8_t> sharedSecret;
     if (protocol == PINUVAuthProtocol::kPinProtocol1) {
         auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
-        crypto->addBytes(ecdhResult.span());
+        crypto->addBytes(borrow(ecdhResult)->span());
         sharedSecret = crypto->computeHash();
     } else if (protocol == PINUVAuthProtocol::kPinProtocol2) {
         sharedSecret.reserveInitialCapacity(64);
@@ -329,8 +330,7 @@ static Vector<uint8_t> encryptForProtocol(PINUVAuthProtocol protocol, const Cryp
         auto result = CryptoAlgorithmAESCBC::platformEncrypt(params, key, plaintext, CryptoAlgorithmAESCBC::Padding::No);
         ASSERT(!result.hasException());
 
-        Vector<uint8_t> output;
-        output.reserveInitialCapacity(iv.size() + result.returnValue().size());
+        Vector<uint8_t> output(ReserveCapacityTag { }, iv.size() + result.returnValue().size());
         output.append(std::span { iv });
         output.appendVector(result.releaseReturnValue());
         return output;
@@ -362,7 +362,7 @@ std::optional<TokenRequest> TokenRequest::tryCreate(PINUVAuthProtocol protocol, 
     Vector<uint8_t> aesKeyMaterial;
     if (protocol == PINUVAuthProtocol::kPinProtocol2) {
         ASSERT(sharedSecret.size() == 64);
-        aesKeyMaterial = Vector<uint8_t>(sharedSecret.span().last(32));
+        aesKeyMaterial = Vector<uint8_t>(borrow(sharedSecret)->span().last(32));
     } else
         aesKeyMaterial = sharedSecret;
 
@@ -429,8 +429,8 @@ std::optional<SetPinRequest> SetPinRequest::tryCreate(PINUVAuthProtocol protocol
     Vector<uint8_t> hmacKeyMaterial, aesKeyMaterial;
     if (protocol == PINUVAuthProtocol::kPinProtocol2) {
         ASSERT(sharedSecret.size() == 64);
-        hmacKeyMaterial = Vector<uint8_t>(sharedSecret.span().first(32));
-        aesKeyMaterial = Vector<uint8_t>(sharedSecret.span().last(32));
+        hmacKeyMaterial = Vector<uint8_t>(borrow(sharedSecret)->span().first(32));
+        aesKeyMaterial = Vector<uint8_t>(borrow(sharedSecret)->span().last(32));
     } else {
         hmacKeyMaterial = sharedSecret;
         aesKeyMaterial = sharedSecret;
@@ -445,9 +445,8 @@ std::optional<SetPinRequest> SetPinRequest::tryCreate(PINUVAuthProtocol protocol
     auto coseKey = encodeCOSEPublicKey(rawPublicKeyResult.returnValue());
 
     const size_t minPaddedPinLength = 64;
-    Vector<uint8_t> paddedPin;
-    paddedPin.reserveInitialCapacity(minPaddedPinLength);
-    paddedPin.append(inputPin.utf8().span());
+    Vector<uint8_t> paddedPin(ReserveCapacityTag { }, minPaddedPinLength);
+    paddedPin.append(makeUTF8CString(inputPin).span());
     for (int i = paddedPin.size(); i < 64; i++)
         paddedPin.append('\0');
 
@@ -513,8 +512,8 @@ std::optional<HmacSecretRequest> HmacSecretRequest::create(PINUVAuthProtocol pro
     Vector<uint8_t> hmacKeyMaterial, aesKeyMaterial;
     if (protocol == PINUVAuthProtocol::kPinProtocol2) {
         ASSERT(sharedSecret.size() == 64);
-        hmacKeyMaterial = Vector<uint8_t>(sharedSecret.span().first(32));
-        aesKeyMaterial = Vector<uint8_t>(sharedSecret.span().last(32));
+        hmacKeyMaterial = Vector<uint8_t>(borrow(sharedSecret)->span().first(32));
+        aesKeyMaterial = Vector<uint8_t>(borrow(sharedSecret)->span().last(32));
     } else {
         hmacKeyMaterial = sharedSecret;
         aesKeyMaterial = sharedSecret;

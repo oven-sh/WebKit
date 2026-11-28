@@ -1,0 +1,30 @@
+# the same call, and one of the two ways brings a value of unseen code: the call may enter anything, and nothing is said of it
+# const pick = globalThis.flag ? () => 1 : globalThis.other;  pick();
+# RUN: link calls functions mechanisms=all
+# CHECK: function f0
+# RUN(NEVER): link calls mechanisms=all
+# NEVER-NOT: several
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = PropGet v0 key="other" [isFreeName]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = Call v4
+    v6 = Add v5, v5
+    Return v6
+}
+function f1 name="one" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

@@ -6,12 +6,11 @@
 # gl*/egl* entry points, but ANGLE-static contains them.
 #
 # The Xcode utils target compiles WebKit/UtilsSourcesPlatform{.cpp,-mm.mm}, which
-# include the platform files and SystemInfo_macos.mm. ANGLE-static already contains
-# SystemInfo_macos.mm, so the rest of the platform files are listed here directly.
+# include the platform files and SystemInfo_macos.mm or SystemInfo_ios.cpp. ANGLE-static
+# already contains those, so the rest of the platform files are listed here directly.
 
 set(angle_test_utils_sources
     "src/common/frame_capture_shared.cpp"
-    "src/tests/test_expectations/GPUTestConfig_mac.mm"
     "src/tests/test_utils/CompilerTest.cpp"
     "src/tests/test_utils/ShaderCompileTreeTest.cpp"
     "src/tests/test_utils/compiler_test.cpp"
@@ -20,14 +19,27 @@ set(angle_test_utils_sources
     "util/OSWindow.cpp"
     "util/Timer.cpp"
     "util/autogen/angle_features_autogen.cpp"
-    "util/osx/OSXPixmap.mm"
-    "util/osx/OSXWindow.mm"
-    "util/osx/osx_backtrace.cpp"
     "util/posix/crash_handler_posix.cpp"
     "util/posix/test_utils_posix.cpp"
     "util/random_utils.cpp"
     "util/shader_utils.cpp"
+    "util/test_blob_cache.cpp"
     "util/test_utils.cpp"
+)
+
+set(angle_test_utils_macos_sources
+    "src/tests/test_expectations/GPUTestConfig_mac.mm"
+    "util/osx/OSXPixmap.mm"
+    "util/osx/OSXWindow.mm"
+    "util/osx/osx_backtrace.cpp"
+)
+
+set(angle_test_utils_ios_sources
+    "src/tests/test_expectations/GPUTestConfig_ios.mm"
+    "util/ios/IOSPixmap.mm"
+    "util/ios/IOSWindow.mm"
+    "util/ios/ios_backtrace.cpp"
+    "util/ios/ios_main.mm"
 )
 
 set(angle_unittests_sources
@@ -55,6 +67,7 @@ set(angle_unittests_sources
     "src/gpu_info_util/SystemInfo_unittest.cpp"
     "src/image_util/AstcDecompressor_unittest.cpp"
     "src/image_util/LoadToNative_unittest.cpp"
+    "src/libANGLE/ResourceMap_unittest.cpp"
     "src/libANGLE/TransformFeedback_unittest.cpp"
     "src/tests/angle_unittest_main.cpp"
     "src/tests/compiler_tests/API_test.cpp"
@@ -68,7 +81,9 @@ set(angle_unittests_sources
     "src/tests/compiler_tests/VariablePacker_test.cpp"
     "src/tests/test_expectations/GPUTestConfig.cpp"
     "src/tests/test_expectations/GPUTestExpectationsParser.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
+    "util/test_blob_cache_unittest.cpp"
 )
 
 set(angle_end2end_tests_sources
@@ -78,6 +93,7 @@ set(angle_end2end_tests_sources
     "src/libANGLE/renderer/metal/VertexArrayMtl_unittest.mm"
     "src/tests/angle_end2end_tests_main.cpp"
     "src/tests/egl_tests/EGLBackwardsCompatibleContextTest.cpp"
+    "src/tests/egl_tests/EGLBlobCacheRestartTest.cpp"
     "src/tests/egl_tests/EGLBlobCacheTest.cpp"
     "src/tests/egl_tests/EGLBufferAgeTest.cpp"
     "src/tests/egl_tests/EGLChooseConfigTest.cpp"
@@ -86,6 +102,7 @@ set(angle_end2end_tests_sources
     "src/tests/egl_tests/EGLContextSharingTest.cpp"
     "src/tests/egl_tests/EGLCreateContextAttribsTest.cpp"
     "src/tests/egl_tests/EGLDebugTest.cpp"
+    "src/tests/egl_tests/EGLDeviceWebGPUTest.cpp"
     "src/tests/egl_tests/EGLDisplaySelectionTest.cpp"
     "src/tests/egl_tests/EGLDisplayTest.cpp"
     "src/tests/egl_tests/EGLFeatureControlTest.cpp"
@@ -167,6 +184,7 @@ set(angle_end2end_tests_sources
     "src/tests/gl_tests/FramebufferTest.cpp"
     "src/tests/gl_tests/GLSLConstantFoldingTest.cpp"
     "src/tests/gl_tests/GLSLOutputTest.cpp"
+    "src/tests/gl_tests/GLSLPrecedenceTest.cpp"
     "src/tests/gl_tests/GLSLTest.cpp"
     "src/tests/gl_tests/GLSLUBTest.cpp"
     "src/tests/gl_tests/GLSLValidationTest.cpp"
@@ -268,6 +286,7 @@ set(angle_end2end_tests_sources
     "src/tests/test_utils/angle_test_instantiate.cpp"
     "src/tests/test_utils/angle_test_instantiate_apple.mm"
     "src/tests/test_utils/angle_test_platform.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
     "src/tests/test_utils/system_info_util.cpp"
 )
@@ -557,6 +576,7 @@ set(angle_deqp_gles2_tests_sources
     "src/tests/test_expectations/GPUTestConfig.cpp"
     "src/tests/test_expectations/GPUTestExpectationsParser.cpp"
     "src/tests/test_utils/RenderDoc.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
     "third_party/VK-GL-CTS/src/modules/gles2/accuracy/es2aAccuracyTests.cpp"
     "third_party/VK-GL-CTS/src/modules/gles2/accuracy/es2aTextureFilteringTests.cpp"
@@ -677,6 +697,7 @@ set(angle_deqp_gles3_tests_sources
     "src/tests/test_expectations/GPUTestConfig.cpp"
     "src/tests/test_expectations/GPUTestExpectationsParser.cpp"
     "src/tests/test_utils/RenderDoc.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
     "third_party/VK-GL-CTS/src/modules/gles3/accuracy/es3aAccuracyTests.cpp"
     "third_party/VK-GL-CTS/src/modules/gles3/accuracy/es3aTextureFilteringTests.cpp"

@@ -169,6 +169,7 @@ namespace JSC { namespace DFG {
     macro(ArithDiv, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMod, NodeResultNumber | NodeMustGenerate) \
     macro(ArithAbs, NodeResultNumber | NodeMustGenerate) \
+    macro(ArithSign, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMin, NodeResultNumber | NodeHasVarArgs) \
     macro(ArithMax, NodeResultNumber | NodeHasVarArgs) \
     macro(ArithFRound, NodeResultDouble | NodeMustGenerate) \
@@ -210,6 +211,9 @@ namespace JSC { namespace DFG {
     macro(GetMyArgumentByValOutOfBounds, NodeResultJS | NodeMustGenerate) \
     macro(VarargsLength, NodeMustGenerate | NodeResultInt32) \
     macro(LoadVarargs, NodeMustGenerate) \
+    /* Spread analogs of the above for op_call_varargs_with_spread inlining. */\
+    macro(VarargsLengthWithSpread, NodeMustGenerate | NodeResultInt32 | NodeHasVarArgs) \
+    macro(LoadVarargsWithSpread, NodeMustGenerate | NodeHasVarArgs) \
     macro(ForwardVarargs, NodeMustGenerate) \
     /* Note that PutByVal opcodes use VarArgs because they may have up to */\
     /* 5 children (? means optional): <cell>, <key>, <value>, <storage>?, and <length>?. */\
@@ -286,6 +290,7 @@ namespace JSC { namespace DFG {
     macro(GetVectorLength, NodeResultInt32) \
     macro(GetTypedArrayByteOffset, NodeResultInt32) \
     macro(GetTypedArrayByteOffsetAsInt52, NodeResultInt52) \
+    macro(GetTypedArrayBuffer, NodeResultJS | NodeMustGenerate) \
     macro(GetWebAssemblyInstanceExports, NodeResultJS) \
     macro(GetScope, NodeResultJS) \
     macro(GetEvalScope, NodeResultJS) \
@@ -406,6 +411,7 @@ namespace JSC { namespace DFG {
     macro(Construct, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(DirectConstruct, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(CallVarargs, NodeResultJS | NodeMustGenerate) \
+    macro(CallVarargsWithSpread, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(CallForwardVarargs, NodeResultJS | NodeMustGenerate) \
     macro(ConstructVarargs, NodeResultJS | NodeMustGenerate) \
     macro(ConstructForwardVarargs, NodeResultJS | NodeMustGenerate) \
@@ -453,6 +459,7 @@ namespace JSC { namespace DFG {
     macro(NewSet, NodeResultJS) \
     macro(NewWeakMap, NodeResultJS) \
     macro(NewWeakSet, NodeResultJS) \
+    macro(NewProxyObject, NodeResultJS) \
     /* Rest Parameter */\
     macro(CreateRest, NodeResultJS | NodeMustGenerate) \
     \

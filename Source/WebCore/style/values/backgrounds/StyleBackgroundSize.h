@@ -27,8 +27,7 @@
 
 #include <WebCore/StylePrimitiveNumericOrKeyword.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct BackgroundSizeLength : PrimitiveNumericOrKeyword<LengthPercentage<CSS::Nonnegative>, CSS::Keyword::Auto> {
     using Base::Base;
@@ -142,12 +141,11 @@ template<> struct Serialize<BackgroundSize> { void operator()(StringBuilder&, co
 // MARK: - Blending
 
 template<> struct Blending<BackgroundSize> {
-    bool LEGACY_NODELETE canBlend(const BackgroundSize&, const BackgroundSize&);
+    NODELETE bool canBlend(const BackgroundSize&, const BackgroundSize&);
     auto blend(const BackgroundSize&, const BackgroundSize&, const BlendingContext&) -> BackgroundSize;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::BackgroundSizeLength)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::BackgroundSize)

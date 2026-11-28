@@ -1,0 +1,20 @@
+# the maker stands in this code and the position is a known index: past the length that the maker made too
+# RUN: verify-code
+# CHECK: verified
+# -- code
+# code f0:Body {
+#   constants:
+#     v1: 5 @Int32 = Integer integer=5
+#   b0(v0: anything @JSValue) entry=0:
+#     v2: Array @Cell = NewArray v0, v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     v3 @Void = PutArrayElement v2, v1, v0 level=Proven [keyIsIntegral, fillsPlaceOfListMadeHere] traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stores" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+entry module=m0

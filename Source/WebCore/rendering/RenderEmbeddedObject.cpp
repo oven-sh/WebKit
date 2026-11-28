@@ -86,7 +86,7 @@ static constexpr auto replacementTextRoundedRectColor = SRGBA<uint8_t> { 125, 12
 static constexpr auto replacementTextColor = SRGBA<uint8_t> { 240, 240, 240 };
 static constexpr auto unavailablePluginBorderColor = Color::white.colorWithAlphaByte(216);
 
-RenderEmbeddedObject::RenderEmbeddedObject(HTMLFrameOwnerElement& element, Style::ComputedStyle&& style)
+RenderEmbeddedObject::RenderEmbeddedObject(HTMLFrameOwnerElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderWidget(Type::EmbeddedObject, element, WTF::move(style))
 {
     ASSERT(isRenderEmbeddedObject());
@@ -485,11 +485,11 @@ CursorDirective RenderEmbeddedObject::getCursor(const LayoutPoint& point, Cursor
 {
     if (isPluginUnavailable() && shouldUnavailablePluginMessageBeButton(protect(page()), m_pluginUnavailabilityReason) && isInUnavailablePluginIndicator(point)) {
         cursor = handCursor();
-        return CursorDirective::SetCursor;
+        return CursorDirective::Set;
     }
     if (widget() && protect(widget())->isPluginViewBase()) {
         // A plug-in is responsible for setting the cursor when the pointer is over it.
-        return CursorDirective::DoNotSetCursor;
+        return CursorDirective::DoNotSet;
     }
     return RenderWidget::getCursor(point, cursor);
 }

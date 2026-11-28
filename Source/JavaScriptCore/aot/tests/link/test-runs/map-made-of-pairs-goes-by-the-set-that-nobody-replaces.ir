@@ -1,0 +1,18 @@
+# `new Map(pairs)` calls the `set` that it finds on the new map, and no row names that member. In a test run its lock is the program's to lay: whoever goes by the rows of the construction takes the member for a constant
+# a.test.js: new Map(given)
+# nothing here reads Map.prototype.set, and it is locked all the same: `link` says that Link has gone by it
+# map-made-of-pairs-calls-a-set-that-a-helper-replaced.ir is the other side
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open mechanisms=all
+# CHECK: locked MapPrototypeSet {{*}}link
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Map" [isFreeName]
+    v2 = PropGet v0 key="given" [isFreeName]
+    v3 = Construct v1, -, v2
+    Return v3
+}

@@ -25,13 +25,13 @@
 
 #pragma once
 
-#include "FrameRateMonitor.h"
-#include "MediaPlayerEnums.h"
-#include "MediaReorderQueue.h"
-#include "ProcessIdentity.h"
-#include "SampleMap.h"
-#include "VideoPlaybackQualityMetrics.h"
-#include "WebAVSampleBufferListener.h"
+#include <WebCore/FrameRateMonitor.h>
+#include <WebCore/MediaPlayerEnums.h>
+#include <WebCore/MediaReorderQueue.h>
+#include <WebCore/ProcessIdentity.h>
+#include <WebCore/SampleMap.h>
+#include <WebCore/VideoPlaybackQualityMetrics.h>
+#include <WebCore/WebAVSampleBufferListener.h>
 #include <wtf/Deque.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
@@ -70,13 +70,13 @@ class VideoMediaSampleRenderer final
 {
 public:
     static Ref<VideoMediaSampleRenderer> create(WebSampleBufferVideoRendering *renderer, const Logger& logger, uint64_t logIdentifier) { return adoptRef(*new VideoMediaSampleRenderer(renderer, logger, logIdentifier)); }
-    ~VideoMediaSampleRenderer();
+    WEBCORE_EXPORT ~VideoMediaSampleRenderer();
 
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
     using Preferences = VideoRendererPreferences;
-    bool LEGACY_NODELETE prefersDecompressionSession() const;
-    void LEGACY_NODELETE setPreferences(Preferences);
+    NODELETE bool prefersDecompressionSession() const;
+    NODELETE WEBCORE_EXPORT void setPreferences(Preferences);
     bool isUsingDecompressionSession() const { return m_isUsingDecompressionSession; }
     bool managesDecodedFrames() const { return m_isUsingDecompressionSession || m_isReceivingDecodedSamples; }
     bool isReceivingDecodedSamples() const { return m_lastEnqueuedSampleWasDecoded; }
@@ -86,26 +86,26 @@ public:
 
     bool isReadyForMoreMediaData() const;
     Ref<GenericPromise> requestMediaDataWhenReady();
-    void enqueueSample(const MediaSample&, std::optional<MediaTime> minimumUpcomingTime);
+    WEBCORE_EXPORT void enqueueSample(const MediaSample&, std::optional<MediaTime> minimumUpcomingTime);
     void stopRequestingMediaData();
 
-    void notifyFirstFrameAvailable(Function<void(const MediaTime&, double)>&&);
+    WEBCORE_EXPORT void notifyFirstFrameAvailable(Function<void(const MediaTime&, double)>&&);
     void notifyWhenHasAvailableVideoFrame(Function<void(const MediaTime&, double)>&&);
-    void notifyWhenDecodingErrorOccurred(Function<void(NSError *)>&&);
+    WEBCORE_EXPORT void notifyWhenDecodingErrorOccurred(Function<void(NSError *)>&&);
     void notifyWhenVideoRendererRequiresFlushToResumeDecoding(Function<void()>&&);
 
 #if HAVE(AVSAMPLEBUFFERVIDEORENDERER)
     Ref<GenericPromise> changeRenderer(WebSampleBufferVideoRendering *);
 #endif
 
-    void flush();
+    WEBCORE_EXPORT void flush();
     void shutdown();
 
     void expectMinimumUpcomingSampleBufferPresentationTime(const MediaTime&);
 
-    WebSampleBufferVideoRendering *LEGACY_NODELETE renderer() const;
+    NODELETE WebSampleBufferVideoRendering *renderer() const;
 
-    template <typename T> T* LEGACY_NODELETE as() const;
+    template <typename T> NODELETE T* as() const;
     template <> AVSampleBufferVideoRenderer* as() const;
     template <> AVSampleBufferDisplayLayer* as() const
     {
@@ -119,7 +119,7 @@ public:
     };
     DisplayedPixelBufferEntry copyDisplayedPixelBuffer();
 
-    unsigned LEGACY_NODELETE totalDisplayedFrames() const;
+    NODELETE unsigned totalDisplayedFrames() const;
     std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() const;
 
     void setResourceOwner(const ProcessIdentity&);
@@ -129,7 +129,7 @@ public:
     void invalidateDecompressionSession();
 
 private:
-    VideoMediaSampleRenderer(WebSampleBufferVideoRendering *, const Logger&, uint64_t);
+    WEBCORE_EXPORT VideoMediaSampleRenderer(WebSampleBufferVideoRendering *, const Logger&, uint64_t);
 
     void clearTimebase();
     using TimebaseAndTimerSource = std::pair<RetainPtr<CMTimebaseRef>, OSObjectPtr<dispatch_source_t>>;
@@ -155,7 +155,7 @@ private:
         Displayed
     };
     DecodedFrameResult maybeQueueFrameForDisplay(const MediaTime&, const MediaSample&, FlushId);
-    void LEGACY_NODELETE flushCompressedSampleQueue();
+    void flushCompressedSampleQueue();
     void flushDecodedSampleQueue();
     void cancelTimer();
     void purgeDecodedSampleQueue(FlushId);
@@ -170,8 +170,8 @@ private:
     RetainPtr<CVPixelBufferRef> imageForSample(CMSampleBufferRef) const;
 
     void assignResourceOwner(const MediaSample&);
-    bool LEGACY_NODELETE areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
-    size_t LEGACY_NODELETE compressedSamplesCount() const;
+    NODELETE bool areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
+    NODELETE size_t compressedSamplesCount() const;
     void maybeBecomeReadyForMoreMediaData();
     bool shouldDecodeSample(const MediaSample&);
 
@@ -183,10 +183,11 @@ private:
     void ensureOnDispatcher(Function<void()>&&) const;
     void ensureOnDispatcherSync(NOESCAPE Function<void()>&&) const;
     dispatch_queue_t dispatchQueue() const;
-    RefPtr<WebCoreDecompressionSession> LEGACY_NODELETE decompressionSession() const;
-    bool LEGACY_NODELETE useDecompressionSessionForProtectedFallback() const;
-    bool LEGACY_NODELETE useDecompressionSessionForProtectedContent() const;
-    bool LEGACY_NODELETE useStereoDecoding() const;
+    NODELETE RefPtr<WebCoreDecompressionSession> decompressionSession() const;
+    NODELETE bool useDecompressionSessionForProtectedFallback() const;
+    NODELETE bool useDecompressionSessionForProtectedContent() const;
+    NODELETE bool useStereoDecoding() const;
+    NODELETE bool requiresHardwareDecoder() const;
 
     // WebAVSampleBufferListenerClient
     void videoRendererDidReceiveError(WebSampleBufferVideoRendering *, NSError *) final;

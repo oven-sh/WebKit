@@ -28,8 +28,7 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 #include <WebCore/StyleTransformFunctionBase.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // scale() = scale( [ <number> | <percentage> ]#{1,2} )
 // https://drafts.csswg.org/css-transforms-2/#funcdef-scale
@@ -42,8 +41,8 @@ namespace Style {
 
 class ScaleTransformFunction final : public TransformFunctionBase {
 public:
-    static Ref<const ScaleTransformFunction> LEGACY_NODELETE create(NumberOrPercentageResolvedToNumber<>, NumberOrPercentageResolvedToNumber<>, TransformFunctionBase::Type);
-    static Ref<const ScaleTransformFunction> LEGACY_NODELETE create(NumberOrPercentageResolvedToNumber<>, NumberOrPercentageResolvedToNumber<>, NumberOrPercentageResolvedToNumber<>, TransformFunctionBase::Type);
+    NODELETE static Ref<const ScaleTransformFunction> create(NumberOrPercentageResolvedToNumber<>, NumberOrPercentageResolvedToNumber<>, TransformFunctionBase::Type);
+    NODELETE static Ref<const ScaleTransformFunction> create(NumberOrPercentageResolvedToNumber<>, NumberOrPercentageResolvedToNumber<>, NumberOrPercentageResolvedToNumber<>, TransformFunctionBase::Type);
 
     Ref<const TransformFunctionBase> clone() const override;
     Ref<TransformOperation> toPlatform(const FloatSize&, ZoomFactor) const override;
@@ -75,7 +74,6 @@ private:
     NumberOrPercentageResolvedToNumber<> m_z;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_TRANSFORM_FUNCTION(WebCore::Style::ScaleTransformFunction, WebCore::Style::TransformFunctionBase::isScaleTransformFunctionType)

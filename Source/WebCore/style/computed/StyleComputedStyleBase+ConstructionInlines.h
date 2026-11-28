@@ -33,7 +33,6 @@ namespace WebCore {
 namespace Style {
 
 inline ComputedStyleBase::ComputedStyleBase(ComputedStyleBase&&) = default;
-inline ComputedStyleBase& ComputedStyleBase::operator=(ComputedStyleBase&&) = default;
 
 inline ComputedStyleBase::ComputedStyleBase(CreateDefaultStyleTag)
     : m_nonInheritedData(NonInheritedData::create())
@@ -79,9 +78,11 @@ inline ComputedStyleBase::ComputedStyleBase(CreateDefaultStyleTag)
     m_nonInheritedFlags.isContainerDependent = false;
     m_nonInheritedFlags.useTreeCountingFunctions = false;
     m_nonInheritedFlags.hasExplicitlyInheritedProperties = false;
+    m_nonInheritedFlags.hasAuthorHighlightColors = false;
     m_nonInheritedFlags.disallowsFastPathInheritance = false;
     m_nonInheritedFlags.hasZeroEffectiveBorderWidths = true;
     m_nonInheritedFlags.hasZeroPadding = true;
+    m_nonInheritedFlags.borderRadiusPercentageBasis = static_cast<unsigned>(ComputedStyle::initialBorderRadiusPercentageBasis());
     m_nonInheritedFlags.firstChildState = false;
     m_nonInheritedFlags.lastChildState = false;
     m_nonInheritedFlags.isLink = false;
@@ -104,15 +105,26 @@ inline ComputedStyleBase::ComputedStyleBase(const ComputedStyleBase& other, Clon
 {
 }
 
-inline ComputedStyleBase::ComputedStyleBase(ComputedStyleBase& a, ComputedStyleBase&& b)
-    : m_nonInheritedFlags(std::exchange(a.m_nonInheritedFlags, b.m_nonInheritedFlags))
-    , m_inheritedFlags(std::exchange(a.m_inheritedFlags, b.m_inheritedFlags))
-    , m_nonInheritedData(a.m_nonInheritedData.replace(WTF::move(b.m_nonInheritedData)))
-    , m_inheritedRareData(a.m_inheritedRareData.replace(WTF::move(b.m_inheritedRareData)))
-    , m_inheritedData(a.m_inheritedData.replace(WTF::move(b.m_inheritedData)))
-    , m_svgData(a.m_svgData.replace(WTF::move(b.m_svgData)))
-    , m_pseudoElementStyles(std::exchange(a.m_pseudoElementStyles, WTF::move(b.m_pseudoElementStyles)))
+inline void ComputedStyleBase::swapData(ComputedStyleBase& other)
 {
+    std::swap(m_nonInheritedFlags, other.m_nonInheritedFlags);
+    std::swap(m_inheritedFlags, other.m_inheritedFlags);
+    std::swap(m_nonInheritedData, other.m_nonInheritedData);
+    std::swap(m_inheritedRareData, other.m_inheritedRareData);
+    std::swap(m_inheritedData, other.m_inheritedData);
+    std::swap(m_svgData, other.m_svgData);
+    std::swap(m_pseudoElementStyles, other.m_pseudoElementStyles);
+}
+
+inline void ComputedStyleBase::cloneDataFrom(const ComputedStyleBase& other)
+{
+    m_nonInheritedFlags = other.m_nonInheritedFlags;
+    m_inheritedFlags = other.m_inheritedFlags;
+    m_nonInheritedData = other.m_nonInheritedData;
+    m_inheritedRareData = other.m_inheritedRareData;
+    m_inheritedData = other.m_inheritedData;
+    m_svgData = other.m_svgData;
+    m_pseudoElementStyles.clear();
 }
 
 inline void ComputedStyleBase::NonInheritedFlags::copyNonInheritedFrom(const NonInheritedFlags& other)
@@ -132,9 +144,11 @@ inline void ComputedStyleBase::NonInheritedFlags::copyNonInheritedFrom(const Non
     isContainerDependent = other.isContainerDependent;
     useTreeCountingFunctions = other.useTreeCountingFunctions;
     hasExplicitlyInheritedProperties = other.hasExplicitlyInheritedProperties;
+    hasAuthorHighlightColors = other.hasAuthorHighlightColors;
     disallowsFastPathInheritance = other.disallowsFastPathInheritance;
     hasZeroEffectiveBorderWidths = other.hasZeroEffectiveBorderWidths;
     hasZeroPadding = other.hasZeroPadding;
+    borderRadiusPercentageBasis = other.borderRadiusPercentageBasis;
 }
 
 } // namespace Style

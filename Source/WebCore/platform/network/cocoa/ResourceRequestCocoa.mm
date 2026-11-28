@@ -138,7 +138,7 @@ CFURLRequestRef ResourceRequest::cfURLRequest(HTTPBodyUpdatePolicy bodyPolicy) c
     return [protect(nsURLRequest(bodyPolicy)) _CFURLRequest];
 }
 
-static inline ResourceRequestCachePolicy LEGACY_NODELETE fromPlatformRequestCachePolicy(NSURLRequestCachePolicy policy)
+NODELETE static inline ResourceRequestCachePolicy fromPlatformRequestCachePolicy(NSURLRequestCachePolicy policy)
 {
     switch (policy) {
     case NSURLRequestUseProtocolCachePolicy:
@@ -152,7 +152,7 @@ static inline ResourceRequestCachePolicy LEGACY_NODELETE fromPlatformRequestCach
     }
 }
 
-static inline NSURLRequestCachePolicy LEGACY_NODELETE toPlatformRequestCachePolicy(ResourceRequestCachePolicy policy)
+NODELETE static inline NSURLRequestCachePolicy toPlatformRequestCachePolicy(ResourceRequestCachePolicy policy)
 {
     switch (policy) {
     case ResourceRequestCachePolicy::UseProtocolCachePolicy:
@@ -195,8 +195,7 @@ void ResourceRequest::doUpdateResourceRequest()
     m_requestData.m_responseContentDispositionEncodingFallbackArray.clear();
     RetainPtr<NSArray> encodingFallbacks = [m_nsRequest contentDispositionEncodingFallbackArray];
     m_requestData.m_responseContentDispositionEncodingFallbackArray.reserveCapacity([encodingFallbacks count]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSNumber *encodingFallback in encodingFallbacks.get()) {
+    for (NSNumber *encodingFallback in encodingFallbacks.get()) {
         CFStringEncoding encoding = CFStringConvertNSStringEncodingToEncoding([encodingFallback unsignedLongValue]);
         if (encoding != kCFStringEncodingInvalidId)
             m_requestData.m_responseContentDispositionEncodingFallbackArray.append(CFStringConvertEncodingToIANACharSetName(encoding));
@@ -302,8 +301,7 @@ void ResourceRequest::doUpdatePlatformRequest()
     [nsRequest _setProperty:m_requestData.m_isTopSite ? @YES : @NO forKey:@"_kCFHTTPCookiePolicyPropertyIsTopLevelNavigation"];
 
     // Cannot just use setAllHTTPHeaderFields here, because it does not remove headers.
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *oldHeaderName in [nsRequest allHTTPHeaderFields])
+    for (NSString *oldHeaderName in [nsRequest allHTTPHeaderFields])
         [nsRequest setValue:nil forHTTPHeaderField:oldHeaderName];
     for (const auto& header : httpHeaderFields())
         [nsRequest setValue:header.value.createNSString().get() forHTTPHeaderField:header.key.createNSString().get()];

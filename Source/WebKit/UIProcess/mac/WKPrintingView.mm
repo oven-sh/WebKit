@@ -47,6 +47,8 @@
 
 NSString * const WebKitOriginalTopPrintingMarginKey = @"WebKitOriginalTopMargin";
 NSString * const WebKitOriginalBottomPrintingMarginKey = @"WebKitOriginalBottomMargin";
+NSString * const WebKitOriginalLeftPrintingMarginKey = @"WebKitOriginalLeftMargin";
+NSString * const WebKitOriginalRightPrintingMarginKey = @"WebKitOriginalRightMargin";
 
 NSString * const NSPrintInfoDidChangeNotification = @"NSPrintInfoDidChange";
 
@@ -142,32 +144,27 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     RetainPtr info = [_printOperation.get() printInfo];
     RetainPtr infoDictionary = [info dictionary];
 
-    // We need to modify the top and bottom margins in the NSPrintInfo to account for the space needed by the
-    // header and footer. Because this method can be called more than once on the same NSPrintInfo (see 5038087),
-    // we stash away the unmodified top and bottom margins the first time this method is called, and we read from
-    // those stashed-away values on subsequent calls.
-    double originalTopMargin;
-    double originalBottomMargin;
-    RetainPtr originalTopMarginNumber = dynamic_objc_cast<NSNumber>([infoDictionary objectForKey:WebKitOriginalTopPrintingMarginKey]);
-    if (!originalTopMarginNumber) {
-        ASSERT(![infoDictionary objectForKey:WebKitOriginalBottomPrintingMarginKey]);
-        originalTopMargin = [info topMargin];
-        originalBottomMargin = [info bottomMargin];
-        [infoDictionary setObject:@(originalTopMargin) forKey:WebKitOriginalTopPrintingMarginKey];
-        [infoDictionary setObject:@(originalBottomMargin) forKey:WebKitOriginalBottomPrintingMarginKey];
-    } else {
-        ASSERT([originalTopMarginNumber isKindOfClass:[NSNumber class]]);
-        ASSERT([[infoDictionary objectForKey:WebKitOriginalBottomPrintingMarginKey] isKindOfClass:[NSNumber class]]);
-        originalTopMargin = [originalTopMarginNumber doubleValue];
-        originalBottomMargin = [[infoDictionary objectForKey:WebKitOriginalBottomPrintingMarginKey] doubleValue];
-    }
-    
-    CGFloat scale = [info scalingFactor];
+    // pageDidComputePageRects() replaces the margins with the @page margins so every pass starts from the ones stashed on the first.
+    // rdar://5038087
+    auto originalMargin = [&infoDictionary](NSString *key, CGFloat margin) -> CGFloat {
+        if (RetainPtr stashedMargin = dynamic_objc_cast<NSNumber>([infoDictionary objectForKey:key]))
+            return [stashedMargin doubleValue];
+        [infoDictionary setObject:@(margin) forKey:key];
+        return margin;
+    };
+    CGFloat topMargin = originalMargin(WebKitOriginalTopPrintingMarginKey, [info topMargin]);
+    CGFloat bottomMargin = originalMargin(WebKitOriginalBottomPrintingMarginKey, [info bottomMargin]);
+    [info setLeftMargin:originalMargin(WebKitOriginalLeftPrintingMarginKey, [info leftMargin])];
+    [info setRightMargin:originalMargin(WebKitOriginalRightPrintingMarginKey, [info rightMargin])];
+
     Ref webFrame = *_webFrame;
     if (RefPtr page = webFrame->page()) {
-        [info setTopMargin:originalTopMargin + page->headerHeightForPrinting(webFrame) * scale];
-        [info setBottomMargin:originalBottomMargin + page->footerHeightForPrinting(webFrame) * scale];
+        CGFloat scale = [info scalingFactor];
+        topMargin += page->headerHeightForPrinting(webFrame) * scale;
+        bottomMargin += page->footerHeightForPrinting(webFrame) * scale;
     }
+    [info setTopMargin:topMargin];
+    [info setBottomMargin:bottomMargin];
 }
 
 - (BOOL)_isPrintingPreview
@@ -232,7 +229,7 @@ struct IPCCallbackContext {
 
 static void pageDidDrawToImage(std::optional<WebCore::ShareableBitmap::Handle>&& imageHandle, IPCCallbackContext* context)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     RetainPtr view = context->view.get();
 
@@ -258,7 +255,7 @@ static void pageDidDrawToImage(std::optional<WebCore::ShareableBitmap::Handle>&&
 
 - (void)_preparePDFDataForPrintingOnSecondaryThread
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     Ref webFrame = *_webFrame;
     RefPtr page = webFrame->page();
@@ -309,7 +306,7 @@ static void pageDidDrawToImage(std::optional<WebCore::ShareableBitmap::Handle>&&
 
 static void pageDidComputePageRects(const Vector<WebCore::IntRect>& pageRects, double totalScaleFactorForPrinting, const WebCore::FloatBoxExtent& computedPageMargin, IPCCallbackContext* context)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     RetainPtr view = context->view.get();
     if (!view->_printOperation)
@@ -358,7 +355,7 @@ static void pageDidComputePageRects(const Vector<WebCore::IntRect>& pageRects, d
 
 - (BOOL)_askPageToComputePageRects
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     Ref webFrame = *_webFrame;
     if (!webFrame->page() || !_printOperation)
@@ -380,7 +377,7 @@ static void pageDidComputePageRects(const Vector<WebCore::IntRect>& pageRects, d
 
 static void prepareDataForPrintingOnSecondaryThread(WKPrintingView *view)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     Locker locker { view->_printingCallbackMutex };
 
@@ -417,12 +414,16 @@ static void prepareDataForPrintingOnSecondaryThread(WKPrintingView *view)
     }
 
     [self _suspendAutodisplay];
-    
+
+    // AppKit places these pages with the @page margins that pageDidComputePageRects() set.
+    if ([self _hasPageRects]) {
+        *range = NSMakeRange(1, _printingPageRects.size());
+        return YES;
+    }
+
     [self performSelectorOnMainThread:@selector(_adjustPrintingMarginsForHeaderAndFooter) withObject:nil waitUntilDone:YES];
 
-    if ([self _hasPageRects])
-        *range = NSMakeRange(1, _printingPageRects.size());
-    else if (!RunLoop::isMain()) {
+    if (!RunLoop::isMain()) {
         ASSERT(![self _isPrintingPreview]);
         Locker lock { _printingCallbackMutex };
 
@@ -481,7 +482,8 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
 
     CGContextSaveGState(context.get());
     CGContextTranslateCTM(context.get(), point.x, point.y);
-    CGContextScaleCTM(context.get(), _totalScaleFactorForPrinting, -_totalScaleFactorForPrinting);
+    // Pages are already in points.
+    CGContextScaleCTM(context, 1, -1);
     CGContextTranslateCTM(context.get(), 0, -[pdfPage boundsForBox:kPDFDisplayBoxMediaBox].size.height);
 
     [pdfPage drawWithBox:kPDFDisplayBoxMediaBox toContext:context.get()];
@@ -493,8 +495,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         CGPDFContextAddDestinationAtPoint(context.get(), bridge_cast(linkDestinationName(pdfDocument, destination.get())).get(), destinationPoint);
     }
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in [pdfPage annotations]) {
+    for (PDFAnnotation *annotation in [pdfPage annotations]) {
         if (![[annotation valueForAnnotationKey:PAL::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:PAL::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
             continue;
 
@@ -517,7 +518,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
 
 - (void)_drawPreview:(NSRect)nsRect
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     RefPtr webFrame = _webFrame;
     if (!webFrame || !webFrame->page())
@@ -601,8 +602,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         _linkDestinationsPerPage.resize(pageCount);
         for (unsigned i = 0; i < pageCount; i++) {
             RetainPtr page = [_printedPagesPDFDocument pageAtIndex:i];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in page.get().annotations) {
+            for (PDFAnnotation *annotation in page.get().annotations) {
                 if (![[annotation valueForAnnotationKey:PAL::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:PAL::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
                     continue;
 

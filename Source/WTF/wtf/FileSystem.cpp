@@ -60,10 +60,10 @@ static std::filesystem::path toStdFileSystemPath(StringView path)
 {
 #if HAVE(MISSING_U8STRING)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return std::filesystem::u8path(path.utf8().data());
+    return std::filesystem::u8path(makeUTF8CString(path).data());
 ALLOW_DEPRECATED_DECLARATIONS_END
 #else
-    return { std::u8string(path.utf8().data()) };
+    return { std::u8string(makeUTF8CString(path).data()) };
 #endif
 }
 
@@ -121,7 +121,7 @@ constexpr std::array<bool, 128> needsEscaping = {
     false, false, false, false, true,  false, false, true,  /* 78-7F */
 };
 
-static inline bool LEGACY_NODELETE shouldEscapeChar16(char16_t character, char16_t previousCharacter, char16_t nextCharacter)
+NODELETE static inline bool shouldEscapeChar16(char16_t character, char16_t previousCharacter, char16_t nextCharacter)
 {
     if (character <= 127)
         return needsEscaping[character];
@@ -705,6 +705,16 @@ std::optional<FileType> fileTypeFollowingSymlinks(const String& path)
 String pathFileName(const String& path)
 {
     return fromStdFileSystemPath(toStdFileSystemPath(path).filename());
+}
+
+StringView pathExtension(StringView path)
+{
+    if (auto separator = path.reverseFind(pathSeparator); separator != notFound)
+        path = path.substring(separator + 1);
+    auto dot = path.reverseFind('.');
+    if (dot == notFound)
+        return { };
+    return path.substring(dot + 1);
 }
 
 String parentPath(const String& path)

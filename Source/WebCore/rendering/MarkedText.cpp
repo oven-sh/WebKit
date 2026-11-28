@@ -40,7 +40,6 @@
 #include "TextBoxSelectableRange.h"
 #include <algorithm>
 #include <ranges>
-#include <wtf/HashSet.h>
 
 namespace WebCore {
 
@@ -53,52 +52,58 @@ Vector<MarkedText> MarkedText::subdivide(const Vector<MarkedText>& markedTexts, 
         enum Kind { Begin, End };
         Kind kind;
         unsigned value; // Copy of markedText.startOffset/endOffset to avoid the need to branch based on kind.
-        CheckedPtr<const MarkedText> markedText;
+        unsigned markedTextIndex;
     };
 
     // 1. Build table of all offsets.
-    Vector<Offset> offsets;
     ASSERT(markedTexts.size() < std::numeric_limits<unsigned>::max() / 2);
     unsigned numberOfMarkedTexts = markedTexts.size();
     unsigned numberOfOffsets = 2 * numberOfMarkedTexts;
-    offsets.reserveInitialCapacity(numberOfOffsets);
-    for (auto& markedText : markedTexts) {
-        offsets.append({ Offset::Begin, markedText.startOffset, &markedText });
-        offsets.append({ Offset::End, markedText.endOffset, &markedText });
+    Vector<Offset> offsets(ReserveCapacityTag { }, numberOfOffsets);
+    for (unsigned i = 0; i < numberOfMarkedTexts; ++i) {
+        offsets.append({ Offset::Begin, markedTexts[i].startOffset, i });
+        offsets.append({ Offset::End, markedTexts[i].endOffset, i });
     }
 
     // 2. Sort offsets such that begin offsets are in paint order and end offsets are in reverse paint order.
-    std::ranges::sort(offsets, [] (const Offset& a, const Offset& b) {
-        return a.value < b.value || (a.value == b.value && a.kind == b.kind && a.kind == Offset::Begin && a.markedText->type < b.markedText->type)
-        || (a.value == b.value && a.kind == b.kind && a.kind == Offset::End && a.markedText->type > b.markedText->type);
+    std::ranges::sort(offsets, [&](const Offset& a, const Offset& b) {
+        auto aType = markedTexts[a.markedTextIndex].type;
+        auto bType = markedTexts[b.markedTextIndex].type;
+        return a.value < b.value || (a.value == b.value && a.kind == b.kind && a.kind == Offset::Begin && aType < bType)
+        || (a.value == b.value && a.kind == b.kind && a.kind == Offset::End && aType > bType);
     });
 
     // 3. Compute intersection.
-    Vector<MarkedText> result;
-    result.reserveInitialCapacity(numberOfMarkedTexts);
-    HashSet<CheckedPtr<const MarkedText>> processedMarkedTexts;
+    Vector<MarkedText> result(ReserveCapacityTag { }, numberOfMarkedTexts);
+    Vector<bool> processedMarkedTexts(FillWith { }, numberOfMarkedTexts, false);
     unsigned offsetSoFar = offsets[0].value;
     for (unsigned i = 1; i < numberOfOffsets; ++i) {
         if (offsets[i].value > offsets[i - 1].value) {
             if (overlapStrategy == OverlapStrategy::Frontmost) {
                 std::optional<unsigned> frontmost;
                 for (unsigned j = 0; j < i; ++j) {
-                    if (!processedMarkedTexts.contains(offsets[j].markedText) && (!frontmost || offsets[j].markedText->type > offsets[*frontmost].markedText->type))
+                    auto index = offsets[j].markedTextIndex;
+                    if (!processedMarkedTexts[index] && (!frontmost || markedTexts[index].type > markedTexts[offsets[*frontmost].markedTextIndex].type))
                         frontmost = j;
                 }
-                if (frontmost)
-                    result.append({ offsetSoFar, offsets[i].value, offsets[*frontmost].markedText->type, offsets[*frontmost].markedText->marker, offsets[*frontmost].markedText->highlightName });
+                if (frontmost) {
+                    auto& frontmostMarkedText = markedTexts[offsets[*frontmost].markedTextIndex];
+                    result.append({ offsetSoFar, offsets[i].value, frontmostMarkedText.type, frontmostMarkedText.marker, frontmostMarkedText.highlightName });
+                }
             } else {
                 // The appended marked texts may not be in paint order. We will fix this up at the end of this function.
                 for (unsigned j = 0; j < i; ++j) {
-                    if (!processedMarkedTexts.contains(offsets[j].markedText))
-                        result.append({ offsetSoFar, offsets[i].value, offsets[j].markedText->type, offsets[j].markedText->marker, offsets[j].markedText->highlightName, offsets[j].markedText->priority });
+                    auto index = offsets[j].markedTextIndex;
+                    if (!processedMarkedTexts[index]) {
+                        auto& markedText = markedTexts[index];
+                        result.append({ offsetSoFar, offsets[i].value, markedText.type, markedText.marker, markedText.highlightName, markedText.priority });
+                    }
                 }
             }
             offsetSoFar = offsets[i].value;
         }
         if (offsets[i].kind == Offset::End)
-            processedMarkedTexts.add(offsets[i].markedText);
+            processedMarkedTexts[offsets[i].markedTextIndex] = true;
     }
     // Fix up; sort the marked texts so that they are in paint order.
     if (overlapStrategy == OverlapStrategy::None)
@@ -224,8 +229,7 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
         }
     };
 
-    Vector<MarkedText> markedTexts;
-    markedTexts.reserveInitialCapacity(markers.size());
+    Vector<MarkedText> markedTexts(ReserveCapacityTag { }, markers.size());
 
     // Give any document markers that touch this run a chance to draw before the text has been drawn.
     // Note end() points at the last char, not one past it like endOffset and ranges do.
@@ -249,7 +253,7 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
                 continue;
             break;
         case DocumentMarkerType::TextMatch:
-            if (!renderer.frame().editor().markedTextMatchesAreHighlighted())
+            if (!protect(renderer.frame())->editor().markedTextMatchesAreHighlighted())
                 continue;
             if (phase == MarkedText::PaintPhase::Decoration)
                 continue;
@@ -260,7 +264,7 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
             break;
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
         case DocumentMarkerType::TelephoneNumber:
-            if (!renderer.frame().editor().markedTextMatchesAreHighlighted())
+            if (!protect(renderer.frame())->editor().markedTextMatchesAreHighlighted())
                 continue;
             if (phase != MarkedText::PaintPhase::Background)
                 continue;
@@ -372,8 +376,7 @@ Vector<MarkedText> MarkedText::collectForDictationStreamingOpacity(const RenderT
     if (markers.isEmpty())
         return { };
 
-    Vector<MarkedText> result;
-    result.reserveInitialCapacity(markers.size());
+    Vector<MarkedText> result(ReserveCapacityTag { }, markers.size());
     for (auto& marker : markers) {
         auto [clampedStart, clampedEnd] = selectableRange.clamp(marker->startOffset(), marker->endOffset());
         if (clampedStart < clampedEnd)

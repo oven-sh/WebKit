@@ -41,7 +41,7 @@ using CPUState = Probe::CPUState;
 using RegisterID = MacroAssembler::RegisterID;
 using FPRegisterID = MacroAssembler::FPRegisterID;
 
-template<typename T> T LEGACY_NODELETE nextID(T id) { return static_cast<T>(id + 1); }
+template<typename T> NODELETE T nextID(T id) { return static_cast<T>(id + 1); }
 
 void printAllRegisters(PrintStream& out, Context& context)
 {
@@ -131,12 +131,12 @@ void printMemory(PrintStream& out, Context& context)
     if (memory.dumpStyle == Memory::SingleWordDump) {
         if (memory.numBytes == sizeof(int8_t)) {
             auto p = reinterpret_cast<int8_t*>(ptr);
-            out.printf("%p:<0x%02x %d>", p, *p, *p);
+            out.printf("%p:<0x%02x %d>", p, static_cast<uint8_t>(*p), *p);
             return;
         }
         if (memory.numBytes == sizeof(int16_t)) {
             auto p = std::bit_cast<int16_t*>(ptr);
-            out.printf("%p:<0x%04x %d>", p, *p, *p);
+            out.printf("%p:<0x%04x %d>", p, static_cast<uint16_t>(*p), *p);
             return;
         }
         if (memory.numBytes == sizeof(int32_t)) {
@@ -165,7 +165,7 @@ void printMemory(PrintStream& out, Context& context)
         if (i % 16 == 15)
             out.print("\n");
     }
-    if (numBytes % 16 < 15)
+    if (numBytes % 16)
         out.print("\n");
 }
 

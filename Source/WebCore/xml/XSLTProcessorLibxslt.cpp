@@ -94,7 +94,7 @@ void XSLTProcessor::parseErrorFunc(void* userData, xmlError* error)
 
 // FIXME: There seems to be no way to control the ctxt pointer for loading here, thus we have globals.
 static XSLTProcessor* globalProcessor = nullptr;
-static WeakPtr<CachedResourceLoader>& LEGACY_NODELETE globalCachedResourceLoader()
+NODELETE static WeakPtr<CachedResourceLoader>& globalCachedResourceLoader()
 {
     static NeverDestroyed<WeakPtr<CachedResourceLoader>> globalCachedResourceLoader;
     return globalCachedResourceLoader;
@@ -218,8 +218,8 @@ static MallocSpan<const char*> xsltParamArrayFromParameterMap(XSLTProcessor::Par
 
     size_t index = 0;
     for (auto& parameter : parameters) {
-        parameterArray[index++] = fastStrDup(parameter.key.utf8().legacyCStringPointer());
-        parameterArray[index++] = fastStrDup(parameter.value.utf8().legacyCStringPointer());
+        parameterArray[index++] = fastStrDup(makeUTF8CString(parameter.key).legacyCStringPointer());
+        parameterArray[index++] = fastStrDup(makeUTF8CString(parameter.value).legacyCStringPointer());
     }
     parameterArray[index] = nullptr;
 

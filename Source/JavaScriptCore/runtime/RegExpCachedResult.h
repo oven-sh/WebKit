@@ -37,13 +37,10 @@ class RegExp;
 
 // RegExpCachedResult is used to track the cached results of the last
 // match, stores on the RegExp constructor (e.g. $&, $_, $1, $2 ...).
-// These values will be lazily generated on demand, so the cached result
-// may be in a lazy or reified state. A lazy state is indicated by a
-// value of m_result indicating a successful match, and a reified state
-// is indicated by setting m_result to MatchResult::failed().
-// Following a successful match, m_result, m_lastInput and m_lastRegExp
-// can be used to reify the results from the match, following reification
-// m_reifiedResult and m_reifiedInput hold the cached results.
+// Recording a match stores only m_lastRegExp, m_lastInput and m_result
+// (the JIT writes these fields directly). The matches array is built on
+// demand, which sets m_state to State::Reified and fills m_reifiedResult and
+// m_reifiedInput. m_result describes the last match in both states.
 class RegExpCachedResult {
 public:
     inline void record(VM&, JSObject* owner, RegExp*, JSString* input, MatchResult, bool oneCharacterMatch);
@@ -51,13 +48,11 @@ public:
     JSArray* lastResult(JSGlobalObject*, JSObject* owner);
     void setInput(JSGlobalObject*, JSObject* owner, JSString*);
 
+    JSString* lastMatch(JSGlobalObject*, JSObject* owner);
     JSString* leftContext(JSGlobalObject*, JSObject* owner);
     JSString* rightContext(JSGlobalObject*, JSObject* owner);
 
-    JSString* input()
-    {
-        return m_reified ? m_reifiedInput.get() : m_lastInput.get();
-    }
+    JSString* input(JSGlobalObject*, JSObject* owner);
 
     DECLARE_VISIT_AGGREGATE;
 
@@ -66,15 +61,32 @@ public:
     static constexpr ptrdiff_t offsetOfLastRegExp() { return OBJECT_OFFSETOF(RegExpCachedResult, m_lastRegExp); }
     static constexpr ptrdiff_t offsetOfLastInput() { return OBJECT_OFFSETOF(RegExpCachedResult, m_lastInput); }
     static constexpr ptrdiff_t offsetOfResult() { return OBJECT_OFFSETOF(RegExpCachedResult, m_result); }
-    static constexpr ptrdiff_t offsetOfReified() { return OBJECT_OFFSETOF(RegExpCachedResult, m_reified); }
+    static constexpr ptrdiff_t offsetOfReified() { return OBJECT_OFFSETOF(RegExpCachedResult, m_state); }
     static constexpr ptrdiff_t offsetOfOneCharacterMatch() { return OBJECT_OFFSETOF(RegExpCachedResult, m_oneCharacterMatch); }
+    static constexpr ptrdiff_t offsetOfInputStart() { return OBJECT_OFFSETOF(RegExpCachedResult, m_inputStart); }
+    static constexpr ptrdiff_t offsetOfInputLength() { return OBJECT_OFFSETOF(RegExpCachedResult, m_inputLength); }
+
+    enum class State : uint8_t {
+        Lazy,
+        Reified,
+        // The input is a substring of m_lastInput, and m_result has offsets in m_lastInput. Code compiled ahead of time records this.
+        LazyWithSubstringInput,
+    };
 
     MatchResult result() const { return m_result; }
 
 private:
+    void resolveSubstringInput(JSGlobalObject*, JSObject* owner);
+    // False for LazyWithSubstringInput: m_lastInput is not the input until resolveSubstringInput() has run.
+    bool hasLazyMatch() const { return m_state == State::Lazy && m_lastRegExp; }
+    JSString* lastInputWithPreciseResult(JSGlobalObject*);
+    void makeResultPrecise(StringView input);
+
     MatchResult m_result { 0, 0 };
-    bool m_reified { false };
+    State m_state { State::Lazy };
     bool m_oneCharacterMatch { false };
+    unsigned m_inputStart { 0 };
+    unsigned m_inputLength { 0 };
     WriteBarrier<JSString> m_lastInput;
     WriteBarrier<RegExp> m_lastRegExp;
     WriteBarrier<JSArray> m_reifiedResult;

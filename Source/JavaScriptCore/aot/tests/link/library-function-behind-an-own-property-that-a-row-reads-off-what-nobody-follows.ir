@@ -1,0 +1,42 @@
+# A row that reads an own property by a key finds nothing above an instance, and says nothing of one. Off a value that nobody follows it may stand at the prototype itself, so the name counts as read, as in `given.at`, and the code of the library behind that member is in the image. No other member comes along
+# sink(new Uint8Array(2)); sink(Object.getOwnPropertyDescriptor(given, "at"));
+# LIBRARY: own
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "at"
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+# RUN(IMAGE): image ProgramTables
+# IMAGE: compiledRuntimeFunction TypedArrayPrototypeAt
+# IMAGE-NOT: compiledRuntimeFunction TypedArrayPrototypeToLocaleString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/TypedArrayPrototype.ts" displayPath="/$bun/js/engine/TypedArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=TypedArrayPrototypeAt function=f1
+runtimefunction id=TypedArrayPrototypeToLocaleString function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=2
+    v4 = Construct v2, -, v3 calleeName="Uint8Array"
+    v5 = Call v1, -, v4
+    v6 = PropGet v0 key="given" [isFreeName]
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v9 = String string="at"
+    v10 = Call v8, v7, v6, v9 calleeName="Object.getOwnPropertyDescriptor"
+    v11 = Call v1, -, v10
+    v12 = Undefined
+    Return v12
+}
+function f1 name="at" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayPrototypeAt thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="toLocaleString" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] enclosingRuntimeFunction=TypedArrayPrototypeToLocaleString thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

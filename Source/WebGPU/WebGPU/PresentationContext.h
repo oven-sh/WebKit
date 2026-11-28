@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
@@ -54,7 +58,7 @@ public:
 
     virtual ~PresentationContext();
 
-    WebGPU::TextureFormat LEGACY_NODELETE getPreferredFormat(const Adapter&);
+    NODELETE WebGPU::TextureFormat getPreferredFormat(const Adapter&);
 
     void configure(const WebGPU::CanvasConfiguration&) override;
     void unconfigure() override;
@@ -63,6 +67,7 @@ public:
     // The texture is owned by the presentation context.
     virtual Texture* currentTexture(uint32_t);
     RefPtr<WebGPU::Texture> getCurrentTexture(uint32_t) final;
+    void renderBufferWasReplaced(uint32_t) final { }
     virtual TextureView* getCurrentTextureView(); // FIXME: This should return a TextureView&.
 
     Seconds lastFrameGPUCost() const override { return 0_s; }

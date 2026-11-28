@@ -2,30 +2,25 @@
  * Copyright (C) 2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
@@ -77,21 +72,21 @@ public:
 
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
 
-    WEBCORE_EXPORT void LEGACY_NODELETE ref() const;
+    NODELETE WEBCORE_EXPORT void ref() const;
     WEBCORE_EXPORT void deref() const;
 
     // InspectorOverlayOwner. Anchors on the frame, which owns this controller and so the overlay.
-    void LEGACY_NODELETE overlayOwnerRef() const final { ref(); }
+    NODELETE void overlayOwnerRef() const final { ref(); }
     void overlayOwnerDeref() const final { deref(); }
-    Page* LEGACY_NODELETE overlayOwnerPage() const final;
-    LocalFrame* LEGACY_NODELETE overlayOwnerFrame() const final;
-    InspectorBackendClient* LEGACY_NODELETE overlayOwnerBackendClient() const final;
+    NODELETE Page* overlayOwnerPage() const final;
+    NODELETE LocalFrame* overlayOwnerFrame() const final;
+    NODELETE InspectorBackendClient* overlayOwnerBackendClient() const final;
     Vector<size_t> overlayOwnerFlexLineStarts(const RenderObject&) const final;
 
     WEBCORE_EXPORT void drawHighlight(GraphicsContext&) const;
 
     // True when this frame's own overlay holds the highlight state, not the page overlay.
-    WEBCORE_EXPORT bool LEGACY_NODELETE hasOverlayContentToDraw() const;
+    NODELETE WEBCORE_EXPORT bool hasOverlayContentToDraw() const;
 
     WEBCORE_EXPORT void connectFrontend(Inspector::FrontendChannel&, bool isAutomaticInspection = false, bool immediatelyPause = false);
     WEBCORE_EXPORT void disconnectFrontend(Inspector::FrontendChannel&);
@@ -104,12 +99,15 @@ public:
     // first one connects.
     WEBCORE_EXPORT void inspect(Node&);
 
+    // The node that this frame's DOM agent gave this protocol id, if it still has one.
+    WEBCORE_EXPORT RefPtr<Node> nodeForId(int nodeId) const;
+
     InstrumentingAgents& instrumentingAgents() const { return m_instrumentingAgents.get(); }
     WebInjectedScriptManager& injectedScriptManager() const { return m_injectedScriptManager.get(); }
 
     // Unlike debugger(), this is null while the frame's debugger exists but nothing is debugging
     // the frame yet. Callers that hand the debugger to a global object need this narrower answer.
-    JSC::Debugger* LEGACY_NODELETE attachedDebugger() const;
+    NODELETE JSC::Debugger* attachedDebugger() const;
 
     // InspectorEnvironment
     bool developerExtrasEnabled() const override;
@@ -118,7 +116,10 @@ public:
     Inspector::InspectorEvaluateHandler evaluateHandler() const override;
     void frontendInitialized() override;
     WTF::Stopwatch& executionStopwatch() const final;
+    bool executionStopwatchIsSharedAcrossProcesses() const final { return m_executionStopwatchIsShared; }
     JSC::Debugger* debugger() override;
+    bool coversGlobalObjectForSampling(JSC::JSGlobalObject&) const override;
+    bool takesUncoveredSamples() const override { return false; }
     JSC::VM& vm() override;
 
 private:
@@ -143,6 +144,7 @@ private:
 
     bool m_didCreateConsoleAgent { false };
     bool m_didCreateLazyAgents { false };
+    bool m_executionStopwatchIsShared { false };
     WeakPtr<InspectorFrontendClient> m_inspectorFrontendClient;
 
     // Non-owning; the agent is owned by m_agents. Kept so the overlay can reach the flex line-start cache.

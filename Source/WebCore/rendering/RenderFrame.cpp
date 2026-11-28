@@ -36,7 +36,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderFrame);
 
-RenderFrame::RenderFrame(HTMLFrameElement& frame, Style::ComputedStyle&& style)
+RenderFrame::RenderFrame(HTMLFrameElement& frame, UniqueRef<Style::ComputedStyle>&& style)
     : RenderFrameBase(Type::Frame, frame, WTF::move(style))
 {
     ASSERT(isRenderFrame());
@@ -44,7 +44,7 @@ RenderFrame::RenderFrame(HTMLFrameElement& frame, Style::ComputedStyle&& style)
 
 RenderFrame::~RenderFrame() = default;
 
-HTMLFrameElement& LEGACY_NODELETE RenderFrame::frameElement() const
+NODELETE HTMLFrameElement& RenderFrame::frameElement() const
 {
     return downcast<HTMLFrameElement>(RenderFrameBase::frameOwnerElement());
 }

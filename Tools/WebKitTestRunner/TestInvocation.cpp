@@ -33,6 +33,7 @@
 #include "TestController.h"
 #include "UIScriptController.h"
 #include "WebCoreTestSupport.h"
+#include <WebCore/CSSUnits.h>
 #include <WebKit/WKCast.h>
 #include <WebKit/WKContextPrivate.h>
 #include <WebKit/WKData.h>
@@ -139,6 +140,7 @@ WKRetainPtr<WKMutableDictionaryRef> TestInvocation::createTestSettingsDictionary
     setValue(beginTestMessageBody, "TestIdentifier", m_identifier);
     setValue(beginTestMessageBody, "UseFlexibleViewport", options().useFlexibleViewport());
     setValue(beginTestMessageBody, "DumpPixels", m_dumpPixels);
+    setValue(beginTestMessageBody, "DumpCSSPageBoxes", options().dumpCSSPageBoxes());
     setValue(beginTestMessageBody, "Timeout", static_cast<uint64_t>(m_timeout.milliseconds()));
     setValue(beginTestMessageBody, "additionalSupportedImageTypes", options().additionalSupportedImageTypes().c_str());
     auto allowedHostsValue = adoptWK(WKMutableArrayCreate());
@@ -172,7 +174,7 @@ void TestInvocation::loadTestInCrossOriginIframe()
         "<script>"
         "    testRunner.dumpChildFramesAsText()"
         "</script>"
-        "<iframe src=\""_s, url.utf8().span(), "\" style=\"position:absolute; top:0; left:0; width:100%; height:100%; border:0\">"_s));
+        "<iframe src=\""_s, makeUTF8CString(url).span(), "\" style=\"position:absolute; top:0; left:0; width:100%; height:100%; border:0\">"_s));
     WKPageLoadHTMLString(TestController::singleton().mainWebView()->page(), htmlString.get(), baseURL.get());
 }
 
@@ -224,8 +226,12 @@ end:
         WKInspectorClose(WKPageGetInspector(TestController::singleton().mainWebView()->page()));
 #endif // !PLATFORM(IOS_FAMILY)
 
-    if (TestController::singleton().resetStateToConsistentValues(m_options, TestController::ResetStage::AfterTest))
+    if (TestController::singleton().resetStateToConsistentValues(m_options, TestController::ResetStage::AfterTest)) {
+#if PLATFORM(MAC)
+        TestController::singleton().terminateWebContentProcessesIfAXAuthenticationWasDenied();
+#endif
         return;
+    }
 
     // The process is unresponsive, so let's start a new one.
     TestController::singleton().terminateWebContentProcess();
@@ -321,6 +327,28 @@ void TestInvocation::dumpResourceLoadStatisticsIfNecessary()
         m_savedResourceLoadStatistics = TestController::singleton().dumpResourceLoadStatistics();
 }
 
+// WPT print reftests default to a 5in by 3in page. wptrunner prints them with 0.5in margins.
+static constexpr double printReftestPageWidth = 5 * WebCore::CSS::pixelsPerInch;
+static constexpr double printReftestPageHeight = 3 * WebCore::CSS::pixelsPerInch;
+static constexpr double printReftestPageMargin = 0.5 * WebCore::CSS::pixelsPerInch;
+
+// FIXME: Apply fuzzy matching to each page separately, as WPT does (rdar://191464055). It applies to the whole image.
+// FIXME: Support <meta name=reftest-pages>, which limits the comparison to some of the pages (rdar://191464016).
+static WKRetainPtr<WKImageRef> takePrintReftestSnapshot()
+{
+    struct SnapshotResult {
+        bool done { false };
+        WKRetainPtr<WKImageRef> image;
+    } result;
+    WKPageTakeCSSPageBoxesSnapshotForTesting(TestController::singleton().mainWebView()->page(), WKSizeMake(printReftestPageWidth, printReftestPageHeight), printReftestPageMargin, &result, [](WKImageRef image, void* context) {
+        auto& result = *static_cast<SnapshotResult*>(context);
+        result.image = image;
+        result.done = true;
+    });
+    TestController::singleton().runUntil(result.done, TestController::noTimeout);
+    return result.image;
+}
+
 void TestInvocation::dumpResults()
 {
     auto& testController = TestController::singleton();
@@ -329,6 +357,12 @@ void TestInvocation::dumpResults()
         *(bool*)context = true;
     });
     testController.runUntil(flushedNetworkProcessMessages, TestController::noTimeout);
+
+    if (m_options.enhancedSecurityEnabled() && !testController.isEnhancedSecurity())
+        m_textOutput.append("FAIL: Enhanced Security was requested for this test but is not enabled in the web process\n"_s);
+
+    if (m_shouldDumpBackForwardListsForAllWindows)
+        m_textOutput.append(testController.dumpBackForwardListsForAllPages());
 
     if (!m_savedResourceLoadCallbacks.isEmpty()) {
         m_textOutput.append(m_savedResourceLoadCallbacks.toString());
@@ -344,13 +378,15 @@ void TestInvocation::dumpResults()
     if (m_textOutput.hasOverflowed())
         dump("text output overflowed"_s);
     else if (m_textOutput.length() || !m_audioResult)
-        dump(m_textOutput.toString().utf8());
+        dump(makeUTF8CString(m_textOutput.toString()));
     else
         dumpAudio(m_audioResult.get());
 
     if (m_dumpPixels) {
         if (m_pixelResult)
             dumpPixelsAndCompareWithExpected(SnapshotResultType::WebContents, m_repaintRects.get(), m_pixelResult.get());
+        else if (m_pixelResultIsPending && options().dumpCSSPageBoxes())
+            dumpPixelsAndCompareWithExpected(SnapshotResultType::WebContents, nullptr, takePrintReftestSnapshot().get());
         else if (m_pixelResultIsPending) {
             if (m_forceRepaint) {
                 m_gotRepaint = false;
@@ -682,6 +718,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
     if (WKStringIsEqualToUTF8CString(messageName, "InitializeWebProcessAccessibility")) {
         // Initialize accessibility in the web content process by sending the IPC message
         TestController::singleton().initializeWebProcessAccessibility();
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetAXAuthenticationDeniedForTesting")) {
+        TestController::singleton().setAXAuthenticationDeniedForTesting(booleanValue(messageBody));
         return nullptr;
     }
 #endif
@@ -1023,6 +1064,9 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
     if (WKStringIsEqualToUTF8CString(messageName, "DidLoadNonAppInitiatedRequest"))
         return adoptWK(WKBooleanCreate(TestController::singleton().didLoadNonAppInitiatedRequest()));
 
+    if (WKStringIsEqualToUTF8CString(messageName, "IsDisplayCaptureCapabilityActive"))
+        return adoptWK(WKBooleanCreate(WKPageIsDisplayCaptureCapabilityActiveForTesting(TestController::singleton().mainWebView()->page())));
+
     if (WKStringIsEqualToUTF8CString(messageName, "SetStatisticsGrandfathered")) {
         auto messageBodyDictionary = dictionaryValue(messageBody);
         auto hostName = stringValue(messageBodyDictionary, "HostName");
@@ -1090,6 +1134,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         auto toHost = stringValue(messageBodyDictionary, "ToHost");
         auto wasFiltered = booleanValue(messageBodyDictionary, "WasFiltered");
         TestController::singleton().setStatisticsCrossSiteLoadWithLinkDecoration(fromHost, toHost, wasFiltered);
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetStatisticsLinkDecorationFilteringData")) {
+        TestController::singleton().setStatisticsLinkDecorationFilteringData(stringValue(messageBody));
         return nullptr;
     }
 
@@ -1382,9 +1431,6 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         return nullptr;
     }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "ShouldDumpBackForwardListsForAllWindows"))
-        return adoptWK(WKBooleanCreate(m_shouldDumpBackForwardListsForAllWindows));
-
     if (WKStringIsEqualToUTF8CString(messageName, "DumpChildFrameScrollPositions")) {
         m_shouldDumpAllFrameScrollPositions = true;
         return nullptr;
@@ -1395,6 +1441,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetHasMouseDeviceForTesting")) {
         TestController::singleton().setHasMouseDeviceForTesting((booleanValue(messageBody)));
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetHasFakePaymentUIForTesting")) {
+        TestController::singleton().setHasFakePaymentUIForTesting(booleanValue(messageBody));
         return nullptr;
     }
 

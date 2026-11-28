@@ -120,7 +120,7 @@ struct ClickHighlightInformation {
 - (BOOL)_isPotentialClickInProgress
 {
     RetainPtr delegate = _delegate.get();
-    return [delegate clickHighlightControllerIsPotentialClickInProgress:self];
+    return [delegate clickHighlightControllerIsPotentialTapInProgress:self];
 }
 
 - (void)didReceiveHighlightForRequest:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)quads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
@@ -195,6 +195,16 @@ struct ClickHighlightInformation {
 - (CGRect)highlightViewFrame
 {
     return [_highlightView frame];
+}
+
+- (WebCore::Color)highlightColor
+{
+    return _highlightInformation.color;
+}
+
+- (BOOL)isShowingHighlight
+{
+    return !![_highlightView superview];
 }
 
 - (BOOL)_shouldPaintHighlightInRect:(const WebCore::FloatRect&)rect

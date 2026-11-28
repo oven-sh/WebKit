@@ -27,6 +27,7 @@
 #include "DisplayListItems.h"
 
 #include "DisplayList.h"
+#include "FEImage.h"
 #include "Filter.h"
 #include "FilterResults.h"
 #include "FontCascade.h"
@@ -39,8 +40,7 @@
 #include "GraphicsContextSkia.h"
 #endif
 
-namespace WebCore {
-namespace DisplayList {
+namespace WebCore::DisplayList {
 
 void Save::apply(GraphicsContext& context) const
 {
@@ -50,6 +50,16 @@ void Save::apply(GraphicsContext& context) const
 void Restore::apply(GraphicsContext& context) const
 {
     context.restore();
+}
+
+void SaveTransform::apply(GraphicsContext& context) const
+{
+    context.saveTransform();
+}
+
+void RestoreTransform::apply(GraphicsContext& context) const
+{
+    context.restoreTransform();
 }
 
 void Translate::apply(GraphicsContext& context) const
@@ -132,6 +142,17 @@ void SetInlineStroke::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 SetState::SetState(const GraphicsContextState& state)
     : m_state(state)
 {
+}
+
+static bool hasUnresolvedPattern(const SourceBrush& brush)
+{
+    RefPtr pattern = brush.pattern();
+    return pattern && !pattern->tileImage().isResolved();
+}
+
+bool SetState::isResolved() const
+{
+    return !hasUnresolvedPattern(m_state.fillBrush()) && !hasUnresolvedPattern(m_state.strokeBrush());
 }
 
 void SetState::apply(GraphicsContext& context) const
@@ -225,15 +246,15 @@ void ClipOutRoundedRect::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("rect"_s, rect());
 }
 
-void ClipToImageBuffer::apply(GraphicsContext& context) const
+void ClipToNativeImage::apply(GraphicsContext& context) const
 {
-    context.clipToImageBuffer(m_imageBuffer, m_destinationRect);
+    context.clipToNativeImage(m_image.image(), m_destinationRect);
 }
 
-void ClipToImageBuffer::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
+void ClipToNativeImage::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
-        ts.dumpProperty("image-buffer-identifier"_s, m_imageBuffer->renderingResourceIdentifier());
+        ts.dumpProperty("image-identifier"_s, imageIdentifier());
     ts.dumpProperty("dest-rect"_s, destinationRect());
 }
 
@@ -258,34 +279,59 @@ void ClipPath::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("wind-rule"_s, windRule());
 }
 
+void ClipTransformedPath::apply(GraphicsContext& context) const
+{
+    context.clipTransformedPath(m_pathTransform, m_path, m_windRule);
+}
+
+void ClipTransformedPath::dump(TextStream& ts, OptionSet<AsTextFlag>) const
+{
+    ts.dumpProperty("path-transform"_s, pathTransform());
+    ts.dumpProperty("path"_s, path());
+    ts.dumpProperty("wind-rule"_s, windRule());
+}
+
 void ResetClip::apply(GraphicsContext& context) const
 {
     context.resetClip();
 }
 
+bool DrawFilteredImageBuffer::isResolved() const
+{
+    if (!isSourceImageResolved())
+        return false;
+    return std::ranges::all_of(m_filter->effectsOfType(FilterFunction::Type::FEImage), [](auto& effect) {
+        return downcast<FEImage>(effect).sourceImage().isResolved();
+    });
+}
+
 void DrawFilteredImageBuffer::apply(GraphicsContext& context) const
 {
+    RefPtr sourceImage = this->sourceImage();
     FilterResults results;
-    context.drawFilteredImageBuffer(m_sourceImage.get(), m_sourceImageRect, m_filter, results);
+    context.drawFilteredImageBuffer(sourceImage.get(), m_sourceImageRect, m_filter, results);
 }
 
 void DrawFilteredImageBuffer::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers)) {
-        if (m_sourceImage)
-            ts.dumpProperty("source-image-identifier"_s, m_sourceImage->renderingResourceIdentifier());
+        if (auto identifier = sourceImageIdentifier())
+            ts.dumpProperty("source-image-identifier"_s, *identifier);
     }
     ts.dumpProperty("source-image-rect"_s, sourceImageRect());
 }
 
 void DrawGlyphs::apply(GraphicsContext& context) const
 {
-    context.drawGlyphsImmediate(m_font, m_glyphs.span(), m_advances.span(), m_localAnchor, m_fontSmoothingMode);
+    RELEASE_ASSERT(isResolved());
+    context.drawGlyphsImmediate(std::get<Ref<const FontBase>>(m_font), m_glyphs.span(), m_advances.span(), m_localAnchor, m_fontSmoothingMode);
 }
 
 void DrawGlyphs::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 {
     // FIXME: dump more stuff.
+    if (auto* fontIndex = std::get_if<uint64_t>(&m_font))
+        ts.dumpProperty("font-index"_s, *fontIndex);
     ts.dumpProperty("local-anchor"_s, localAnchor());
     ts.dumpProperty("font-smoothing-mode"_s, fontSmoothingMode());
     ts.dumpProperty("length"_s, length());
@@ -311,20 +357,37 @@ DrawDisplayList::DrawDisplayList(Ref<const DisplayList>&& displayList)
 {
 }
 
+DrawDisplayList::DrawDisplayList(uint64_t displayListIndex)
+    : m_displayList(displayListIndex)
+{
+}
+
 DrawDisplayList::~DrawDisplayList() = default;
 
 Ref<const DisplayList> DrawDisplayList::displayList() const
 {
-    return m_displayList;
+    auto* displayList = std::get_if<Ref<const DisplayList>>(&m_displayList);
+    RELEASE_ASSERT(displayList);
+    return *displayList;
+}
+
+void DrawDisplayList::setDisplayList(Ref<const DisplayList>&& displayList)
+{
+    m_displayList = WTF::move(displayList);
 }
 
 void DrawDisplayList::apply(GraphicsContext& context, ControlFactory& controlFactory) const
 {
-    return context.drawDisplayList(m_displayList, controlFactory);
+    RELEASE_ASSERT(isResolved());
+    return context.drawDisplayList(std::get<Ref<const DisplayList>>(m_displayList), controlFactory);
 }
 
 void DrawDisplayList::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 {
+    if (auto* displayListIndex = std::get_if<uint64_t>(&m_displayList)) {
+        ts.dumpProperty("display-list-index"_s, *displayListIndex);
+        return;
+    }
     Ref displayList = this->displayList();
     ts.dumpProperty("display-list"_s, displayList);
 }
@@ -347,26 +410,26 @@ void DrawPlaceholder::dump(TextStream&, OptionSet<AsTextFlag>) const
 
 void DrawImageBuffer::apply(GraphicsContext& context) const
 {
-    context.drawImageBuffer(m_imageBuffer, m_destinationRect, m_srcRect, m_options);
+    context.drawImageBuffer(m_imageBuffer.image(), m_destinationRect, m_srcRect, m_options);
 }
 
 void DrawImageBuffer::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
-        ts.dumpProperty("image-buffer-identifier"_s, m_imageBuffer->renderingResourceIdentifier());
+        ts.dumpProperty("image-buffer-identifier"_s, imageIdentifier());
     ts.dumpProperty("source-rect"_s, source());
     ts.dumpProperty("dest-rect"_s, destinationRect());
 }
 
 void DrawNativeImage::apply(GraphicsContext& context) const
 {
-    context.drawNativeImage(m_image, m_destinationRect, m_srcRect, m_options);
+    context.drawNativeImage(m_image.image(), m_destinationRect, m_srcRect, m_options);
 }
 
 void DrawNativeImage::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
-        ts.dumpProperty("image-identifier"_s, m_image->renderingResourceIdentifier());
+        ts.dumpProperty("image-identifier"_s, imageIdentifier());
     ts.dumpProperty("source-rect"_s, source());
     ts.dumpProperty("dest-rect"_s, destinationRect());
 }
@@ -384,13 +447,13 @@ void DrawSystemImage::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 
 void DrawPatternNativeImage::apply(GraphicsContext& context) const
 {
-    context.drawPattern(m_image, m_destination, m_tileRect, m_patternTransform, m_phase, m_spacing, m_options);
+    context.drawPattern(m_image.image(), m_destination, m_tileRect, m_patternTransform, m_phase, m_spacing, m_options);
 }
 
 void DrawPatternNativeImage::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
-        ts.dumpProperty("image-identifier"_s, m_image->renderingResourceIdentifier());
+        ts.dumpProperty("image-identifier"_s, imageIdentifier());
     ts.dumpProperty("pattern-transform"_s, patternTransform());
     ts.dumpProperty("tile-rect"_s, tileRect());
     ts.dumpProperty("dest-rect"_s, destRect());
@@ -400,13 +463,13 @@ void DrawPatternNativeImage::dump(TextStream& ts, OptionSet<AsTextFlag> flags) c
 
 void DrawPatternImageBuffer::apply(GraphicsContext& context) const
 {
-    context.drawPattern(m_imageBuffer, m_destination, m_tileRect, m_patternTransform, m_phase, m_spacing, m_options);
+    context.drawPattern(m_imageBuffer.image(), m_destination, m_tileRect, m_patternTransform, m_phase, m_spacing, m_options);
 }
 
 void DrawPatternImageBuffer::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
-        ts.dumpProperty("image-identifier"_s, m_imageBuffer->renderingResourceIdentifier());
+        ts.dumpProperty("image-identifier"_s, imageIdentifier());
     ts.dumpProperty("pattern-transform"_s, patternTransform());
     ts.dumpProperty("tile-rect"_s, tileRect());
     ts.dumpProperty("dest-rect"_s, destRect());
@@ -459,6 +522,28 @@ void DrawLinesForText::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("lineSegments"_s, lineSegments());
     ts.dumpProperty("is-printing"_s, isPrinting());
     ts.dumpProperty("style"_s, style());
+}
+
+void DrawFreeformGradient::apply(GraphicsContext& context) const
+{
+    context.drawFreeformGradient(m_gradient, m_destination);
+}
+
+void DrawFreeformGradient::dump(TextStream& ts, OptionSet<AsTextFlag>) const
+{
+    ts.dumpProperty("gradient"_s, gradient());
+    ts.dumpProperty("destination"_s, destination());
+}
+
+void DrawMeshGradient::apply(GraphicsContext& context) const
+{
+    context.drawMeshGradient(m_gradient, m_destination);
+}
+
+void DrawMeshGradient::dump(TextStream& ts, OptionSet<AsTextFlag>) const
+{
+    ts.dumpProperty("gradient"_s, gradient());
+    ts.dumpProperty("destination"_s, destination());
 }
 
 void DrawDotsForDocumentMarker::apply(GraphicsContext& context) const
@@ -539,13 +624,13 @@ void FillRectWithColor::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("color"_s, color());
 }
 
-FillRectWithGradient::FillRectWithGradient(const FloatRect& rect, Gradient& gradient)
+FillRectWithGradient::FillRectWithGradient(const FloatRect& rect, const Gradient& gradient)
     : m_rect(rect)
     , m_gradient(gradient)
 {
 }
 
-FillRectWithGradient::FillRectWithGradient(FloatRect&& rect, Ref<Gradient>&& gradient)
+FillRectWithGradient::FillRectWithGradient(FloatRect&& rect, Ref<const Gradient>&& gradient)
     : m_rect(WTF::move(rect))
     , m_gradient(WTF::move(gradient))
 {
@@ -562,7 +647,7 @@ void FillRectWithGradient::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("gradient"_s, m_gradient);
 }
 
-FillRectWithGradientAndSpaceTransform::FillRectWithGradientAndSpaceTransform(const FloatRect& rect, Gradient& gradient, const AffineTransform& gradientSpaceTransform, GraphicsContext::RequiresClipToRect requiresClipToRect)
+FillRectWithGradientAndSpaceTransform::FillRectWithGradientAndSpaceTransform(const FloatRect& rect, const Gradient& gradient, const AffineTransform& gradientSpaceTransform, GraphicsContext::RequiresClipToRect requiresClipToRect)
     : m_rect(rect)
     , m_gradient(gradient)
     , m_gradientSpaceTransform(gradientSpaceTransform)
@@ -570,7 +655,7 @@ FillRectWithGradientAndSpaceTransform::FillRectWithGradientAndSpaceTransform(con
 {
 }
 
-FillRectWithGradientAndSpaceTransform::FillRectWithGradientAndSpaceTransform(FloatRect&& rect, Ref<Gradient>&& gradient, AffineTransform&& gradientSpaceTransform, GraphicsContext::RequiresClipToRect requiresClipToRect)
+FillRectWithGradientAndSpaceTransform::FillRectWithGradientAndSpaceTransform(FloatRect&& rect, Ref<const Gradient>&& gradient, AffineTransform&& gradientSpaceTransform, GraphicsContext::RequiresClipToRect requiresClipToRect)
     : m_rect(WTF::move(rect))
     , m_gradient(WTF::move(gradient))
     , m_gradientSpaceTransform(WTF::move(gradientSpaceTransform))
@@ -739,18 +824,31 @@ void EndTransparencyLayer::apply(GraphicsContext& context) const
         context.endTransparencyLayer();
 }
 
-#if USE(CG)
-
-void ApplyStrokePattern::apply(GraphicsContext& context) const
+bool DrawPDFPage::isResolved() const
 {
-    context.applyStrokePattern();
+    if (!std::holds_alternative<Ref<SharedPDFDocument>>(m_document))
+        return false;
+    return !m_fallbackImage || m_fallbackImage->isResolved();
 }
 
-void ApplyFillPattern::apply(GraphicsContext& context) const
+void DrawPDFPage::apply(GraphicsContext& context) const
 {
-    context.applyFillPattern();
+    RELEASE_ASSERT(isResolved());
+    if (m_fallbackImage) {
+        Ref image = m_fallbackImage->image();
+        context.drawNativeImage(image, m_pageRect, FloatRect { { }, image->size() });
+        return;
+    }
+    protect(document())->drawPage(context, m_pageIndex, m_pageRect);
 }
-#endif
+
+void DrawPDFPage::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
+{
+    if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
+        ts.dumpProperty("document-identifier"_s, documentIdentifier());
+    ts.dumpProperty("page-index"_s, pageIndex());
+    ts.dumpProperty("page-rect"_s, pageRect());
+}
 
 void ApplyDeviceScaleFactor::apply(GraphicsContext& context) const
 {
@@ -788,5 +886,4 @@ void SetURLForRect::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("dest_rect"_s, destRect());
 }
 
-} // namespace DisplayList
-} // namespace WebCore
+} // namespace WebCore::DisplayList

@@ -33,6 +33,7 @@
 #include "CSSFontSelector.h"
 #include "DocumentInlines.h"
 #include "FontCascade.h"
+#include "HTMLSelectElement.h"
 #include "NodeDocument.h"
 #include "PseudoElementIdentifier.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -43,8 +44,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringHash.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MatchedDeclarationsCache);
 
@@ -85,6 +85,9 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const Style::
     // attr() value depends on the element it is being applied to.
     if (style.hasAttrContent())
         return false;
+    // So does -internal-auto-base() where a select's attributes rule out base appearance.
+    if (auto* select = dynamicDowncast<HTMLSelectElement>(element); select && !select->canHaveBaseAppearance())
+        return false;
     if (style.zoom() != Style::ComputedStyle::initialZoom())
         return false;
     if (style.writingMode().computedWritingMode() != Style::ComputedStyle::initialWritingMode()
@@ -106,6 +109,10 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const Style::
         return false;
 
     if (element.hasRandomCachingKeyMap())
+        return false;
+
+    // AccentColor CSS keyword keyword in the child resolves differently depending on the accent color of the parent.
+    if (!parentStyle.accentColor().isAuto())
         return false;
 
     // FIXME: counter-style: we might need to resolve cache like for fontSelector here (rdar://103018993).
@@ -131,7 +138,7 @@ unsigned MatchedDeclarationsCache::computeHash(const MatchResult& matchResult, c
     if (matchResult.isCompletelyNonCacheable)
         return 0;
 
-    if (matchResult.userAgentDeclarations.isEmpty() && matchResult.userDeclarations.isEmpty()) {
+    if (matchResult.userAgentDeclarations.isEmpty() && matchResult.userDeclarations.isEmpty() && matchResult.quirkDeclarations.isEmpty()) {
         bool allNonCacheable = std::ranges::all_of(matchResult.authorDeclarations, [](auto& matchedProperties) {
             return matchedProperties.isCacheable != IsCacheable::Yes;
         });
@@ -246,11 +253,10 @@ void MatchedDeclarationsCache::sweep()
 
     removeAllMatching([&] (const Entry& entry) -> bool {
         auto& matchResult = entry.matchResult;
-        return hasOneRef(matchResult->userAgentDeclarations) || hasOneRef(matchResult->userDeclarations) || hasOneRef(matchResult->authorDeclarations);
+        return hasOneRef(matchResult->userAgentDeclarations) || hasOneRef(matchResult->userDeclarations) || hasOneRef(matchResult->authorDeclarations) || hasOneRef(matchResult->quirkDeclarations);
     });
 
     m_additionsSinceLastSweep = 0;
 }
 
-}
 }

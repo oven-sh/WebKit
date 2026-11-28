@@ -106,25 +106,29 @@ auto SharedWorkerContextManager::connection() const -> Connection*
 
 void SharedWorkerContextManager::registerSharedWorkerThread(Ref<SharedWorkerThreadProxy>&& proxy)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RELEASE_LOG(SharedWorker, "SharedWorkerContextManager::registerSharedWorkerThread: sharedWorkerIdentifier=%" PRIu64, proxy->identifier().toUInt64());
 
     auto result = m_workerMap.add(proxy->identifier(), proxy.copyRef());
-    ASSERT_UNUSED(result, result.isNewEntry);
+    if (!result.isNewEntry) {
+        // Nothing took ownership of this proxy, so its thread must not be started.
+        RELEASE_LOG_ERROR(SharedWorker, "SharedWorkerContextManager::registerSharedWorkerThread: sharedWorkerIdentifier=%" PRIu64 " is already registered", proxy->identifier().toUInt64());
+        return;
+    }
 
     proxy->thread().start([](const String& /*exceptionMessage*/) { });
 }
 
 void SharedWorkerContextManager::Connection::postConnectEvent(SharedWorkerIdentifier sharedWorkerIdentifier, TransferredMessagePort&& transferredPort, const SecurityOriginData& sourceOrigin, CompletionHandler<void(bool)>&& completionHandler)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RefPtr proxy = SharedWorkerContextManager::singleton().sharedWorker(sharedWorkerIdentifier);
     RELEASE_LOG(SharedWorker, "SharedWorkerContextManager::Connection::postConnectEvent: sharedWorkerIdentifier=%" PRIu64 ", proxy=%p", sharedWorkerIdentifier.toUInt64(), proxy.get());
     if (!proxy)
         return completionHandler(false);
 
     proxy->thread().runLoop().postTask([transferredPort = WTF::move(transferredPort), sourceOrigin = sourceOrigin.isolatedCopy()] (auto& scriptExecutionContext) mutable {
-        ASSERT(!isMainThread());
+        ASSERT(scriptExecutionContext.isContextThread());
         downcast<SharedWorkerGlobalScope>(scriptExecutionContext).postConnectEvent(WTF::move(transferredPort), sourceOrigin);
     });
     completionHandler(true);
@@ -132,7 +136,7 @@ void SharedWorkerContextManager::Connection::postConnectEvent(SharedWorkerIdenti
 
 void SharedWorkerContextManager::Connection::terminateSharedWorker(SharedWorkerIdentifier sharedWorkerIdentifier)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RELEASE_LOG(SharedWorker, "SharedWorkerContextManager::Connection::terminateSharedWorker: sharedWorkerIdentifier=%" PRIu64, sharedWorkerIdentifier.toUInt64());
     SharedWorkerContextManager::singleton().stopSharedWorker(sharedWorkerIdentifier);
 }

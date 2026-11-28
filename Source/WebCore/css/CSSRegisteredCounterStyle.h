@@ -57,7 +57,6 @@ public:
     const CSSCounterStyleDescriptors::Ranges& ranges() const LIFETIME_BOUND { return m_descriptors.m_ranges; }
     const CSSCounterStyleDescriptors::Pad& pad() const LIFETIME_BOUND { return m_descriptors.m_pad; }
     const CSSCounterStyleDescriptors::Name& fallbackName() const LIFETIME_BOUND { return m_descriptors.m_fallbackName; }
-    RefPtr<const CSSRegisteredCounterStyle> fallbackStyle() const { return m_fallbackReference.get(); }
     const Vector<CSSCounterStyleDescriptors::Symbol>& symbols() const LIFETIME_BOUND { return m_descriptors.m_symbols; }
     const CSSCounterStyleDescriptors::AdditiveSymbols& additiveSymbols() const LIFETIME_BOUND { return m_descriptors.m_additiveSymbols; }
     CSSCounterStyleDescriptors::SpeakAs speakAs() const { return m_descriptors.m_speakAs; }
@@ -77,7 +76,7 @@ public:
     void setSpeakAs(CSSCounterStyleDescriptors::SpeakAs speakAs) { m_descriptors.m_speakAs = speakAs; }
     void setFirstSymbolValueForFixedSystem(int firstSymbolValue) { m_descriptors.m_fixedSystemFirstSymbolValue = firstSymbolValue; }
 
-    void LEGACY_NODELETE setFallbackReference(Ref<CSSRegisteredCounterStyle>&&);
+    NODELETE void setFallbackReference(Ref<CSSRegisteredCounterStyle>&&);
     bool isFallbackUnresolved() { return !m_fallbackReference; }
     bool isExtendsUnresolved() { return !m_descriptors.m_isExtendedResolved; };
     bool isExtendsSystem() const { return system() == CSSCounterStyleDescriptors::System::Extends; }
@@ -100,10 +99,9 @@ private:
     CSSRegisteredCounterStyle(const CSSCounterStyleDescriptors&, bool isPredefinedCounterStyle);
 
     // https://www.w3.org/TR/css-counter-styles-3/#counter-style-range
-    bool LEGACY_NODELETE isInRange(int) const;
+    NODELETE bool isInRange(int) const;
     // https://www.w3.org/TR/css-counter-styles-3/#counter-style-negative
-    bool usesNegativeSign();
-    bool LEGACY_NODELETE shouldApplyNegativeSymbols(int) const;
+    NODELETE bool shouldApplyNegativeSymbols(int) const;
     // https://www.w3.org/TR/css-counter-styles-3/#counter-style-fallback
     WeakPtr<CSSRegisteredCounterStyle> fallback() const { return m_fallbackReference; };
     String fallbackText(int, WritingMode);
@@ -113,8 +111,8 @@ private:
     // Initial text representation for the counter, before applying pad and/or negative symbols. Suffix and Prefix are also not considered as described by https://www.w3.org/TR/css-counter-styles-3/#counter-styles.
     String initialRepresentation(int, WritingMode) const;
 
-    String LEGACY_NODELETE counterForSystemCyclic(int) const;
-    String LEGACY_NODELETE counterForSystemFixed(int) const;
+    NODELETE String counterForSystemCyclic(int) const;
+    NODELETE String counterForSystemFixed(int) const;
     String counterForSystemSymbolic(unsigned) const;
     String counterForSystemAlphabetic(unsigned) const;
     String counterForSystemNumeric(unsigned) const;
@@ -122,9 +120,6 @@ private:
 
     bool isPredefinedCounterStyle() const { return m_predefinedCounterStyle; }
     bool isAutoRange() const { return ranges().isEmpty(); }
-
-    // Fixed and Extends system can/must have extra data in the system descriptor (https://www.w3.org/TR/css-counter-styles-3/#fixed-system and https://www.w3.org/TR/css-counter-styles-3/#extends-system).
-    void extractDataFromSystemDescriptor(const StyleRuleCounterStyle&);
 
     CSSCounterStyleDescriptors m_descriptors;
     bool m_predefinedCounterStyle { false };

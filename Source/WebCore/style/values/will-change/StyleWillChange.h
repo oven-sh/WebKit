@@ -32,8 +32,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TrailingArray.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct WillChange;
 
@@ -78,9 +77,9 @@ struct WillChangeAnimatableFeature {
     {
     }
 
-    static bool LEGACY_NODELETE propertyCreatesStackingContext(CSSPropertyID);
-    static bool LEGACY_NODELETE propertyTriggersCompositing(CSSPropertyID);
-    static bool LEGACY_NODELETE propertyTriggersCompositingOnBoxesOnly(CSSPropertyID);
+    NODELETE static bool propertyCreatesStackingContext(CSSPropertyID);
+    NODELETE static bool propertyTriggersCompositing(CSSPropertyID);
+    NODELETE static bool propertyTriggersCompositingOnBoxesOnly(CSSPropertyID);
 
     template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
@@ -164,12 +163,12 @@ private:
             return adoptRef(*new (NotNull, fastMalloc(Base::allocationSize(size))) Data(size, std::forward<SizedRange>(range), mapper));
         }
 
-        bool containsScrollPosition() const;
-        bool containsContents() const;
-        bool containsProperty(CSSPropertyID) const;
-        bool createsContainingBlockForAbsolutelyPositioned(bool isRootElement) const;
-        bool createsContainingBlockForOutOfFlowPositioned(bool isRootElement) const;
-        bool canBeBackdropRoot() const;
+        NODELETE bool containsScrollPosition() const;
+        NODELETE bool containsContents() const;
+        NODELETE bool containsProperty(CSSPropertyID) const;
+        NODELETE bool createsContainingBlockForAbsolutelyPositioned(bool isRootElement) const;
+        NODELETE bool createsContainingBlockForOutOfFlowPositioned(bool isRootElement) const;
+        NODELETE bool canBeBackdropRoot() const;
         bool canCreateStackingContext() const { return m_canCreateStackingContext; }
         bool canTriggerCompositing() const { return m_canTriggerCompositing; }
         bool canTriggerCompositingOnInline() const { return m_canTriggerCompositingOnInline; }
@@ -190,7 +189,7 @@ private:
             initializeCachedChecks();
         }
 
-        void LEGACY_NODELETE initializeCachedChecks();
+        NODELETE void initializeCachedChecks();
 
         bool m_canCreateStackingContext { false };
         bool m_canTriggerCompositing { false };
@@ -255,8 +254,7 @@ private:
 
 template<> struct CSSValueConversion<WillChange> { auto operator()(BuilderState&, const CSSValue&) -> WillChange; };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_COMMA_SEPARATED_RANGE_LIKE_CONFORMANCE(WebCore::Style::WillChangeAnimatableFeatures)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::WillChangeAnimatableFeature::CustomIdentWithCachedPropertyID);

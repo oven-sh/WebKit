@@ -1,0 +1,26 @@
+# the other side of member-that-link-found-written-is-open-when-the-program-runs.ir: a member to which no write was followed is a constant in the code, so the lock has to hold whoever writes
+# hidden(); print(Math.imul(2, 2))   where `hidden` is a function of the shell's own, which finds Math by its name: the program hands it nothing
+# the store of code that nobody has seen is refused, and the code goes on with the member of the table
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell globalThis.hidden = () => { try { Math.imul = () => 7; print("stored"); } catch (error) { print(error.constructor.name); } };
+# CHECK: TypeError
+# CHECK-NEXT: 4
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: locked MathImul constant
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hidden" [isFreeName]
+    v2 = Call v1, -
+    v3 = PropGet v0 key="Math" [isFreeName]
+    v4 = PropGet v3 key="imul"
+    v5 = Integer integer=2
+    v6 = Call v4, v3, v5, v5 calleeKey="imul"
+    v7 = PropGet v0 key="print" [isFreeName]
+    v8 = Call v7, -, v6
+    Return v8
+}

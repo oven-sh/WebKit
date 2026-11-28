@@ -33,7 +33,6 @@
 #include "FontCascadeInlines.h"
 #include "FrameLoader.h"
 #include "FrameLoaderTypes.h"
-#include "ImageAdapter.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
 #include "LocalFrameView.h"
@@ -41,7 +40,6 @@
 #include "MemoryCache.h"
 #include "NativeImage.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGImage.h"
 #include "SecurityOrigin.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
@@ -169,13 +167,13 @@ void CachedImage::addClientWaitingForAsyncDecoding(CachedImageClient& client)
     
 void CachedImage::removeAllClientsWaitingForAsyncDecoding()
 {
-    if (m_clientsWaitingForAsyncDecoding.isEmptyIgnoringNullReferences() || !hasImage())
+    if (m_clientsWaitingForAsyncDecoding.computeIsEmpty() || !hasImage())
         return;
 
     RefPtr bitmapImage = dynamicDowncast<BitmapImage>(image());
     if (!bitmapImage)
         return;
-    bitmapImage->stopDecodingWorkQueue();
+    bitmapImage->cancelPendingDecodingRequests();
 
     for (Ref client : m_clientsWaitingForAsyncDecoding)
         client->imageChanged(this);
@@ -208,16 +206,16 @@ void CachedImage::allClientsRemoved()
 std::pair<WeakPtr<BitmapImage>, float> CachedImage::brokenImage(float deviceScaleFactor)
 {
     if (deviceScaleFactor >= 3) {
-        static NeverDestroyed<BitmapImage*> brokenImageVeryHiRes(&ImageAdapter::loadPlatformResource("missingImage@3x").leakRef());
+        static NeverDestroyed<BitmapImage*> brokenImageVeryHiRes(&BitmapImage::createFromPlatformResource("missingImage@3x"_s).leakRef());
         return std::make_pair(WeakPtr { *brokenImageVeryHiRes }, 3);
     }
 
     if (deviceScaleFactor >= 2) {
-        static NeverDestroyed<BitmapImage*> brokenImageHiRes(&ImageAdapter::loadPlatformResource("missingImage@2x").leakRef());
+        static NeverDestroyed<BitmapImage*> brokenImageHiRes(&BitmapImage::createFromPlatformResource("missingImage@2x"_s).leakRef());
         return std::make_pair(WeakPtr { *brokenImageHiRes }, 2);
     }
 
-    static NeverDestroyed<BitmapImage*> brokenImageLoRes(&ImageAdapter::loadPlatformResource("missingImage").leakRef());
+    static NeverDestroyed<BitmapImage*> brokenImageLoRes(&BitmapImage::createFromPlatformResource("missingImage"_s).leakRef());
     return std::make_pair(WeakPtr { *brokenImageLoRes }, 1);
 }
 
@@ -350,11 +348,6 @@ void CachedImage::CachedImageObserver::scheduleRenderingUpdate(const Image& imag
 
 bool CachedImage::CachedImageObserver::allowsAnimation(const Image& image) const
 {
-    // *::allowsAnimation can only return false when systemAllowsAnimationControls == true,
-    // so this prevents unnecessary work by exiting early.
-    if (!Image::systemAllowsAnimationControls())
-        return true;
-
     for (RefPtr cachedImage : m_cachedImages) {
         if (cachedImage->allowsAnimation(image))
             return true;
@@ -370,7 +363,7 @@ inline void CachedImage::clearImage()
     if (RefPtr imageObserver = std::exchange(m_imageObserver, nullptr)) {
         imageObserver->cachedImages().remove(*this);
 
-        if (imageObserver->cachedImages().isEmptyIgnoringNullReferences()) {
+        if (imageObserver->cachedImages().computeIsEmpty()) {
             ASSERT(imageObserver->hasOneRef());
             m_image->setImageObserver(nullptr);
         }
@@ -622,24 +615,10 @@ void CachedImage::scheduleRenderingUpdate(const Image& image)
         client->scheduleRenderingUpdateForImage(*this);
 }
 
-bool CachedImage::useSystemDarkAppearance() const
-{
-    CachedResourceClientWalker<CachedImageClient> walker(*this);
-    while (RefPtr client = walker.next()) {
-        if (client->useSystemDarkAppearance())
-            return true;
-    }
-
-    return false;
-}
-
 bool CachedImage::allowsAnimation(const Image& image) const
 {
     if (&image != m_image)
         return false;
-
-    if (!Image::systemAllowsAnimationControls())
-        return true;
 
     CachedResourceClientWalker<CachedImageClient> walker(*this);
     while (RefPtr client = walker.next()) {
@@ -717,10 +696,22 @@ bool CachedImage::isAnimated() const
     return m_image ? protect(m_image)->isAnimated() : false;
 }
 
+void CachedImage::startAnimation()
+{
+    if (m_image)
+        protect(m_image)->startAnimation();
+}
+
 void CachedImage::stopAnimation()
 {
     if (m_image)
         protect(m_image)->stopAnimation();
+}
+
+void CachedImage::clearAnimationOverride()
+{
+    if (m_image)
+        protect(m_image)->setAnimationOverride(ImageAnimationOverride::None);
 }
 
 void CachedImage::resetAnimation()

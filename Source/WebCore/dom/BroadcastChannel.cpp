@@ -51,15 +51,15 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 static Lock allBroadcastChannelsLock;
-static HashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>& LEGACY_NODELETE allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
+NODELETE static HashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
 {
     static NeverDestroyed<HashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>> map;
     return map;
 }
 
-static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& LEGACY_NODELETE channelToContextIdentifier()
+NODELETE static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
 }
@@ -71,7 +71,7 @@ static PartitionedSecurityOrigin partitionedSecurityOriginFromContext(ScriptExec
 
 class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main>, public Identified<BroadcastChannelIdentifier> {
 public:
-    static Ref<MainThreadBridge> LEGACY_NODELETE create(BroadcastChannel& channel, const String& name)
+    NODELETE static Ref<MainThreadBridge> create(BroadcastChannel& channel, const String& name)
     {
         return adoptRef(*new MainThreadBridge(channel, name));
     }
@@ -79,7 +79,7 @@ public:
     void registerChannel();
     void unregisterChannel();
     void postMessage(Ref<SerializedScriptValue>&&);
-    void LEGACY_NODELETE detach() { m_broadcastChannel = nullptr; }
+    NODELETE void detach() { m_broadcastChannel = nullptr; }
 
     String name() const { return m_name.isolatedCopy(); }
 
@@ -109,7 +109,7 @@ void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(Page*)
     RefPtr context = m_broadcastChannel->scriptExecutionContext();
     if (!context)
         return;
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
 
     if (RefPtr document = dynamicDowncast<Document>(*context)) {
         task(protect(document->page()).get());
@@ -217,7 +217,7 @@ void BroadcastChannel::close()
 
 void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdentifier, Ref<SerializedScriptValue>&& message, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     CompletionHandlerCallingScope completionHandlerCallingScope { CompletionHandler<void()> { [completionHandler = WTF::move(completionHandler)]() mutable {
         callOnMainThread(WTF::move(completionHandler));
     }, CompletionHandlerCallThread::AnyThread } };
@@ -273,7 +273,7 @@ ScriptExecutionContext* BroadcastChannel::scriptExecutionContext() const
 
 void BroadcastChannel::eventListenersDidChange()
 {
-    m_hasRelevantEventListener = hasEventListeners(eventNames().messageEvent);
+    m_hasRelevantEventListener = hasEventListeners(eventNames().messageEvent) || hasEventListeners(eventNames().messageerrorEvent);
 }
 
 bool BroadcastChannel::virtualHasPendingActivity() const

@@ -69,6 +69,7 @@
 #import <wtf/cocoa/VectorCocoa.h>
 
 constexpr Seconds defaultInteractionPresentationUpdateTimeout = 100_ms;
+constexpr Seconds filterRulesRequestTimeout = 1_s;
 
 constexpr auto staleNodeIdentifierGuidance = " The page changed since this uid was last observed; re-extract the page and retry with a current uid."_s;
 
@@ -221,9 +222,7 @@ static std::optional<WebCore::NodeIdentifier> activeContextMenuTargetNodeIdentif
 - (void)_retryInteractionWithConnectedRemapCandidate:(WebCore::TextExtraction::Interaction)interaction actionType:(_WKTextExtractionAction)actionType requestedNodeIdentifier:(const String&)requestedIdentifier remapCandidates:(const Vector<String>&)remapCandidates failureDescription:(const String&)failureDescription completionHandler:(void(^)(_WKTextExtractionInteractionResult *))completionHandler;
 - (void)_retryDescribingInteractionWithConnectedRemapCandidate:(WebCore::TextExtraction::Interaction)interaction requestedNodeIdentifier:(const String&)requestedIdentifier remapCandidates:(const Vector<String>&)remapCandidates completionHandler:(void (^)(NSString *, NSError *))completionHandler;
 - (Vector<String>)_activeNativeMenuItemTitles;
-#if PLATFORM(MAC)
-- (RetainPtr<NSPopUpButtonCell>)_activePopupButtonCell;
-#endif
+- (BOOL)_hasActiveNativeMenu;
 @end
 
 @implementation WKWebView (WKTextExtraction)
@@ -241,8 +240,7 @@ static Vector<std::pair<String, String>> extractReplacementStrings(_WKTextExtrac
 {
     Vector<std::pair<String, String>> result;
     RetainPtr replacementStrings = [configuration replacementStrings];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *replacement in replacementStrings.get()) {
+    for (NSString *replacement in replacementStrings.get()) {
         if (!replacement.length)
             continue;
 
@@ -293,16 +291,22 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
     }
 }
 
-- (void)_ensureTextExtractionFilterRulesWithCompletionHandler:(CompletionHandler<void()>&&)completionHandler
+- (void)_fetchTextExtractionFilterRulesIfNeededWithCompletionHandler:(CompletionHandler<void()>&&)completionHandler
 {
     _page->hasTextExtractionFilterRules([completionHandler = WTF::move(completionHandler), weakSelf = WeakObjCPtr<WKWebView>(self)](bool hasRules) mutable {
         if (hasRules)
             return completionHandler();
 
-        WebKit::requestTextExtractionFilterRuleData([completionHandler = WTF::move(completionHandler), weakSelf](auto&& data) mutable {
+        Ref aggregator = EagerCallbackAggregator<void()>::create(WTF::move(completionHandler));
+
+        WebKit::requestTextExtractionFilterRuleData([aggregator, weakSelf](auto&& data) {
             if (RetainPtr strongSelf = weakSelf.get())
                 strongSelf->_page->updateTextExtractionFilterRules(WTF::move(data));
-            completionHandler();
+            aggregator.get()();
+        });
+
+        RunLoop::mainSingleton().dispatchAfter(filterRulesRequestTimeout, [aggregator] {
+            aggregator.get()();
         });
     });
 }
@@ -681,11 +685,11 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
     ](std::optional<WebKit::ConnectedRemapCandidate>&& candidate) mutable {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf || !candidate) {
-            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Interaction failed; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8());
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Interaction failed; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), makeUTF8CString(requestedIdentifier));
             return reportStaleNode();
         }
 
-        RELEASE_LOG(TextExtraction, "<%@: %p> Interaction failed; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8());
+        RELEASE_LOG(TextExtraction, "<%@: %p> Interaction failed; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), makeUTF8CString(requestedIdentifier));
         interaction.nodeIdentifier = candidate->nodeIdentifier;
         [strongSelf _performInteraction:WTF::move(interaction) inFrame:RefPtr { candidate->frame.ptr() } actionType:actionType staleNodeResolution:WebKit::StaleNodeResolutionState {
             .requestedIdentifier = requestedIdentifier,
@@ -762,11 +766,9 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
 
 static Vector<WebCore::JSHandleIdentifier> extractHandleIdentifiersOfNodesToSkip(Ref<WebKit::WebFrameProxy>&& frame, _WKTextExtractionConfiguration *configuration)
 {
-    Vector<WebCore::JSHandleIdentifier> nodes;
     RetainPtr nodesToSkip = [configuration nodesToSkip];
-    nodes.reserveInitialCapacity([nodesToSkip count]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL _WKJSHandle *handle in nodesToSkip.get()) {
+    Vector<WebCore::JSHandleIdentifier> nodes(ReserveCapacityTag { }, [nodesToSkip count]);
+    for (_WKJSHandle *handle in nodesToSkip.get()) {
         if (auto identifier = WebKit::jsHandleIdentifierInFrame(frame, handle))
             nodes.append(WTF::move(*identifier));
     }
@@ -790,7 +792,7 @@ static HashMap<String, HashMap<WebCore::JSHandleIdentifier, String>> extractClie
     return result;
 }
 
-static OptionSet<WebCore::TextExtraction::EventListenerCategory> LEGACY_NODELETE coreEventListenerCategories(_WKTextExtractionEventListenerCategory categories)
+NODELETE static OptionSet<WebCore::TextExtraction::EventListenerCategory> coreEventListenerCategories(_WKTextExtractionEventListenerCategory categories)
 {
     OptionSet<WebCore::TextExtraction::EventListenerCategory> coreCategories;
     if (categories & _WKTextExtractionEventListenerCategoryClick)
@@ -808,7 +810,7 @@ static OptionSet<WebCore::TextExtraction::EventListenerCategory> LEGACY_NODELETE
 
 #if ENABLE(DATA_DETECTION)
 
-static OptionSet<WebCore::DataDetectorType> LEGACY_NODELETE coreDataDetectorTypes(_WKTextExtractionDataDetectorTypes types)
+NODELETE static OptionSet<WebCore::DataDetectorType> coreDataDetectorTypes(_WKTextExtractionDataDetectorTypes types)
 {
     OptionSet<WebCore::DataDetectorType> coreTypes;
     if (types & _WKTextExtractionDataDetectorMoney)
@@ -910,8 +912,7 @@ static OptionSet<WebCore::DataDetectorType> LEGACY_NODELETE coreDataDetectorType
     };
 
     HashSet<Ref<WebKit::WebFrameProxy>> additionalFrames;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WKFrameInfo *info in [configuration additionalFrames]) {
+    for (WKFrameInfo *info in [configuration additionalFrames]) {
         RefPtr frame = WebKit::WebFrameProxy::webFrame(info->_frameInfo->frameInfoData().frameID);
         if (!frame)
             continue;
@@ -1074,10 +1075,8 @@ static OptionSet<WebCore::DataDetectorType> LEGACY_NODELETE coreDataDetectorType
     if (!targetFrame)
         return completionHandler(nil, [NSError errorWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:nil]);
 
-#if PLATFORM(MAC)
-    if ([self _activePopupButtonCell] && interaction.action == WebCore::TextExtraction::Action::SelectMenuItem && !interaction.text.isEmpty())
+    if ([self _hasActiveNativeMenu] && interaction.action == WebCore::TextExtraction::Action::SelectMenuItem && !interaction.text.isEmpty())
         return completionHandler([NSString stringWithFormat:@"Select popup menu item labeled '%@'", interaction.text.createNSString().get()], nil);
-#endif
 
     [self _describeInteraction:WTF::move(interaction) inFrame:targetFrame staleNodeResolution:WebKit::StaleNodeResolutionState { .requestedIdentifier = nodeIdentifierString } completionHandler:completionHandler];
 }
@@ -1111,7 +1110,7 @@ static OptionSet<WebCore::DataDetectorType> LEGACY_NODELETE coreDataDetectorType
         }
 
         if (!result.describesInteractionTarget) {
-            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Unable to describe the target of an interaction with node %" PUBLIC_LOG_STRING, [strongSelf class], strongSelf.get(), staleNodeResolution.requestedIdentifier.utf8());
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Unable to describe the target of an interaction with node %" PUBLIC_LOG_STRING, [strongSelf class], strongSelf.get(), makeUTF8CString(staleNodeResolution.requestedIdentifier));
             auto errorDescription = makeString("Unable to describe the target of the interaction."_s, resolutionIsStale ? staleNodeIdentifierGuidance : ""_s);
             completionHandler(nil, [NSError errorWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:@{
                 NSDebugDescriptionErrorKey: errorDescription.createNSString()
@@ -1176,11 +1175,11 @@ static OptionSet<WebCore::DataDetectorType> LEGACY_NODELETE coreDataDetectorType
     ](std::optional<WebKit::ConnectedRemapCandidate>&& candidate) mutable {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf || !candidate) {
-            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Describe target missing; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8());
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Describe target missing; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), makeUTF8CString(requestedIdentifier));
             return reportStaleNode();
         }
 
-        RELEASE_LOG(TextExtraction, "<%@: %p> Describe target missing; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8());
+        RELEASE_LOG(TextExtraction, "<%@: %p> Describe target missing; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), makeUTF8CString(requestedIdentifier));
         interaction.nodeIdentifier = candidate->nodeIdentifier;
         [strongSelf _describeInteraction:WTF::move(interaction) inFrame:RefPtr { candidate->frame.ptr() } staleNodeResolution:WebKit::StaleNodeResolutionState {
             .requestedIdentifier = requestedIdentifier,

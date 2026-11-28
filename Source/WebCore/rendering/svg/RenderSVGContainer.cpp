@@ -48,12 +48,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGContainer);
 
-RenderSVGContainer::RenderSVGContainer(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+RenderSVGContainer::RenderSVGContainer(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : RenderSVGModelObject(type, document, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
 
-RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : RenderSVGModelObject(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
@@ -84,7 +84,7 @@ void RenderSVGContainer::layout()
     clearNeedsLayout();
 }
 
-TransformationMatrix RenderSVGContainer::transformToParentUserSpace() const
+TransformationMatrix RenderSVGContainer::computeChildrenToParentUserSpaceTransform() const
 {
     // The layer transform is relative to the layout location, which moves with the children.
     auto* transform = layerTransform();
@@ -113,14 +113,14 @@ void RenderSVGContainer::layoutChildren()
     m_strokeBoundingBox = std::nullopt;
     m_cachedVisualOverflowRect = std::nullopt;
 
-    if (auto objectBoundingBoxWithoutTransformations = overridenObjectBoundingBoxWithoutTransformations())
-        m_objectBoundingBoxWithoutTransformations = objectBoundingBoxWithoutTransformations.value();
+    if (auto objectBoundingBoxWithoutTransforms = overriddenObjectBoundingBoxWithoutTransforms())
+        m_objectBoundingBoxWithoutTransforms = objectBoundingBoxWithoutTransforms.value();
     else {
-        constexpr auto objectBoundingBoxDecorationWithoutTransformations = SVGBoundingBoxComputation::objectBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IgnoreTransformations;
-        m_objectBoundingBoxWithoutTransformations = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecorationWithoutTransformations);
+        constexpr auto objectBoundingBoxDecorationWithoutTransforms = SVGBoundingBoxComputation::objectBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IgnoreTransforms;
+        m_objectBoundingBoxWithoutTransforms = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecorationWithoutTransforms);
     }
 
-    setCurrentSVGLayoutRect(enclosingLayoutRect(m_objectBoundingBoxWithoutTransformations));
+    setCurrentSVGLayoutRect(enclosingLayoutRect(m_objectBoundingBoxWithoutTransforms));
 
     containerLayout.positionChildrenRelativeToContainer();
 }
@@ -184,10 +184,8 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
 
     // For layer-backed containers, clipping is handled by RenderLayer::calculateClipRects().
     if (isRenderSVGViewportContainer() && SVGRenderSupport::isOverflowHidden(*this)) {
-        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite()) {
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST childPaintInfo.context().clip(FloatRect(clipRect));
-        }
+        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite())
+            childPaintInfo.context().clip(FloatRect(clipRect));
     }
 
     childPaintInfo.updateSubtreePaintRootForChildren(this);

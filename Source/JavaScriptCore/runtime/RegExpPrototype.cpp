@@ -22,6 +22,7 @@
 #include "RegExpPrototype.h"
 
 #include "AOTRemovableFeature.h"
+#include "AOTRuntimeHooks.h"
 #include "CachedCallInlines.h"
 #include "InterpreterInlines.h"
 #include "IntegrityInlines.h"
@@ -48,7 +49,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncExec);
+JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncExec);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncCompile);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterGlobal);
@@ -358,6 +359,9 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncCompile, (JSGlobalObject* globalObject, 
         return throwVMError(globalObject, scope, regExp->errorToThrow(globalObject));
 
     globalObject->regExpRecompiledWatchpointSet().fireAll(vm, "RegExp is recompiled");
+#if ENABLE(AOT)
+    AOT::RuntimeHooks::willRecompileRegExp(vm);
+#endif
 
     thisRegExp->setRegExp(vm, regExp);
     scope.release();
@@ -822,7 +826,7 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
     ASSERT(StringSplitCache::canBeKey(subject->impl()));
 
     constexpr unsigned atomStringsArrayLimit = 100;
-    bool makeAtomStringsArray = subject->impl()->isAtom() && resultLength < atomStringsArrayLimit;
+    bool makeAtomStringsArray = resultLength < atomStringsArrayLimit;
     Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
     auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultLength);
     if (!newButterfly)
@@ -1554,7 +1558,7 @@ static inline String getSubstitution(JSGlobalObject* globalObject, const String&
         return { };
     }
 
-    return result.toString();
+    return WTF::move(result).toString();
 }
 
 JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject, JSString* string, JSValue replaceValue)
@@ -1787,7 +1791,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
-        return jsString(vm, accumulatedResult.toString());
+        return jsString(vm, WTF::move(accumulatedResult).toString());
     }
 
     // 17. Return the string-concatenation of accumulatedResult and the substring of S from nextSourcePosition.
@@ -1796,7 +1800,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
-    return jsString(vm, accumulatedResult.toString());
+    return jsString(vm, WTF::move(accumulatedResult).toString());
 }
 
 // 22.2.6.11 RegExp.prototype [ %Symbol.replace% ] ( string, replaceValue )

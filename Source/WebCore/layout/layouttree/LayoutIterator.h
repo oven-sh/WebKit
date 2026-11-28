@@ -27,8 +27,7 @@
 
 #include <WebCore/LayoutInitialContainingBlock.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 template <typename T>
 class LayoutIterator {
@@ -48,8 +47,8 @@ public:
     LayoutIterator& traverseNextSibling();
 
 private:
-    const ElementBox* m_root;
-    const T* m_current;
+    CheckedPtr<const ElementBox> m_root;
+    CheckedPtr<const T> m_current;
 };
 
 namespace LayoutBoxTraversal {
@@ -242,7 +241,6 @@ inline bool LayoutIterator<T>::operator==(const LayoutIterator& other) const
     return m_current == other.m_current;
 }
 
-}
 }
 #include <WebCore/LayoutChildIterator.h>
 

@@ -1,0 +1,94 @@
+# function swap(list: number[]) { for (let i = 0, j = 5; i < j; i++, j--) { const x = list[i]; list[i] = list[j]; list[j] = x; } }
+# function scale(list: number[], by: number) { for (let i = 0, j = 5; i < j; i++, j--) { const x = list[i], y = list[j]; list[i] = x * by; list[j] = y * by; } }
+# A hole of double storage is a NaN, and no NaN is ever stored there: what is read present out of it is none. So a store takes it as it is, without a question. A product may be a NaN: each store of such a turn asks; where the second finds one, what the first overwrote is put back and the turn begins again.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double [isWritable]
+# CHECK: PutDoubleIndex
+# CHECK: PutDoubleIndex
+# RUN(COMPUTED): walk f2 mechanisms=all
+# COMPUTED-LABEL: code f2:Body
+# COMPUTED: StrictEq
+# COMPUTED: PutDoubleIndex
+# COMPUTED: StrictEq
+# COMPUTED: PutDoubleIndex
+# COMPUTED: frequency=Rare
+# COMPUTED: PutOwnDoubleIndex {{*}}undoesIterationStore
+# RUN(COUNT): compile DoubleElementsCopiedUnchecked mechanisms=all
+# COUNT-NOT: statistic DoubleElementsCopiedUnchecked 0
+# RUN(SHELL): run-in-shell globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 5.5 4.5 0.5 2.75 0.25
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Double number=0.5
+    v3 = Double number=1.5
+    v4 = Double number=2.5
+    v5 = Double number=3.5
+    v6 = Double number=4.5
+    v7 = Double number=5.5
+    v8 = NewArray v2, v3, v4, v5, v6, v7 contents=number
+    v9 = Call v0, -, v8
+    v10 = Integer
+    v11 = Integer integer=1
+    v12 = Integer integer=5
+    v13 = ElemGet v8, v10
+    v14 = ElemGet v8, v11
+    v15 = ElemGet v8, v12
+    v16 = Call v1, -, v8, v2
+    v17 = ElemGet v8, v10
+    v18 = ElemGet v8, v12
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="sink" [isFreeName]
+    v21 = Call v20, -, v13, v14, v15, v17, v18
+    Return v21
+}
+function f1 name="swap" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Integer integer=5
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = Less v3, v4
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = ElemGet v0, v3
+    v8 = ElemGet v0, v4
+    ElemSet v0, v3, v8 mode=Strict
+    ElemSet v0, v4, v7 mode=Strict
+    v11 = Increment v3
+    v12 = Decrement v4
+    Jump -> next b1(v11, v12)
+  b3():
+    v13 = Undefined
+    Return v13
+}
+function f2 name="scale" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = Integer
+    v3 = Integer integer=5
+    Jump -> next b1(v2, v3)
+  b1(v4: number, v5: number):
+    LoopHint
+    v7 = Less v4, v5
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = ElemGet v0, v5
+    v10 = Mul v8, v1
+    v11 = Mul v9, v1
+    ElemSet v0, v4, v10 mode=Strict
+    ElemSet v0, v5, v11 mode=Strict
+    v14 = Increment v4
+    v15 = Decrement v5
+    Jump -> next b1(v14, v15)
+  b3():
+    v16 = Undefined
+    Return v16
+}

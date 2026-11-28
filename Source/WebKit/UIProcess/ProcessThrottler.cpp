@@ -98,7 +98,7 @@ private:
             return adoptRef(*new CachedAssertion(cache, WTF::move(assertion)));
         }
 
-        bool LEGACY_NODELETE isValid() const { return m_assertion->isValid(); }
+        NODELETE bool isValid() const { return m_assertion->isValid(); }
         Ref<ProcessAssertion> release() { return m_assertion.releaseNonNull(); }
 
     private:
@@ -121,7 +121,7 @@ private:
         RunLoop::Timer m_expirationTimer;
     };
 
-    HashMap<ProcessAssertionType, Ref<CachedAssertion>, IntHash<ProcessAssertionType>, WTF::StrongEnumHashTraits<ProcessAssertionType>> m_entries;
+    HashMap<ProcessAssertionType, Ref<CachedAssertion>, IntHash<ProcessAssertionType>> m_entries;
     bool m_isEnabled { true };
 };
 
@@ -132,7 +132,7 @@ namespace WebKit {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottler::ProcessAssertionCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottler::ProcessAssertionCache::CachedAssertion);
 
-static uint64_t LEGACY_NODELETE generatePrepareToSuspendRequestID()
+NODELETE static uint64_t generatePrepareToSuspendRequestID()
 {
     static uint64_t prepareToSuspendRequestID = 0;
     return ++prepareToSuspendRequestID;
@@ -202,8 +202,8 @@ void ProcessThrottler::removeActivity(Activity& activity)
     assertIfCalledFromBackgroundThread();
 
     if (!m_allowsActivities) {
-        ASSERT(m_foregroundActivities.isEmptyIgnoringNullReferences());
-        ASSERT(m_backgroundActivities.isEmptyIgnoringNullReferences());
+        ASSERT(m_foregroundActivities.computeIsEmpty());
+        ASSERT(m_backgroundActivities.computeIsEmpty());
         return;
     }
 
@@ -224,9 +224,9 @@ void ProcessThrottler::invalidateAllActivities()
     assertIfCalledFromBackgroundThread();
 
     PROCESSTHROTTLER_RELEASE_LOG("invalidateAllActivities: BEGIN (foregroundActivityCount: %u, backgroundActivityCount: %u)", m_foregroundActivities.computeSize(), m_backgroundActivities.computeSize());
-    while (!m_foregroundActivities.isEmptyIgnoringNullReferences())
+    while (!m_foregroundActivities.computeIsEmpty())
         Ref { *m_foregroundActivities.begin() }->invalidate(ProcessThrottlerActivity::ForceEnableActivityLogging::Yes);
-    while (!m_backgroundActivities.isEmptyIgnoringNullReferences())
+    while (!m_backgroundActivities.computeIsEmpty())
         Ref { *m_backgroundActivities.begin() }->invalidate(ProcessThrottlerActivity::ForceEnableActivityLogging::Yes);
     PROCESSTHROTTLER_RELEASE_LOG("invalidateAllActivities: END");
 }
@@ -242,9 +242,9 @@ void ProcessThrottler::invalidateAllActivitiesAndDropAssertion()
 
 ProcessThrottleState ProcessThrottler::expectedThrottleState()
 {
-    if (!m_foregroundActivities.isEmptyIgnoringNullReferences())
+    if (!const_cast<const WeakHashSet<Activity>&>(m_foregroundActivities).computeIsEmpty())
         return ProcessThrottleState::Foreground;
-    if (!m_backgroundActivities.isEmptyIgnoringNullReferences())
+    if (!const_cast<const WeakHashSet<Activity>&>(m_backgroundActivities).computeIsEmpty())
         return ProcessThrottleState::Background;
     return ProcessThrottleState::Suspended;
 }
@@ -515,8 +515,8 @@ void ProcessThrottler::setAllowsActivities(bool allow)
         invalidateAllActivities();
     }
 
-    ASSERT(m_foregroundActivities.isEmptyIgnoringNullReferences());
-    ASSERT(m_backgroundActivities.isEmptyIgnoringNullReferences());
+    ASSERT(m_foregroundActivities.computeIsEmpty());
+    ASSERT(m_backgroundActivities.computeIsEmpty());
     m_allowsActivities = allow;
 }
 
@@ -653,7 +653,7 @@ ProcessThrottlerActivity::ProcessThrottlerActivity(ProcessThrottler& throttler, 
     , m_type(type)
     , m_isQuietActivity(isQuiet)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     if (!throttler.addActivity(*this)) {
         m_throttler = nullptr;
         return;
@@ -684,7 +684,7 @@ void ProcessThrottlerActivity::invalidate(ForceEnableActivityLogging forceEnable
 template <typename T>
 static void logActivityNames(WTF::TextStream& ts, ASCIILiteral description, const T& activities, bool& didLog)
 {
-    if (activities.isEmptyIgnoringNullReferences())
+    if (activities.computeIsEmpty())
         return;
 
     ts << (didLog ? ", "_s : ""_s) << description << ": "_s;

@@ -9,29 +9,44 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTStringArena.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "SmallStrings.h"
 #include <algorithm>
+#include <bit>
 #include <unicode/utf16.h>
 #include <utility>
+#include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIIFastPath.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static_assert(StringTable::provisionalBit == ProvisionalStringID::provisionalBit);
-
 static constexpr char32_t minCodePointForLength[] = { 0, 0, 0x80, 0x800, 0x10000 };
+
+bool hasCellOfVM(std::span<const uint8_t> bytes)
+{
+    constexpr size_t maxEncodedSizeOfLatin1Character = 2;
+    if (bytes.size() > maxEncodedSizeOfLatin1Character)
+        return false;
+    Vector<char16_t> units = decodeProgramString(bytes);
+    return units.isEmpty() || (units.size() == 1 && units[0] <= maxSingleCharacterString);
+}
 
 Vector<char16_t> decodeProgramString(std::span<const uint8_t> bytes)
 {
     Vector<char16_t> units;
-    units.reserveInitialCapacity(bytes.size());
+    units.grow(bytes.size());
+    std::span<char16_t> room = units.mutableSpan();
+    size_t numberOfUnits = 0;
     for (size_t i = 0; i < bytes.size();) {
         uint8_t lead = bytes[i];
+        if (lead < 0x80) {
+            room[numberOfUnits++] = lead;
+            ++i;
+            continue;
+        }
         unsigned length = lead < 0xc0 || lead >= 0xf8 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
         char32_t character = length == 1 ? lead : lead & (0x7f >> length);
         bool isWhole = i + length <= bytes.size();
@@ -45,12 +60,13 @@ Vector<char16_t> decodeProgramString(std::span<const uint8_t> bytes)
         }
         i += length;
         if (character < 0x10000)
-            units.append(static_cast<char16_t>(character));
+            room[numberOfUnits++] = static_cast<char16_t>(character);
         else {
-            units.append(static_cast<char16_t>(0xd7c0 + (character >> 10)));
-            units.append(static_cast<char16_t>(0xdc00 | (character & 0x3ff)));
+            room[numberOfUnits++] = static_cast<char16_t>(0xd7c0 + (character >> 10));
+            room[numberOfUnits++] = static_cast<char16_t>(0xdc00 | (character & 0x3ff));
         }
     }
+    units.shrink(numberOfUnits);
     return units;
 }
 
@@ -111,6 +127,11 @@ bool isCanonicalProgramString(std::span<const uint8_t> bytes)
     bool isAfterLeadSurrogate = false;
     for (size_t i = 0; i < bytes.size();) {
         uint8_t lead = bytes[i];
+        if (lead < 0x80) {
+            isAfterLeadSurrogate = false;
+            ++i;
+            continue;
+        }
         if ((lead >= 0x80 && lead < 0xc2) || lead > 0xf4)
             return false;
         unsigned length = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
@@ -132,28 +153,29 @@ bool isCanonicalProgramString(std::span<const uint8_t> bytes)
     return true;
 }
 
-static StringTable::Error checkStringAsRead(const BuiltinTable& builtins, const StringAsRead& string)
+void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& loops, Vector<StringAsRead>&& strings)
 {
-    if (!isCanonicalProgramString(string.bytes))
-        return StringTable::Error::StringNotCanonical;
-    if (classifyName(string.bytes) != string.nameClass || builtins.nameOf(string.bytes) != string.builtinName)
-        return StringTable::Error::NameClassMismatch;
-    return StringTable::Error::None;
-}
-
-StringTable::InitializationResult StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& loops, Vector<StringAsRead>&& strings, WhatIsSaidOfStrings whatIsSaid)
-{
-    RELEASE_ASSERT(!m_builtins && strings.size() < provisionalBit);
+    RELEASE_ASSERT(!m_builtins);
     m_builtins = &builtins;
     size_t numberOfStrings = strings.size();
+    m_numberOfStringsAsRead = numberOfStrings;
+    size_t largestSizeWhenInitialized = numberOfStrings + 6 + builtins.nameCount();
+    m_strings.reserveInitialCapacity(largestSizeWhenInitialized);
+    m_nameClasses.reserveInitialCapacity(largestSizeWhenInitialized);
+    m_builtinNames.reserveInitialCapacity(largestSizeWhenInitialized);
     m_strings.grow(numberOfStrings);
     m_nameClasses.grow(numberOfStrings);
     m_builtinNames.grow(numberOfStrings);
 
     constexpr size_t stringsPerTask = 1024;
     Vector<uint64_t> hashes(numberOfStrings);
-    Vector<Error> errors(numberOfStrings);
+    Vector<uint32_t> stringsInOrderOfShards(numberOfStrings);
+    Vector<std::array<uint16_t, numberOfShards + 1>> firstsOfShardsByTask((numberOfStrings + stringsPerTask - 1) / stringsPerTask);
+    CodeUnitSet codeUnits { };
+    Lock codeUnitsLock;
     forEachIndexInParallel(loops, static_cast<unsigned>((numberOfStrings + stringsPerTask - 1) / stringsPerTask), [&](unsigned task) {
+        CodeUnitSet codeUnitsOfTask { };
+        ASCIIUnits asciiUnitsOfTask { };
         size_t end = std::min(numberOfStrings, (static_cast<size_t>(task) + 1) * stringsPerTask);
         for (size_t i = static_cast<size_t>(task) * stringsPerTask; i < end; ++i) {
             const StringAsRead& string = strings[i];
@@ -161,51 +183,126 @@ StringTable::InitializationResult StringTable::initialize(const BuiltinTable& bu
             m_nameClasses[i] = string.nameClass;
             m_builtinNames[i] = string.builtinName;
             hashes[i] = hashOf(string.bytes);
-            errors[i] = whatIsSaid == WhatIsSaidOfStrings::IsChecked ? checkStringAsRead(builtins, string) : Error::None;
+            addCodeUnitsOf(string.bytes, asciiUnitsOfTask, codeUnitsOfTask);
         }
+        addASCIIUnits(asciiUnitsOfTask, codeUnitsOfTask);
+        size_t begin = static_cast<size_t>(task) * stringsPerTask;
+        auto& firstsOfShards = firstsOfShardsByTask[task];
+        firstsOfShards.fill(0);
+        for (size_t i = begin; i < end; ++i)
+            ++firstsOfShards[shardIndexOf(hashes[i]) + 1];
+        for (unsigned shardIndex = 0; shardIndex < numberOfShards; ++shardIndex)
+            firstsOfShards[shardIndex + 1] += firstsOfShards[shardIndex];
+        auto nextsOfShards = firstsOfShards;
+        for (size_t i = begin; i < end; ++i)
+            stringsInOrderOfShards[begin + nextsOfShards[shardIndexOf(hashes[i])]++] = static_cast<uint32_t>(i);
+        Locker locker { codeUnitsLock };
+        for (size_t word = 0; word < codeUnits.size(); ++word)
+            codeUnits[word] |= codeUnitsOfTask[word];
     });
-    size_t lowestInvalid = errors.findIf([](Error error) {
-        return error != Error::None;
-    });
-    if (lowestInvalid != notFound)
-        return { errors[lowestInvalid], StringID(lowestInvalid) };
 
-    std::array<Vector<StringID>, numberOfShards> idsInShard;
-    for (size_t i = 0; i < numberOfStrings; ++i)
-        idsInShard[shardIndexOf(hashes[i])].append(StringID(i));
-    std::array<StringID, numberOfShards> duplicateInShard;
     forEachIndexInParallel(loops, numberOfShards, [&](unsigned shardIndex) {
+        size_t numberInShard = 0;
+        for (const auto& firstsOfShards : firstsOfShardsByTask)
+            numberInShard += firstsOfShards[shardIndex + 1] - firstsOfShards[shardIndex];
         Shard shard;
-        reserve(shard, idsInShard[shardIndex].size());
-        for (StringID id : idsInShard[shardIndex]) {
-            uint64_t hash = hashes[id.index()];
-            if (find(shard, hash, m_strings[id.index()])) {
-                duplicateInShard[shardIndex] = id;
-                return;
+        reserve(shard, numberInShard);
+        for (size_t task = 0; task < firstsOfShardsByTask.size(); ++task) {
+            for (size_t place = firstsOfShardsByTask[task][shardIndex]; place < firstsOfShardsByTask[task][shardIndex + 1]; ++place) {
+                uint32_t string = stringsInOrderOfShards[task * stringsPerTask + place];
+                insert(shard, hashes[string], StringID(string));
             }
-            insert(shard, hash, id);
         }
         m_shards[shardIndex] = WTF::move(shard);
     });
-    StringID lowestDuplicate;
-    for (StringID duplicate : duplicateInShard) {
-        if (duplicate && (!lowestDuplicate || duplicate < lowestDuplicate))
-            lowestDuplicate = duplicate;
-    }
-    if (lowestDuplicate)
-        return { Error::DuplicateString, lowestDuplicate };
 
     m_builtinNameStrings.fill(StringID(), builtins.nameCount());
     for (size_t i = 0; i < numberOfStrings; ++i)
         recordBuiltinName(StringID(i));
     m_emptyString = intern(std::span<const uint8_t> { });
+    m_comma = intern(StringView(","_s));
+    m_textOfUndefined = intern(StringView("undefined"_s));
+    m_textOfNull = intern(StringView("null"_s));
+    m_textOfTrue = intern(StringView("true"_s));
+    m_textOfFalse = intern(StringView("false"_s));
     appendBuiltinNames();
-    return { };
+    ASCIIUnits asciiUnits { };
+    for (size_t i = numberOfStrings; i < m_strings.size(); ++i)
+        addCodeUnitsOf(m_strings[i], asciiUnits, codeUnits);
+    addASCIIUnits(asciiUnits, codeUnits);
+    internCodeUnitsIn(codeUnits);
 }
 
-BuiltinName StringTable::builtinName(StringID id) const
+void StringTable::addCodeUnitsOf(std::span<const uint8_t> bytes, ASCIIUnits& asciiUnits, CodeUnitSet& codeUnits)
 {
-    return isProvisional(id) ? m_builtins->nameOf(provisionalAt(id)) : m_builtinNames[id.index()];
+    if (charactersAreAllASCII(byteCast<Latin1Character>(bytes))) {
+        for (uint8_t byte : bytes)
+            asciiUnits[byte] = 1;
+        return;
+    }
+    for (char16_t unit : decodeProgramString(bytes))
+        codeUnits[unit / 64] |= 1ull << (unit % 64);
+}
+
+void StringTable::addASCIIUnits(const ASCIIUnits& asciiUnits, CodeUnitSet& codeUnits)
+{
+    for (unsigned unit = 0; unit < asciiUnits.size(); ++unit)
+        codeUnits[unit / 64] |= static_cast<uint64_t>(asciiUnits[unit]) << (unit % 64);
+}
+
+StringID StringTable::internCodeUnit(char16_t unit)
+{
+    m_internedCodeUnits[unit / 64] |= 1ull << (unit % 64);
+    std::span<const char16_t> text = singleElementSpan(unit);
+    return intern(encodeProgramString(text).span());
+}
+
+void StringTable::internCodeUnitsIn(const CodeUnitSet& codeUnits)
+{
+    for (size_t word = 0; word < codeUnits.size(); ++word) {
+        for (uint64_t bits = codeUnits[word]; bits; bits &= bits - 1)
+            internCodeUnit(static_cast<char16_t>(word * 64 + std::countr_zero(bits)));
+    }
+}
+
+void StringTable::internCodeUnitsOf(std::span<const uint8_t> bytes, size_t numberOfBytesLookedAt)
+{
+    auto internIfNew = [&](char16_t unit) {
+        if (!(m_internedCodeUnits[unit / 64] >> (unit % 64) & 1))
+            internCodeUnit(unit);
+    };
+    std::span<const uint8_t> rest = bytes.subspan(numberOfBytesLookedAt);
+    if (charactersAreAllASCII(byteCast<Latin1Character>(rest))) {
+        if (bytes.size() < 2)
+            return;
+        for (uint8_t byte : rest)
+            internIfNew(byte);
+        return;
+    }
+    Vector<char16_t> units = decodeProgramString(rest);
+    if (units.size() < 2 && !numberOfBytesLookedAt)
+        return;
+    for (char16_t unit : units)
+        internIfNew(unit);
+}
+
+StringID StringTable::codeUnitAt(StringID id, uint64_t position) const
+{
+    std::span<const uint8_t> bytes = (*this)[id];
+    StringID codeUnit;
+    if (isAllASCII(id)) {
+        if (position >= bytes.size())
+            return { };
+        codeUnit = find(bytes.subspan(position, 1));
+    } else {
+        Vector<char16_t> units = decodeProgramString(bytes);
+        if (position >= units.size())
+            return { };
+        std::span<const char16_t> text = units.span().subspan(position, 1);
+        codeUnit = find(encodeProgramString(text).span());
+    }
+    RELEASE_ASSERT(codeUnit);
+    return codeUnit;
 }
 
 bool StringTable::isAllASCII(StringID id) const
@@ -213,14 +310,19 @@ bool StringTable::isAllASCII(StringID id) const
     return charactersAreAllASCII(byteCast<Latin1Character>((*this)[id]));
 }
 
+StringView viewOfProgramString(std::span<const uint8_t> bytes, Vector<char16_t>& bufferForNonASCII)
+{
+    if (bytes.empty())
+        return emptyStringView();
+    if (charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
+        return StringView(byteCast<Latin1Character>(bytes));
+    bufferForNonASCII = decodeProgramString(bytes);
+    return StringView(bufferForNonASCII.span());
+}
+
 StringView StringTable::viewOf(StringID id, Vector<char16_t>& bufferForNonASCII) const
 {
-    if (id == m_emptyString)
-        return emptyStringView();
-    if (isAllASCII(id))
-        return StringView(byteCast<Latin1Character>((*this)[id]));
-    bufferForNonASCII = decodeProgramString((*this)[id]);
-    return StringView(bufferForNonASCII.span());
+    return viewOfProgramString((*this)[id], bufferForNonASCII);
 }
 
 String StringTable::toWTFString(StringID id) const
@@ -241,7 +343,7 @@ StringID StringTable::find(std::span<const uint8_t> canonicalProgramString) cons
 
 StringID StringTable::intern(std::span<const uint8_t> bytes)
 {
-    RELEASE_ASSERT(m_builtins && !m_openPhase);
+    RELEASE_ASSERT(m_builtins);
     Vector<uint8_t> canonicalBytes;
     if (!isCanonicalProgramString(bytes)) {
         canonicalBytes = encodeProgramString(decodeProgramString(bytes).span());
@@ -251,7 +353,9 @@ StringID StringTable::intern(std::span<const uint8_t> bytes)
     if (StringID id = find(m_shards[shardIndexOf(hash)], hash, bytes))
         return id;
     m_ownStrings.append(Vector<uint8_t>(bytes));
-    return append(m_ownStrings.last().span(), hash);
+    StringID id = append(m_ownStrings.last().span(), hash);
+    internCodeUnitsOf(bytes);
+    return id;
 }
 
 StringID StringTable::intern(StringView view)
@@ -259,13 +363,64 @@ StringID StringTable::intern(StringView view)
     return intern(encodeProgramString(view).span());
 }
 
+std::span<const uint8_t> StringTable::keep(std::span<const uint8_t> bytes)
+{
+    m_ownStrings.append(Vector<uint8_t>(bytes));
+    return m_ownStrings.last().span();
+}
+
+StringID StringTable::internKept(std::span<const uint8_t> bytes, FrontsOfKeptTexts& fronts)
+{
+    RELEASE_ASSERT(m_builtins);
+    ASSERT(isCanonicalProgramString(bytes));
+    FrontOfKeptTexts& front = fronts.add(bytes.data(), FrontOfKeptTexts { }).iterator->value;
+    uint64_t hash = hashGoingOnFrom(front, bytes);
+    StringID id = find(m_shards[shardIndexOf(hash)], hash, bytes);
+    size_t numberOfBytesLookedAt = std::min(std::exchange(front.numberOfBytesLookedAt, std::max(front.numberOfBytesLookedAt, bytes.size())), bytes.size());
+    if (id)
+        return id;
+    id = append(bytes, hash);
+    internCodeUnitsOf(bytes, numberOfBytesLookedAt);
+    return id;
+}
+
 uint64_t StringTable::hashOf(std::span<const uint8_t> bytes)
 {
-    constexpr uint64_t fnvOffsetBasis = 0xcbf29ce484222325;
-    constexpr uint64_t fnvPrime = 0x100000001b3;
-    uint64_t hash = fnvOffsetBasis;
-    for (uint8_t byte : bytes)
-        hash = (hash ^ byte) * fnvPrime;
+    FrontOfKeptTexts nothing;
+    return hashGoingOnFrom(nothing, bytes);
+}
+
+uint64_t StringTable::hashOf(StringID id) const
+{
+    return id.index() < m_numberOfStringsAsRead ? hashOf(m_strings[id.index()]) : m_hashesOfInternedStrings[id.index() - m_numberOfStringsAsRead];
+}
+
+uint64_t StringTable::hashGoingOnFrom(FrontOfKeptTexts& front, std::span<const uint8_t> bytes)
+{
+    constexpr uint64_t multiplier = 0x9e3779b97f4a7c15;
+    auto add = [](uint64_t hash, uint64_t word) {
+        hash = (hash ^ word) * multiplier;
+        return hash ^ hash >> 32;
+    };
+    size_t numberOfBytes = bytes.size();
+    size_t numberOfWords = numberOfBytes / sizeof(uint64_t);
+    if (front.numberOfWords > numberOfWords) {
+        front.hashOfWords = 0;
+        front.numberOfWords = 0;
+    }
+    uint64_t hash = front.hashOfWords;
+    bytes = bytes.subspan(front.numberOfWords * sizeof(uint64_t));
+    for (; bytes.size() >= sizeof(uint64_t); bytes = bytes.subspan(sizeof(uint64_t))) {
+        uint64_t word;
+        memcpySpan(asMutableByteSpan(word), bytes.first(sizeof(uint64_t)));
+        hash = add(hash, word);
+    }
+    front.hashOfWords = hash;
+    front.numberOfWords = numberOfWords;
+    uint64_t rest = 0;
+    for (size_t index = 0; index < bytes.size(); ++index)
+        rest |= static_cast<uint64_t>(bytes[index]) << (index * 8);
+    hash = add(add(hash, rest), numberOfBytes);
     hash ^= hash >> 29;
     hash *= 0xbf58476d1ce4e5b9;
     hash ^= hash >> 32;
@@ -297,7 +452,7 @@ void StringTable::insert(Shard& shard, uint64_t hash, StringID id)
 
 void StringTable::reserve(Shard& shard, size_t count) const
 {
-    AOT_THRESHOLD(size_t, minNumberOfSlots, 8);
+    static constexpr size_t minNumberOfSlots = 8;
     if (shard.slots.size() >= 2 * count)
         return;
     size_t numberOfSlots = std::max(minNumberOfSlots, roundUpToPowerOfTwo(2 * count));
@@ -305,7 +460,7 @@ void StringTable::reserve(Shard& shard, size_t count) const
     shard.count = 0;
     for (StringID id : oldSlots) {
         if (id)
-            insert(shard, hashOf(m_strings[id.index()]), id);
+            insert(shard, hashOf(id), id);
     }
 }
 
@@ -316,11 +471,11 @@ StringID StringTable::append(std::span<const uint8_t> bytes, uint64_t hash)
 
 StringID StringTable::append(std::span<const uint8_t> bytes, uint64_t hash, BuiltinName name)
 {
-    RELEASE_ASSERT(m_strings.size() < provisionalBit);
     StringID id(m_strings.size());
     m_strings.constructAndAppend(bytes);
     m_nameClasses.append(classifyName(bytes));
     m_builtinNames.append(name);
+    m_hashesOfInternedStrings.append(hash);
     recordBuiltinName(id);
     Shard& shard = m_shards[shardIndexOf(hash)];
     reserve(shard, static_cast<size_t>(shard.count) + 1);
@@ -355,7 +510,6 @@ void StringTable::appendBuiltinNames()
     }
     for (unsigned shardIndex = 0; shardIndex < numberOfShards; ++shardIndex)
         reserve(m_shards[shardIndex], static_cast<size_t>(m_shards[shardIndex].count) + countInShard[shardIndex]);
-    // The table outlives the strings, and its names are canonical.
     for (auto [name, hash] : names) {
         std::span<const uint8_t> text = m_builtins->textOf(name);
         ASSERT(isCanonicalProgramString(text));
@@ -363,12 +517,6 @@ void StringTable::appendBuiltinNames()
         StringID id = append(text, hash, name);
         RELEASE_ASSERT(stringOf(name) == id);
     }
-}
-
-std::span<const uint8_t> StringTable::provisionalAt(StringID id) const
-{
-    RELEASE_ASSERT(m_openPhase);
-    return m_openPhase->textOf(id);
 }
 
 } } } // namespace JSC::AOT::Typed

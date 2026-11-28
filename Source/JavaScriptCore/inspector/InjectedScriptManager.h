@@ -59,7 +59,7 @@ public:
     JS_EXPORT_PRIVATE virtual void disconnect();
     JS_EXPORT_PRIVATE virtual void discardInjectedScripts();
 
-    InjectedScriptHost& LEGACY_NODELETE injectedScriptHost();
+    NODELETE JS_EXPORT_PRIVATE InjectedScriptHost& injectedScriptHost();
     InspectorEnvironment& inspectorEnvironment() const { return *m_environment; }
 
     JS_EXPORT_PRIVATE InjectedScript injectedScriptFor(JSC::JSGlobalObject*);
@@ -75,8 +75,8 @@ public:
 protected:
     virtual void didCreateInjectedScript(const InjectedScript&);
 
-    UncheckedKeyHashMap<int, InjectedScript> m_idToInjectedScript;
-    UncheckedKeyHashMap<JSC::JSGlobalObject*, int> m_scriptStateToId;
+    HashMap<int, InjectedScript> m_idToInjectedScript;
+    HashMap<JSC::JSGlobalObject*, int> m_scriptStateToId;
 
 private:
     std::expected<JSC::JSObject*, NakedPtr<JSC::Exception>> createInjectedScript(JSC::JSGlobalObject*, int id);

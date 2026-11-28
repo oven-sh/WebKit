@@ -36,17 +36,17 @@ class RenderMathMLPadded final : public RenderMathMLRow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLPadded);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLPadded);
 public:
-    RenderMathMLPadded(MathMLPaddedElement&, Style::ComputedStyle&&);
+    RenderMathMLPadded(MathMLPaddedElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMathMLPadded();
 
 private:
     ASCIILiteral renderName() const final { return "RenderMathMLPadded"_s; }
 
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     std::optional<LayoutUnit> firstLineBaseline() const final;
 
-    MathMLPaddedElement& LEGACY_NODELETE element() const;
+    NODELETE MathMLPaddedElement& element() const;
     LayoutUnit voffset() const;
     LayoutUnit lspace() const;
     LayoutUnit mpaddedWidth(LayoutUnit contentWidth) const;

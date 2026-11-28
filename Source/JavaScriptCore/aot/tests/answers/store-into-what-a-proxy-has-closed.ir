@@ -1,0 +1,59 @@
+# function around(box, f) { box.a = 1; f(); box.b = 2; }, once in strict code and once in sloppy code
+# RUN(STRICT): run-in-shell globalThis.show = (strict, sloppy, box) => { try { strict(box, () => { Object.freeze(new Proxy(box, {})); }); } catch (e) { print(String(e)); } print(JSON.stringify(box), Object.isFrozen(box)); };
+# STRICT: TypeError: Attempted to assign to readonly property
+# STRICT-NEXT: {"b":0,"a":1} true
+# STRICT-NEXT: exited with 0
+# RUN(SLOPPY): run-in-shell globalThis.show = (strict, sloppy, box) => { sloppy(box, () => { Object.freeze(new Proxy(box, {})); }); print(JSON.stringify(box), Object.isFrozen(box)); };
+# SLOPPY: {"b":0,"a":1} true
+# SLOPPY-NEXT: exited with 0
+# RUN(SEALED): run-in-shell globalThis.show = (strict, sloppy, box) => { sloppy(box, () => { Object.seal(new Proxy(box, {})); }); print(JSON.stringify(box)); box.b = 0; strict(box, () => { }); print(JSON.stringify(box), Object.isSealed(box), Object.isFrozen(box)); };
+# SEALED: {"b":2,"a":1}
+# SEALED-NEXT: {"b":2,"a":1} true false
+# SEALED-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell globalThis.show = (strict, sloppy, box) => { strict(box, () => { Object.preventExtensions(new Proxy(box, {})); }); print(JSON.stringify(box), Object.isExtensible(box)); };
+# CLOSED: {"b":2,"a":1} false
+# CLOSED-NEXT: exited with 0
+# RUN(TWICE): run-in-shell globalThis.show = (strict, sloppy, box) => { strict(box, () => { print(Reflect.preventExtensions(new Proxy(new Proxy(box, {}), {}))); }); print(JSON.stringify(box), Object.isExtensible(box)); };
+# TWICE: true
+# TWICE-NEXT: {"b":2,"a":1} false
+# TWICE-NEXT: exited with 0
+# RUN(ADDSTRICT): run-in-shell globalThis.show = (strict, sloppy, box) => { Object.preventExtensions(new Proxy(box, {})); try { strict(box, () => { }); } catch (e) { print(e.constructor.name); } print(JSON.stringify(box)); };
+# ADDSTRICT: TypeError
+# ADDSTRICT-NEXT: {"b":0}
+# ADDSTRICT-NEXT: exited with 0
+# RUN(ADDSLOPPY): run-in-shell globalThis.show = (strict, sloppy, box) => { Object.preventExtensions(new Proxy(box, {})); sloppy(box, () => { }); print(JSON.stringify(box)); };
+# ADDSLOPPY: {"b":2}
+# ADDSLOPPY-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f2
+layout L0 name="Box" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="around" parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    PropSet v0, v2 key="a"
+    v4 = Call v1, - calleeName="f"
+    v5 = Integer integer=2
+    PropSet v0, v5 key="b"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="aroundSloppy" flags=[IsSloppy] parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    PropSet v0, v2 key="a" mode=Sloppy
+    v4 = Call v1, - calleeName="f"
+    v5 = Integer integer=2
+    PropSet v0, v5 key="b" mode=Sloppy
+    v7 = Undefined
+    Return v7
+}
+function f2 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = NewClosure function=f0
+    v3 = NewClosure function=f1
+    v4 = Integer integer=0
+    v5 = NewObject -, v4 layout=L0 fields=[1]
+    v6 = FinishObject v5
+    v7 = Call v1, -, v2, v3, v6 calleeName="show"
+    Return v7
+}
+entry module=m0

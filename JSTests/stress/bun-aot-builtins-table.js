@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--useShadowRealm=1", "--useTemporal=1", "--useSharedArrayBuffer=1")
+//@ requireOptions("--useDollarVM=1", "--useShadowRealm=1", "--useTemporal=1", "--alwaysUseSharedArrayBuffer=1")
 // Bun: the ahead-of-time compiler knows the engine's built-ins by a table (Source/JavaScriptCore/aot/builtins/*.def). Every entry has to be found in the
 // engine where the table says and be implemented the way the table says, a constant has to have the table's value, and every name or symbol on Object.prototype
 // has to be in the table. After an upstream sync each line printed here names an entry of the table to correct. The options are the ones Bun turns on.

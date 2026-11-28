@@ -28,6 +28,7 @@
 #include "ActiveDOMObject.h"
 #include "CSSFontFace.h"
 #include "CSSPropertyNames.h"
+#include "FontFaceLoadStatus.h"
 #include "IDLTypes.h"
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakPtr.h>
@@ -91,11 +92,10 @@ public:
     String lineGapOverride() const;
     String sizeAdjust() const;
 
-    enum class LoadStatus { Unloaded, Loading, Loaded, Error };
-    LoadStatus LEGACY_NODELETE status() const;
+    NODELETE FontFaceLoadStatus status() const;
 
     using LoadedPromise = DOMPromiseProxyWithResolveCallback<IDLInterface<FontFace>>;
-    LoadedPromise& LEGACY_NODELETE loadedForBindings();
+    NODELETE LoadedPromise& loadedForBindings();
     LoadedPromise& loadForBindings();
 
     void adopt(CSSFontFace&);
@@ -109,10 +109,10 @@ private:
     explicit FontFace(ScriptExecutionContext*, CSSFontFace&);
 
     // ActiveDOMObject.
-    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
+    NODELETE bool virtualHasPendingActivity() const final;
 
     // Callback for LoadedPromise.
-    FontFace& LEGACY_NODELETE loadedPromiseResolve();
+    NODELETE FontFace& loadedPromiseResolve();
     void setErrorState();
 
     Ref<CSSFontFace> m_backing;

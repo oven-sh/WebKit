@@ -1601,6 +1601,59 @@ egl::Error Renderer11::getD3DTextureInfo(const egl::Config *configuration,
         ASSERT(textureAngleFormat);
         sizedInternalFormat = textureAngleFormat->glInternalFormat;
     }
+    else if (desc.Format == DXGI_FORMAT_Y410 || desc.Format == DXGI_FORMAT_Y210)
+    {
+        // Packed 10-bit YUV keeps its native DXGI format and is sampled
+        // through its aliased view. Y410 can additionally be rendered to through
+        // its aliased R10G10B10A2_UNORM view.
+        if (configuration)
+        {
+            // ANGLE creates no packed YUV surfaces of its own.
+            return egl::Error(EGL_BAD_PARAMETER, "Packed YUV textures are not valid for pbuffers.");
+        }
+
+        if (attribs.contains(EGL_D3D11_TEXTURE_PLANE_ANGLE))
+        {
+            return egl::Error(
+                EGL_BAD_PARAMETER,
+                "EGL_D3D11_TEXTURE_PLANE_ANGLE is not valid for packed YUV textures.");
+        }
+
+        textureAngleFormat = desc.Format == DXGI_FORMAT_Y410
+                                 ? &angle::Format::Get(angle::FormatID::R10G10B10A2_UNORM)
+                                 : &angle::Format::Get(angle::FormatID::R16G16B16A16_UNORM);
+        ASSERT(textureAngleFormat);
+        sizedInternalFormat = textureAngleFormat->glInternalFormat;
+
+        // Y210 packs two pixels per word pair: the width must be even, and the
+        // RGBA16 view covers a pair of words, halving the texture width.
+        if (desc.Format == DXGI_FORMAT_Y210)
+        {
+            if (desc.Width % 2 != 0)
+            {
+                return egl::Error(EGL_BAD_PARAMETER,
+                                  "Y210 client buffer textures must have an even width.");
+            }
+            imageWidth /= 2;
+        }
+
+        // The internal format must match the packed format's bit layout.
+        // GL_RGB10_A2_EXT has the same value as GL_RGB10_A2, so both are accepted.
+        if (attribs.contains(EGL_TEXTURE_INTERNAL_FORMAT_ANGLE))
+        {
+            const GLenum internalFormat =
+                static_cast<GLenum>(attribs.get(EGL_TEXTURE_INTERNAL_FORMAT_ANGLE));
+            const GLenum expectedInternalFormat =
+                desc.Format == DXGI_FORMAT_Y410 ? GL_RGB10_A2 : GL_RGBA16_EXT;
+            if (internalFormat != expectedInternalFormat)
+            {
+                std::ostringstream err;
+                err << "Invalid client buffer texture internal format: " << std::hex
+                    << internalFormat;
+                return egl::Error(EGL_BAD_PARAMETER, err.str());
+            }
+        }
+    }
     else
     {
         switch (desc.Format)
@@ -2667,9 +2720,29 @@ angle::Result Renderer11::copyTexture(const gl::Context *context,
     ASSERT(destStorage11);
 
     // Check for fast path where a CopySubresourceRegion can be used.
-    if (unpackPremultiplyAlpha == unpackUnmultiplyAlpha && !unpackFlipY &&
-        sourceImageDesc.format.info->sizedInternalFormat ==
-            destStorage11->getFormatSet().internalFormat)
+    bool useCopySubresourceRegion = unpackPremultiplyAlpha == unpackUnmultiplyAlpha &&
+                                    !unpackFlipY &&
+                                    sourceImageDesc.format.info->sizedInternalFormat ==
+                                        destStorage11->getFormatSet().internalFormat;
+
+    // Packed YUV images (Y410/Y210) share the internal format of their RGBA view alias but keep a
+    // DXGI format that CopySubresourceRegion can't convert, so copies to or from them use the
+    // shader path. Check the resources: the EGL image storage's format set comes from the internal
+    // format.
+    if (useCopySubresourceRegion && srcTarget == gl::TextureTarget::_2D)
+    {
+        gl::ImageIndex sourceIndex = gl::ImageIndex::MakeFromTarget(srcTarget, sourceLevel, 1);
+        const TextureHelper11 *sourceResource = nullptr;
+        UINT sourceSubresource                = 0;
+        ANGLE_TRY(GetTextureD3DResourceFromStorageOrImage(context, sourceD3D, sourceIndex,
+                                                          &sourceResource, &sourceSubresource));
+        const TextureHelper11 *destResource = nullptr;
+        ANGLE_TRY(destStorage11->getResource(context, &destResource));
+        useCopySubresourceRegion = !d3d11::IsPackedYUVFormat(sourceResource->getFormat()) &&
+                                   !d3d11::IsPackedYUVFormat(destResource->getFormat());
+    }
+
+    if (useCopySubresourceRegion)
     {
         const TextureHelper11 *destResource = nullptr;
         ANGLE_TRY(destStorage11->getResource(context, &destResource));
@@ -3408,8 +3481,6 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
     ASSERT(sourceArea.width >= 0);
     ASSERT(sourceArea.height >= 0);
 
-    const bool invertTexture = UsePresentPathFast(this, &srcAttachment);
-
     RenderTarget11 *rt11 = nullptr;
     ANGLE_TRY(srcAttachment.getRenderTarget(context, 0, &rt11));
     ASSERT(rt11->getTexture().valid());
@@ -3417,37 +3488,17 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
     const TextureHelper11 &textureHelper = rt11->getTexture();
     unsigned int sourceSubResource       = rt11->getSubresourceIndex();
 
-    const gl::Extents &texSize = textureHelper.getExtents();
-
-    gl::Rectangle actualArea = sourceArea;
-    bool reverseRowOrder     = pack.reverseRowOrder;
-    if (invertTexture)
-    {
-        actualArea.y    = texSize.height - actualArea.y - actualArea.height;
-        reverseRowOrder = !reverseRowOrder;
-    }
-
-    // Clamp read region to the defined texture boundaries, preventing out of bounds reads
-    // and reads of uninitialized data.
-    gl::Rectangle safeArea;
-    safeArea.x = gl::clamp(actualArea.x, 0, texSize.width);
-    safeArea.y = gl::clamp(actualArea.y, 0, texSize.height);
-    safeArea.width =
-        gl::clamp(actualArea.width + std::min(actualArea.x, 0), 0, texSize.width - safeArea.x);
-    safeArea.height =
-        gl::clamp(actualArea.height + std::min(actualArea.y, 0), 0, texSize.height - safeArea.y);
-
-    ASSERT(safeArea.x >= 0 && safeArea.y >= 0);
-    ASSERT(safeArea.x + safeArea.width <= texSize.width);
-    ASSERT(safeArea.y + safeArea.height <= texSize.height);
-
-    if (safeArea.width == 0 || safeArea.height == 0)
+    gl::Rectangle clippedReadArea;
+    bool reverseRowOrder     = false;
+    const bool invertTexture = UsePresentPathFast(this, &srcAttachment);
+    if (!ClipRenderTargetReadArea(*rt11, sourceArea, invertTexture, pack.reverseRowOrder,
+                                  &clippedReadArea, &reverseRowOrder))
     {
         // no work to do
         return angle::Result::Continue;
     }
 
-    gl::Extents safeSize(safeArea.width, safeArea.height, 1);
+    const gl::Extents stagingTextureSize(clippedReadArea.width, clippedReadArea.height, 1);
 
     // Intermediate texture used for copy for multiplanar formats or resolving multisampled
     // textures.
@@ -3463,8 +3514,8 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
         if (d3d11::IsSupportedMultiplanarFormat(textureHelper.getFormat()))
         {
             D3D11_TEXTURE2D_DESC planeDesc;
-            planeDesc.Width              = static_cast<UINT>(safeSize.width);
-            planeDesc.Height             = static_cast<UINT>(safeSize.height);
+            planeDesc.Width              = static_cast<UINT>(stagingTextureSize.width);
+            planeDesc.Height             = static_cast<UINT>(stagingTextureSize.height);
             planeDesc.MipLevels          = 1;
             planeDesc.ArraySize          = 1;
             planeDesc.Format             = textureHelper.getFormatSet().srvFormat;
@@ -3502,19 +3553,21 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
             ANGLE_TRY(allocateResource(context11, srvDesc, textureHelper.get(), &srv));
             srv.setInternalName("readFromAttachment.SRV");
 
-            gl::Box srcGlBox(safeArea.x, safeArea.y, 0, safeArea.width, safeArea.height, 1);
-            gl::Box destGlBox(0, 0, 0, safeSize.width, safeSize.height, 1);
+            gl::Box srcGlBox(clippedReadArea.x, clippedReadArea.y, 0, clippedReadArea.width,
+                             clippedReadArea.height, 1);
+            gl::Box destGlBox(0, 0, 0, stagingTextureSize.width, stagingTextureSize.height, 1);
 
             // Perform a copy to planeTexture as we cannot read directly from NV12 d3d11 textures.
-            ANGLE_TRY(mBlit->copyTexture(
-                context, srv, srcGlBox, safeSize, internalFormat, rtv, destGlBox, safeSize, nullptr,
-                gl::GetUnsizedFormat(internalFormat), GL_NONE, GL_NEAREST, false, false, false));
+            ANGLE_TRY(mBlit->copyTexture(context, srv, srcGlBox, stagingTextureSize, internalFormat,
+                                         rtv, destGlBox, stagingTextureSize, nullptr,
+                                         gl::GetUnsizedFormat(internalFormat), GL_NONE, GL_NEAREST,
+                                         false, false, false));
 
-            // Update safeArea based on the destination.
-            safeArea.x      = destGlBox.x;
-            safeArea.y      = destGlBox.y;
-            safeArea.width  = destGlBox.width;
-            safeArea.height = destGlBox.height;
+            // Update clippedReadArea based on the destination.
+            clippedReadArea.x      = destGlBox.x;
+            clippedReadArea.y      = destGlBox.y;
+            clippedReadArea.width  = destGlBox.width;
+            clippedReadArea.height = destGlBox.height;
 
             sourceSubResource = 0;
             srcTexture        = &intermediateTextureHelper;
@@ -3524,8 +3577,8 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
             if (textureHelper.getSampleCount() > 1)
             {
                 D3D11_TEXTURE2D_DESC resolveDesc;
-                resolveDesc.Width              = static_cast<UINT>(texSize.width);
-                resolveDesc.Height             = static_cast<UINT>(texSize.height);
+                resolveDesc.Width              = static_cast<UINT>(rt11->getWidth());
+                resolveDesc.Height             = static_cast<UINT>(rt11->getHeight());
                 resolveDesc.MipLevels          = 1;
                 resolveDesc.ArraySize          = 1;
                 resolveDesc.Format             = textureHelper.getFormat();
@@ -3553,10 +3606,10 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
     }
 
     D3D11_BOX srcBox;
-    srcBox.left   = static_cast<UINT>(safeArea.x);
-    srcBox.right  = static_cast<UINT>(safeArea.x + safeArea.width);
-    srcBox.top    = static_cast<UINT>(safeArea.y);
-    srcBox.bottom = static_cast<UINT>(safeArea.y + safeArea.height);
+    srcBox.left   = static_cast<UINT>(clippedReadArea.x);
+    srcBox.right  = static_cast<UINT>(clippedReadArea.x + clippedReadArea.width);
+    srcBox.top    = static_cast<UINT>(clippedReadArea.y);
+    srcBox.bottom = static_cast<UINT>(clippedReadArea.y + clippedReadArea.height);
 
     // Select the correct layer from a 3D attachment
     srcBox.front = 0;
@@ -3568,8 +3621,8 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
 
     TextureHelper11 stagingHelper;
     ANGLE_TRY(createStagingTexture(context, textureHelper.getTextureType(),
-                                   srcTexture->getFormatSet(), safeSize, StagingAccess::READ,
-                                   &stagingHelper));
+                                   srcTexture->getFormatSet(), stagingTextureSize,
+                                   StagingAccess::READ, &stagingHelper));
     stagingHelper.setInternalName("readFromAttachment::stagingHelper");
 
     mDeviceContext->CopySubresourceRegion(stagingHelper.get(), 0, 0, 0, 0, srcTexture->get(),
@@ -3578,7 +3631,8 @@ angle::Result Renderer11::readFromAttachment(const gl::Context *context,
     const angle::Format &angleFormat = GetFormatFromFormatType(format, type);
     gl::Buffer *packBuffer = context->getState().getTargetBuffer(gl::BufferBinding::PixelPack);
 
-    PackPixelsParams packParams(safeArea, angleFormat, outputPitch, reverseRowOrder, packBuffer, 0);
+    PackPixelsParams packParams(clippedReadArea, angleFormat, outputPitch, reverseRowOrder,
+                                packBuffer, 0);
     return packPixels(context, stagingHelper, packParams, pixelsOut);
 }
 
@@ -3747,6 +3801,12 @@ angle::Result Renderer11::blitRenderbufferRect(const gl::Context *context,
     bool partialDSBlit =
         (nativeFormat.depthBits > 0 && depthBlit) != (nativeFormat.stencilBits > 0 && stencilBlit);
 
+    // Packed YUV images (Y410) share the format ID of their RGBA view alias but keep a DXGI format
+    // that ResolveSubresource and CopySubresourceRegion can't convert, so blits to or from them go
+    // through the shader path.
+    const bool packedYUV = d3d11::IsPackedYUVFormat(readRenderTarget11->getFormatSet().texFormat) ||
+                           d3d11::IsPackedYUVFormat(drawRenderTarget11->getFormatSet().texFormat);
+
     // Fast path: resolve a multisampled source straight into the destination.
     //
     // ResolveSubresource covers an entire subresource and cannot offset, scale or flip, so this
@@ -3759,7 +3819,7 @@ angle::Result Renderer11::blitRenderbufferRect(const gl::Context *context,
         !drawRenderTarget->isMultisampled() &&
         readRenderTarget11->getFormatSet().formatID ==
             drawRenderTarget11->getFormatSet().formatID &&
-        !readRenderTarget11->getTexture().is3D() && !drawTexture.is3D())
+        !packedYUV && !readRenderTarget11->getTexture().is3D() && !drawTexture.is3D())
     {
         ASSERT(!outOfBounds && !reversalRequired && !colorMaskingNeeded);
         ASSERT(!depthBlit && !stencilBlit && !partialDSBlit);
@@ -3817,7 +3877,7 @@ angle::Result Renderer11::blitRenderbufferRect(const gl::Context *context,
     if (drawRenderTarget->getSamples() == readRenderTarget->getSamples() &&
         readRenderTarget11->getFormatSet().formatID ==
             drawRenderTarget11->getFormatSet().formatID &&
-        !stretchRequired && !outOfBounds && !reversalRequired && !partialDSBlit &&
+        !packedYUV && !stretchRequired && !outOfBounds && !reversalRequired && !partialDSBlit &&
         !colorMaskingNeeded && (!(depthBlit || stencilBlit) || wholeBufferCopy))
     {
         UINT dstX = drawRect.x;

@@ -48,16 +48,14 @@ public:
     const ColorSpace& colorSpace() const final;
 
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
-    void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
+    bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
+    void saveTransform() final;
+    bool restoreTransform() final;
 
     void drawRect(const FloatRect&, float borderThickness = 1) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawEllipse(const FloatRect&) final;
 
-#if USE(CG)
-    void applyStrokePattern() final;
-    void applyFillPattern() final;
-#endif
     void drawPath(const Path&) final;
     void fillPath(const Path&) final;
     void strokePath(const Path&) final;
@@ -71,8 +69,8 @@ public:
     using GraphicsContext::fillRect;
     void fillRect(const FloatRect&, RequiresClipToRect) final;
     void fillRect(const FloatRect&, const Color&) final;
-    void fillRect(const FloatRect&, Gradient&) final;
-    void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect) final;
+    void fillRect(const FloatRect&, const Gradient&) final;
+    void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect) final;
     void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) final;
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect& roundedHoleRect, const Color&) final;
     void clearRect(const FloatRect&) final;
@@ -92,12 +90,13 @@ public:
     void clip(const FloatRect&) final;
     void clipRoundedRect(const FloatRoundedRect&) final;
     void clipPath(const Path&, WindRule = WindRule::EvenOdd) final;
+    // clipTransformedPath intentionally left as the base class implementation.
 
     void clipOut(const FloatRect&) final;
     void clipOutRoundedRect(const FloatRoundedRect&) final;
     void clipOut(const Path&) final;
 
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
 
     IntRect clipBounds() const final;
 
@@ -106,13 +105,13 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions = { }) final;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions = { }) final;
     void drawSystemImage(SystemImage&, const FloatRect&) final;
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions = { }) final;
     void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&) final;
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImageDrawingOptions) final;
+    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, RasterDrawingOptions) final;
 #endif
 
     using GraphicsContext::scale;
@@ -138,6 +137,9 @@ public:
 
     void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) final;
 
+    void drawFreeformGradient(FreeformGradient&, const FloatRect& destination) final;
+    void drawMeshGradient(MeshGradient&, const FloatRect& destination) final;
+
     void beginPage(const FloatRect&) final;
     void endPage() final;
 
@@ -148,9 +150,11 @@ public:
 
     bool supportsInternalLinks() const final;
 
-    void didUpdateState(GraphicsContextState&) final;
-
 private:
+    // The child contexts are kept in sync lazily, before any operation that needs them to
+    // observe the current state. They apply the state to their platform contexts in turn.
+    void updatePlatformContextStateIfNeeded();
+
     void verifyStateSynchronization();
 
     bool m_hasLoggedAboutDesynchronizedState { false };

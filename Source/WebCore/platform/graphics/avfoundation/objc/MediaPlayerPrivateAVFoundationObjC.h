@@ -101,11 +101,11 @@ public:
 #endif
 
     void playerItemStatusDidChange(int);
-    void LEGACY_NODELETE playbackLikelyToKeepUpWillChange();
+    NODELETE void playbackLikelyToKeepUpWillChange();
     void playbackLikelyToKeepUpDidChange(bool);
-    void LEGACY_NODELETE playbackBufferEmptyWillChange();
+    NODELETE void playbackBufferEmptyWillChange();
     void playbackBufferEmptyDidChange(bool);
-    void LEGACY_NODELETE playbackBufferFullWillChange();
+    NODELETE void playbackBufferFullWillChange();
     void playbackBufferFullDidChange(bool);
     void loadedTimeRangesDidChange(RetainPtr<NSArray>&&);
     void seekableTimeRangesDidChange(RetainPtr<NSArray>&&, NSTimeInterval, NSTimeInterval);
@@ -120,8 +120,8 @@ public:
     void metadataDidArrive(const RetainPtr<NSArray>&, const MediaTime&);
     void firstFrameAvailableDidChange(bool);
     void trackEnabledDidChange(bool);
-    void LEGACY_NODELETE canPlayFastReverseDidChange(bool);
-    void LEGACY_NODELETE canPlayFastForwardDidChange(bool);
+    NODELETE void canPlayFastReverseDidChange(bool);
+    NODELETE void canPlayFastForwardDidChange(bool);
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     void playbackTargetIsWirelessDidChange();
@@ -136,6 +136,7 @@ public:
     Ref<WebCoreAVFResourceLoader> ensureAVFResourceLoader(AVAssetResourceLoadingRequest *);
 
     bool isAudible() const { return m_isAudible; }
+    void setHasAudioForTesting(bool);
 
 private:
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -191,8 +192,6 @@ private:
 
 #if PLATFORM(IOS_FAMILY)
     NSArray *timedMetadata() const final;
-    String accessLog() const final;
-    String errorLog() const final;
     void sceneIdentifierDidChange() final;
 #endif
 
@@ -404,7 +403,7 @@ private:
     RefPtr<WebCoreAVFResourceLoader> takeResourceLoader(AVAssetResourceLoadingRequest *);
 
     void updateLayerAttachment();
-    bool LEGACY_NODELETE shouldAttachLayerToPlayer();
+    NODELETE bool shouldAttachLayerToPlayer();
 
 #if PLATFORM(MAC)
     void screenReservedChanged(bool) final;
@@ -533,6 +532,7 @@ private:
     RetainPtr<id> m_videoFrameMetadataGatheringObserver;
     bool m_isGatheringVideoFrameMetadata { false };
     bool m_isAudible { false };
+    bool m_suppressesAudioRendering { false };
     bool m_isVideoPlayer { false };
     std::optional<VideoFrameMetadata> m_videoFrameMetadata;
     mutable std::optional<NSTimeInterval> m_cachedSeekableTimeRangesLastModifiedTime;

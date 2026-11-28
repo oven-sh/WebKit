@@ -143,7 +143,7 @@ CDMSessionAVContentKeySession::CDMSessionAVContentKeySession(Vector<int>&& proto
 
 CDMSessionAVContentKeySession::~CDMSessionAVContentKeySession()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER);
     [m_contentKeySessionDelegate invalidate];
 
@@ -215,8 +215,7 @@ void CDMSessionAVContentKeySession::releaseKeys()
 
         RetainPtr certificateData = WTF::toNSData(protect(m_certificate)->span());
         RetainPtr expiredSessions = [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:certificateData.get() storageDirectoryAtURL:[NSURL fileURLWithPath:storagePath.createNSString().get()]];
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSData* expiredSessionData in expiredSessions.get()) {
+        for (NSData* expiredSessionData in expiredSessions.get()) {
             static const NSString *PlaybackSessionIdKey = @"PlaybackSessionID";
             NSDictionary *expiredSession = [NSPropertyListSerialization propertyListWithData:expiredSessionData options:kCFPropertyListImmutable format:nullptr error:nullptr];
             RetainPtr playbackSessionIdValue = dynamic_objc_cast<NSString>([expiredSession objectForKey:PlaybackSessionIdKey]);
@@ -233,7 +232,7 @@ void CDMSessionAVContentKeySession::releaseKeys()
     }
 }
 
-static bool LEGACY_NODELETE isEqual(Uint8Array* data, ASCIILiteral literal)
+NODELETE static bool isEqual(Uint8Array* data, ASCIILiteral literal)
 {
     ASSERT(data);
     ASSERT(!literal.isNull());

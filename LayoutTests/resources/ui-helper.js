@@ -1572,12 +1572,18 @@ window.UIHelper = class UIHelper {
     {
         const zoomScale = () => new Promise(resolve => testRunner.runUIScript('uiController.uiScriptComplete(uiController.zoomScale)', resolve));
 
+        const isHoldingAnUpdate = async () => {
+            if (!this.isWebKit2() || !this.isMac())
+                return false;
+            return /holding the web process update until the ease ends|holding viewport-constrained layers until the web process lays out/.test(await UIHelper.delegatedZoomOverrideAsText());
+        };
+
         let lastScale = await zoomScale();
         let stableCount = 0;
         for (let i = 0; i < 60 && stableCount < 3; ++i) {
             await UIHelper.ensurePresentationUpdate();
             const scale = await zoomScale();
-            stableCount = (scale === lastScale) ? stableCount + 1 : 0;
+            stableCount = (scale === lastScale && !await isHoldingAnUpdate()) ? stableCount + 1 : 0;
             lastScale = scale;
         }
         return parseFloat(lastScale);
@@ -2309,12 +2315,12 @@ window.UIHelper = class UIHelper {
         });
     }
 
-    static remoteAnimationStackForElement(element)
+    static remoteAnimationStackForElement(element, layerType)
     {
         if (!this.isWebKit2() || !element)
             return Promise.resolve();
 
-        const layerID = window.internals?.layerIDForElement(element);
+        const layerID = window.internals?.layerIDForElement(element, layerType);
         const script = `uiController.uiScriptComplete(uiController.animationStackForLayerWithID(${layerID}))`;
         return new Promise(resolve => {
             testRunner.runUIScript(script, result => resolve(JSON.parse(result)));
@@ -2341,6 +2347,15 @@ window.UIHelper = class UIHelper {
             if (timeline.identifier == identifier)
                 return timeline;
         }
+    }
+
+    static async schedulesUpdatesForMonotonicAnimations()
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve(false);
+
+        const script = `uiController.schedulesUpdatesForMonotonicAnimations()`;
+        return new Promise(resolve => testRunner.runUIScript(script, result => resolve(result === "true")));
     }
 
     static async displayLinkWantsHighFrameRate()

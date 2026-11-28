@@ -28,9 +28,7 @@
 #if ENABLE(WEB_AUTHN)
 
 #include <WebCore/DigitalCredentialsRequestDataBuilder.h>
-#include <WebCore/DocumentInlines.h>
-#include <WebCore/ProcessWarming.h>
-#include <WebCore/Settings.h>
+#include <WebCore/SecurityOriginData.h>
 #include <WebCore/ValidatedOpenID4VPRequest.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -38,11 +36,10 @@ namespace TestWebKitAPI {
 
 using namespace WebCore;
 
-static Ref<Document> createDocument()
+static DigitalCredentialsSecurityOriginData exampleOrigins()
 {
-    ProcessWarming::initializeNames();
-    auto settings = Settings::create(nullptr);
-    return Document::create(settings.get(), URL { "https://example.com/"_s });
+    auto origin = SecurityOriginData::fromURL(URL { "https://example.com/"_s });
+    return { origin, origin };
 }
 
 static UnvalidatedDigitalCredentialRequest mobileDocumentRequest(ASCIILiteral deviceRequest)
@@ -72,61 +69,53 @@ static std::optional<ValidatedDigitalCredentialRequest> validatedOpenID4VP(Digit
 
 static Vector<String> rawRequestIdentifiers(const DigitalCredentialsRawRequests& rawRequests)
 {
-    return WTF::switchOn(rawRequests, [](const Vector<UnvalidatedDigitalCredentialRequest>& requests) {
-        return requests.map([](auto& request) {
-            return WTF::switchOn(request,
-                [](const MobileDocumentRequest& request) {
-                    return request.deviceRequest;
-                },
-                [](const OpenID4VPSignedRequest& request) {
-                    return request.request;
-                },
-                [](const OpenID4VPMultisignedRequest& request) {
-                    return request.payload;
-                },
-                [](const OpenID4VPUnsignedRequest& request) {
-                    return request.requestJSON;
-                });
-        });
+    return rawRequests.map([](auto& request) {
+        return WTF::switchOn(request,
+            [](const MobileDocumentRequest& request) {
+                return request.deviceRequest;
+            },
+            [](const OpenID4VPSignedRequest& request) {
+                return request.request;
+            },
+            [](const OpenID4VPMultisignedRequest& request) {
+                return request.payload;
+            },
+            [](const OpenID4VPUnsignedRequest& request) {
+                return request.requestJSON;
+            });
     });
 }
 
 TEST(DigitalCredentialsRequestDataBuilder, RawRequestsOmitRequestsThatDidNotValidate)
 {
-    auto document = createDocument();
-
     auto result = DigitalCredentialsRequestDataBuilder::build(
         { std::nullopt, validatedMobileDocument(), std::nullopt, validatedMobileDocument() },
-        document,
+        exampleOrigins(),
         { mobileDocumentRequest("invalid-1"_s), mobileDocumentRequest("valid-1"_s), mobileDocumentRequest("invalid-2"_s), mobileDocumentRequest("valid-2"_s) });
     ASSERT_FALSE(result.hasException());
 
     auto [requestData, rawRequests] = result.releaseReturnValue();
-    auto* mobileDocumentRequestData = std::get_if<DigitalCredentialsMobileDocumentRequestData>(&requestData);
-    ASSERT_TRUE(mobileDocumentRequestData);
-    EXPECT_EQ(mobileDocumentRequestData->requests.size(), 2u);
+    EXPECT_EQ(requestData.requests.size(), 2u);
     EXPECT_EQ(rawRequestIdentifiers(rawRequests), (Vector<String> { "valid-1"_s, "valid-2"_s }));
 }
 
-TEST(DigitalCredentialsRequestDataBuilder, RawRequestsFollowMobileDocumentPrecedence)
+TEST(DigitalCredentialsRequestDataBuilder, PresentsMobileDocumentAndOpenID4VPRequestsInPageOrder)
 {
-    auto document = createDocument();
-
     auto result = DigitalCredentialsRequestDataBuilder::build(
         { validatedOpenID4VP(DigitalCredentialPresentationProtocol::Openid4vpV1Signed), validatedMobileDocument() },
-        document,
+        exampleOrigins(),
         { signedRequest("openid4vp"_s), mobileDocumentRequest("mdoc"_s) });
     ASSERT_FALSE(result.hasException());
 
     auto [requestData, rawRequests] = result.releaseReturnValue();
-    EXPECT_TRUE(std::holds_alternative<DigitalCredentialsMobileDocumentRequestData>(requestData));
-    EXPECT_EQ(rawRequestIdentifiers(rawRequests), (Vector<String> { "mdoc"_s }));
+    ASSERT_EQ(requestData.requests.size(), 2u);
+    EXPECT_TRUE(std::holds_alternative<ValidatedOpenID4VPRequest>(requestData.requests[0]));
+    EXPECT_TRUE(std::holds_alternative<ValidatedMobileDocumentRequest>(requestData.requests[1]));
+    EXPECT_EQ(rawRequestIdentifiers(rawRequests), (Vector<String> { "openid4vp"_s, "mdoc"_s }));
 }
 
-TEST(DigitalCredentialsRequestDataBuilder, RawRequestsFollowTheFirstOpenID4VPProtocol)
+TEST(DigitalCredentialsRequestDataBuilder, PresentsOpenID4VPRequestsOfDifferentProtocols)
 {
-    auto document = createDocument();
-
     Vector<std::optional<ValidatedDigitalCredentialRequest>> validatedRequests {
         validatedOpenID4VP(DigitalCredentialPresentationProtocol::Openid4vpV1Unsigned),
         validatedOpenID4VP(DigitalCredentialPresentationProtocol::Openid4vpV1Signed),
@@ -135,55 +124,57 @@ TEST(DigitalCredentialsRequestDataBuilder, RawRequestsFollowTheFirstOpenID4VPPro
     };
     auto result = DigitalCredentialsRequestDataBuilder::build(
         WTF::move(validatedRequests),
-        document,
+        exampleOrigins(),
         { unsignedRequest("unsigned-1"_s), signedRequest("signed"_s), unsignedRequest("invalid"_s), unsignedRequest("unsigned-2"_s) });
     ASSERT_FALSE(result.hasException());
 
     auto [requestData, rawRequests] = result.releaseReturnValue();
-    auto* openID4VPRequestData = std::get_if<DigitalCredentialsOpenID4VPRequestData>(&requestData);
-    ASSERT_TRUE(openID4VPRequestData);
-    ASSERT_EQ(openID4VPRequestData->requests.size(), 2u);
-    EXPECT_EQ(openID4VPRequestData->requests[0].protocol, DigitalCredentialPresentationProtocol::Openid4vpV1Unsigned);
-    EXPECT_EQ(openID4VPRequestData->requests[1].protocol, DigitalCredentialPresentationProtocol::Openid4vpV1Unsigned);
-    EXPECT_EQ(rawRequestIdentifiers(rawRequests), (Vector<String> { "unsigned-1"_s, "unsigned-2"_s }));
+    auto protocols = requestData.requests.map([](auto& request) {
+        return std::get<ValidatedOpenID4VPRequest>(request).protocol;
+    });
+    EXPECT_EQ(protocols, (Vector<DigitalCredentialPresentationProtocol> { DigitalCredentialPresentationProtocol::Openid4vpV1Unsigned, DigitalCredentialPresentationProtocol::Openid4vpV1Signed, DigitalCredentialPresentationProtocol::Openid4vpV1Unsigned }));
+    EXPECT_EQ(rawRequestIdentifiers(rawRequests), (Vector<String> { "unsigned-1"_s, "signed"_s, "unsigned-2"_s }));
 }
 
 TEST(DigitalCredentialsRequestDataBuilder, RejectsValidationThatDoesNotCoverEveryRequest)
 {
-    auto document = createDocument();
-
     auto result = DigitalCredentialsRequestDataBuilder::build(
         { validatedMobileDocument() },
-        document,
+        exampleOrigins(),
         { mobileDocumentRequest("first"_s), mobileDocumentRequest("second"_s) });
     EXPECT_TRUE(result.hasException());
 }
 
 TEST(DigitalCredentialsRequestDataBuilder, PresentsAtMostTheMaximumNumberOfOpenID4VPRequests)
 {
-    auto document = createDocument();
-
     Vector<std::optional<ValidatedDigitalCredentialRequest>> validatedRequests;
     Vector<UnvalidatedDigitalCredentialRequest> unvalidatedRequests;
     for (size_t index = 0; index <= maxOpenID4VPRequestCount; ++index) {
         validatedRequests.append(validatedOpenID4VP(DigitalCredentialPresentationProtocol::Openid4vpV1Unsigned));
         unvalidatedRequests.append(unsignedRequest("request"_s));
     }
+    validatedRequests.append(validatedMobileDocument());
+    unvalidatedRequests.append(mobileDocumentRequest("mdoc"_s));
 
-    auto result = DigitalCredentialsRequestDataBuilder::build(WTF::move(validatedRequests), document, WTF::move(unvalidatedRequests));
+    auto result = DigitalCredentialsRequestDataBuilder::build(WTF::move(validatedRequests), exampleOrigins(), WTF::move(unvalidatedRequests));
     ASSERT_FALSE(result.hasException());
 
     auto [requestData, rawRequests] = result.releaseReturnValue();
-    auto* openID4VPRequestData = std::get_if<DigitalCredentialsOpenID4VPRequestData>(&requestData);
-    ASSERT_TRUE(openID4VPRequestData);
-    EXPECT_EQ(openID4VPRequestData->requests.size(), maxOpenID4VPRequestCount);
-    EXPECT_EQ(rawRequestIdentifiers(rawRequests).size(), maxOpenID4VPRequestCount);
+    ASSERT_EQ(requestData.requests.size(), maxOpenID4VPRequestCount + 1);
+    EXPECT_TRUE(std::holds_alternative<ValidatedMobileDocumentRequest>(requestData.requests.last()));
+    auto rawRequestIDs = rawRequestIdentifiers(rawRequests);
+    ASSERT_EQ(rawRequestIDs.size(), maxOpenID4VPRequestCount + 1);
+    EXPECT_EQ(rawRequestIDs.last(), "mdoc"_s);
 }
 
 TEST(ValidatedOpenID4VPRequest, LimitsBoundEveryElement)
 {
+    OpenID4VPCredentialQuery credential;
+    credential.identifier = "credential"_s;
+    credential.format = OpenID4VPCredentialFormat::MsoMdoc;
+
     ValidatedOpenID4VPRequestObject request;
-    request.credentials.append(OpenID4VPCredentialQuery { .identifier = "credential"_s, .format = OpenID4VPCredentialFormat::MsoMdoc });
+    request.credentials.append(WTF::move(credential));
     EXPECT_TRUE(isWithinOpenID4VPRequestLimits(request));
 
     request.credentials[0].claimSets.resize(maxOpenID4VPRequestElementCount);
@@ -192,8 +183,11 @@ TEST(ValidatedOpenID4VPRequest, LimitsBoundEveryElement)
 
 TEST(ValidatedOpenID4VPRequest, LimitsBoundStringLength)
 {
+    OpenID4VPVerifierIdentity verifier;
+    verifier.identifier = "verifier"_s;
+
     ValidatedOpenID4VPRequestObject request;
-    request.verifierIdentities.append(OpenID4VPVerifierIdentity { .identifier = "verifier"_s });
+    request.verifierIdentities.append(WTF::move(verifier));
     EXPECT_TRUE(isWithinOpenID4VPRequestLimits(request));
 
     StringBuilder longIdentifier;

@@ -35,7 +35,7 @@ namespace WebKit {
 
 typedef HashMap<String, bool> BoolOverridesMap;
 
-static BoolOverridesMap& LEGACY_NODELETE boolTestRunnerOverridesMap()
+NODELETE static BoolOverridesMap& boolTestRunnerOverridesMap()
 {
     static NeverDestroyed<BoolOverridesMap> map;
     return map;
@@ -52,7 +52,7 @@ void WebPreferencesStore::removeTestRunnerOverrides()
 }
 
 template<typename MappedType>
-SUPPRESS_NODELETE static MappedType LEGACY_NODELETE valueForKey(const WebPreferencesStore::ValueMap& values, const WebPreferencesStore::ValueMap& overriddenDefaults, const String& key)
+NODELETE SUPPRESS_NODELETE static MappedType valueForKey(const WebPreferencesStore::ValueMap& values, const WebPreferencesStore::ValueMap& overriddenDefaults, const String& key)
 {
     auto valuesIt = values.find(key);
     if (valuesIt != values.end() && std::holds_alternative<MappedType>(valuesIt->value))
@@ -195,7 +195,7 @@ void WebPreferencesStore::logNonDefaultValues() const
         checkEntry(key, value);
 
     if (!nonDefaultPrefs.isEmpty())
-        RELEASE_LOG(Loading, "WebPreferencesStore: non-default preferences: %" PUBLIC_LOG_STRING, nonDefaultPrefs.toString().utf8());
+        RELEASE_LOG(Loading, "WebPreferencesStore: non-default preferences: %" PUBLIC_LOG_STRING, makeUTF8CString(nonDefaultPrefs.toString()));
 #endif
 }
 

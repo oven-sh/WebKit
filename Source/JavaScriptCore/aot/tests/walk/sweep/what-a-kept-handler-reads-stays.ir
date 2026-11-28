@@ -1,0 +1,33 @@
+# const info = rest; let t; try { t = make(); } catch { log(info); } return t;
+# v3 is returned, so it stays and may throw for lack of memory. b1 keeps its handler edge, b2 is reached through it, and v2 stays for the call in b2.
+# The argument that the handler edge brings is needed only once the edge is taken and the parameter is read.
+# RUN: sweep-code
+# CHECK: v2: anything @Cell = CreateRest
+# CHECK: b1() handler=b2(v0)
+# CHECK: v3: anything @Cell = CreateRest
+# CHECK: b2(v4
+# CHECK: = Call v1
+# CHECK-NOT: dropped b
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
+#     Jump -> next b1()
+#   b1() handler=b2(v0):
+#     v3: anything @Cell = CreateRest firstArgument=1 traits=[mayThrow, mayCollect, mayTouchMemory]
+#     Jump -> next b3()
+#   b2(v4: anything @JSValue) role=CatchHandler:
+#     v5: anything @JSValue = Call v1, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v5
+#   b3():
+#     Return v3
+# }
+# -- end of code

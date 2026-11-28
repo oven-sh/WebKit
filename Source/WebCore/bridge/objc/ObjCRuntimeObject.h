@@ -28,8 +28,7 @@
 
 #include "runtime_object.h"
 
-namespace JSC {
-namespace Bindings {
+namespace JSC::Bindings {
 
 class ObjcInstance;
 
@@ -44,7 +43,7 @@ public:
         return object;
     }
 
-    ObjcInstance* LEGACY_NODELETE getInternalObjCInstance() const;
+    NODELETE ObjcInstance* getInternalObjCInstance() const;
 
     DECLARE_INFO;
 
@@ -58,7 +57,6 @@ private:
     void finishCreation(VM&);
 };
 
-}
 }
 
 #endif

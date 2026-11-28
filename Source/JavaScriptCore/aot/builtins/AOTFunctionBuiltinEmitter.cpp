@@ -13,9 +13,13 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTClosureWord.h"
 #include "AOTElementAccessEmitter.h"
-#include "AOTPlacement.h"
+#include "AOTIRProgram.h"
+#include "AOTPlan.h"
+#include "AOTStubsCallLists.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
 #include "JSBoundFunction.h"
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -36,8 +40,8 @@ void FunctionBuiltinEmitter::missUnlessCallableClosure(const InlineCall& call, C
         if (mayBeConstructor)
             missUnless(call, isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTClosure_entry), static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit))));
     };
-    if (FunctionID known = type.singleFunction()) {
-        switch (m_placement.slots().closureFormOf(known)) {
+    if (FunctionID known = singleFunctionOf(types(), type)) {
+        switch (m_plan.slots().closureFormOf(known)) {
         case ClosureForm::Slim:
             missUnless(call, hasStructureIDAt(offsetOfSlimClosureHeader));
             return;
@@ -116,21 +120,37 @@ void FunctionBuiltinEmitter::generateReflectApply(const InlineCall& call)
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { boxCell(function), thisValue, boxCell(list) }));
 }
 
-// Bytecode also constructs in place, so the stack has no frame for Reflect.construct, and a construct is never a tail call. The host function throws for invalid arguments, so that call stays where it is written.
 void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments() == 2 || call.numberOfArguments() == 3);
     auto constructorOrMiss = [&](ValueID id) {
-        Boxed constructor = boxCell(objectOrMiss(call, id));
-        missUnless(call, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { constructor }));
+        CellPointer constructor = objectOrMiss(call, id);
+        missUnless(call, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { boxCell(constructor) }));
         return constructor;
     };
-    Boxed target = constructorOrMiss(call.argument(0));
-    Boxed list = boxCell(objectOrMiss(call, call.argument(1)));
-    Boxed newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
+    CellPointer target = constructorOrMiss(call.argument(0));
+    CellPointer list = objectOrMiss(call, call.argument(1));
+    CellPointer newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
     Origin origin = call.context().origin();
     origin.isTailCall = false;
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .origin = origin, .constructs = true }));
+    LBasicBlock isArrayBlock = newBlock();
+    LBasicBlock isOtherListBlock = newBlock();
+    LBasicBlock isNativeClassBlock = newBlock();
+    LBasicBlock isOtherTargetBlock = newBlock();
+    Join<CellPointer> arrays(m_out);
+    Join<Boxed> join(m_out);
+    branch(logicalAnd(hasCellType(list, ArrayType), emitter<ElementAccessEmitter>().isPristineArray(list, { PristineAspects::Storage, PristineAspects::Names })), { normalEdge(isArrayBlock), unlikelyEdge(isOtherListBlock) });
+    m_out.appendTo(isArrayBlock);
+    arrays.add(list);
+    m_out.appendTo(isOtherListBlock);
+    branch(hasCellType(target, InternalFunctionType), { normalEdge(isNativeClassBlock), normalEdge(isOtherTargetBlock) });
+    m_out.appendTo(isNativeClassBlock);
+    join.add(callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { boxCell(target), boxCell(newTarget), boxCell(list) }, { .origin = origin, .constructs = true }));
+    m_out.appendTo(isOtherTargetBlock);
+    arrays.add(callOperation<CellPointer>(call.context(), RuntimeOperation::NewArgumentList, { boxCell(list) }, { .origin = origin }));
+    const std::array operands { target.value(), newTarget.value(), arrays.finish().value() };
+    join.add(Boxed(callStub(call.context(), constructWithArray(ConstructSyntax::NewExpression), operands, { .origin = origin, .constructs = true }).first));
+    finish(call, join.finish());
 }
 
 void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
@@ -142,9 +162,10 @@ void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
     Boxed function = boxedOperand(call.context(), call.receiver());
     Boxed thisValue = argumentOrUndefined(0);
     Boxed list = argumentOrUndefined(1);
-    // The operation has no name for what it refuses.
-    if (!typeOf(call.receiver()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        emitter<CallEmitter>().requireCallable(call.context(), function, CallEmitter::siteThatNamesCallee(*call.value()), call.context().origin().isTailCall);
+    if (!types().isSubset(typeIDOf(call.receiver()), TypeTable::function)) {
+        CallEmitter& calls = emitter<CallEmitter>();
+        calls.requireCallable(call.context(), function, calls.siteThatNamesCallee(*call.value()), call.context().origin().isTailCall, list);
+    }
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { function, thisValue, list }));
 }
 

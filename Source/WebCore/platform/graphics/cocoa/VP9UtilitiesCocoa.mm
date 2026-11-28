@@ -138,7 +138,7 @@ enum class ResolutionCategory : uint8_t {
     R_12K,
 };
 
-static ResolutionCategory LEGACY_NODELETE resolutionCategory(const FloatSize& size)
+NODELETE static ResolutionCategory resolutionCategory(const FloatSize& size)
 {
     auto pixels = size.area();
     if (pixels > 7680 * 4320)
@@ -195,12 +195,12 @@ void registerSupplementalVP9Decoder()
         s_vp9HardwareDecoderAvailableInProcess = { };
 }
 
-bool LEGACY_NODELETE shouldEnableVP9Decoder()
+NODELETE bool shouldEnableVP9Decoder()
 {
     return VP9TestingOverrides::singleton().shouldEnableVP9Decoder();
 }
 
-static bool LEGACY_NODELETE isSWDecodersAlwaysEnabled()
+NODELETE static bool isSWDecodersAlwaysEnabled()
 {
     return VP9TestingOverrides::singleton().swVPDecodersAlwaysEnabled();
 }
@@ -210,7 +210,7 @@ bool shouldEnableSWVP9Decoder()
     return isSWDecodersAlwaysEnabled() || (!vp9HardwareDecoderAvailable() && !systemHasBattery());
 }
 
-static bool LEGACY_NODELETE isVP9HardwareDecoderAvailabilityKnown()
+NODELETE static bool isVP9HardwareDecoderAvailabilityKnown()
 {
     return VP9TestingOverrides::singleton().hardwareDecoderDisabled() || VP9TestingOverrides::singleton().vp9HardwareDecoderEnabledOverride();
 }
@@ -447,7 +447,7 @@ std::optional<PlatformMediaCapabilitiesInfo> computeVPParameters(const PlatformM
     return info;
 }
 
-static uint8_t LEGACY_NODELETE convertToColorPrimaries(const Primaries& coefficients)
+NODELETE static uint8_t convertToColorPrimaries(const Primaries& coefficients)
 {
     switch (coefficients) {
     case Primaries::kBt709:
@@ -477,7 +477,7 @@ static uint8_t LEGACY_NODELETE convertToColorPrimaries(const Primaries& coeffici
     }
 }
 
-static uint8_t LEGACY_NODELETE convertToTransferCharacteristics(const TransferCharacteristics& characteristics)
+NODELETE static uint8_t convertToTransferCharacteristics(const TransferCharacteristics& characteristics)
 {
     switch (characteristics) {
     case TransferCharacteristics::kBt709:
@@ -517,7 +517,7 @@ static uint8_t LEGACY_NODELETE convertToTransferCharacteristics(const TransferCh
     }
 }
 
-static uint8_t LEGACY_NODELETE convertToMatrixCoefficients(const MatrixCoefficients& coefficients)
+NODELETE static uint8_t convertToMatrixCoefficients(const MatrixCoefficients& coefficients)
 {
     switch (coefficients) {
     case MatrixCoefficients::kRgb:
@@ -542,7 +542,7 @@ static uint8_t LEGACY_NODELETE convertToMatrixCoefficients(const MatrixCoefficie
         return VPConfigurationMatrixCoefficients::BT_2020_Constant_Luminance;
     }
 }
-static uint8_t LEGACY_NODELETE convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
+NODELETE static uint8_t convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
 {
     if (x & y)
         return VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
@@ -554,7 +554,7 @@ static uint8_t LEGACY_NODELETE convertSubsamplingXYToChromaSubsampling(uint64_t 
     return VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
 }
 
-static Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord& record, const FloatSize& size, const FloatSize& displaySize, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt)
+static Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord& record, const FloatSize& size, const FloatSize& displaySize, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt, bool hasSeparateAlphaStream = false)
 {
     // FIXME: Convert existing struct to an ISOBox and replace the writing code below
     // with a subclass of ISOFullBox.
@@ -573,6 +573,7 @@ static Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCode
             .bitDepth = record.bitDepth,
             .colorSpace = WTF::move(colorSpace),
             .extensionAtoms = { FillWith { }, 1, { computeBoxType(codecName), SharedBuffer::create(vpcCFromVPCodecConfigurationRecord(record)) } },
+            .hasSeparateAlphaStream = hasSeparateAlphaStream,
         }
     });
 }
@@ -611,7 +612,7 @@ Ref<VideoInfo> createVideoInfoFromVP9HeaderParser(const vp9_parser::Vp9HeaderPar
             record.colorPrimaries = convertToColorPrimaries(colorValue.primaries.value());
     }
 
-    return createVideoInfoFromVPCodecConfigurationRecord(record, { static_cast<float>(parser.width()), static_cast<float>(parser.height()) }, { static_cast<float>(video.display_width.is_present() ? video.display_width.value() : parser.display_width()), static_cast<float>(video.display_height.is_present() ? video.display_height.value() : parser.display_height()) });
+    return createVideoInfoFromVPCodecConfigurationRecord(record, { static_cast<float>(parser.width()), static_cast<float>(parser.height()) }, { static_cast<float>(video.display_width.is_present() ? video.display_width.value() : parser.display_width()), static_cast<float>(video.display_height.is_present() ? video.display_height.value() : parser.display_height()) }, { }, !!video.alpha_mode.value());
 }
 
 std::optional<VP8FrameHeader> parseVP8FrameHeader(std::span<const uint8_t> frameData)
@@ -676,6 +677,26 @@ std::optional<VP8FrameHeader> parseVP8FrameHeader(std::span<const uint8_t> frame
     return header;
 }
 
+bool vpxFrameIsKeyframe(uint32_t codec, std::span<const uint8_t> frameData)
+{
+    if (frameData.empty())
+        return false;
+
+    if (codec == 'vp09') {
+        vp9_parser::Vp9HeaderParser parser;
+        if (!parser.ParseUncompressedHeader(frameData.data(), frameData.size()))
+            return false;
+        return parser.key();
+    }
+
+    if (codec == 'vp08') {
+        auto header = parseVP8FrameHeader(frameData);
+        return header && header->keyframe;
+    }
+
+    return false;
+}
+
 Ref<VideoInfo> createVideoInfoFromVP8Header(const VP8FrameHeader& header, const webm::Video& video)
 {
     VPCodecConfigurationRecord record;
@@ -706,7 +727,7 @@ Ref<VideoInfo> createVideoInfoFromVP8Header(const VP8FrameHeader& header, const 
             record.colorPrimaries = convertToColorPrimaries(colorValue.primaries.value());
     }
 
-    return createVideoInfoFromVPCodecConfigurationRecord(record, { static_cast<float>(header.width), static_cast<float>(header.height) }, { static_cast<float>(video.display_width.is_present() ? video.display_width.value() : header.width), static_cast<float>(video.display_height.is_present() ? video.display_height.value() : header.height) });
+    return createVideoInfoFromVPCodecConfigurationRecord(record, { static_cast<float>(header.width), static_cast<float>(header.height) }, { static_cast<float>(video.display_width.is_present() ? video.display_width.value() : header.width), static_cast<float>(video.display_height.is_present() ? video.display_height.value() : header.height) }, { }, !!video.alpha_mode.value());
 }
 
 RetainPtr<CMVideoFormatDescriptionRef> createVP9FormatDescriptionFromRecord(const VPCodecConfigurationRecord& record, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride)

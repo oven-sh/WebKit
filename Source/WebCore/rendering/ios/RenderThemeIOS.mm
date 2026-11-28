@@ -31,7 +31,6 @@
 
 #import "ARKitBadgeSystemImage.h"
 #import "AttachmentLayout.h"
-#import "BitmapImage.h"
 #import "BorderShape.h"
 #import "CSSToLengthConversionData.h"
 #import "CSSValueKey.h"
@@ -67,6 +66,7 @@
 #import "LocalFrame.h"
 #import "LocalFrameView.h"
 #import "LocalizedDateCache.h"
+#import "NativeImage.h"
 #import "NodeRenderStyle.h"
 #import "PaintInfo.h"
 #import "PathUtilities.h"
@@ -101,6 +101,7 @@
 #import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/text/MakeString.h>
 
 #import <pal/ios/UIKitSoftLink.h>
 
@@ -173,7 +174,7 @@ bool RenderThemeIOS::isControlStyled(const Style::ComputedStyle& style) const
 
 void RenderThemeIOS::adjustMinimumIntrinsicSizeForAppearance(StyleAppearance appearance, Style::ComputedStyle& style) const
 {
-    auto minimumControlSize = this->minimumControlSize(appearance, style.fontCascade(), { style.minWidth(), style.minHeight() }, { style.width(), style.height() }, style.usedZoom());
+    auto minimumControlSize = this->minimumControlSize(appearance, protect(style.fontCascade()), { style.minWidth(), style.minHeight() }, { style.width(), style.height() }, style.usedZoom());
 
     // FIXME: The min-width/min-heigh value should use `calc-size()` when supported to make non-specified overrides work.
 
@@ -381,7 +382,7 @@ void RenderThemeIOS::paintTextAreaDecorations(const RenderBox& box, const PaintI
 
 // These values are taken from the UIKit button system.
 constexpr auto largeButtonSize = 45;
-constexpr auto largeButtonBorderRadiusRatio = 0.35f / 2;
+constexpr auto largeButtonBorderRadiusRatio = 0.35 / 2;
 
 const int MenuListMinHeight = 15;
 
@@ -408,9 +409,9 @@ Style::PaddingBox RenderThemeIOS::platformPopupInternalPaddingBox(const Style::C
     return { 0_css_px };
 }
 
-static inline bool canAdjustBorderRadiusForAppearance(StyleAppearance appearance, const RenderBox& box)
+static bool canAdjustBorderRadiusForAppearance(const Style::ComputedStyle& style)
 {
-    switch (appearance) {
+    switch (style.usedAppearance()) {
 #if ENABLE(APPLE_PAY)
     case StyleAppearance::ApplePayButton:
 #endif
@@ -419,40 +420,71 @@ static inline bool canAdjustBorderRadiusForAppearance(StyleAppearance appearance
     case StyleAppearance::SearchField:
         return false;
     case StyleAppearance::MenulistButton:
-        return !box.style().hasExplicitlySetBorderRadius();
+        return !style.hasExplicitlySetBorderRadius();
     default:
         return true;
     };
 }
 
-void RenderThemeIOS::adjustRoundBorderRadius(Style::ComputedStyle& style, RenderBox& box)
+static bool isButtonAppearance(StyleAppearance appearance)
 {
-    if (!canAdjustBorderRadiusForAppearance(style.usedAppearance(), box) || Style::hasImageInAnyLayer(style.backgroundLayers()))
-        return;
-
-    auto usedZoom = style.usedZoomForLength();
-
-    auto boxLogicalHeight = box.logicalHeight();
-    auto unzoomedBoxLogicalHeight = box.logicalHeight() / usedZoom.value;
-
-    auto minDimension = std::min(box.borderBoxWidth(), box.borderBoxHeight());
-    auto unzoomedMinDimension = minDimension / usedZoom.value;
-
-    if ((isAnyOf<RenderButton, RenderMenuList>(box)) && boxLogicalHeight >= largeButtonSize) {
-        auto largeButtonBorderRadius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedMinDimension * largeButtonBorderRadiusRatio };
-        style.setBorderRadius({ largeButtonBorderRadius, largeButtonBorderRadius });
-        return;
+    switch (appearance) {
+    case StyleAppearance::PushButton:
+    case StyleAppearance::SquareButton:
+    case StyleAppearance::DefaultButton:
+    case StyleAppearance::Button:
+        return true;
+    default:
+        return false;
     }
+}
 
-    // FIXME: We should not be relying on border radius for the appearance of our controls <rdar://problem/7675493>.
-    auto borderRadius = Style::BorderRadiusValue {
-        Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedMinDimension / 2 },
-        Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedBoxLogicalHeight / 2 },
+// FIXME: We should not be relying on border radius for the appearance of our controls <rdar://problem/7675493>.
+void RenderThemeIOS::adjustControlBorderRadius(Style::ComputedStyle& style, const Element& element) const
+{
+    if (!canAdjustBorderRadiusForAppearance(style) || Style::hasImageInAnyLayer(style.backgroundLayers()))
+        return;
+
+    auto usesLargeButtonRadius = [&] {
+        if (is<HTMLButtonElement>(element))
+            return true;
+        if (RefPtr select = dynamicDowncast<HTMLSelectElement>(element))
+            return select->boxType(&style) == HTMLSelectElement::BoxType::DropdownBox;
+        if (RefPtr input = dynamicDowncast<HTMLInputElement>(element))
+            return input->isTextButton();
+        return false;
     };
-    if (!style.writingMode().isHorizontal())
-        borderRadius.transpose();
 
-    style.setBorderRadius(WTF::move(borderRadius));
+    auto isPill = [&] {
+        if (RefPtr input = dynamicDowncast<HTMLInputElement>(element); input && input->isSearchField())
+            return true;
+#if ENABLE(FORM_CONTROL_REFRESH)
+        if (element.document().settings().formControlRefreshEnabled())
+            return false;
+#endif
+        return isButtonAppearance(style.usedAppearance());
+    };
+
+    auto radius = [&] -> std::optional<Style::LengthPercentage<CSS::Nonnegative>> {
+        if (usesLargeButtonRadius()) {
+            // calc(50% - (32.5% * clamp(0, sign(100% - 45px) + 1, 1)))
+            namespace Calculation = Style::Calculation;
+            auto isLarge = Calculation::makeChild(Calculation::Clamp {
+                Calculation::number(0),
+                Calculation::add(Calculation::makeChild(Calculation::Sign { Calculation::subtract(Calculation::percentage(100), Calculation::dimension(largeButtonSize)) }), Calculation::number(1)),
+                Calculation::number(1),
+            });
+            return Style::LengthPercentage<CSS::Nonnegative>::Calc { Calculation::subtract(Calculation::percentage(50), Calculation::multiply(Calculation::percentage(50 - 100 * largeButtonBorderRadiusRatio), WTF::move(isLarge))) };
+        }
+        if (isPill())
+            return Style::LengthPercentage<CSS::Nonnegative>::Percentage { 50 };
+        return std::nullopt;
+    }();
+    if (!radius)
+        return;
+
+    style.setBorderRadiusPercentageBasis(BorderRadiusPercentageBasis::BlockSize);
+    style.setBorderRadius(Style::BorderRadiusValue { *radius, *radius });
 }
 
 static void applyCommonButtonPaddingToStyle(Style::ComputedStyle& style)
@@ -486,11 +518,11 @@ public:
     float measureText(const String& string) const override
     {
         TextRun run = RenderBlock::constructTextRun(string, m_style);
-        return m_font.width(run);
+        return m_font->width(run);
     }
 private:
-    const FontCascade& m_font;
-    const Style::ComputedStyle& m_style;
+    const CheckedRef<const FontCascade> m_font;
+    const CheckedRef<const Style::ComputedStyle> m_style;
 };
 
 static void adjustInputElementButtonStyle(Style::ComputedStyle& style, const HTMLInputElement& inputElement)
@@ -515,7 +547,7 @@ static void adjustInputElementButtonStyle(Style::ComputedStyle& style, const HTM
 #endif
 
     // Enforce the width and set the box-sizing to content-box to not conflict with the padding.
-    FontCascade font = style.fontCascade();
+    FontCascade font { CheckedRef { style.fontCascade() } };
 
     float maximumWidth = localizedDateCache().estimatedMaximumWidthForDateType(dateType, font, RenderThemeMeasureTextClient(font, style));
 
@@ -754,7 +786,7 @@ bool RenderThemeIOS::paintSliderTrack(const RenderElement& box, const PaintInfo&
     }
 
     FloatRoundedRect fillRect(trackClip, cornerRadii);
-    context.fillRoundedRect(fillRect, controlTintColor(box.style(), styleColorOptions));
+    context.fillRoundedRect(fillRect, controlTintColor(protect(box.style()), styleColorOptions));
 
     return false;
 }
@@ -876,7 +908,7 @@ bool RenderThemeIOS::paintProgressBar(const RenderElement& renderer, const Paint
     }
 
     FloatRect barRect(barInlineStart, barBlockStart, barInlineSize, barBlockSize);
-    context.fillRoundedRect(FloatRoundedRect(isHorizontalWritingMode ? barRect : barRect.transposedRect(), barCornerRadii), controlTintColor(renderer.style(), styleColorOptions).colorWithAlphaMultipliedBy(alpha));
+    context.fillRoundedRect(FloatRoundedRect(isHorizontalWritingMode ? barRect : barRect.transposedRect(), barCornerRadii), controlTintColor(protect(renderer.style()), styleColorOptions).colorWithAlphaMultipliedBy(alpha));
 
     return false;
 }
@@ -905,18 +937,6 @@ void RenderThemeIOS::adjustSearchFieldStyle(Style::ComputedStyle& style, const E
     RenderTheme::adjustSearchFieldStyle(style, element);
 
     applyCommonNonCapsuleBorderRadiusToStyle(style);
-
-    if (!element)
-        return;
-
-    if (!style.border().hasBorder())
-        return;
-
-    RenderBox* box = element->renderBox();
-    if (!box)
-        return;
-
-    adjustRoundBorderRadius(style, *box);
 }
 
 void RenderThemeIOS::paintSearchFieldDecorations(const RenderBox& box, const PaintInfo& paintInfo, const FloatRect& rect)
@@ -995,12 +1015,6 @@ void RenderThemeIOS::adjustButtonStyle(Style::ComputedStyle& style, const Elemen
         return;
 
     adjustButtonLikeControlStyle(style, *element);
-
-    RenderBox* box = element->renderBox();
-    if (!box)
-        return;
-
-    adjustRoundBorderRadius(style, *box);
 }
 
 Color RenderThemeIOS::platformActiveSelectionBackgroundColor(OptionSet<StyleColorOptions>) const
@@ -1048,7 +1062,7 @@ Color RenderThemeIOS::insertionPointColor()
 
 Color RenderThemeIOS::autocorrectionReplacementMarkerColor(const RenderText& renderer) const
 {
-    auto caretColor = CaretBase::computeCaretColor(renderer.style(), protect(renderer.textNode()));
+    auto caretColor = CaretBase::computeCaretColor(protect(renderer.style()), protect(renderer.textNode()));
     if (!caretColor.isValid())
         caretColor = insertionPointColor();
 
@@ -1177,11 +1191,11 @@ static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformat
 
 static inline std::optional<Color> systemColorFromCSSValueSystemColorInformation(CSSValueSystemColorInformation systemColorInformation, bool useDarkAppearance)
 {
-    UIColor *color = wtfObjCMsgSend<UIColor *>(PAL::getUIColorClassSingleton(), systemColorInformation.selector);
+    RetainPtr color = wtfObjCMsgSend<UIColor *>(PAL::getUIColorClassSingleton(), systemColorInformation.selector);
     if (!color)
         return std::nullopt;
 
-    Color systemColor(roundAndClampToSRGBALossy(color.CGColor), Color::Flags::Semantic);
+    Color systemColor(roundAndClampToSRGBALossy(protect(color.get().CGColor)), Color::Flags::Semantic);
 
     if (systemColorInformation.opacity < 1.0f)
         systemColor = systemColor.colorWithAlphaMultipliedBy(systemColorInformation.opacity);
@@ -1282,18 +1296,18 @@ Color RenderThemeIOS::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
 
 Color RenderThemeIOS::pictureFrameColor(const RenderElement& buttonRenderer)
 {
-    return buttonRenderer.style().visitedDependentBorderTopColor();
+    return protect(buttonRenderer.style())->visitedDependentBorderTopColor();
 }
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
-RenderThemeCocoa::IconAndSize RenderThemeIOS::iconForAttachment(const String& fileName, const String& attachmentType, const String& title)
+RenderThemeCocoa::IconAndSize RenderThemeIOS::iconForAttachment(const String& fileExtension, const String& attachmentType, const String& title)
 {
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     auto documentInteractionController = adoptNS([PAL::allocUIDocumentInteractionControllerInstance() init]);
 ALLOW_DEPRECATED_DECLARATIONS_END
 
-    [documentInteractionController setName:fileName.isEmpty() ? title.createNSString().get() : fileName.createNSString().get()];
+    [documentInteractionController setName:fileExtension.isEmpty() ? title.createNSString().get() : makeString("attachment."_s, fileExtension).createNSString().get()];
 
     if (!attachmentType.isEmpty()) {
         String UTI;
@@ -1309,7 +1323,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     RetainPtr<UIImage> result;
 #if PLATFORM(IOS) || PLATFORM(VISION)
-    NSArray *icons = [documentInteractionController icons];
+    NSArray<UIImage *> *icons = [documentInteractionController icons];
     if (!icons.count)
         return IconAndSize { nil, FloatSize() };
 
@@ -1344,13 +1358,7 @@ LayoutSize RenderThemeIOS::attachmentIntrinsicSize(const RenderAttachment&) cons
 
 static void paintAttachmentIcon(GraphicsContext& context, AttachmentLayout& info)
 {
-    RefPtr<BitmapImage> iconImage;
-    if (info.thumbnailIcon)
-        iconImage = info.thumbnailIcon;
-    else if (info.icon)
-        iconImage = info.icon;
-    
-    iconImage->draw(context, info.iconRect, FloatRect { { }, iconImage->size() });
+    context.drawNativeImage(protect(*info.icon), info.iconRect);
 }
 
 static void paintAttachmentProgress(GraphicsContext& context, AttachmentLayout& info)
@@ -1415,7 +1423,7 @@ bool RenderThemeIOS::paintAttachment(const RenderElement& renderer, const PaintI
 
     if (info.hasProgress)
         paintAttachmentProgress(context, info);
-    else if (info.icon || info.thumbnailIcon)
+    else if (info.icon)
         paintAttachmentIcon(context, info);
 
     paintAttachmentText(context, &info);
@@ -1494,17 +1502,18 @@ Color RenderThemeIOS::checkboxRadioBackgroundColor(const Style::ComputedStyle& s
     return enabledBackgroundColor;
 }
 
-RefPtr<Gradient> RenderThemeIOS::checkboxRadioBackgroundGradient(const FloatRect& rect, OptionSet<ControlStyle::State> states)
+RefPtr<const Gradient> RenderThemeIOS::checkboxRadioBackgroundGradient(const FloatRect& rect, OptionSet<ControlStyle::State> states)
 {
     bool isPressed = states.contains(ControlStyle::State::Pressed);
     if (isPressed)
         return nullptr;
 
     bool isEmpty = !states.containsAny({ ControlStyle::State::Checked, ControlStyle::State::Indeterminate });
-    auto gradient = Gradient::create(Gradient::LinearData { rect.minXMinYCorner(), rect.maxXMaxYCorner() }, { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied });
-    gradient->addColorStop({ 0.0f, DisplayP3<float> { 0, 0, 0, isEmpty ? 0.05f : 0.125f }});
-    gradient->addColorStop({ 1.0f, DisplayP3<float> { 0, 0, 0, 0 }});
-    return gradient;
+    GradientColorStops stops { std::array {
+        DisplayP3<float> { 0, 0, 0, isEmpty ? 0.05f : 0.125f },
+        DisplayP3<float> { 0, 0, 0, 0 },
+    } };
+    return Gradient::create(Gradient::LinearData { rect.minXMinYCorner(), rect.maxXMaxYCorner() }, { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied }, GradientSpreadMethod::Pad, WTF::move(stops));
 }
 
 Color RenderThemeIOS::checkboxRadioIndicatorColor(OptionSet<ControlStyle::State> states, OptionSet<StyleColorOptions> styleColorOptions)
@@ -1579,7 +1588,7 @@ bool RenderThemeIOS::paintCheckbox(const RenderElement& box, const PaintInfo& pa
     auto controlStates = extractControlStyleStatesForRenderer(box);
     auto styleColorOptions = box.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
-    auto backgroundColor = checkboxRadioBackgroundColor(box.style(), controlStates, styleColorOptions);
+    auto backgroundColor = checkboxRadioBackgroundColor(protect(box.style()), controlStates, styleColorOptions);
 
     bool checked = controlStates.contains(ControlStyle::State::Checked);
     bool indeterminate = controlStates.contains(ControlStyle::State::Indeterminate);
@@ -1664,7 +1673,7 @@ bool RenderThemeIOS::paintRadio(const RenderElement& box, const PaintInfo& paint
     auto controlStates = extractControlStyleStatesForRenderer(box);
     auto styleColorOptions = box.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
-    auto backgroundColor = checkboxRadioBackgroundColor(box.style(), controlStates, styleColorOptions);
+    auto backgroundColor = checkboxRadioBackgroundColor(protect(box.style()), controlStates, styleColorOptions);
 
     FloatRoundedRect radioRect { rect, CornerRadii(rect.width() / 2, rect.height() / 2) };
 
@@ -1775,18 +1784,18 @@ bool RenderThemeIOS::paintListButton(const RenderElement& box, const PaintInfo& 
         return RenderThemeCocoa::paintListButton(box, paintInfo, rect);
 #endif
 
-    auto& style = box.style();
-    if (style.content().isData() || style.hasUsedContentNone())
+    CheckedRef style = box.style();
+    if (style->content().isData() || style->hasUsedContentNone())
         return false;
 
     auto& context = paintInfo.context();
     GraphicsContextStateSaver stateSaver(context);
 
-    const auto& zoomFactor = style.usedZoomForLength();
-    auto paddingTop = Style::evaluate<float>(style.paddingTop(), rect.height(), zoomFactor);
-    auto paddingRight = Style::evaluate<float>(style.paddingRight(), rect.width(), zoomFactor);
-    auto paddingBottom = Style::evaluate<float>(style.paddingBottom(), rect.height(), zoomFactor);
-    auto paddingLeft = Style::evaluate<float>(style.paddingLeft(), rect.width(), zoomFactor);
+    const auto& zoomFactor = style->usedZoomForLength();
+    auto paddingTop = Style::evaluate<float>(style->paddingTop(), rect.height(), zoomFactor);
+    auto paddingRight = Style::evaluate<float>(style->paddingRight(), rect.width(), zoomFactor);
+    auto paddingBottom = Style::evaluate<float>(style->paddingBottom(), rect.height(), zoomFactor);
+    auto paddingLeft = Style::evaluate<float>(style->paddingLeft(), rect.width(), zoomFactor);
 
     FloatRect indicatorRect = rect;
     indicatorRect.move(paddingLeft, paddingTop);
@@ -1872,7 +1881,7 @@ void RenderThemeIOS::paintSliderTicks(const RenderElement& box, const PaintInfo&
                 tickRect.setY(rect.y() + tickRatio * (rect.height() - tickRect.height()));
 
             FloatRoundedRect roundedTickRect(snapRectToDevicePixels(LayoutRect(tickRect), deviceScaleFactor), tickCornerRadii);
-            context.fillRoundedRect(roundedTickRect, (value >= *optionValue) ? controlTintColor(box.style(), styleColorOptions) : systemColor(CSSValueID::AppleSystemOpaqueSeparator, styleColorOptions));
+            context.fillRoundedRect(roundedTickRect, (value >= *optionValue) ? controlTintColor(protect(box.style()), styleColorOptions) : systemColor(CSSValueID::AppleSystemOpaqueSeparator, styleColorOptions));
         }
     }
 }
@@ -1900,11 +1909,8 @@ void RenderThemeIOS::paintColorWellDecorations(const RenderElement& renderer, co
         DisplayP3<float> { 0.63, 0.88, 0.03, 1 },
         DisplayP3<float> { 1, 1, 0, 1 }
     };
-    constexpr int numColorStops = std::size(colorStops);
 
-    auto gradient = Gradient::create(Gradient::ConicData { rect.center(), 0 }, { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied });
-    for (int i = 0; i < numColorStops; ++i)
-        gradient->addColorStop({ i * 1.0f / (numColorStops - 1), colorStops[i] });
+    auto gradient = Gradient::create(Gradient::ConicData { rect.center(), 0 }, { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied }, GradientSpreadMethod::Pad, GradientColorStops { colorStops });
 
     auto& context = paintInfo.context();
     GraphicsContextStateSaver stateSaver(context);

@@ -139,10 +139,11 @@ const PathImpl* Path::asImpl() const
     return nullptr;
 }
 
-void Path::setNotTransient()
+Path Path::createNonTransient(Vector<PathSegment>&& segments)
 {
-    if (RefPtr impl = asImpl())
-        impl->setNotTransient();
+    if (segments.size() <= 1)
+        return Path { WTF::move(segments) };
+    return Path { PathStream::create(WTF::move(segments), IsTransient::No) };
 }
 
 static FloatRoundedRect calculateEvenRoundedRect(const FloatRect& rect, const FloatSize& roundingRadii)
@@ -316,6 +317,24 @@ std::optional<PathDataLine> Path::singleDataLine() const
     return std::nullopt;
 }
 
+std::optional<PathArc> Path::pieWedgeArc() const
+{
+    auto* segments = segmentsIfExists();
+    if (!segments || segments->size() != 3)
+        return std::nullopt;
+
+    auto* moveTo = std::get_if<PathMoveTo>(&(*segments)[0].data());
+    auto* arc = std::get_if<PathArc>(&(*segments)[1].data());
+    auto* lineTo = std::get_if<PathLineTo>(&(*segments)[2].data());
+    if (!moveTo || !arc || !lineTo)
+        return std::nullopt;
+
+    if (moveTo->point != arc->center || lineTo->point != arc->center)
+        return std::nullopt;
+
+    return *arc;
+}
+
 bool Path::definitelySingleLine() const
 {
     return !!singleDataLine();
@@ -454,7 +473,15 @@ FloatRect Path::boundingRect() const
 
 FloatRect Path::strokeBoundingRect(NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const
 {
+    if (isEmpty())
+        return { };
+
+#if USE(CG)
+    // Unlike ensurePlatformPathImpl(), this keeps the segments used by display lists and GPU process.
+    return PathCG::strokeBoundingRect(*this, strokeStyleApplier);
+#else
     return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->strokeBoundingRect(strokeStyleApplier);
+#endif
 }
 
 TextStream& operator<<(TextStream& ts, const Path& path)

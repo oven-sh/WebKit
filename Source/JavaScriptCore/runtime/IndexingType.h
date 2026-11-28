@@ -72,11 +72,11 @@ static const IndexingType Int32Shape                      = 0x04;
 static const IndexingType DoubleShape                     = 0x06;
 static const IndexingType ContiguousShape                 = 0x08;
 static const IndexingType ArrayStorageShape               = 0x0A;
-static const IndexingType SlowPutArrayStorageShape        = 0x0C;
+static const IndexingType SlowPutArrayStorageShape        = 0x0E; // No array has 0x0C, so the arrays without UndecidedShape's bit are the ones with boxed elements.
 
 static const IndexingType IndexingShapeMask               = 0x0E;
 static const IndexingType IndexingShapeShift              = 1;
-static const IndexingType NumberOfIndexingShapes          = 7;
+static const IndexingType NumberOfIndexingShapes          = 8;
 static const IndexingType IndexingTypeMask                = IndexingShapeMask | IsArray;
 
 // Whether or not the butterfly is copy on write. If it is copy on write then the butterfly is actually a JSCellButterfly. This should only ever be set if there are no named properties.

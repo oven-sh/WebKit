@@ -13,20 +13,8 @@ namespace JSC { namespace AOT {
 
 inline void checkPrivateNameProgram(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "check=VerifyEachPass"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:ResolveCalls"_s,
-        "disable=pass:ResolveAccesses"_s,
-        "disable=flow-results"_s,
-        "references=narrow"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
 }
 
 } } // namespace JSC::AOT

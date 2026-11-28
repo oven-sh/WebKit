@@ -112,7 +112,7 @@ protected:
 
     bool parseAndValidateModule(std::span<const uint8_t>);
 
-    const char* LEGACY_NODELETE stateString(State);
+    NODELETE const char* stateString(State);
     void moveToState(State);
     bool isComplete() const override { return m_state == State::Completed; }
     void complete() WTF_REQUIRES_LOCK(m_lock) override;
@@ -146,7 +146,6 @@ protected:
     Vector<uint8_t> m_source;
     Vector<MacroAssemblerCodeRef<WasmEntryPtrTag>> m_wasmToWasmExitStubs;
     Vector<MacroAssemblerCodeRef<WasmEntryPtrTag>> m_wasmToJSExitStubs;
-    UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_exportedFunctionIndices;
 
     StreamingParser m_streamingParser;
     State m_state;

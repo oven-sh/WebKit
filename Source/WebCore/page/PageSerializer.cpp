@@ -94,7 +94,7 @@ static bool shouldIgnoreElement(const Element& element)
     return element.hasTagName(HTMLNames::scriptTag) || element.hasTagName(HTMLNames::noscriptTag) || isCharsetSpecifyingNode(element);
 }
 
-static const QualifiedName& LEGACY_NODELETE frameOwnerURLAttributeName(const HTMLFrameOwnerElement& frameOwner)
+NODELETE static const QualifiedName& frameOwnerURLAttributeName(const HTMLFrameOwnerElement& frameOwner)
 {
     // FIXME: We should support all frame owners including applets.
     return is<HTMLObjectElement>(frameOwner) ? HTMLNames::dataAttr : HTMLNames::srcAttr;
@@ -285,7 +285,7 @@ void PageSerializer::addImageToResources(CachedImage* image, RenderElement* imag
         data = image->image()->data();
 
     if (!data) {
-        LOG_ERROR("No data for image %s", url.string().utf8());
+        LOG_ERROR("No data for image %s", makeUTF8CString(url.string()));
         return;
     }
 

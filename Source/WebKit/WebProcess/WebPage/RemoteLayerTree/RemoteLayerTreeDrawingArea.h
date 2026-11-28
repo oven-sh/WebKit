@@ -49,6 +49,7 @@ namespace WebKit {
 
 class RemoteLayerTreeContext;
 struct MainFrameData;
+struct RemoteLayerTreeCommitBundle;
 
 class RemoteLayerTreeDrawingArea : public DrawingArea, public WebCore::GraphicsLayerClient {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeDrawingArea);
@@ -73,9 +74,6 @@ protected:
     void updateRendering();
 
 private:
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType type() const final { return DrawingAreaType::RemoteLayerTree; }
-#endif
 
     // DrawingArea
     void setNeedsDisplay() final;
@@ -90,6 +88,7 @@ private:
     void triggerRenderingUpdate() final;
     bool scheduleRenderingUpdate() final;
     void renderingUpdateFramesPerSecondChanged() final;
+    bool usesRenderingUpdateBackpressure() const final { return false; }
     void attachViewOverlayGraphicsLayer(WebCore::FrameIdentifier, WebCore::GraphicsLayer*) final;
 
     void dispatchAfterEnsuringDrawing(IPC::AsyncReplyID) final;
@@ -118,6 +117,8 @@ private:
     void acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier, const String& key, MonotonicTime startTime) final;
     void acceleratedAnimationDidEnd(WebCore::PlatformLayerIdentifier, const String& key) final;
 
+    void buildFullLayerTreeState() final;
+
     WebCore::FloatRect exposedContentRect() const final;
     void setExposedContentRect(const WebCore::FloatRect&) final;
 
@@ -136,6 +137,7 @@ private:
     void addCommitHandlers();
     void startRenderingUpdateTimer();
     void didCompleteRenderingUpdateDisplayFlush(bool flushSucceeded);
+    void encodeFullState(IPC::Encoder&, const RemoteLayerTreeCommitBundle&);
 
     TransactionID takeNextTransactionID() { return m_currentTransactionID.increment(); }
 
@@ -195,6 +197,7 @@ private:
 
     TransactionID m_currentTransactionID { TransactionID::generateMonotonic() };
     Vector<IPC::AsyncReplyID> m_pendingCallbackIDs;
+    bool m_hasPendingFullStateRequest { false };
     ActivityStateChangeID m_activityStateChangeID { ActivityStateChangeAsynchronous };
 
     OptionSet<WebCore::LayoutMilestone> m_pendingNewlyReachedPaintingMilestones;

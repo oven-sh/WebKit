@@ -33,7 +33,6 @@
 #pragma once
 
 #include "InspectorWebAgentBase.h"
-#include "LayoutRect.h"
 #include <JavaScriptCore/Debugger.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
@@ -45,10 +44,8 @@
 
 namespace WebCore {
 
-class Element;
 class Event;
-class FloatQuad;
-class RenderObject;
+class WebDebuggerAgent;
 
 enum class TimelineRecordType {
     EventDispatch,
@@ -121,8 +118,6 @@ public:
     void didEvaluateScript();
     void didTimeStamp(const String& message);
     void didPerformanceMark(const String& label, std::optional<MonotonicTime>);
-    void didEnqueueFirstContentfulPaint();
-    void didEnqueueLargestContentfulPaint(Element*, unsigned area);
     void didRequestAnimationFrame(int callbackId);
     void didCancelAnimationFrame(int callbackId);
     void willFireAnimationFrame(int callbackId);
@@ -146,7 +141,11 @@ protected:
     virtual void internalStop();
 
     virtual bool shouldStartHeapInstrument() const { return true; }
+    virtual bool shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument) const { return true; }
     void autoCaptureStarted() const;
+
+    // The debugger agent whose breakpoints are turned off during a programmatic capture.
+    virtual WebDebuggerAgent* debuggerAgentForProgrammaticCapture() const;
 
     const Vector<Inspector::Protocol::Timeline::Instrument>& instruments() const LIFETIME_BOUND { return m_instruments; }
 
@@ -169,7 +168,7 @@ protected:
         RefPtr<JSON::Array> children;
         TimelineRecordType type;
     };
-    TimelineRecordEntry* LEGACY_NODELETE lastRecordEntry();
+    NODELETE TimelineRecordEntry* lastRecordEntry();
 
     void appendRecord(Ref<JSON::Object>&& data, TimelineRecordType, bool captureCallStack, std::optional<double> startTime = std::nullopt);
     void pushCurrentRecord(Ref<JSON::Object>&&, TimelineRecordType, bool captureCallStack, std::optional<double> startTime = std::nullopt);
@@ -178,6 +177,7 @@ protected:
 private:
     void startProgrammaticCapture();
     void stopProgrammaticCapture();
+    void restoreBreakpointsAfterProgrammaticCapture();
 
     void toggleScriptProfilerInstrument(InstrumentState);
     void toggleHeapInstrument(InstrumentState);
@@ -197,7 +197,7 @@ private:
 
     void didCompleteRecordEntry(const TimelineRecordEntry&);
 
-    bool LEGACY_NODELETE shouldNestUnder(TimelineRecordType type, TimelineRecordType previousType) const;
+    NODELETE bool shouldNestUnder(TimelineRecordType type, TimelineRecordType previousType) const;
 
     void addRecordToTimeline(Ref<JSON::Object>&&, TimelineRecordType);
 

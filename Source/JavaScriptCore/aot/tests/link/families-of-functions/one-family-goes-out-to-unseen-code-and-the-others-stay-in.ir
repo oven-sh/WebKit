@@ -1,0 +1,147 @@
+# A value of which nobody says any longer who it is comes to unseen code: it is one of its family, here `K` or one of eight functions. Nine other functions have met one another alone: unseen code cannot have them.
+# If all that have ever met went out with it, one class beside a few functions anywhere in a program would hand every callback of the program whatever unseen code may pass.
+# class K {}  callFew(<one of nine>, 1);  give(K);  give(<one of eight>);  function give(held) { sink(held); }
+# RUN: link functions mechanisms=all
+# CHECK: function f3 {{*}}result=undefined|int[0, 2147483647] returns=
+# CHECK-NEXT: parameter 0 expected=undefined|i32
+# CHECK: function f7 {{*}}result=undefined|int[0, 2147483647] returns=
+# CHECK-NEXT: parameter 0 expected=undefined|i32
+# CHECK: function f8 
+# CHECK-NOT: expected=
+# CHECK: function f12 
+
+layout L0 kind=Instance name="K" module=m0 constructor=f12
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = NewClosure function=f9
+    v9 = NewClosure function=f10
+    v10 = NewClosure function=f11
+    v11 = NewClosure function=f12
+    v12 = NewClass v11 layout=L0
+    v13 = FinishClass v12 layout=L0
+    v14 = Integer integer=1
+    v15 = NewClosure function=f13
+    v16 = NewClosure function=f14
+    v17 = NewClosure function=f15
+    v18 = NewClosure function=f16
+    v19 = NewClosure function=f17
+    v20 = NewClosure function=f18
+    v21 = NewClosure function=f19
+    v22 = NewClosure function=f20
+    v23 = Call v0, -, v2, v14 calleeName="callFew"
+    v24 = Call v0, -, v3, v14 calleeName="callFew"
+    v25 = Call v0, -, v4, v14 calleeName="callFew"
+    v26 = Call v0, -, v5, v14 calleeName="callFew"
+    v27 = Call v0, -, v6, v14 calleeName="callFew"
+    v28 = Call v0, -, v15, v14 calleeName="callFew"
+    v29 = Call v0, -, v16, v14 calleeName="callFew"
+    v30 = Call v0, -, v17, v14 calleeName="callFew"
+    v31 = Call v0, -, v18, v14 calleeName="callFew"
+    v32 = Call v1, -, v13 calleeName="give"
+    v33 = Call v1, -, v7 calleeName="give"
+    v34 = Call v1, -, v8 calleeName="give"
+    v35 = Call v1, -, v9 calleeName="give"
+    v36 = Call v1, -, v10 calleeName="give"
+    v37 = Call v1, -, v19 calleeName="give"
+    v38 = Call v1, -, v20 calleeName="give"
+    v39 = Call v1, -, v21 calleeName="give"
+    v40 = Call v1, -, v22 calleeName="give"
+    v41 = Undefined
+    Return v41
+}
+function f1 name="callFew" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="held"
+    Return v2
+}
+function f2 name="give" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}
+function f3 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f8 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f9 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f10 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f11 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f12 name="K" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f13 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f14 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f15 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f16 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f17 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f18 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f19 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f20 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

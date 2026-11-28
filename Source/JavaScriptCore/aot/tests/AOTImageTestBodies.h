@@ -16,7 +16,6 @@
 
 namespace JSC::AOT::ImageTests {
 
-inline constexpr unsigned wordsInPinnedUnit = 1024;
 inline constexpr unsigned numberOfMixedBodyKinds = 7;
 inline constexpr unsigned numberOfMixedBodies = 86 * numberOfMixedBodyKinds;
 
@@ -24,7 +23,7 @@ inline CodeSketch framedSketch(uint32_t function)
 {
     CodeSketch sketch(function);
     sketch.withFrame();
-    sketch.pinned(0x1000 + function);
+    sketch.plain(0x1000 + function);
     return sketch;
 }
 
@@ -36,12 +35,21 @@ inline CompiledCode plainBody(uint32_t function)
     return sketch.take();
 }
 
+inline CompiledCode entryOfBody(const TestBuild& build, uint32_t function)
+{
+    CodeSketch sketch(build.genericEntrypointOf(function));
+    sketch.plain(0x2000 + function);
+    sketch.jumpToFunction(function);
+    return sketch.take();
+}
+
 inline CompiledCode takeWithHandler(CodeSketch& sketch, std::initializer_list<uint32_t> frameMapWords)
 {
     uint32_t site = sketch.code().sites.positions.size() - 1;
     uint32_t handler = sketch.end();
-    sketch.code().sites.handlers.append(SiteHandler { site, handler, HandlerType::Catch });
-    sketch.code().sites.frameMapWords = frameMapWords;
+    RareListsOfSites& rareLists = sketch.code().sites.rareLists.ensure();
+    rareLists.handlers.append(SiteHandler { site, handler, HandlerType::Catch });
+    rareLists.frameMapWords = frameMapWords;
     return sketch.take();
 }
 
@@ -61,7 +69,7 @@ inline CompiledCode mixedBody(uint32_t function, uint32_t lastFunction)
     case 0:
         return plainBody(function);
     case 1:
-        sketch.pinned(7);
+        sketch.plain(7);
         sketch.jumpToStub(catchException());
         break;
     case 2:
@@ -78,12 +86,12 @@ inline CompiledCode mixedBody(uint32_t function, uint32_t lastFunction)
     case 4:
         return framedCallsBody(function, lastFunction);
     case 5:
-        sketch.pinned(function);
+        sketch.plain(function);
         sketch.jumpToFunction(function + 1 <= lastFunction ? function + 1 : 1);
         break;
     case 6:
         sketch.withFrame();
-        sketch.pinned(function);
+        sketch.plain(function);
         sketch.jumpToFunction(function + 1 <= lastFunction ? function + 1 : 1);
         break;
     }
@@ -98,15 +106,80 @@ inline Vector<CompiledCode> mixedBodies(unsigned count)
     return result;
 }
 
-inline TestImage builtImage(TestBuild& build, Vector<CompiledCode>&& code)
+inline uint64_t sumOfStatistics(TestBuild& build, std::initializer_list<StatisticID> statistics)
 {
-    TestImage image = build.build(WTF::move(code));
-    AOT_TEST_CHECK(image.image);
-    return image;
+    uint64_t sum = 0;
+    for (StatisticID statistic : statistics)
+        sum += build.statistic(statistic);
+    return sum;
 }
 
-inline TestOptions reachOptions(LimitID limit = LimitID::DirectCallReach) { return { .loweredLimit = limit, .loweredLimitValue = loweredReach, .heat = Wire::HeatOverride::EverythingIsCold }; }
-inline TestOptions sharedCodeReachOptions() { return { .loweredLimit = LimitID::DirectCallReach, .loweredLimitValue = loweredSharedCodeReach, .heat = Wire::HeatOverride::EverythingIsCold }; }
+inline void checkPartsOfCodeAddUp(TestBuild& build, const TestImage& image)
+{
+    const ImageHeader& header = image.image->header();
+    const ImageCodeRanges& ranges = header.code;
+    AOT_TEST_CHECK(build.statistic(StatisticID::CodeBytesEmitted) == header.codeSize);
+
+    uint64_t sizeOfBodies = 0;
+    for (const CompiledCode& function : image.built.functions)
+        sizeOfBodies += function.body.bytes.size();
+    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionBytesEmitted) == sizeOfBodies);
+    AOT_TEST_CHECK(build.statistic(StatisticID::SharedCodeBytesEmitted) == static_cast<uint64_t>(image.built.sharedCode.veneersOffset) * image.built.layout.sharedCodeCopies.size());
+    AOT_TEST_CHECK(build.statistic(StatisticID::VeneerBytesEmitted) == build.statistic(StatisticID::Veneers) * testTemplates().sizeOfVeneer());
+    AOT_TEST_CHECK(build.statistic(StatisticID::StubBytes) + build.statistic(StatisticID::ArgumentThunkBytes) <= image.built.sharedCode.veneersOffset);
+    AOT_TEST_CHECK(sumOfStatistics(build, {
+        StatisticID::FunctionBytesEmitted,
+        StatisticID::FarInstanceWordBytesEmitted,
+        StatisticID::VeneerBytesEmitted,
+        StatisticID::SharedCodeBytesEmitted,
+        StatisticID::PaddingBytesBetweenFunctions,
+    }) == ranges.functionsEnd);
+
+    uint64_t roomOfRegExpCode = header.executableSize - ranges.regExpCodeOffset;
+    uint64_t sizeOfRegExpCode = build.statistic(StatisticID::RegExpCodeBytesEmitted);
+    AOT_TEST_CHECK(sizeOfRegExpCode <= roomOfRegExpCode && roomOfRegExpCode - sizeOfRegExpCode < RegExpSection::alignment);
+    AOT_TEST_CHECK(build.statistic(StatisticID::RegExp16BitCodeBytes) <= sizeOfRegExpCode);
+    if (ranges.constantsOffset < header.executableSize)
+        AOT_TEST_CHECK(!roomOfRegExpCode && !ranges.ffiCodeSize && ranges.constantsOffset + WTF::roundUpToMultipleOf<imageConstantsAlignment>(ranges.constantsSize) == header.executableSize && header.codeSize == header.executableSize);
+    else
+        AOT_TEST_CHECK(WTF::roundUpToMultipleOf<imageConstantsAlignment>(header.executableSize + build.statistic(StatisticID::RegExpTableBytesEmitted)) == ranges.constantsOffset);
+    AOT_TEST_CHECK(build.statistic(StatisticID::WasmCodeBytesEmitted) == ranges.webAssemblyCodeSize);
+    AOT_TEST_CHECK(build.statistic(StatisticID::FFICodeBytesEmitted) == ranges.ffiCodeSize);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesEmitted) == ranges.constantsSize);
+    AOT_TEST_CHECK(ranges.functionsEnd + sumOfStatistics(build, {
+        StatisticID::WasmCodeBytesEmitted,
+        StatisticID::FFICodeBytesEmitted,
+        StatisticID::RegExpCodeBytesEmitted,
+        StatisticID::RegExpTableBytesEmitted,
+        StatisticID::ConstantBytesEmitted,
+        StatisticID::FFIDirectoryBytesEmitted,
+        StatisticID::PaddingBytesBetweenCodeParts,
+    }) == header.codeSize);
+
+    AOT_TEST_CHECK(sumOfStatistics(build, {
+        StatisticID::ConstantBytesOfSharedConstants,
+        StatisticID::ConstantBytesOfShapeSets,
+        StatisticID::ConstantBytesOfShapeBitmaps,
+        StatisticID::ConstantBytesOfOffsetTables,
+        StatisticID::ConstantBytesOfCellTemplates,
+        StatisticID::ConstantBytesOfNumbers,
+        StatisticID::UnlabeledConstantBytes,
+        StatisticID::ConstantBytesOfJumpTables,
+        StatisticID::PaddingBytesBetweenConstants,
+    }) == ranges.constantsSize);
+}
+
+inline TestImage builtImage(TestBuild& build, Vector<CompiledCode>&& code)
+{
+    uint64_t sizeOfBodiesAsCompiled = 0;
+    for (const CompiledCode& function : code)
+        sizeOfBodiesAsCompiled += function.body.bytes.size();
+    TestImage image = build.build(WTF::move(code));
+    AOT_TEST_CHECK(image.image);
+    checkPartsOfCodeAddUp(build, image);
+    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionBytesEmitted) + build.statistic(StatisticID::FinalJumpBytesRemoved) == sizeOfBodiesAsCompiled);
+    return image;
+}
 
 } // namespace JSC::AOT::ImageTests
 

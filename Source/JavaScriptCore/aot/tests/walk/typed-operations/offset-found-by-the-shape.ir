@@ -1,0 +1,100 @@
+# two members of a family keep a field in the cell in one form at different offsets: the read, the question and the store are one operation on the slot each, whose code finds the offset by the shape word
+# type Dot = { kind }  type Circle = { kind, radius, width, scale }  type Square = { kind, scale, side }  type Ring = { kind, radius, width }  function scaleOf(s) { if (s is a Circle or a Square) return s.scale; return s; }
+# the four functions are handed to sink, so only the test gives a type: two members of the family of four, which are no family themselves. A Circle has every name of a Ring, so those two are a family, and a set that cuts across a family is none
+# a Square has a side, or a Circle would have every name of a Square and the two would be a family, whose members keep what they share at one offset
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="scale" receivers=[L2, L3] level=Proven
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = GetSlot {{*}}key="scale" receivers=[L2, L3] level=Proven
+# RUN(NEVER): walk f1 f3 f4 mechanisms=none+TypedOperations
+# NEVER-NOT: = PropGet
+# NEVER-NOT: PropSet
+# NEVER-NOT: = PropHas
+# what every member of a family lists comes first, the largest family first. So a Circle has its radius and its width where a Ring has them, and its scale behind the end of a Square: no cell grows, so no one offset suits both
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations
+# PLAN: layout L2 CompiledObject
+# PLAN: slot 1 "radius" JSValue Inline offset=[[second]]
+# PLAN: layout L3 CompiledObject
+# PLAN: slot 1 "scale" JSValue Inline offset=[[second]]
+# a field that one of the two lacks is one operation too: a Square reads as an empty slot does
+# RUN(LACKS): walk f2 mechanisms=none+TypedOperations
+# LACKS-LABEL: code f2:Body
+# LACKS: = GetSlotOrUndefined {{*}}key="radius" receivers=[L2, L3] level=Proven
+# RUN(STORE): walk f3 mechanisms=none+TypedOperations
+# STORE-LABEL: code f3:Body
+# STORE: PutSlot{{*}}key="scale" receivers=[L2, L3]
+# RUN(HAS): walk f4 mechanisms=none+TypedOperations
+# HAS-LABEL: code f4:Body
+# HAS: = IsSlotFilled {{*}}key="scale" receivers=[L2, L3]
+
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Dot" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Circle" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="radius" declared={type=anything} flags=[IsRequired]}, {key="width" declared={type=anything} flags=[IsRequired]}, {key="scale" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Square" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="scale" declared={type=anything} flags=[IsRequired]}, {key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Ring" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="radius" declared={type=anything} flags=[IsRequired]}, {key="width" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    v7 = String string="a"
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject -, v7, v7, v7, v7 layout=L2 fields=[0, 1, 2, 3]
+    PutModuleVariable v10 variable=g0
+    v12 = NewObject -, v7, v7, v7 layout=L3 fields=[0, 1, 2]
+    PutModuleVariable v12 variable=g0
+    v14 = NewObject -, v7, v7, v7 layout=L4 fields=[0, 1, 2]
+    PutModuleVariable v14 variable=g0
+    Return v6
+}
+function f1 name="scaleOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L2|L3
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="scale"
+    Return v3
+  b2(v4):
+    Return v4
+}
+function f2 name="radiusOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L2|L3
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="radius"
+    Return v3
+  b2(v4):
+    Return v4
+}
+function f3 name="setScale" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=L2|L3
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = String string="wide"
+    PropSet v3, v4 key="scale"
+    Return v1
+  b2(v6):
+    Return v6
+}
+function f4 name="hasScale" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L2|L3
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropHas v2 key="scale"
+    Return v3
+  b2(v4):
+    Return v4
+}

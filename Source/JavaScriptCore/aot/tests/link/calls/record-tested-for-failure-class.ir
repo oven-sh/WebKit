@@ -1,0 +1,57 @@
+# class Failure extends Error {} function total(n) { let sum = 0; for (let i = 0; i < n; i++) { const point = { x: i, y: 2 }; if (point instanceof Failure) break; sum += point.x; } return sum; }
+# Symbol.hasInstance is looked up through a class that extends a built-in.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 changes=[]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Failure" module=m0 position=6 constructor=f2 flags=[HasHeritage]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Failure" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Error" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Error) flags=[IsExpected]}
+    v4 = ResolveHeritage v3
+    v5 = NewClosure function=f2
+    v6 = NewClass v5, v3, v4 layout=L0
+    v7 = FinishClass v6 layout=L0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]}
+    PutModuleVariable v8 variable=g0
+    PropSet v1, v0 key="total"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="total" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer integer=2
+    Jump -> next b1(v1, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b4()
+  b2():
+    v7 = NewObject -, v4, v2 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="Failure"
+    v11 = InstanceOf v8, v10
+    Branch v11 -> taken b4(), notTaken b3()
+  b3():
+    v12 = PropGet v8 key="x"
+    v13 = Add v3, v12
+    v14 = Increment v4
+    Jump -> next b1(v13, v14)
+  b4():
+    Return v3
+}
+function f2 name="Failure" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L0
+    v5 = Convert v4 declared={type=L0}
+    Return v5
+}

@@ -35,10 +35,10 @@ class RenderSVGForeignObject final : public RenderSVGBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGForeignObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGForeignObject);
 public:
-    RenderSVGForeignObject(SVGForeignObjectElement&, Style::ComputedStyle&&);
+    RenderSVGForeignObject(SVGForeignObjectElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGForeignObject();
 
-    SVGForeignObjectElement& LEGACY_NODELETE foreignObjectElement() const;
+    NODELETE SVGForeignObjectElement& foreignObjectElement() const;
 
     void paint(PaintInfo&, const LayoutPoint&) override;
 

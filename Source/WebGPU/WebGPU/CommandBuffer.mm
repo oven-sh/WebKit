@@ -28,6 +28,7 @@
 
 #import "APIConversions.h"
 #import "Instance.h"
+#import <wtf/Borrow.h>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebGPU::Metal {
@@ -79,7 +80,7 @@ void CommandBuffer::releasePriorCommandBuffers()
 {
     auto commandBuffers = takePriorCommandBuffers();
     Ref queue = m_device->getQueue();
-    for (auto& commandBuffer : commandBuffers)
+    for (auto& commandBuffer : borrow(commandBuffers))
         queue->removeMTLCommandBuffer(commandBuffer.get());
 }
 
@@ -99,8 +100,10 @@ void CommandBuffer::makeInvalid(NSString* lastError)
     releasePriorCommandBuffers();
     m_commandBuffer = nil;
     m_cachedCommandBuffer = nil;
-    if (RefPtr commandEncoder = m_commandEncoder)
+    if (RefPtr commandEncoder = m_commandEncoder) {
         commandEncoder->clearTracking();
+        m_device->getQueue()->discardProvisionalTextureClears(commandEncoder->uniqueId());
+    }
     m_commandEncoder = nullptr;
     m_preCommitHandlers.clear();
     m_postCommitHandlers.clear();
@@ -111,9 +114,11 @@ bool CommandBuffer::preCommitHandler()
     bool result = true;
     if (RefPtr commandEncoder = m_commandEncoder) {
         auto& commandEncoderRef = *commandEncoder;
+        m_device->getQueue()->resolveProvisionalTextureClears(commandEncoderRef.uniqueId());
         for (auto& function : m_preCommitHandlers)
             result = function(*this, commandEncoderRef) && result;
-    }
+    } else
+        m_device->getQueue()->resolveProvisionalTextureClears();
 
     m_preCommitHandlers.clear();
     return result;
@@ -138,7 +143,7 @@ void CommandBuffer::makeInvalidDueToCommit(NSString* lastError)
         [m_commandBuffer encodeSignalEvent:m_sharedEvent value:m_sharedEventSignalValue];
 
     m_cachedCommandBuffer = m_commandBuffer;
-    if (RefPtr instance = m_device->instance())
+    if (RefPtr instance = m_device->weakInstance())
         instance->retainCommandBuffer(*this, m_commandBuffer);
     [m_commandBuffer addCompletedHandler:[protectedThis = protect(*this)](id<MTLCommandBuffer> completedCommandBuffer) {
         // GPUStartTime/GPUEndTime bracket execution on the GPU; kernelStartTime/kernelEndTime only bracket the driver scheduling it.
@@ -158,7 +163,7 @@ void CommandBuffer::makeInvalidDueToCommit(NSString* lastError)
 
             protectedThis->m_commandEncoder = nullptr;
 
-            if (RefPtr instance = protectedThis->m_device->instance())
+            if (RefPtr instance = protectedThis->m_device->weakInstance())
                 instance->releaseCompletedCommandBuffers();
         });
     }];
@@ -182,20 +187,3 @@ bool CommandBuffer::waitForCompletion()
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuCommandBufferAddRef(WGPUCommandBuffer commandBuffer)
-{
-    WebGPU::Metal::fromAPI(commandBuffer).ref();
-}
-
-void wgpuCommandBufferRelease(WGPUCommandBuffer commandBuffer)
-{
-    WebGPU::Metal::fromAPI(commandBuffer).deref();
-}
-
-void wgpuCommandBufferSetLabel(WGPUCommandBuffer commandBuffer, WGPUStringView label)
-{
-    protect(WebGPU::Metal::fromAPI(commandBuffer))->setLabel(WebGPU::Metal::fromAPI(label));
-}

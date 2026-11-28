@@ -41,9 +41,9 @@ class SurfaceMtl : public SurfaceImpl
                const egl::AttributeMap &attribs);
     ~SurfaceMtl() override;
 
-    void destroy(const egl::Display *display) override;
+    void destroy(const egl::ThreadSafeDisplay *display) override;
 
-    egl::Error initialize(const egl::Display *display) override;
+    egl::Error initialize(const egl::ThreadSafeDisplay *display) override;
 
     egl::Error makeCurrent(const gl::Context *context) override;
     egl::Error unMakeCurrent(const gl::Context *context) override;
@@ -61,7 +61,7 @@ class SurfaceMtl : public SurfaceImpl
     egl::Error releaseTexImage(const gl::Context *context, EGLint buffer) override;
     egl::Error getSyncValues(EGLuint64KHR *ust, EGLuint64KHR *msc, EGLuint64KHR *sbc) override;
     egl::Error getMscRate(EGLint *numerator, EGLint *denominator) override;
-    void setSwapInterval(const egl::Display *display, EGLint interval) override;
+    void setSwapInterval(const egl::ThreadSafeDisplay *display, EGLint interval) override;
     void setFixedWidth(EGLint width) override;
     void setFixedHeight(EGLint height) override;
 
@@ -74,6 +74,8 @@ class SurfaceMtl : public SurfaceImpl
 
     const mtl::TextureRef &getColorTexture() { return mColorTexture; }
     const mtl::Format &getColorFormat() const { return mColorFormat; }
+    // True if this surface wraps a multiplanar YUV IOSurface (see IOSurfaceSurfaceMtl).
+    virtual bool isYUV() const { return false; }
     int getSamples() const { return mSamples; }
     bool hasDepthStencil() const { return mDepthTexture || mStencilTexture; }
 
@@ -128,13 +130,13 @@ class WindowSurfaceMtl : public SurfaceMtl
                      const egl::AttributeMap &attribs);
     ~WindowSurfaceMtl() override;
 
-    void destroy(const egl::Display *display) override;
+    void destroy(const egl::ThreadSafeDisplay *display) override;
 
-    egl::Error initialize(const egl::Display *display) override;
+    egl::Error initialize(const egl::ThreadSafeDisplay *display) override;
 
     egl::Error swap(const gl::Context *context, SurfaceSwapFeedback *feedback) override;
 
-    void setSwapInterval(const egl::Display *display, EGLint interval) override;
+    void setSwapInterval(const egl::ThreadSafeDisplay *display, EGLint interval) override;
     EGLint getSwapBehavior() const override;
 
     angle::Result initializeContents(const gl::Context *context,
@@ -188,7 +190,7 @@ class OffscreenSurfaceMtl : public SurfaceMtl
                         const egl::AttributeMap &attribs);
     ~OffscreenSurfaceMtl() override;
 
-    void destroy(const egl::Display *display) override;
+    void destroy(const egl::ThreadSafeDisplay *display) override;
 
     gl::Extents getSize() const override;
 
@@ -206,7 +208,7 @@ class OffscreenSurfaceMtl : public SurfaceMtl
                                             FramebufferAttachmentRenderTarget **rtOut) override;
 
   protected:
-    angle::Result ensureTexturesSizeCorrect(const gl::Context *context);
+    virtual angle::Result ensureTexturesSizeCorrect(const gl::Context *context);
 
     gl::Extents mSize;
 };

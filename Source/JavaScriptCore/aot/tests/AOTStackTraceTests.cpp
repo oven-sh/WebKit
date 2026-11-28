@@ -7,22 +7,20 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableRealm.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
 #include "AOTCompiledCallee.h"
+#include "AOTDriver.h"
 #include "AOTFunctionDescription.h"
-#include "AOTIRParser.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
-#include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
+#include "AOTShellProgramTestSupport.h"
 #include "AOTStackTrace.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -173,38 +171,20 @@ function withLimit(limit, run) {
 globalThis.leaf = function leaf() { return names(new Error().stack); };
 )js"_s;
 
-static std::unique_ptr<CompileOutput> compileWithValidation(ASCIILiteral referencesWord)
+static String runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
-        // The script of the shell hands the program its own objects, closures and Error.captureStackTrace.
-        AOT_TEST_CHECK(!applyOptionWord(options, "admit=Inspector"_s));
-        AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-        if (!program) {
-            build.diagnostics().finish(nullptr);
-            Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-        }
-        AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = compileForShellOnThisThread(programText, { "admit=Inspector"_s, referencesWord }, way);
     });
-    return output;
-}
+    std::span<const uint32_t> entryModules = output->records<uint32_t>(Wire::ResultSection::EntryModuleIds);
+    AOT_TEST_CHECK(entryModules.size() == 1);
 
-static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
-{
-    std::unique_ptr<CompileOutput> output = compileWithValidation(referencesWord);
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
+        makeString(scriptStart, "runCompiledEntryPoint("_s, entryModules[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -216,11 +196,13 @@ static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
 
 static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        String output = runInShell(referencesWord, statements);
-        if (output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            String output = runInShell(way, referencesWord, statements);
+            if (output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(output == expectedOutput);
+        }
     }
 }
 
@@ -355,11 +337,10 @@ static void checkBuiltinNamesNeedNoAtomTable(LoadedProgram& program)
     VM& vm = program.vm();
     auto nameOf = [&](BuiltinID builtin) {
         FunctionDescription description(functionInFramesOf(builtin));
-        String name = description.nameInFrames(vm);
-        AOT_TEST_CHECK(name == description.name(vm) && name == description.calculatedDisplayName(vm, nullptr, false));
+        String name = description.stackTraceName(vm);
+        AOT_TEST_CHECK(name == description.name(vm) && name == description.calculatedDisplayName(vm));
         return name;
     };
-    // Heap::pruneDeadReferences() runs without one.
     Thread& thread = Thread::currentSingleton();
     AtomStringTable* atomStringTable = thread.setCurrentAtomStringTable(nullptr);
     auto restore = makeScopeExit([&] {

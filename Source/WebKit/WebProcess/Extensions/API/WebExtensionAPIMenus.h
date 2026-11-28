@@ -54,6 +54,9 @@ public:
 
     double actionMenuTopLevelLimit() const { return webExtensionActionMenuItemTopLevelLimit; }
 
+    NODELETE NSDictionary *contextType();
+    NODELETE NSDictionary *itemType();
+
     const ClickHandlerMap& clickHandlers() const LIFETIME_BOUND { return m_clickHandlerMap; }
 
 private:

@@ -34,10 +34,9 @@
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
 #include "LazyLoadElementObserver.h"
-#include "LocalFrame.h"
+#include "LazyLoading.h"
 #include "NodeName.h"
 #include "RenderIFrame.h"
-#include "ScriptController.h"
 #include "ScriptableDocumentParser.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -136,7 +135,7 @@ void HTMLIFrameElement::attributeChanged(const QualifiedName& name, const AtomSt
         String invalidTokens;
         setSandboxFlags(newValue.isNull() ? SandboxFlags { } : SecurityContext::parseSandboxPolicy(newValue, invalidTokens));
         if (!invalidTokens.isNull())
-            protect(document())->addConsoleMessage(MessageSource::Other, MessageLevel::Error, makeString("Error while parsing the 'sandbox' attribute: "_s, invalidTokens));
+            protect(document())->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Error while parsing the 'sandbox' attribute: "_s, invalidTokens));
         break;
     }
     case AttributeNames::allowAttr:
@@ -146,7 +145,7 @@ void HTMLIFrameElement::attributeChanged(const QualifiedName& name, const AtomSt
     case AttributeNames::loadingAttr:
         // Allow loading=eager to load the frame immediately if the lazy load was started, but
         // do not allow the reverse situation since the eager load is already started.
-        if (m_isLazyLoading && !equalLettersIgnoringASCIICase(newValue, "lazy"_s)) {
+        if (m_isLazyLoading && !LazyLoading::hasLazyAttributeValue(newValue)) {
             LazyLoadElementObserver::unobserve(*this, protect(document()));
             loadDeferredFrame();
         }
@@ -165,7 +164,7 @@ bool HTMLIFrameElement::rendererIsNeeded(const Style::ComputedStyle& style)
     return style.display() != Style::DisplayType::None && canLoad();
 }
 
-RenderPtr<RenderElement> HTMLIFrameElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLIFrameElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderIFrame>(*this, WTF::move(style));
 }
@@ -204,26 +203,23 @@ ReferrerPolicy HTMLIFrameElement::referrerPolicyFromAttribute() const
     return parseReferrerPolicy(attributeWithoutSynchronization(referrerpolicyAttr), ReferrerPolicySource::ReferrerPolicyAttribute).value_or(ReferrerPolicy::EmptyString);
 }
 
-static bool isFrameLazyLoadable(const Document& document, const URL& url, const AtomString& loadingAttributeValue)
+static bool isFrameLazyLoadable(const HTMLIFrameElement& element, const URL& url)
 {
     if (!url.isValid() || url.isAboutBlank())
         return false;
 
-    if (RefPtr frame = document.frame(); !frame || !protect(frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
-        return false;
-
-    return equalLettersIgnoringASCIICase(loadingAttributeValue, "lazy"_s);
+    return LazyLoading::isLazyLoadable(element);
 }
 
 bool HTMLIFrameElement::shouldLoadFrameLazily()
 {
     Ref document = this->document();
-    if (!document->settings().lazyIframeLoadingEnabled() || document->quirks().shouldDisableLazyIframeLoadingQuirk())
+    if (!LazyLoading::isLazyLoadingEnabled(*this))
         return false;
     URL completeURL = document->encodingParseURL(frameURL());
     auto referrerPolicy = referrerPolicyFromAttribute();
     if (!m_isLazyLoading) {
-        if (isFrameLazyLoadable(document, completeURL, attributeWithoutSynchronization(HTMLNames::loadingAttr))) {
+        if (isFrameLazyLoadable(*this, completeURL)) {
             m_deferredFrameURL = AtomString { completeURL.string() };
             m_deferredReferrerPolicy = referrerPolicy;
             m_isLazyLoading = true;

@@ -436,7 +436,13 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
 
         // Our hypothesis is that we're doing a transition. Before we prove that this is really
         // true, we want to do some sanity checks.
-    
+
+        // getConcurrently above saw only the property table. If this structure's static property
+        // table has not been reified, it can still own the property, in which case the put is not
+        // a transition at all and goes through the static entry's setter or replaces it in place.
+        if (structure->hasNonReifiedStaticProperty(uid))
+            return PutByStatus(LikelyTakesSlowPath);
+
         // Don't cache put transitions on dictionaries.
         if (structure->isDictionary())
             return PutByStatus(LikelyTakesSlowPath);
@@ -449,7 +455,10 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
         // If the structure is for prototype, we should do a slow path which can invalidate MegamorphicCache.
         if (structure->mayBePrototype())
             return PutByStatus(LikelyTakesSlowPath);
-    
+
+        if (privateFieldPutKind.isDefine() && !structure->privateElementAdditionsAreCacheable())
+            return PutByStatus(LikelyTakesSlowPath);
+
         ObjectPropertyConditionSet conditionSet;
         if (!isDirect) {
             ASSERT(privateFieldPutKind.isNone());

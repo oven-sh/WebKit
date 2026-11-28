@@ -71,17 +71,21 @@ public:
     XRLayerQuality quality() const { return XRLayerQuality::Default; }
     void setQuality(XRLayerQuality) { }
 
+    // FIXME: No backend detects a resource loss yet, so nothing sets this to true again after the first draw.
     bool needsRedraw() const { return m_needsRedraw; }
     void setNeedsRedraw(bool needsRedraw) { m_needsRedraw = needsRedraw; }
 
     bool isStatic() const { return m_isStatic; }
     void setIsStatic(bool isStatic) { m_isStatic = isStatic; }
 
+    void markContentUpdated() { m_contentUpdatedThisFrame = true; }
+
     XRLayerBacking& backing();
     PlatformXR::LayerHandle layerHandle() const final;
     WebXRSession* session() const;
 
-    void destroy() { }
+    bool isDestroyed() const final { return m_destroyed; }
+    void destroy();
 
     const Vector<RefPtr<WebGLOpaqueTexture>>& colorTextures() const { return m_colorTextures; }
     void setColorTextures(Vector<RefPtr<WebGLOpaqueTexture>>&&);
@@ -108,7 +112,7 @@ protected:
     // Composition layers fill in their specific data in their overrides.
     virtual void fillInTypeSpecificDeviceLayerData(PlatformXR::DeviceLayer&) const { }
 
-    const PlatformXR::FrameData::Pose& poseInLocalSpace() const { return m_poseInLocalSpace; }
+    const PlatformXR::Pose& poseInLocalSpace() const { return m_poseInLocalSpace; }
 
     const Ref<XRLayerBacking> m_backing;
     const WebXRLayerInit m_init;
@@ -117,11 +121,14 @@ private:
     bool isXRCompositionLayer() const final { return true; }
 
     void recomputePose();
+    void destroyResources();
 
     WeakPtr<WebXRSession> m_session;
 
+    bool m_destroyed { false };
     bool m_isStatic { false };
     bool m_needsRedraw { true };
+    bool m_contentUpdatedThisFrame { false };
     XRLayerLayout m_layout { XRLayerLayout::Stereo };
     bool m_blendTextureSourceAlpha { false };
     bool m_forceMonoPresentation { false };
@@ -131,7 +138,7 @@ private:
 
     RefPtr<WebXRSpace> m_space;
     RefPtr<WebXRRigidTransform> m_transform;
-    PlatformXR::FrameData::Pose m_poseInLocalSpace;
+    PlatformXR::Pose m_poseInLocalSpace;
 };
 
 } // namespace WebCore

@@ -68,10 +68,10 @@
     "IOAudioSelectorControl"
     "IOMobileFramebufferShim"))
 
-;; Allow development dylibs to be loaded
+;; Load WebKitSwift in local development builds and in STP.
 (when (equal? (param "WK_FRAMEWORKS_ARE_RELOCATED") "YES")
     (allow file-read* file-map-executable
-        (literal (string-append (param "WEBKIT2_FRAMEWORK_DIR") "/libWebKitSwift.dylib"))))
+        (literal (string-append (param "WEBKIT2_FRAMEWORK_DIR") "/WebKit.framework/Versions/A/Frameworks/libWebKitSwift.dylib"))))
 
 (allow file-map-executable (subpath
     "/System/Library/Components"
@@ -588,6 +588,11 @@
     (iokit-property "IOGVAH264EncodeCapabilities") ;; <rdar://problem/49498040>
     (iokit-property "IOAVDHEVCDecodeCapabilities") ;; <rdar://problem/71100188>
     (iokit-property "AVCEncoderChromaFormat") ;; <rdar://188029698>
+    (iokit-property "HEVCEncoderChromaFormat") ;; <rdar://192853168>
+    (iokit-property "IOAVEHEVCEncode") ;; <rdar://192853168>
+    (iokit-property "IOAVDAV1DecodeCapabilities") ;; <rdar://192853168>
+    (iokit-property "IOProResHWDecode") ;; <rdar://192853168>
+    (iokit-property "IOProResHWEncode") ;; <rdar://192853168>
 )
 
 ;; <rdar://problem/60088861>
@@ -685,6 +690,13 @@
             (allow file-read* (subpath path))
             (allow file-issue-extension (require-all (extension-class "com.apple.app-sandbox.read") (subpath path))))))
 
+(define (allow-read-write-directory-and-issue-read-write-extensions path)
+    (if path
+        (begin
+            (allow file-read* file-write* (subpath path))
+            (allow file-issue-extension (require-all (extension-class "com.apple.app-sandbox.read") (subpath path)))
+            (allow file-issue-extension (require-all (extension-class "com.apple.app-sandbox.read-write") (subpath path))))))
+
 ;; Remove when <rdar://problem/29646094> is fixed.
 (define (HEX-pattern-match-generator pattern-descriptor)
     (letrec ((pattern-string ""))
@@ -768,10 +780,10 @@
     (allow mach-register (global-name-regex #"^_oglprof_attach_<[0-9]+>$")))
 
 (if (positive? (string-length (param "DARWIN_USER_CACHE_DIR")))
-    (allow file-read* file-write* (subpath (param "DARWIN_USER_CACHE_DIR"))))
+    (allow-read-write-directory-and-issue-read-write-extensions (param "DARWIN_USER_CACHE_DIR")))
 
 (if (positive? (string-length (param "DARWIN_USER_TEMP_DIR")))
-    (allow file-read* file-write* (subpath (param "DARWIN_USER_TEMP_DIR"))))
+    (allow-read-write-directory-and-issue-read-write-extensions (param "DARWIN_USER_TEMP_DIR")))
 
 ;; IOKit user clients
 (if (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES")
@@ -1477,6 +1489,9 @@
     SYS_open_dprotected_np
     SYS_open_nocancel
     SYS_pathconf
+#if UBSAN_ENABLED
+    SYS_pipe
+#endif
     SYS_pread
     SYS_proc_rlimit_control
     SYS_psynch_cvbroad

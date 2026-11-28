@@ -1,0 +1,33 @@
+# const half = x => Math.sqrt(Number(x)) * 0.5;
+# globalThis.kept = half;
+# half(16);
+# RUN: walk f0 mechanisms=all
+# CHECK: @Double = CallDirect {{*}} function=f1
+# RUN(CALLEE): walk f1 mechanisms=all
+# CALLEE: number @Double = Mul
+# CALLEE-NEXT: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="kept"
+    v3 = Integer integer=16
+    v4 = Call v0, -, v3 calleeName="half" [isNeverInlined]
+    PropSet v1, v4 key="result"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="half" module=m0 position=27 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathSqrt
+    v3 = Builtin builtin=Number
+    v4 = Call v3, -, v0 calleeName="Number"
+    v5 = Call v2, v1, v4 calleeName="Math.sqrt"
+    v6 = Double number=0.5
+    v7 = Mul v5, v6
+    Return v7
+}

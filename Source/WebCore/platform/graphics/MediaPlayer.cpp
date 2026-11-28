@@ -191,19 +191,19 @@ private:
     explicit NullMediaPlayerPrivate(MediaPlayer&) { }
 };
 
-static const Vector<WebCore::ContentType>& LEGACY_NODELETE nullContentTypeVector()
+NODELETE static const Vector<WebCore::ContentType>& nullContentTypeVector()
 {
     static NeverDestroyed<Vector<WebCore::ContentType>> vector;
     return vector;
 }
 
-static const std::optional<Vector<String>>& LEGACY_NODELETE nullOptionalStringVector()
+NODELETE static const std::optional<Vector<String>>& nullOptionalStringVector()
 {
     static NeverDestroyed<std::optional<Vector<String>>> vector;
     return vector;
 }
 
-static const std::optional<Vector<FourCC>>& LEGACY_NODELETE nullOptionalFourCCVector()
+NODELETE static const std::optional<Vector<FourCC>>& nullOptionalFourCCVector()
 {
     static NeverDestroyed<std::optional<Vector<FourCC>>> vector;
     return vector;
@@ -266,7 +266,7 @@ class NullMediaPlayerClient final
     , public RefCounted<NullMediaPlayerClient>
     , public Identified<MediaPlayerClientIdentifier> {
 public:
-    static Ref<NullMediaPlayerClient> LEGACY_NODELETE create()
+    NODELETE static Ref<NullMediaPlayerClient> create()
     {
         return adoptRef(*new NullMediaPlayerClient);
     }
@@ -291,19 +291,19 @@ static void addMediaEngine(std::unique_ptr<MediaPlayerFactory>&&);
 
 static Lock mediaEngineVectorLock;
 
-static bool& LEGACY_NODELETE haveMediaEnginesVector() WTF_REQUIRES_LOCK(mediaEngineVectorLock)
+NODELETE static bool& haveMediaEnginesVector() WTF_REQUIRES_LOCK(mediaEngineVectorLock)
 {
     static bool haveVector;
     return haveVector;
 }
 
-static Vector<std::unique_ptr<MediaPlayerFactory>>& LEGACY_NODELETE mutableInstalledMediaEnginesVector()
+NODELETE static Vector<std::unique_ptr<MediaPlayerFactory>>& mutableInstalledMediaEnginesVector()
 {
     static NeverDestroyed<Vector<std::unique_ptr<MediaPlayerFactory>>> installedEngines;
     return installedEngines;
 }
 
-static RemoteMediaPlayerSupport::RegisterRemotePlayerCallback& LEGACY_NODELETE registerRemotePlayerCallback()
+NODELETE static RemoteMediaPlayerSupport::RegisterRemotePlayerCallback& registerRemotePlayerCallback()
 {
     static NeverDestroyed<RemoteMediaPlayerSupport::RegisterRemotePlayerCallback> callback;
     return callback;
@@ -325,7 +325,7 @@ bool RemoteMediaPlayerSupport::registerRemoteEngineIfAvailable(MediaEngineRegist
 
 static void buildMediaEnginesVector() WTF_REQUIRES_LOCK(mediaEngineVectorLock)
 {
-    ASSERT(mediaEngineVectorLock.isLocked());
+    RELEASE_ASSERT(mediaEngineVectorLock.isLocked());
 
 #if USE(AVFOUNDATION)
     if (DeprecatedGlobalSettings::isAVFoundationEnabled()) {
@@ -399,12 +399,12 @@ MediaPlayerPrivateInterface* MediaPlayer::playerPrivate()
     return m_private.get();
 }
 
-static MediaPlayerScope LEGACY_NODELETE effectiveSelectedScope(const MediaPlayerEngineSelection& selection)
+NODELETE static MediaPlayerScope effectiveSelectedScope(const MediaPlayerEngineSelection& selection)
 {
     return selection.scope.value_or(hasPlatformStrategies() ? MediaPlayerScope::Playback : MediaPlayerScope::Supports);
 }
 
-static bool LEGACY_NODELETE engineScopeMatchesSelection(MediaPlayerScope engineScope, MediaPlayerScope selectionScope)
+NODELETE static bool engineScopeMatchesSelection(MediaPlayerScope engineScope, MediaPlayerScope selectionScope)
 {
     if (selectionScope == MediaPlayerScope::Playback)
         return engineScope == MediaPlayerScope::Playback;
@@ -533,7 +533,7 @@ MediaPlayer::MediaPlayer(MediaPlayerClient& client, MediaPlayerEnums::MediaEngin
 
 MediaPlayer::~MediaPlayer()
 {
-    ASSERT(!m_initializingMediaEngine);
+    RELEASE_ASSERT(!m_initializingMediaEngine);
     if (RefPtr privatePtr = m_private)
         privatePtr->mediaPlayerWillBeDestroyed();
 }
@@ -641,6 +641,17 @@ void MediaPlayer::reloadAndResumePlaybackIfNeeded()
     protect(client())->mediaPlayerReloadAndResumePlaybackIfNeeded();
 }
 
+void MediaPlayer::setPlayerPrivate(RefPtr<MediaPlayerPrivateInterface>&& playerPrivate)
+{
+    // m_private is read on the audio render thread by audioSourceProvider(), and this player owns
+    // the only reference. It may only be replaced between mediaPlayerWillInitializeMediaEngine()
+    // and mediaPlayerDidInitializeMediaEngine(), which hold MediaElementAudioSourceNode's process
+    // lock; m_initializingMediaEngine tracks that window.
+    RELEASE_ASSERT(isMainThread());
+    RELEASE_ASSERT(m_initializingMediaEngine);
+    m_private = WTF::move(playerPrivate);
+}
+
 void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 {
 
@@ -656,7 +667,7 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 #define MEDIASTREAM 0
 #endif
 
-    ASSERT(!m_initializingMediaEngine);
+    RELEASE_ASSERT(!m_initializingMediaEngine);
     m_initializingMediaEngine = true;
     protect(client())->mediaPlayerWillInitializeMediaEngine();
 
@@ -673,12 +684,12 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
     if (!engine) {
         LOG_WITH_STREAM(Media, stream << "MediaPlayer::loadWithNextMediaEngine - no media engine found for type \""_s << contentType().raw() << "\""_s);
         m_currentMediaEngine = engine.get();
-        m_private = nullptr;
+        setPlayerPrivate(nullptr);
     } else if (m_currentMediaEngine.get() != engine.get()) {
         m_currentMediaEngine = engine.get();
         m_attemptedEngines.add(*engine);
         RefPtr playerPrivate = engine->createMediaEnginePlayer(*this);
-        m_private = playerPrivate;
+        setPlayerPrivate(playerPrivate.copyRef());
         if (playerPrivate) {
             protect(client())->mediaPlayerEngineUpdated();
             playerPrivate->setMessageClientForTesting(m_internalMessageClient);
@@ -718,7 +729,7 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 #endif
         playerPrivate->load(m_url, m_loadOptions);
     } else {
-        m_private = NullMediaPlayerPrivate::create(*this);
+        setPlayerPrivate(NullMediaPlayerPrivate::create(*this));
         CheckedPtr currentMediaEngine = m_currentMediaEngine.get();
         if (!m_activeEngineIdentifier
             && installedMediaEngines().size() > 1
@@ -736,13 +747,18 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 
 void MediaPlayer::queueTaskOnEventLoop(Function<void()>&& task)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     protect(client())->mediaPlayerQueueTaskOnEventLoop(WTF::move(task));
 }
 
 bool MediaPlayer::hasAvailableVideoFrame() const
 {
     return protect(m_private)->hasAvailableVideoFrame();
+}
+
+bool MediaPlayer::videoFrameHasAlpha() const
+{
+    return protect(m_private)->videoFrameHasAlpha();
 }
 
 void MediaPlayer::prepareForRendering()
@@ -1024,16 +1040,6 @@ void MediaPlayer::setVideoLayerSizeFenced(const FloatSize& size, WTF::MachSendRi
 NSArray* MediaPlayer::timedMetadata() const
 {
     return protect(m_private)->timedMetadata();
-}
-
-String MediaPlayer::accessLog() const
-{
-    return protect(m_private)->accessLog();
-}
-
-String MediaPlayer::errorLog() const
-{
-    return protect(m_private)->errorLog();
 }
 
 #endif
@@ -1480,6 +1486,10 @@ bool MediaPlayer::attemptSniffAndReload()
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
+        // A new load clears m_sniffer through cancelSniffer(), but an already settled promise still
+        // delivers this callback. The result describes a load that is no longer the current one.
+        if (!protectedThis->m_sniffer)
+            return;
         protectedThis->m_sniffer = nullptr;
 
         auto reportOriginalFailure = [&protectedThis] {
@@ -1505,7 +1515,9 @@ bool MediaPlayer::attemptSniffAndReload()
         protectedThis->m_loadOptions.contentType = sniffed;
         protectedThis->m_attemptedEngines.clear();
         protectedThis->m_currentMediaEngine = nullptr;
-        protectedThis->m_private = nullptr;
+        // Clearing m_private here would free the engine while the audio render thread reads it in
+        // audioSourceProvider(). loadWithNextMediaEngine() replaces it under the process lock.
+        protectedThis->cancelLoad();
         protectedThis->loadWithNextMediaEngine(nullptr);
     });
     return true;

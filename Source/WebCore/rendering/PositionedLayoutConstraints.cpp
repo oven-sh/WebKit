@@ -113,7 +113,7 @@ bool PositionedLayoutConstraints::containingCoordsAreFlipped() const
     return !m_useStaticPosition && ((isBlockOpposing() && m_containingAxis == LogicalBoxAxis::Block) || (isOrthogonal() && orthogonalOpposing));
 }
 
-static bool LEGACY_NODELETE isFlippedOnAxis(WritingMode writingMode, BoxAxis physicalAxis)
+NODELETE static bool isFlippedOnAxis(WritingMode writingMode, BoxAxis physicalAxis)
 {
     bool axisIsBlock = writingMode.isHorizontal() != (physicalAxis == BoxAxis::Horizontal);
     return axisIsBlock ? writingMode.isBlockFlipped() : writingMode.isInlineFlipped();
@@ -149,21 +149,17 @@ bool PositionedLayoutConstraints::usesStaticPosition(const Style::ComputedStyle&
     return style.hasStaticBlockPosition(isHorizontalWritingMode) && !style.alignSelf().isAnchorCenter();
 }
 
-LayoutSize PositionedLayoutConstraints::containingBlockOffsetForNonStaticAxes(const RenderBoxModelObject& container, const Style::ComputedStyle& outOfFlowBoxStyle)
+bool PositionedLayoutConstraints::alignmentDependsOnStaticPositionRectangleSize(const RenderBox& outOfFlowBox)
 {
-    auto isHorizontal = container.writingMode().isHorizontal();
-    auto firstFragmentBorderBoxRect = container.firstFragmentBorderBoxRect();
-    if (container.writingMode().isBlockFlipped()) {
-        // firstFragmentBorderBoxRect() is flipped for painting while this offset is added to unflipped locations.
-        if (CheckedPtr containingBlock = container.containingBlock())
-            containingBlock->flipForWritingMode(firstFragmentBorderBoxRect);
-    }
-    auto offset = toLayoutSize(firstFragmentBorderBoxRect.location());
-    if (usesStaticPosition(outOfFlowBoxStyle, LogicalBoxAxis::Inline, isHorizontal))
-        isHorizontal ? offset.setWidth(0_lu) : offset.setHeight(0_lu);
-    if (usesStaticPosition(outOfFlowBoxStyle, LogicalBoxAxis::Block, isHorizontal))
-        isHorizontal ? offset.setHeight(0_lu) : offset.setWidth(0_lu);
-    return offset;
+    CheckedPtr parent = outOfFlowBox.parent();
+    auto& style = outOfFlowBox.style();
+    if (!parent || !style.hasStaticInlinePosition(parent->isHorizontalWritingMode()))
+        return false;
+    auto justifySelf = style.justifySelf().resolve(&parent->style());
+    if (justifySelf.positionType() == ItemPositionType::Legacy)
+        return false;
+    auto alignment = StyleSelfAlignmentData::resolvePositionalAlignment(justifySelf.position(), LogicalBoxAxis::Inline, parent->writingMode(), outOfFlowBox.writingMode());
+    return alignment == ItemPosition::Center || alignment == ItemPosition::End;
 }
 
 void PositionedLayoutConstraints::captureInsets()
@@ -270,8 +266,10 @@ void PositionedLayoutConstraints::captureAnchorGeometry()
     if (!m_defaultAnchorBox)
         return;
 
+    CheckedRef containingBlock = *m_container;
+
     // Store the anchor geometry.
-    LayoutRect anchorRect = Style::AnchorPositionEvaluator::computeAnchorRectRelativeToContainingBlock(*m_defaultAnchorBox, *m_container, m_renderer.get());
+    LayoutRect anchorRect = Style::AnchorPositionEvaluator::computeAnchorRectRelativeToContainingBlock(*m_defaultAnchorBox, containingBlock, m_renderer.get());
     m_anchorArea = extractRange(anchorRect);
 
     // Adjust containing block for position-area.
@@ -286,7 +284,7 @@ void PositionedLayoutConstraints::captureAnchorGeometry()
     }
     // Else we're representing the block axis, but need the inline dimensions.
     auto inlineAxis = oppositeAxis(m_physicalAxis);
-    LayoutRange inlineContainingBlock(m_container->borderLogicalLeft(), m_containingInlineSize);
+    LayoutRange inlineContainingBlock(containingBlock->borderLogicalLeft(), m_containingInlineSize);
     auto inlineAnchorArea = BoxAxis::Horizontal == inlineAxis
         ? LayoutRange { anchorRect.x(), anchorRect.width() }
         : LayoutRange { anchorRect.y(), anchorRect.height() };
@@ -419,6 +417,75 @@ bool PositionedLayoutConstraints::shouldAlignStaticPositionInInlineAxis() const
     return !m_style.justifySelf().resolve(m_renderer->parentStyle()).isNormalStretchOrLegacy();
 }
 
+static bool usesInitialContainingBlockAsStaticPositionRectangle(const RenderBox& renderer)
+{
+    // https://drafts.csswg.org/css-position-3/#staticpos-rect
+    // "Boxes in the top layer always use the initial containing block as their static-position rectangle."
+    RefPtr element = renderer.element();
+    return element && element->isInTopLayer();
+}
+
+WritingMode PositionedLayoutConstraints::staticPositionContainingBlockWritingMode() const
+{
+    ASSERT(shouldAlignStaticPositionInInlineAxis());
+    // https://drafts.csswg.org/css-position-3/#staticpos-rect
+    // "To the extent the box alignment properties have an effect, they use the static-position containing block as the effective containing block, including using its writing mode for resolving alignment axes and directions."
+    // A box in the top layer is laid out as if it were a sibling of the root element, so its static-position containing block is the initial containing block.
+    if (usesInitialContainingBlockAsStaticPositionRectangle(m_renderer))
+        return m_containingWritingMode;
+    // FIXME: The inline axis of a parent orthogonal to the box is the box's block axis, so its writing mode can't resolve justify-self here.
+    if (m_parentWritingMode.isOrthogonal(m_writingMode))
+        return m_containingWritingMode;
+    // shouldAlignStaticPositionInInlineAxis() requires the parent to be a block container, which makes it the static-position containing block.
+    return m_parentWritingMode;
+}
+
+void PositionedLayoutConstraints::resolveAutoInsetsFromAlignment(LayoutUnit staticDistance)
+{
+    ASSERT(shouldAlignStaticPositionInInlineAxis());
+
+    // https://drafts.csswg.org/css-position-3/#staticpos-rect
+    // "The static-position rectangle is a zero-thickness rectangle spanning between the inline-axis sides of the box's static-position containing block"
+    CheckedRef staticPositionContainingBlock = downcast<RenderBox>(*m_renderer->parent());
+    auto rectangleSize = staticPositionContainingBlock->contentBoxLogicalWidth();
+    bool startIsLeftOrTop = m_parentWritingMode.isLogicalLeftInlineStart();
+    auto distanceFromStartEdgeToRectangleStart = startIsLeftOrTop ? staticDistance : containingSize() - staticDistance;
+    auto& startEdgeInset = startIsLeftOrTop ? m_insetBefore : m_insetAfter;
+    auto& endEdgeInset = startIsLeftOrTop ? m_insetAfter : m_insetBefore;
+    auto fixedInset = [&](LayoutUnit inset) -> Style::InsetEdge {
+        return Style::InsetEdge::Fixed { inset / m_style.usedZoomForLength().value };
+    };
+
+    // https://drafts.csswg.org/css-position-3/#resolving-inset-auto
+    // "If both inset properties in a given axis are auto, then, depending on the box's self-alignment property in the relevant axis:"
+    // "For the rules above, ignore overflow alignment, and treat normal as start and any baseline or stretch alignment value as its fallback alignment."
+    // FIXME: css-align-3 gives first baseline a self-start fallback and last baseline a self-end one.
+    switch (StyleSelfAlignmentData::resolvePositionalAlignment(resolveAlignmentValue(), LogicalBoxAxis::Inline, m_parentWritingMode, m_writingMode)) {
+    case ItemPosition::Start:
+        // "for self-start alignment or its equivalent: Set its start-edge inset property to the static position, and its end-edge inset property to zero."
+        startEdgeInset = fixedInset(distanceFromStartEdgeToRectangleStart);
+        return;
+    case ItemPosition::End:
+        // "for self-end alignment or its equivalent: Set its end-edge inset property to the static position, and its start-edge inset property to zero."
+        endEdgeInset = fixedInset(containingSize() - distanceFromStartEdgeToRectangleStart - rectangleSize);
+        return;
+    case ItemPosition::Center: {
+        // "for center alignment: Let start distance be the distance from the center of its static-position rectangle to the start edge of its containing block, and end distance be the distance from the center of its static-position rectangle to the end edge of its containing block. If start distance is less than or equal to end distance, then set the start-edge inset property to zero, and set the end-edge inset property to (containing block size - 2 x |start distance|); otherwise, set the end-edge inset property to zero and the start-edge inset property to (containing block size - 2 x |end distance|)."
+        auto startDistance = distanceFromStartEdgeToRectangleStart + rectangleSize / 2;
+        auto endDistance = containingSize() - startDistance;
+        if (startDistance <= endDistance) {
+            endEdgeInset = fixedInset(containingSize() - 2 * startDistance.abs());
+            return;
+        }
+        startEdgeInset = fixedInset(containingSize() - 2 * endDistance.abs());
+        return;
+    }
+    default:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
 // See CSS2 § 10.3.7-8 and 10.6.4-5.
 void PositionedLayoutConstraints::resolvePosition(RenderBox::LogicalExtentComputedValues& computedValues) const
 {
@@ -458,16 +525,16 @@ void PositionedLayoutConstraints::resolvePosition(RenderBox::LogicalExtentComput
             usedMarginAfter = remainingSpace;
     } else {
         if (auto staticRemainingSpace = remainingSpaceForStaticAlignment(outerSize))
-            alignmentShift = resolveAlignmentShift(*staticRemainingSpace, outerSize);
+            alignmentShift = resolveAlignmentShift(*staticRemainingSpace, outerSize, m_containingWritingMode);
         else if (shouldAlignStaticPositionInInlineAxis()) {
             // Both insets were auto (static position) and an explicit justify-self was specified:
             // align the box's margin box within its static-position rectangle.
             // https://drafts.csswg.org/css-align-3/#justify-abspos
-            alignmentShift = resolveAlignmentShift(remainingSpace, outerSize);
+            alignmentShift = resolveAlignmentShift(remainingSpace, outerSize, staticPositionContainingBlockWritingMode());
         } else if (hasAutoBeforeInset != hasAutoAfterInset)
             alignmentShift = hasAutoAfterInset ? 0_lu : remainingSpace;
         else // Align into remaining space.
-            alignmentShift = resolveAlignmentShift(remainingSpace, outerSize);
+            alignmentShift = resolveAlignmentShift(remainingSpace, outerSize, m_containingWritingMode);
     };
 
     auto position = m_insetModifiedContainingRange.min() + usedMarginBefore + alignmentShift;
@@ -490,9 +557,9 @@ void PositionedLayoutConstraints::resolvePosition(RenderBox::LogicalExtentComput
     }
 }
 
-LayoutUnit PositionedLayoutConstraints::resolveAlignmentShift(LayoutUnit unusedSpace, LayoutUnit itemSize) const
+LayoutUnit PositionedLayoutConstraints::resolveAlignmentShift(LayoutUnit unusedSpace, LayoutUnit itemSize, WritingMode alignmentWritingMode) const
 {
-    bool startIsBefore = this->startIsBefore();
+    bool startIsBefore = m_containingAxis == LogicalBoxAxis::Block || alignmentWritingMode.isLogicalLeftInlineStart();
     bool isOverflowing = unusedSpace < 0_lu;
 
     ItemPosition resolvedAlignment = resolveAlignmentValue();
@@ -519,7 +586,7 @@ LayoutUnit PositionedLayoutConstraints::resolveAlignmentShift(LayoutUnit unusedS
                 shift = unusedSpace;
         }
     } else {
-        auto alignmentSpace = StyleSelfAlignmentData::adjustmentFromStartEdge(unusedSpace, resolvedAlignment, m_containingAxis, m_containingWritingMode, m_writingMode);
+        auto alignmentSpace = StyleSelfAlignmentData::adjustmentFromStartEdge(unusedSpace, resolvedAlignment, m_containingAxis, alignmentWritingMode, m_writingMode);
         shift = startIsBefore ? alignmentSpace : unusedSpace - alignmentSpace;
     }
 
@@ -574,8 +641,14 @@ ItemPosition PositionedLayoutConstraints::resolveAlignmentValue() const
         // At the static position an explicit justify-self aligns the box within its
         // static-position rectangle, resolving against the parent (the static-position
         // containing block); auto resolves to the parent's justify-items.
-        if (shouldAlignStaticPositionInInlineAxis())
-            return m_style.justifySelf().resolve(m_renderer->parentStyle()).position();
+        if (shouldAlignStaticPositionInInlineAxis()) {
+            auto alignmentPosition = m_style.justifySelf().resolve(m_renderer->parentStyle()).position();
+            // https://drafts.csswg.org/css-anchor-position-1/#anchor-center
+            // "If the box is not absolutely positioned, or does not have a default anchor box, this value behaves as center"
+            // captureInsets() only uses the static position when there is no default anchor box.
+            ASSERT(!m_defaultAnchorBox);
+            return alignmentPosition == ItemPosition::AnchorCenter ? ItemPosition::Center : alignmentPosition;
+        }
 #if ASSERT_ENABLED
         ASSERT(m_isEligibleForStaticRangeAlignment);
 #endif
@@ -618,7 +691,7 @@ bool PositionedLayoutConstraints::alignmentAppliesStretch(ItemPosition normalAli
     return ItemPosition::Stretch == alignmentPosition;
 }
 
-bool LEGACY_NODELETE PositionedLayoutConstraints::insetFitsContent() const
+NODELETE bool PositionedLayoutConstraints::insetFitsContent() const
 {
     return (m_insetBefore.isAuto() || m_insetAfter.isAuto())
         && !m_defaultAnchorBox; // position-area and align-center zero out auto insets.
@@ -692,6 +765,17 @@ void PositionedLayoutConstraints::computeStaticPosition()
             shouldUseInsetBefore = false;
         return shouldUseInsetBefore;
     };
+    if (shouldAlignStaticPositionInInlineAxis() && usesInitialContainingBlockAsStaticPositionRectangle(m_renderer)) {
+        // A box in the top layer is laid out as if it were a sibling of the root element, so its containing block is the initial containing block,
+        // or the viewport, which has the same size, when it's fixed positioned. Both insets are zero, so the box aligns within all of it.
+        m_insetBefore = 0_css_px;
+        return;
+    }
+    if (shouldAlignStaticPositionInInlineAxis() && !m_style.originalDisplay().isInlineType() && !m_parentWritingMode.isOrthogonal(m_writingMode)) {
+        // FIXME: Implement the static-position rectangle for originally inline-level boxes and for boxes orthogonal to their parent.
+        resolveAutoInsetsFromAlignment(staticDistance);
+        return;
+    }
     // Since the static position is computed during in flow layout, the computed
     // position should already have zoom computed in. We need to divide out the zoom
     // so that we get the same position when evaluating the inset.
@@ -701,13 +785,19 @@ void PositionedLayoutConstraints::computeStaticPosition()
         m_insetAfter = Style::InsetEdge::Fixed { (containingSize() - staticDistance) / m_style.usedZoomForLength().value };
 }
 
-static LayoutPoint positionInContainer(const RenderBox& container, const RenderBox& child, LayoutPoint positionInChild)
+static LayoutPoint positionInContainer(const RenderBoxModelObject& container, const RenderBox& child, LayoutPoint positionInChild)
 {
     auto containerWritingMode = container.writingMode();
     auto childWritingMode = child.writingMode();
     auto childInFlowOffset = childWritingMode.isHorizontal() ? child.offsetForInFlowPosition() : child.offsetForInFlowPosition().transposedSize();
     auto childLogicalLeft = childInFlowOffset.width() + child.logicalLeft();
     auto childLogicalTop = childInFlowOffset.height() + child.logicalTop();
+    if (CheckedPtr inlineBox = dynamicDowncast<RenderBoxModelObject>(child.container()); inlineBox && inlineBox->isInlineBox() && child.isOutOfFlowPositioned()) {
+        // The child is positioned relative to its inline box containing block, which is in the coordinate space of the container.
+        auto inlineBoxOffset = toLayoutSize(inlineBox->blockStartRelativeFirstFragmentBorderBoxRect().location());
+        childLogicalLeft += childWritingMode.isHorizontal() ? inlineBoxOffset.width() : inlineBoxOffset.height();
+        childLogicalTop += childWritingMode.isHorizontal() ? inlineBoxOffset.height() : inlineBoxOffset.width();
+    }
 
     if (containerWritingMode.isOrthogonal(childWritingMode)) {
         auto topLeft = LayoutPoint { childLogicalLeft + positionInChild.x(), childLogicalTop + positionInChild.y() };
@@ -735,9 +825,9 @@ static LayoutPoint staticDistance(const RenderBoxModelObject& container, const R
     auto initialStaticPosition = [&] {
         // Static position is already in the coordinate system of the container (minus the flip in inline direction).
         auto staticPosition = LayoutPoint { outOfFlowBox.layer()->staticInlinePosition(), outOfFlowBox.layer()->staticBlockPosition() };
-        // We are relative to a RenderBox ancestor unless the containing block itself is an inline box.
+        // We are relative to a RenderBox ancestor (for inline-level content, the block that establishes the inline formatting context).
         auto* staticPositionContainingBlock = outOfFlowBox.parent();
-        for (; staticPositionContainingBlock && !is<RenderBox>(staticPositionContainingBlock) && staticPositionContainingBlock != &container; staticPositionContainingBlock = staticPositionContainingBlock->container()) { }
+        for (; staticPositionContainingBlock && !is<RenderBox>(staticPositionContainingBlock); staticPositionContainingBlock = staticPositionContainingBlock->container()) { }
         if (auto* renderBox = dynamicDowncast<RenderBox>(staticPositionContainingBlock); renderBox && renderBox->writingMode().isInlineFlipped())
             staticPosition.setX(renderBox->logicalWidth() - staticPosition.x());
         return staticPosition;
@@ -745,7 +835,6 @@ static LayoutPoint staticDistance(const RenderBoxModelObject& container, const R
 
     auto staticPosition = LayoutPoint { };
     auto* child = &outOfFlowBox;
-    auto hasSeenNonInlineBoxContainer = false;
     for (auto* ancestorContainer = child->parent(); ancestorContainer && ancestorContainer != &container; ancestorContainer = ancestorContainer->container()) {
         CheckedPtr containerBox = dynamicDowncast<RenderBox>(*ancestorContainer);
         if (!containerBox)
@@ -753,28 +842,21 @@ static LayoutPoint staticDistance(const RenderBoxModelObject& container, const R
 
         staticPosition = child == &outOfFlowBox ? initialStaticPosition() : positionInContainer(*containerBox, *child, staticPosition);
         child = containerBox.get();
-        hasSeenNonInlineBoxContainer = true;
     }
 
-    if (!hasSeenNonInlineBoxContainer && container.isInlineBox()) {
-        // This is a simple case of when the containing block is formed by a positioned inline box with no block boxes in-between (e.g <span style="position: relative">)
-        return initialStaticPosition();
-    }
+    auto staticPositionInContainingBlock = [&] {
+        if (auto* containingBlock = dynamicDowncast<RenderBox>(container))
+            return child == &outOfFlowBox ? initialStaticPosition() : positionInContainer(*containingBlock, *child, staticPosition);
+        ASSERT(container.isInlineBox());
+        // The inline box is in the coordinate space of its own containing block, so make the position relative to the border box of the inline box.
+        auto staticPositionInInlineBoxContainingBlock = child == &outOfFlowBox ? initialStaticPosition() : positionInContainer(*container.containingBlock(), *child, staticPosition);
+        auto offset = toLayoutSize(container.blockStartRelativeFirstFragmentBorderBoxRect().location());
+        return staticPositionInInlineBoxContainingBlock - (container.writingMode().isHorizontal() ? offset : offset.transposedSize());
+    };
 
-    auto* containingBlock = dynamicDowncast<RenderBox>(container);
     // m_insetBefore is expected to be relative to the padding box (while staticPosition is relative to the border box).
-    auto containingBlockBorderSize = LayoutSize { };
-    if (containingBlock)
-        containingBlockBorderSize = containingBlock->writingMode().isInlineFlipped() ? LayoutSize(containingBlock->borderEnd(), containingBlock->borderBefore()) : LayoutSize(containingBlock->borderStart(), containingBlock->borderBefore());
-    else {
-        containingBlock = child->containingBlock();
-        ASSERT(containingBlock);
-        // Note that we don't take the border here as we passed the real containing block.
-    }
-
-    staticPosition = child == &outOfFlowBox ? initialStaticPosition() : positionInContainer(*containingBlock, *child, staticPosition);
-    staticPosition -= containingBlockBorderSize;
-    return staticPosition;
+    auto borderSize = container.writingMode().isInlineFlipped() ? LayoutSize(container.borderEnd(), container.borderBefore()) : LayoutSize(container.borderStart(), container.borderBefore());
+    return staticPositionInContainingBlock() - borderSize;
 }
 
 LayoutUnit PositionedLayoutConstraints::computedInlineStaticDistance() const
@@ -798,7 +880,7 @@ LayoutUnit PositionedLayoutConstraints::computedBlockStaticDistance() const
     return !isOrthogonal() ? staticPosition.y() : staticPosition.x();
 }
 
-static bool LEGACY_NODELETE shouldInlineStaticDistanceAdjustedWithBoxHeight(WritingMode containinigBlockWritingMode, WritingMode parentWritingMode, WritingMode outOfFlowBoxWritingMode)
+NODELETE static bool shouldInlineStaticDistanceAdjustedWithBoxHeight(WritingMode containinigBlockWritingMode, WritingMode parentWritingMode, WritingMode outOfFlowBoxWritingMode)
 {
     if (!containinigBlockWritingMode.isOrthogonal(parentWritingMode))
         return false;
@@ -856,7 +938,7 @@ void PositionedLayoutConstraints::fixupLogicalLeftPosition(RenderBox::LogicalExt
 }
 
 // FIXME: Let's move this over to RenderBoxModelObject and collapse some of the logic here.
-static bool LEGACY_NODELETE shouldBlockStaticDistanceAdjustedWithBoxHeight(const RenderBoxModelObject& containingBlock, const RenderElement& parent, WritingMode outOfFlowBoxWritingMode)
+NODELETE static bool shouldBlockStaticDistanceAdjustedWithBoxHeight(const RenderBoxModelObject& containingBlock, const RenderElement& parent, WritingMode outOfFlowBoxWritingMode)
 {
     // This is where we check if the final static position needs to be adjusted with the height of the out-of-flow box.
     // In ::computeBlockStaticDistance we convert the static position relative to the containing block but in some cases

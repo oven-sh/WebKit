@@ -1,0 +1,131 @@
+# `const parts = s.split("/"); return [parts.length, parts[1]];`: at a written separator, on a text, a list that is only taken apart is never made: one call over the characters says where each place that is read begins and ends
+# and, where the length is read, how many pieces there are; the reads are answered by pieces of the subject.
+# function second(s: string) { const parts = s.split("/"); return [parts.length, parts[1]]; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = BoundsOfStringSplit {{*}}literal="/" count=2 [countsEveryPiece]
+# CHECK: = ResultAt
+# CHECK: = SubstringOrUndefined
+# RUN(UNMADE): walk f1 mechanisms=all
+# UNMADE-LABEL: code f1:Body
+# UNMADE-NOT: NewStringSplitArray
+# UNMADE-NOT: inlineBuiltin=StringSplit
+# UNMADE-NOT: GetArrayElement
+# UNMADE-NOT: GetArrayLength
+# UNMADE-NOT: ElemGet
+# Behind a test of its length the list has another name on each way, and the names meet in a parameter: function routed(s: string) { const parts = s.split("/"); if (parts.length === 5) sink(); return parts[1]; }
+# RUN(MEETS): walk f2 mechanisms=all
+# MEETS-LABEL: code f2:Body
+# MEETS: = BoundsOfStringSplit {{*}}literal="/" count=2 [countsEveryPiece]
+# MEETS-NOT: NewStringSplitArray
+# MEETS-NOT: GetArrayElement
+# It gets out, so the call is what it was: function kept(s: string) { const parts = s.split("/"); return [parts, parts[1]]; }
+# RUN(KEPT): walk f3 mechanisms=all
+# KEPT-LABEL: code f3:Body
+# KEPT-NOT: BoundsOfStringSplit
+# KEPT: inlineBuiltin=StringSplit
+# A separator of several units: function pair(s: string) { const parts = s.split(": "); return [parts[0], parts[1]]; }
+# RUN(LONG): walk f4 mechanisms=all
+# LONG-LABEL: code f4:Body
+# LONG: = BoundsOfStringSplit {{*}}literal=": " count=2
+# LONG-NOT: NewStringSplitArray
+# LONG-NOT: inlineBuiltin=StringSplit
+# The empty text parts a text into its units: function units(s: string) { const parts = s.split(""); return [parts[0], parts[1]]; }
+# RUN(EMPTY): walk f5 mechanisms=all
+# EMPTY-LABEL: code f5:Body
+# EMPTY-NOT: BoundsOfStringSplit
+# EMPTY: inlineBuiltin=StringSplit
+# RUN(COUNTED): compile StringSplitAllocationsElided mechanisms=all
+# COUNTED: statistic StringSplitAllocationsElided 3
+# What it leans on withheld, nothing is taken in parts.
+# RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
+# WITHHELD-NOT: BoundsOfStringSplit
+# RUN(UNFOLDED): walk f1 mechanisms=all-Folding
+# UNFOLDED-NOT: BoundsOfStringSplit
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = String string="/shops/7"
+    v4 = Call v0, -, v3
+    v5 = Call v1, -, v3
+    v6 = Call v2, -, v3
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f5
+    v9 = Call v7, -, v3
+    v10 = Call v8, -, v3
+    v11 = NewArray v4, v5, v6, v9, v10 contents=anything
+    Return v11
+}
+function f1 name="second" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @11
+    v2 = String string="/"
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @12
+    v4 = PropGet v3 key="length" @13
+    v5 = Integer integer=1
+    v6 = ElemGet v3, v5 @14
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+}
+function f2 name="routed" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @21
+    v2 = String string="/"
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @22
+    v4 = PropGet v3 key="length" @23
+    v5 = Integer integer=5
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v7):
+    v8 = NarrowByField v3, v7 key="length"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -
+    Jump -> next b3(v8)
+  b2(v12):
+    v13 = NarrowByField v3, v12 key="length"
+    Jump -> next b3(v13)
+  b3(v14):
+    v15 = Integer integer=1
+    v16 = ElemGet v14, v15 @24
+    Return v16
+}
+function f3 name="kept" module=m0 position=30 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @31
+    v2 = String string="/"
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @32
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4 @33
+    v6 = NewArray v3, v5 contents=anything
+    Return v6
+}
+function f4 name="pair" module=m0 position=40 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @41
+    v2 = String string=": "
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @42
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4 @43
+    v6 = Integer integer=1
+    v7 = ElemGet v3, v6 @44
+    v8 = NewArray v5, v7 contents=anything
+    Return v8
+}
+function f5 name="units" module=m0 position=50 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="split" @51
+    v2 = String string=""
+    v3 = Call v1, v0, v2 calleeKey="split" calleeName="split" @52
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4 @53
+    v6 = Integer integer=1
+    v7 = ElemGet v3, v6 @54
+    v8 = NewArray v5, v7 contents=anything
+    Return v8
+}

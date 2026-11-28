@@ -37,12 +37,15 @@ namespace InlineIterator {
 
 class SVGTextBox : public TextBox {
 public:
-    SVGTextBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
+    NODELETE SVGTextBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
     FloatRect calculateBoundariesIncludingSVGTransform() const;
     static FloatRect calculateBoundariesIncludingSVGTransform(const RenderSVGInlineText&, std::span<const SVGTextFragment>);
+    FloatRect localBoundariesIncludingSVGTransform() const;
     LayoutRect localSelectionRect(unsigned start, unsigned end) const;
-    const Vector<SVGTextFragment>& LEGACY_NODELETE textFragments() const;
+    NODELETE const Vector<SVGTextFragment>& textFragments() const;
+
+    LayoutSize localToUserSpaceOffset() const;
 
     const RenderSVGInlineText& renderer() const { return downcast<RenderSVGInlineText>(TextBox::renderer()); }
 };

@@ -1,0 +1,71 @@
+# The list follows from the program alone. Inside the rehearsal the program never holds a built-in itself. What it holds in its place goes through the same call as any call of the program's, whoever makes the call: the engine too,
+# by a trap, a callback. So what is not written down is entered by no road, and what is written down is paid for at the moment of the call.
+# new RegExp("a" + ("x" in new Proxy({}, { has: Array.of }))): Array.of is not written down, and gives a list, which counts as true . ("f" + [4, 9].map(Math.sqrt))
+# It is the same thing each time that it is read, and it looks like what it stands for: ("c" + (Math.max === Math.max)) . ("d" + [Math.max].includes(Math.max)) . ("e" + Math.max.name) . ("g" + [4, 9].map(Number))
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /atrue/
+# CHECK: text /ctrue/
+# CHECK: text /dtrue/
+# CHECK: text /emax/
+# CHECK-NOT: text /f2,3/
+# CHECK: text /g4,9/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[{key="has" declared={type=anything}}] ownFieldCount=1
+layout L1 module=m0 position=2 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Null
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=Array
+    v4 = PropGet v3 key="of"
+    v5 = Builtin builtin=Proxy
+    v6 = NewObject layout=L1
+    v7 = NewObject -, v4 layout=L0 fields=[0]
+    v8 = Construct v5, -, v6, v7
+    v9 = String string="x"
+    v10 = ElemHas v8, v9
+    v11 = String string="a"
+    v12 = Add v11, v10
+    v13 = Construct v0, -, v12
+    v14 = PropGet v2 key="max"
+    v15 = PropGet v2 key="max"
+    v16 = StrictEq v14, v15
+    v17 = String string="c"
+    v18 = Add v17, v16
+    v19 = Construct v0, -, v18
+    v20 = NewArray v14 contents=anything
+    v21 = PropGet v2 key="max"
+    v22 = PropGet v20 key="includes"
+    v23 = Call v22, v20, v21 calleeKey="includes"
+    v24 = String string="d"
+    v25 = Add v24, v23
+    v26 = Construct v0, -, v25
+    v27 = PropGet v14 key="name"
+    v28 = String string="e"
+    v29 = Add v28, v27
+    v30 = Construct v0, -, v29
+    v31 = Integer integer=4
+    v32 = Integer integer=9
+    v33 = NewArray v31, v32 contents=anything
+    v34 = PropGet v2 key="sqrt"
+    v35 = PropGet v33 key="map"
+    v36 = Call v35, v33, v34 calleeKey="map"
+    v37 = String string="f"
+    v38 = Add v37, v36
+    v39 = Construct v0, -, v38
+    v40 = Integer integer=4
+    v41 = Integer integer=9
+    v42 = NewArray v40, v41 contents=anything
+    v43 = Builtin builtin=Number
+    v44 = PropGet v42 key="map"
+    v45 = Call v44, v42, v43 calleeKey="map"
+    v46 = String string="g"
+    v47 = Add v46, v45
+    v48 = Construct v0, -, v47
+    v49 = NewArray v13, v19, v26, v30, v39, v48 contents=anything
+    Return v49
+}

@@ -23,6 +23,8 @@
 #include "PatternAttributes.h"
 #include "RenderSVGResourcePaintServer.h"
 #include "SVGPatternElement.h"
+#include <wtf/Vector.h>
+#include <wtf/WeakHashMap.h>
 
 class Pattern;
 
@@ -32,7 +34,7 @@ class RenderSVGResourcePattern final : public RenderSVGResourcePaintServer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourcePattern);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourcePattern);
 public:
-    RenderSVGResourcePattern(SVGElement&, Style::ComputedStyle&&);
+    RenderSVGResourcePattern(SVGElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGResourcePattern();
 
     inline SVGPatternElement& patternElement() const;
@@ -44,8 +46,7 @@ public:
     void invalidatePattern(SuppressRepaint suppressRepaint = SuppressRepaint::No)
     {
         m_attributes = std::nullopt;
-        m_imageMap.clear();
-        m_transformMap.clear();
+        m_tiles.clear();
         if (suppressRepaint == SuppressRepaint::No)
             repaintAllClients();
     }
@@ -54,7 +55,7 @@ private:
     bool requiresLayer() const final { return true; }
 
 protected:
-    RefPtr<Pattern> buildPattern(GraphicsContext&, const RenderLayerModelObject&);
+    RefPtr<const Pattern> buildPattern(GraphicsContext&, const RenderLayerModelObject&, const std::optional<AffineTransform>& nonScalingStrokeTransform = std::nullopt);
 
     void collectPatternAttributesIfNeeded();
 
@@ -66,8 +67,16 @@ protected:
 
     std::optional<PatternAttributes> m_attributes;
 
-    HashMap<SingleThreadWeakRef<const RenderLayerModelObject>, Ref<ImageBuffer>> m_imageMap;
-    HashMap<SingleThreadWeakRef<const RenderLayerModelObject>, AffineTransform> m_transformMap;
+    struct CachedTile {
+        FloatSize absoluteScale;
+        Ref<ImageBuffer> image;
+        AffineTransform patternSpaceTransform;
+    };
+    struct CachedTiles {
+        FloatRect objectBoundingBox;
+        Vector<CachedTile, 1> tiles;
+    };
+    SingleThreadWeakHashMap<const RenderLayerModelObject, CachedTiles> m_tiles;
 };
 
 }

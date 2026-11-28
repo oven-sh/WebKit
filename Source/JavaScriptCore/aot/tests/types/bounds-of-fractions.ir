@@ -1,0 +1,36 @@
+# the fractions of a type lie between two integers, or nobody knows where: fractions without bounds hold every other, a union takes the hull, an intersection what both allow, and no fraction lies on a bound
+# RUN: subset int[0,5]|fractional[0,5] fractional[0,5] fractional[3,9] fractional[5,9] fractional
+# CHECK: t0 <= t3: no overlaps: yes
+# CHECK: t2 <= t3: yes overlaps: yes
+# CHECK: t3 <= t0: yes overlaps: yes
+# CHECK: t4 <= t3: yes overlaps: yes
+# CHECK: t4 <= t5: no overlaps: yes
+# CHECK: t4 <= t6: no overlaps: no
+# CHECK: t4 <= t7: yes overlaps: yes
+# CHECK: t7 <= t4: no overlaps: yes
+# CHECK: laws hold
+
+# RUN(UNION): union int[0,5]|fractional[0,5] fractional[0,5] fractional[3,9] fractional[5,9] fractional
+# UNION: t0 | t4 = number
+# UNION: t2 | t4 = int[0, 5]|fractional[0, 5]
+# UNION: t4 | t5 = fractional[0, 9]
+# UNION: t4 | t7 = fractional
+# UNION: laws hold
+
+# RUN(MEET): intersect int[0,5]|fractional[0,5] fractional[0,5] fractional[3,9] fractional[5,9] fractional
+# MEET: t0 & t3 = int[0, 5]|fractional[0, 5]
+# MEET: t3 - t7 = int[0, 5]
+# MEET: t4 - t3 = never
+# MEET: t4 & t5 = fractional[3, 5]
+# MEET: t4 - t5 = fractional[0, 5]
+# MEET: t4 & t6 = never
+# MEET: t4 - t7 = never
+# MEET: t7 - t4 = fractional
+# MEET: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=number}, {type=i32}, {type=int[0, 5]}] results=[{type=anything}] {
+    v3 = Undefined
+    Return v3
+}
+entry module=m0

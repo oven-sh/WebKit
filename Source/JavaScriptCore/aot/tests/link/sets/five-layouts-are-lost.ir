@@ -1,0 +1,55 @@
+# If a set grew with every stranger that comes, types would grow with the program and Link would no longer be linear. The fifth finds no declared family that holds all five, so the set is taken apart and all five are lost, as any two strangers were before there were sets
+# function take(o) { return o.x; }  function same(o) { return o; }  take({ x: 1, p: 1 });  take({ x: "a", q: 1 });  take({ x: true, r: 1 });  take({ x: null, s: 1 });  take(same({ x: "a", t: 1 }));
+# The fifth has the longer way, so the four are a set when it comes. A read through what is lost gives undefined too. None has escaped, so the type names the five that met.
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee {{*}}result=undefined|null|true|int[0, 2147483647]|string returns=
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L3 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L4 {{*}}changes=[] stays-with-compiled-code
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = String string="a"
+    v4 = NewObject -, v3, v0 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v6, v0 layout=L2 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Null
+    v10 = NewObject -, v9, v0 layout=L3 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v3, v0 layout=L4 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = NewClosure function=f1
+    v15 = Call v14, -, v2 calleeName="take"
+    v16 = Call v14, -, v5 calleeName="take"
+    v17 = Call v14, -, v8 calleeName="take"
+    v18 = Call v14, -, v11 calleeName="take"
+    v19 = NewClosure function=f2
+    v20 = Call v19, -, v13 calleeName="same"
+    v21 = Call v14, -, v20 calleeName="take"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

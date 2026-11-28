@@ -34,23 +34,19 @@ class RenderMenuList final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderMenuList);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMenuList);
 public:
-    RenderMenuList(HTMLSelectElement&, Style::ComputedStyle&&);
+    RenderMenuList(HTMLSelectElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMenuList();
 
-    HTMLSelectElement& LEGACY_NODELETE selectElement() const;
+    NODELETE HTMLSelectElement& selectElement() const;
 
     // CheckedPtr interface.
     uint32_t checkedPtrCount() const { return RenderFlexibleBox::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const { return RenderFlexibleBox::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const { RenderFlexibleBox::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const { RenderFlexibleBox::decrementCheckedPtrCount(); }
-    void setDidBeginCheckedPtrDeletion() { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
+    void setDidBeginCheckedPtrDeletion() { RenderFlexibleBox::setDidBeginCheckedPtrDeletion(); }
 
     void setOptionsChanged(bool changed) { m_needsOptionsWidthUpdate = changed; }
-
-#if PLATFORM(IOS_FAMILY)
-    void layout() override;
-#endif
 
     void getItemBackgroundColor(unsigned listIndex, Color&, bool& itemHasCustomBackgroundColor) const;
 
@@ -71,7 +67,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderMenuList"_s; }
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 

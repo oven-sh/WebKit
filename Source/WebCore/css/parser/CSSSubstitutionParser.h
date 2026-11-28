@@ -32,6 +32,7 @@
 #include "CSSParserTokenRange.h"
 #include <WebCore/CSSNamespacePrefixMap.h>
 #include <wtf/RefPtr.h>
+#include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -50,7 +51,9 @@ public:
     static RefPtr<CSSCustomPropertyValue> parseDeclarationValue(const AtomString&, CSSParserTokenRange, const CSSParserContext&, const CSSNamespacePrefixMap& = { });
     static RefPtr<const Style::CustomProperty> parseInitialValueForUniversalSyntax(const AtomString&, CSSParserTokenRange);
 
-    static bool LEGACY_NODELETE isValidCustomPropertyName(const CSSParserToken&);
+    NODELETE static bool isValidCustomPropertyName(const CSSParserToken&);
+    // Consumes the <integer [0,∞]>* indices of an env() reference. Returns std::nullopt if one is invalid.
+    static std::optional<Vector<unsigned, 2>> consumeEnvVariableIndices(CSSParserTokenRange&);
 };
 
 } // namespace WebCore

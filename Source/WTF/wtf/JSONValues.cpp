@@ -42,8 +42,7 @@
 #include <wtf/text/ParsingUtilities.h>
 #include <wtf/text/StringBuilder.h>
 
-namespace WTF {
-namespace JSONImpl {
+namespace WTF::JSONImpl {
 
 namespace {
 
@@ -69,7 +68,7 @@ constexpr auto trueToken = "true"_s;
 constexpr auto falseToken = "false"_s;
 
 template<typename CodeUnit>
-bool LEGACY_NODELETE parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, ASCIILiteral token)
+NODELETE bool parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, ASCIILiteral token)
 {
     if (data.size() < token.length())
         return false;
@@ -84,7 +83,7 @@ bool LEGACY_NODELETE parseConstToken(std::span<const CodeUnit> data, std::span<c
 }
 
 template<typename CodeUnit>
-bool LEGACY_NODELETE readInt(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, bool canHaveLeadingZeros)
+NODELETE bool readInt(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, bool canHaveLeadingZeros)
 {
     if (data.empty())
         return false;
@@ -105,7 +104,7 @@ bool LEGACY_NODELETE readInt(std::span<const CodeUnit> data, std::span<const Cod
 }
 
 template<typename CodeUnit>
-bool LEGACY_NODELETE parseNumberToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
+NODELETE bool parseNumberToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
 {
     // We just grab the number here. We validate the size in DecodeNumber.
     // According to RFC 4627, a valid number is: [minus] int [frac] [exp]
@@ -149,7 +148,7 @@ bool LEGACY_NODELETE parseNumberToken(std::span<const CodeUnit> data, std::span<
 }
 
 template<typename CodeUnit>
-bool LEGACY_NODELETE readHexDigits(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, unsigned digits)
+NODELETE bool readHexDigits(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, unsigned digits)
 {
     if (data.size() < digits)
         return false;
@@ -165,7 +164,7 @@ bool LEGACY_NODELETE readHexDigits(std::span<const CodeUnit> data, std::span<con
 }
 
 template<typename CodeUnit>
-bool LEGACY_NODELETE parseStringToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
+NODELETE bool parseStringToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
 {
     while (!data.empty()) {
         CodeUnit c = consume(data);
@@ -204,7 +203,7 @@ bool LEGACY_NODELETE parseStringToken(std::span<const CodeUnit> data, std::span<
 }
 
 template<typename CodeUnit>
-Token LEGACY_NODELETE parseToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenStart, std::span<const CodeUnit>& tokenEnd)
+NODELETE Token parseToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenStart, std::span<const CodeUnit>& tokenEnd)
 {
     skipWhile<isASCIIWhitespaceWithoutFF>(data);
 
@@ -943,5 +942,4 @@ bool ObjectBase::getValue(const String& name, RefPtr<Value>& output) const
     return true;
 }
 
-} // namespace JSONImpl
-} // namespace WTF
+} // namespace WTF::JSONImpl

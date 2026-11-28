@@ -119,10 +119,8 @@ UIProcess/ViewGestureController.cpp
 UIProcess/ViewSnapshotStore.cpp
 UIProcess/WebGrammarDetail.cpp
 UIProcess/WebMemoryPressureHandler.cpp
-UIProcess/WebViewportAttributes.cpp
 
 UIProcess/API/C/WKGrammarDetail.cpp
-UIProcess/API/C/WKViewportAttributes.cpp
 
 UIProcess/API/C/glib/WKContextConfigurationGlib.cpp
 UIProcess/API/C/glib/WKTextCheckerGLib.cpp
@@ -273,6 +271,12 @@ UIProcess/Notifications/glib/NotificationService.cpp
 
 UIProcess/linux/MemoryPressureMonitor.cpp
 
+UIProcess/WebAuthentication/AuthenticatorManager.cpp
+
+UIProcess/WebAuthentication/fido/CtapAuthenticator.cpp
+
+UIProcess/WebAuthentication/glib/WebAuthenticatorCoordinatorProxyGLib.cpp
+
 UIProcess/WebsiteData/glib/WebsiteDataStoreGLib.cpp
 UIProcess/WebsiteData/soup/WebsiteDataStoreSoup.cpp
 
@@ -325,9 +329,11 @@ UIProcess/gtk/WebPreferencesGtk.cpp
 
 UIProcess/soup/WebProcessPoolSoup.cpp
 
+UIProcess/XR/openxr/OpenXRAnchorManager.cpp
 UIProcess/XR/openxr/OpenXRExtensions.cpp
 UIProcess/XR/openxr/OpenXRGraphicsBindingOpenGLES.cpp
 UIProcess/XR/openxr/OpenXRHitTestManager.cpp
+UIProcess/XR/openxr/OpenXRPlaneDetectionManager.cpp
 UIProcess/XR/openxr/OpenXRInput.cpp
 UIProcess/XR/openxr/OpenXRInputSource.cpp
 UIProcess/XR/openxr/OpenXRLayer.cpp
@@ -335,7 +341,6 @@ UIProcess/XR/openxr/OpenXRSwapchain.cpp
 UIProcess/XR/openxr/PlatformXROpenXR.cpp
 UIProcess/XR/openxr/PlatformXRSystemOpenXR.cpp
 
-WebProcess/Extensions/API/glib/WebExtensionAPIEventGLib.cpp
 WebProcess/Extensions/API/glib/WebExtensionAPIPortGLib.cpp
 WebProcess/Extensions/API/glib/WebExtensionAPITestGLib.cpp
 

@@ -1,0 +1,38 @@
+# function first() {} Object.defineProperties(first, { limit: { get: () => 1 }, mark: hidden })
+# The first entry is written in place, the second is not: its change is a copy of the first one's and must not keep the first one's marks.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# RUN(SUMMARY): summary f0
+# SUMMARY-COUNT-1: entry-written-in-map
+# SUMMARY-NOT: entry-written-in-map
+
+layout L0 fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="value" declared={type=anything}}]
+layout L1 fields=[{key="limit" declared={type=anything}}, {key="mark" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperties
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="hidden" [isFreeName]
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewObject -, v7, v4 layout=L1 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = Call v2, v1, v0, v9 calleeName="Object.defineProperties"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

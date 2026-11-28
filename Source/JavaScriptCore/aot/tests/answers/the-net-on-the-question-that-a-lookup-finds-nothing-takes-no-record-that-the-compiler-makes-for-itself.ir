@@ -1,0 +1,11 @@
+# Under testing=CheckWalkAtRunTime the yes of `$findsNoMember` as the library writes it is asked of the object. Under testing=CheckProofsAtRunTime the compiler tests what it remembers of the cell, in front of the question, by a record of the same kind: its yes says
+# "no field outside its slot, the layout's prototype", not "a lookup finds nothing". Here the prototype holds the name: the written question says no, rightly, and the compiler's own record says yes, rightly. A net that takes every record of the kind stops both runs.
+# RUN(BEFORE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime give = () => "missing"; keep = x => x; later = function () { };
+# BEFORE: may hold 7 7
+# BEFORE-NEXT: may hold 7 7
+# BEFORE-NEXT: exited with 0
+# RUN(LATER): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime give = () => "other"; keep = x => x; later = function (Meter) { Meter.prototype["miss" + "ing"] = 8; };
+# LATER: lacks undefined undefined
+# LATER-NEXT: may hold 8 8
+# LATER-NEXT: exited with 0
+# PROGRAM-OF: a-name-defined-on-a-prototype-under-an-unknown-key-is-left-to-the-guard-of-the-name-that-is-asked.ir

@@ -158,7 +158,19 @@ using RecordsOrError = std::expected<Vector<Record>, Error>;
 using RecordsCallback = CompletionHandler<void(RecordsOrError&&)>;
 
 using CrossThreadRecordsOrError = std::expected<Vector<CrossThreadRecord>, Error>;
-using CrossThreadRecordsCallback = CompletionHandler<void(CrossThreadRecordsOrError&&)>;
+
+struct CORPViolation {
+    URL blockedURL;
+    URL responseURL;
+    String crossOriginResourcePolicy;
+    IncludesCredentials requestIncludesCredentials { IncludesCredentials::Yes };
+};
+
+struct RetrieveRecordsResult {
+    CrossThreadRecordsOrError records;
+    Vector<CORPViolation> corpViolations;
+};
+using RetrieveRecordsCallback = CompletionHandler<void(RetrieveRecordsResult&&)>;
 
 using CompletionCallback = CompletionHandler<void(std::optional<Error>&&)>;
 

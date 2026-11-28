@@ -1,0 +1,46 @@
+# The list follows from the program alone, and the texts that come of one file are the same whatever stands beside it.
+# routes.js: export function route(path) { return new RegExp("^" + path); }   main.js: import { route } from "./routes.js"; route("shops");
+# main.js imports behind it a file that counts to a million, and calls route() behind both.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /^shops/
+
+module m0 path="/routes.js" displayPath="routes.js" body=f0 exports=[{name="route" variable=g0}]
+module m1 path="/main.js" displayPath="main.js" body=f2 requests=[{target=m0 completes=true}, {target=m2 completes=true}]
+module m2 path="/spins.js" displayPath="spins.js" body=f3
+entry module=m1
+variable g0 name="route" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="route" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=RegExp
+    v2 = String string="^"
+    v3 = Add v2, v0
+    v4 = Construct v1, -, v3
+    Return v4
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="shops"
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    Jump -> next b1(v0)
+  b1(v1: anything):
+    LoopHint
+    v3 = Increment v1
+    v4 = Integer integer=1000000
+    v5 = Less v3, v4
+    Branch v5 -> taken b1(v3), notTaken b2()
+  b2():
+    Return v0
+}

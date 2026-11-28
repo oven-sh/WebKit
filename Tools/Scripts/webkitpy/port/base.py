@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (C) 2010 Google Inc. All rights reserved.
-# Copyright (C) 2013-2019 Apple Inc. All rights reserved.
+# Copyright (C) 2013-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -105,6 +105,11 @@ class Port(object):
     DEFAULT_DEVICE_TYPES = []
     DRIVER_NAMES = ('WebKitTestRunner',)
     DEFAULT_SUPPORTED_DRIVERS = DRIVER_NAMES
+
+    SANITIZER_OPTIONS_VARIABLES = ('ASAN_OPTIONS', 'LSAN_OPTIONS', 'TSAN_OPTIONS', 'UBSAN_OPTIONS')
+    # Sanitizers split their options on any of these characters outside a quoted value.
+    SANITIZER_OPTION_SEPARATORS = ' ,:\t\n\r'
+    SANITIZER_OPTION_PATTERN = re.compile(r'''[^{0}=]*=(?:"[^"]*"|'[^']*'|[^{0}]*)|[^{0}]+'''.format(SANITIZER_OPTION_SEPARATORS))
 
     # Do test runners support alias hostnames such as web-platform.test
     supports_localhost_aliases = False
@@ -320,11 +325,11 @@ class Port(object):
                 return group
         return None
 
-    def filter_api_tests_by_allowlist(self, tests):
-        """Split API tests into allowlisted (parallel) and non-allowlisted (system) groups.
+    def filter_api_tests_by_blocklist(self, tests):
+        """Split API tests into parallel and blocklisted (system shard) groups.
 
-        Default implementation: all tests are allowlisted (no system shard).
-        Override in platform-specific ports to implement allowlist filtering.
+        Default implementation: no test is blocklisted (no system shard).
+        Override in platform-specific ports to implement blocklist filtering.
         """
         return tests, []
 
@@ -355,7 +360,9 @@ class Port(object):
         return True
 
     def environment_for_api_tests(self):
-        return self.setup_environ_for_server()
+        environment = self.setup_environ_for_server()
+        self._append_sanitizer_options(environment)
+        return environment
 
     def _check_driver(self):
         driver_path = self._path_to_driver()
@@ -842,6 +849,36 @@ class Port(object):
         else:
             env[name] = value
 
+    @staticmethod
+    def _merge_sanitizer_options(options, additions):
+        # Join with ':', never os.pathsep (';' on Windows).
+        # Keep every setting in options, including repeated keys, and add only the additions whose key options lacks.
+        options = Port.SANITIZER_OPTION_PATTERN.findall(options)
+        keys = set(each.split('=', 1)[0] for each in options)
+        return ':'.join(options + [each for each in Port.SANITIZER_OPTION_PATTERN.findall(additions) if each.split('=', 1)[0] not in keys])
+
+    def _append_sanitizer_options(self, environment):
+        defaults = {'ASAN_OPTIONS': 'allocator_may_return_null=1'}
+        if self._config.tsan:
+            suppressions = self.path_from_webkit_base('Tools', 'Scripts', 'tsan_suppressions.txt')
+            if re.search('[{}]'.format(self.SANITIZER_OPTION_SEPARATORS), suppressions):
+                suppressions = '"{}"'.format(suppressions)
+            defaults['TSAN_OPTIONS'] = 'second_deadlock_stack=1:suppressions=' + suppressions
+        for variable in self.SANITIZER_OPTIONS_VARIABLES:
+            options = self._merge_sanitizer_options(environment.get(variable, ''), defaults.get(variable, ''))
+            # XPC services see only the __XPC_-prefixed twin, so copy each setting there unless the twin already has its key.
+            xpc_options = self._merge_sanitizer_options(environment.get('__XPC_' + variable, ''), options)
+            for name, value in [(variable, options), ('__XPC_' + variable, xpc_options)]:
+                if value:
+                    environment[name] = value
+
+    def warn_about_ignored_sanitizer_options(self):
+        passed_variables = set(each.split('=', 1)[0] for each in self.get_option('additional_env_var', []))
+        for variable in self.SANITIZER_OPTIONS_VARIABLES:
+            for name in [variable, '__XPC_' + variable]:
+                if os.environ.get(name) and name not in passed_variables:
+                    _log.warning('%s is set in the environment but is ignored; pass it with --additional-env-var=%s=... instead.', name, name)
+
     def show_results_html_file(self, results_filename):
         """This routine should display the HTML file pointed at by
         results_filename in a users' browser."""
@@ -1130,6 +1167,12 @@ class Port(object):
     def allowed_hosts(self):
         return self.get_option("allowed_host", [])
 
+    def requested_disabled_keys(self):
+        return {key for value in self.get_option('disabled_keys', None) or [] for key in (item.strip(' \t\n\r\f') for item in value.split(',')) if key}
+
+    def disabled_keys(self):
+        return sorted(key for key in self.requested_disabled_keys() if re.fullmatch(r'''[^ \t\n\r\f"']+''', key))
+
     def internal_feature(self):
         return self.get_option("internal_feature", [])
 
@@ -1347,7 +1390,12 @@ class Port(object):
             if internal_name and port_config.apple_additions():
                 internal_path = self._apple_api_test_expectations_path(internal_name)
                 if internal_path:
-                    files.append(self._filesystem.join(internal_path, 'apitests'))
+                    # Only list each internal file once, since several cascade entries can map
+                    # to the same internal platform (e.g. 'mac' and 'mac-<version>'), and multiple
+                    # loads would report every expectation as a duplicate of itself.
+                    internal_file = self._filesystem.join(internal_path, 'apitests')
+                    if internal_file not in files:
+                        files.append(internal_file)
 
         return files
 

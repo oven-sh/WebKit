@@ -123,6 +123,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
+    // The promise that a reaction with this cell settles, directly or at the end of a chain of reactions.
+    JS_EXPORT_PRIVATE static JSPromise* promiseForReactionCell(JSCell*);
 #endif
 
     JS_EXPORT_PRIVATE static JSPromise* resolvedPromise(JSGlobalObject*, JSValue);
@@ -289,6 +291,8 @@ private:
     JSPromiseReaction* reactionHead(VM&);
     void settleInlineInternalMicrotask(VM&, JSGlobalObject*, Status, JSValue argument, uint16_t flags);
     void settleInlineHandler(VM&, JSGlobalObject*, Status, JSValue argument, uint16_t flags);
+    void fulfillPromiseImpl(VM&, JSValue);
+    void fulfillPromiseWithCell(VM&, JSCell*);
     static void triggerPromiseReactions(VM&, JSGlobalObject*, JSPromise::Status, JSPromiseReaction* head, JSValue argument);
 
     InternalMicrotask inlineReactionMicrotask() const

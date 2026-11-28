@@ -24,6 +24,7 @@
 #if ENABLE_PHONE_NUMBER_POSSESSION
 
 import WebKit_Internal
+import WebCore_Private
 import os
 import wtf
 
@@ -33,37 +34,50 @@ import UIKit
 import AppKit
 #endif
 
+@_expose(Cxx)
 final class PhoneNumberPossessionController {
     private let base: Base
 
+    @_expose(Cxx)
     init() {
-        base = Base(manager: UnavailablePhoneNumberPossessionManager())
+        if let platformManager = WebKit.phoneNumberPossessionPlatformManager() {
+            base = Base(manager: CocoaPhoneNumberPossessionManager(platformManager: platformManager))
+        } else {
+            base = Base(manager: UnavailablePhoneNumberPossessionManager())
+        }
+    }
+
+    @_expose(Cxx)
+    init(mockConfiguration: WebCore.MockPhoneNumberPossessionConfiguration) {
+        base = Base(manager: MockPhoneNumberPossessionManager(configuration: mockConfiguration))
     }
 
     // FIXME: rdar://191032757 Each task below captures completionHandler explicitly, because the
     // Swift 6.4 optimizer crashes when a closure captures a sending C++ reference implicitly.
     // Drop completionHandler from the capture lists once that's fixed.
+    @_expose(Cxx)
     func canRequest(completionHandler: sending WebKit.PhoneNumberPossessionCanRequestCompletionHandler) {
         Task.immediate { @MainActor [base, completionHandler] in
             completionHandler.pointee(await base.canRequest())
         }
     }
 
+    @_expose(Cxx)
     func request(
         _ request: sending WebKit.RefCountedPhoneNumberPossessionRequest,
-        origin: sending WTF.String,
         presentationAnchor: PhoneNumberPossessionPresentationAnchor?,
         completionHandler: sending WebKit.PhoneNumberPossessionRequestCompletionHandler
     ) {
         Task.immediate { @MainActor [base, completionHandler] in
             let result = await WebKit.PhoneNumberPossessionResult { () async throws(CxxUnexpected<WebKit.PhoneNumberPossessionError>) in
-                try await base.request(request, origin: origin, presentationAnchor: presentationAnchor)
+                try await base.request(request, presentationAnchor: presentationAnchor)
             }
 
             completionHandler.pointee(result)
         }
     }
 
+    @_expose(Cxx)
     func cancel(completionHandler: sending WebKit.PhoneNumberPossessionCancelCompletionHandler) {
         Task.immediate { @MainActor [base, completionHandler] in
             await base.cancel()
@@ -114,7 +128,6 @@ extension PhoneNumberPossessionController {
 
         func request(
             _ request: sending WebKit.RefCountedPhoneNumberPossessionRequest,
-            origin: sending WTF.String,
             presentationAnchor: PhoneNumberPossessionPresentationAnchor?
         ) async throws(CxxUnexpected<WebKit.PhoneNumberPossessionError>) -> WebCore.PhoneNumberPossessionResponse {
             if hasStartedRequest {
@@ -138,7 +151,6 @@ extension PhoneNumberPossessionController {
                 requestResult = await Result { () async throws(CxxUnexpected<WebKit.PhoneNumberPossessionError>) in
                     try await manager.requestPhoneNumberPossession(
                         request: request,
-                        origin: origin,
                         presentationAnchor: presentationAnchor
                     )
                 }

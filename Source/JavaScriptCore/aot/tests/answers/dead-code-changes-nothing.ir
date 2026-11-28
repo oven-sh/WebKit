@@ -1,0 +1,62 @@
+# what a bare name means goes by reached code alone: every way to answer for `sink` stands in a function that nobody calls, and a store in a file that nobody loads
+# main.js: sink(() => 1);
+# const never = () => { typeof sink; "sink" in globalThis; globalThis.sink; Object.hasOwn(globalThis, "sink"); sink = 2; globalThis.sink = 3; delete globalThis.sink;
+# Object.defineProperty(globalThis, "sink", { value: 4 }); };
+# other.js: globalThis.sink = taken => 5;
+# RUN(SHELL): run-in-shell globalThis.sink = handed => { print(handed()); };
+# SHELL: 1
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="other.js" displayPath="other.js" body=f3
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    Return
+}
+function f1 name="handed" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="never" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName, isForTypeOf]
+    v2 = PropHas v0 key="sink"
+    v3 = PropGet v0 key="sink"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectHasOwn
+    v6 = String string="sink"
+    v7 = Call v5, v4, v0, v6 calleeName="Object.hasOwn"
+    v8 = Integer integer=2
+    PropSet v0, v8 key="sink" mode=Sloppy [isFreeName]
+    v10 = Integer integer=3
+    PropSet v0, v10 key="sink"
+    v12 = PropDelete v0 key="sink" mode=Sloppy
+    v13 = Builtin builtin=ObjectDefineProperty
+    v14 = NewObject layout=L0
+    v15 = Integer integer=4
+    PropDefine v14, v15 key="value"
+    v17 = FinishObject v14
+    v18 = Call v13, v4, v0, v6, v17 calleeName="Object.defineProperty"
+    Return
+}
+function f3 name="other" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f4
+    PropSet v0, v1 key="sink"
+    Return
+}
+function f4 name="stored" module=m1 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=5
+    Return v1
+}

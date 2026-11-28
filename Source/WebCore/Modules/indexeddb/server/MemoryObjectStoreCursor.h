@@ -30,8 +30,7 @@
 #include "MemoryCursor.h"
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-namespace IDBServer {
+namespace WebCore::IDBServer {
 
 class MemoryBackingStoreTransaction;
 class MemoryObjectStore;
@@ -41,7 +40,7 @@ class MemoryObjectStoreCursor : public MemoryCursor {
 public:
     static Ref<MemoryObjectStoreCursor> create(MemoryObjectStore&, const IDBCursorInfo&, MemoryBackingStoreTransaction&);
 
-    void LEGACY_NODELETE objectStoreCleared();
+    NODELETE void objectStoreCleared();
     void keyDeleted(const IDBKeyData&);
     void keyAdded(IDBKeyDataSet::iterator);
 
@@ -68,5 +67,4 @@ private:
     IDBKeyData m_currentPositionKey;
 };
 
-} // namespace IDBServer
-} // namespace WebCore
+} // namespace WebCore::IDBServer

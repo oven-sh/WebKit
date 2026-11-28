@@ -29,9 +29,7 @@
 
 #include <wtf/text/WTFString.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 class CombinedURLFilters;
 
@@ -55,15 +53,14 @@ public:
         InvalidQuantifier,
     };
     static ASCIILiteral statusString(ParseStatus);
-    explicit URLFilterParser(CombinedURLFilters&);
-    ~URLFilterParser();
+    NODELETE explicit URLFilterParser(CombinedURLFilters&);
+    NODELETE ~URLFilterParser();
     ParseStatus addPattern(StringView pattern, bool patternIsCaseSensitive, uint64_t patternId);
 
 private:
     CombinedURLFilters& m_combinedURLFilters;
 };
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

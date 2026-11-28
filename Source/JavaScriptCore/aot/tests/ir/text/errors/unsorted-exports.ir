@@ -1,5 +1,5 @@
 # Exports in the order of their bytes and not of their UTF-16 code units: U+FFFD comes after the surrogate pair of U+10000
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: UnsortedList
 
 variable g0 declared={type=anything}

@@ -30,8 +30,7 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 #include <WebCore/StyleValueTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'offset-rotate'> = [ auto | reverse ] || <angle>
 // https://drafts.fxtf.org/motion/#propdef-offset-rotate
@@ -73,8 +72,8 @@ template<> struct CSSValueConversion<OffsetRotate> { OffsetRotate operator()(Bui
 // MARK: - Blending
 
 template<> struct Blending<OffsetRotate> {
-    bool LEGACY_NODELETE canBlend(const OffsetRotate&, const OffsetRotate&);
-    OffsetRotate LEGACY_NODELETE blend(const OffsetRotate&, const OffsetRotate&, const BlendingContext&);
+    NODELETE bool canBlend(const OffsetRotate&, const OffsetRotate&);
+    NODELETE OffsetRotate blend(const OffsetRotate&, const OffsetRotate&, const BlendingContext&);
 };
 
 // MARK: - Evaluation
@@ -82,7 +81,7 @@ template<> struct Blending<OffsetRotate> {
 #if ENABLE(THREADED_ANIMATIONS)
 
 template<> struct Evaluation<OffsetRotate, AcceleratedEffectOffsetRotate> {
-    AcceleratedEffectOffsetRotate LEGACY_NODELETE operator()(const OffsetRotate&);
+    NODELETE AcceleratedEffectOffsetRotate operator()(const OffsetRotate&);
 };
 
 #endif
@@ -91,7 +90,6 @@ template<> struct Evaluation<OffsetRotate, AcceleratedEffectOffsetRotate> {
 
 WTF::TextStream& operator<<(WTF::TextStream&, const OffsetRotate&);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::OffsetRotate)

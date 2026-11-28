@@ -49,6 +49,7 @@
 #import "AccessibilityScrollView.h"
 #import "AccessibilitySpinButton.h"
 #import "AccessibilityTableColumn.h"
+#import "BoundaryPointInlines.h"
 #import "CGUtilities.h"
 #import "Chrome.h"
 #import "ChromeClient.h"
@@ -1849,7 +1850,7 @@ static id handleTableSelectedRowsAttribute(WebAccessibilityObjectWrapper*, AXCor
     return selectedChildren.size() ? makeNSArray(WTF::move(selectedChildren)) : nil;
 }
 
-static id LEGACY_NODELETE handleSelectedColumnsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject&)
+NODELETE static id handleSelectedColumnsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject&)
 {
     return nil;
 }
@@ -2151,37 +2152,44 @@ static id handleMathRootRadicandAttribute(WebAccessibilityObjectWrapper*, AXCore
 
 static id handleMathFractionNumeratorAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathNumeratorObject()) ? backingObject.mathNumeratorObject()->wrapper() : 0;
+    RefPtr numerator = backingObject.mathNumeratorObject();
+    return numerator ? numerator->wrapper() : nil;
 }
 
 static id handleMathFractionDenominatorAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathDenominatorObject()) ? backingObject.mathDenominatorObject()->wrapper() : 0;
+    RefPtr denominator = backingObject.mathDenominatorObject();
+    return denominator ? denominator->wrapper() : nil;
 }
 
 static id handleMathBaseAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathBaseObject()) ? backingObject.mathBaseObject()->wrapper() : 0;
+    RefPtr base = backingObject.mathBaseObject();
+    return base ? base->wrapper() : nil;
 }
 
 static id handleMathSubscriptAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathSubscriptObject()) ? backingObject.mathSubscriptObject()->wrapper() : 0;
+    RefPtr subscript = backingObject.mathSubscriptObject();
+    return subscript ? subscript->wrapper() : nil;
 }
 
 static id handleMathSuperscriptAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathSuperscriptObject()) ? backingObject.mathSuperscriptObject()->wrapper() : 0;
+    RefPtr superscript = backingObject.mathSuperscriptObject();
+    return superscript ? superscript->wrapper() : nil;
 }
 
 static id handleMathUnderAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathUnderObject()) ? backingObject.mathUnderObject()->wrapper() : 0;
+    RefPtr under = backingObject.mathUnderObject();
+    return under ? under->wrapper() : nil;
 }
 
 static id handleMathOverAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return (backingObject.mathOverObject()) ? backingObject.mathOverObject()->wrapper() : 0;
+    RefPtr over = backingObject.mathOverObject();
+    return over ? over->wrapper() : nil;
 }
 
 static id handleMathFencedOpenAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
@@ -2981,7 +2989,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
         NSAccessibilityTextMarkerForIndexAttribute,
         NSAccessibilityTextMarkerIsValidAttribute,
         NSAccessibilityIndexForTextMarkerAttribute,
-        NSAccessibilityRelativeIndexForTextMarkerAttribute
+        NSAccessibilityRelativeIndexForTextMarkerAttribute,
+        NSAccessibilityTextMarkerForRelativeIndexAttribute
     ];
 
     static NeverDestroyed textParamAttrs = [] {
@@ -3369,30 +3378,42 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 }
 ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
-- (AXTextMarkerRef)_textMarkerForIndex:(NSInteger)textIndex
+- (AXTextMarkerRef)_textMarkerForOffset:(NSInteger)offset fromBoundaryPoint:(const BoundaryPoint&)start
 {
-    return Accessibility::retrieveAutoreleasedValueFromMainThread<AXTextMarkerRef>([&textIndex, protectedSelf = retainPtr(self)] () -> RetainPtr<AXTextMarkerRef> {
-        RefPtr backingObject = downcast<AccessibilityObject>(protectedSelf.get().axBackingObject);
-        if (!backingObject)
-            return nil;
+    AX_ASSERT(isMainThread());
 
-        CheckedPtr cache = backingObject->axObjectCache();
-        if (!cache)
-            return nil;
+    RefPtr backingObject = downcast<AccessibilityObject>(self.axBackingObject);
+    if (!backingObject)
+        return nil;
 
-        RefPtr document = backingObject->document();
-        if (!document)
-            return nil;
+    CheckedPtr cache = backingObject->axObjectCache();
+    if (!cache)
+        return nil;
 
-        RefPtr documentElement = document->documentElement();
-        if (!documentElement)
-            return nil;
+    RefPtr document = backingObject->document();
+    if (!document)
+        return nil;
 
-        auto boundary = resolveCharacterLocation(makeRangeSelectingNodeContents(*documentElement), textIndex);
+    RefPtr documentElement = document->documentElement();
+    if (!documentElement)
+        return nil;
+
+    SimpleRange scope = makeSimpleRange(start, makeBoundaryPointAfterNodeContents(*documentElement));
+    auto boundary = resolveCharacterLocation(scope, offset);
+
+    // FIXME: Remove this branch once we consider snapping to grapheme cluster boundaries.
+    // Currently several tests rely on returning a marker at each UTF16 code point inside Text nodes.
+    if (is<Text>(boundary.container)) {
         auto characterOffset = cache->startOrEndCharacterOffsetForRange(makeSimpleRange(boundary), true);
-
         return textMarkerForCharacterOffset(cache.get(), characterOffset);
-    });
+    }
+
+    // Converting to a VisiblePosition to handle offsets that fall inside emitted (virtual) characters,
+    // mirroring the implementation of AXTextMarker::nextMarkerFromOffset. As stated there:
+    // Positions that fall inside an emitted (virtual) character, e.g. a newline at a block boundary,
+    // have no marker of their own, so they snap back to the end of the preceding run; this is a
+    // bounded, non-accumulating snap (acceptable per VoiceOver's needs).
+    return textMarkerForVisiblePosition(cache.get(), VisiblePosition { makeDeprecatedLegacyPosition(boundary) });
 }
 
 #if ENABLE(TREE_DEBUGGING)
@@ -3994,6 +4015,29 @@ static id handleRelativeIndexForTextMarkerAttribute(WebAccessibilityObjectWrappe
     return offset.has_value() ? [NSNumber numberWithUnsignedInt:*offset] : @(NSNotFound);
 }
 
+static id handleTextMarkerForRelativeIndexAttribute(WebAccessibilityObjectWrapper* wrapper, AXCoreObject& backingObject, const ParameterizedAttributeContext& context)
+{
+    if (!context.number)
+        return nil;
+
+    NSInteger offset = [context.number integerValue];
+    if (offset < 0)
+        return nil;
+
+    AXTextMarker start = backingObject.textMarkerRange().start();
+    if (!start.isValid())
+        return nil;
+
+    if (AXObjectCache::useAXThreadTextApis())
+        return start.nextMarkerFromOffset(offset).platformData().bridgingAutorelease();
+
+    auto startPoint = start.boundaryPoint();
+    if (!startPoint)
+        return nil;
+
+    return (id)[wrapper _textMarkerForOffset:offset fromBoundaryPoint:*startPoint];
+}
+
 static id handleTextMarkerForIndexAttribute(WebAccessibilityObjectWrapper* wrapper, AXCoreObject& backingObject, const ParameterizedAttributeContext& context)
 {
     if (AXObjectCache::useAXThreadTextApis()) {
@@ -4008,7 +4052,15 @@ static id handleTextMarkerForIndexAttribute(WebAccessibilityObjectWrapper* wrapp
         }
         return nil;
     }
-    return (id)[wrapper _textMarkerForIndex:[context.number integerValue]];
+    RefPtr document = backingObject.document();
+    if (!document)
+        return nil;
+
+    RefPtr documentElement = document->documentElement();
+    if (!documentElement)
+        return nil;
+
+    return (id)[wrapper _textMarkerForOffset:[context.number integerValue] fromBoundaryPoint:makeBoundaryPointBeforeNodeContents(*documentElement)];
 }
 
 static id handleLineForTextMarkerAttribute(WebAccessibilityObjectWrapper* wrapper, AXCoreObject&, const ParameterizedAttributeContext& context)
@@ -4371,6 +4423,7 @@ static MemoryCompactLookupOnlyRobinHoodHashMap<String, ParameterizedAttributeHan
         { NSAccessibilityTextMarkerIsValidAttribute, { handleTextMarkerIsValidAttribute } },
         { NSAccessibilityIndexForTextMarkerAttribute, { handleIndexForTextMarkerAttribute } },
         { NSAccessibilityRelativeIndexForTextMarkerAttribute, { handleRelativeIndexForTextMarkerAttribute } },
+        { NSAccessibilityTextMarkerForRelativeIndexAttribute, { handleTextMarkerForRelativeIndexAttribute } },
         { NSAccessibilityTextMarkerForIndexAttribute, { handleTextMarkerForIndexAttribute } },
         { NSAccessibilityLineForTextMarkerAttribute, { handleLineForTextMarkerAttribute } },
         { NSAccessibilityTextMarkerRangeForLineAttribute, { handleTextMarkerRangeForLineAttribute } },

@@ -10,7 +10,7 @@
 
 #include "AOTClassToken.h"
 #include "AOTClosureWord.h"
-#include "AOTRuntimeValidation.h"
+#include "AOTCompactTable.h"
 #include "ArrayConventions.h"
 #include "CustomGetterSetter.h"
 #include "GetterSetter.h"
@@ -35,8 +35,9 @@ namespace JSC { namespace AOT {
 
 static_assert(sizeof(JSCell) == 8 && offsetOfShapeWord == 12);
 static_assert(offsetOfShapeWord + sizeof(uint32_t) <= MarkedBlock::atomSize);
+static_assert((tagOfLinkBetweenEnvironmentsHandedBack & JSValue::NotCellMask) && tagOfLinkBetweenEnvironmentsHandedBack < MarkedBlock::atomSize);
 
-enum class WordAtShapeOffset : uint8_t { Unlisted, ShapeWord, UpperHalfOfPointer, UpperHalfOfValue, UpperHalfOfClosureWord, BigIntHash, VectorLength, Zero, NotAValue };
+enum class WordAtShapeOffset : uint8_t { Unlisted, ShapeWord, UpperHalfOfPointer, UpperHalfOfValue, UpperHalfOfClosureWord, HashOfSubstring, BigIntHash, VectorLength, Zero, NotAValue };
 
 static_assert(!canPassShapeTest(pointerUpperHalfBits));
 
@@ -47,7 +48,6 @@ static_assert(!canPassShapeTest(upperHalfOfClosureWordWithAllFlags(ClosureWord::
 
 static_assert(!canPassShapeTest(bigIntHashMask));
 
-// A vector length can contain shapeBlockMarker. The only JSCellButterfly that is a value is a class token: a longer one is storage that compiled code reaches through its owner.
 static constexpr uint32_t classTokenLengthBits = (1u << 17) - 1;
 static_assert(ClassToken::firstNameSlot + std::numeric_limits<decltype(LayoutData::numberOfFields)>::max() <= classTokenLengthBits);
 static_assert(!canPassShapeTest(classTokenLengthBits) && !mayBeUpperHalfOfSlimClosureWord(classTokenLengthBits));
@@ -62,8 +62,8 @@ static constexpr WordAtShapeOffset wordAtShapeOffset(JSType type)
         return WordAtShapeOffset::UpperHalfOfPointer;
     switch (type) {
     case StringType:
-        static_assert(JSString::offsetOfValue() == 8);
-        return WordAtShapeOffset::UpperHalfOfPointer;
+        static_assert(JSString::offsetOfValue() == 8 && JSRopeString::substringHashShift == 32);
+        return WordAtShapeOffset::HashOfSubstring;
     case SymbolType:
         static_assert(Symbol::offsetOfSymbolImpl() == 8);
         return WordAtShapeOffset::UpperHalfOfPointer;
@@ -146,6 +146,8 @@ static constexpr bool isValidWord(WordAtShapeOffset content, uint32_t word)
         return !(word & ~valueUpperHalfBits);
     case WordAtShapeOffset::UpperHalfOfClosureWord:
         return !word || (!canPassShapeTest(word) && mayBeUpperHalfOfSlimClosureWord(word));
+    case WordAtShapeOffset::HashOfSubstring:
+        return !((word & ~CompactTable::substringHits) >> CompactTable::hashBits) && !canPassShapeTest(word);
     case WordAtShapeOffset::BigIntHash:
         return !(word & ~bigIntHashMask);
     case WordAtShapeOffset::VectorLength:
@@ -162,6 +164,7 @@ static constexpr bool isValidWord(WordAtShapeOffset content, uint32_t word)
 
 static_assert(isValidWord(WordAtShapeOffset::ShapeWord, shapeWordOf(1)) && !isValidWord(WordAtShapeOffset::ShapeWord, pointerUpperHalfBits));
 static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfPointer, 0) && isValidWord(WordAtShapeOffset::UpperHalfOfPointer, pointerUpperHalfBits) && !isValidWord(WordAtShapeOffset::UpperHalfOfPointer, 0u - 5));
+static_assert(isValidWord(WordAtShapeOffset::HashOfSubstring, pointerUpperHalfBits) && isValidWord(WordAtShapeOffset::HashOfSubstring, 0xfeffff) && !isValidWord(WordAtShapeOffset::HashOfSubstring, 0x7f0000) && !isValidWord(WordAtShapeOffset::HashOfSubstring, 0xffff12) && !isValidWord(WordAtShapeOffset::HashOfSubstring, closureWordMarker));
 static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfValue, 0) && !isValidWord(WordAtShapeOffset::UpperHalfOfValue, static_cast<uint32_t>(JSValue::NumberTag >> 32)) && !isValidWord(WordAtShapeOffset::UpperHalfOfValue, 1u << (JSValue::DoubleEncodeOffsetBit - 32)));
 static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, closureWordMarker | (ClosureWord::firstReservedFunction - 1)) && !isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, ClosureWord::firstReservedFunction - 1) && !isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, compiledObjectShapeBit));
 static_assert(isValidWord(WordAtShapeOffset::BigIntHash, 0) && isValidWord(WordAtShapeOffset::BigIntHash, bigIntHashMask) && !isValidWord(WordAtShapeOffset::BigIntHash, 0u - 5) && !isValidWord(WordAtShapeOffset::BigIntHash, shapeBlockMarker));
@@ -180,7 +183,7 @@ void validateShapeWord(const JSCell* cell)
     uint32_t word = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const char*>(cell) + offsetOfShapeWord);
     bool isValid = isValidWord(type > LastJSCObjectType ? WordAtShapeOffset::UpperHalfOfPointer : wordAtShapeOffset(type), word);
     if (!isValid)
-        crashOnValidationFailure(cell->vm(), { ValidationFailureKind::ShapeWordInvalid, { }, { }, cell });
+        CRASH_WITH_INFO(std::bit_cast<uintptr_t>(cell));
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

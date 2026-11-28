@@ -27,18 +27,17 @@
 
 #if ENABLE(WEBXR) && USE(OPENXR)
 
+#include "OpenXRGraphicsBinding.h"
 #include "OpenXRSwapchain.h"
-#include "OpenXRUtils.h"
 
 #include <WebCore/PlatformXR.h>
+#include <openxr/openxr.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
 
 namespace WebKit {
-
-class OpenXRGraphicsBinding;
 
 class OpenXRLayer {
     WTF_MAKE_TZONE_ALLOCATED(OpenXRLayer);
@@ -49,8 +48,12 @@ public:
     virtual std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) = 0;
     virtual Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) = 0;
 
+    void releaseExportedTextures(OpenXRGraphicsBinding&);
+
 protected:
     OpenXRLayer(UniqueRef<OpenXRSwapchain>&&);
+
+    virtual OpenXRGraphicsBinding::ExportDescriptor exportDescriptor() const;
 
     const UniqueRef<OpenXRSwapchain> m_swapchain;
 
@@ -81,61 +84,73 @@ class OpenXRCompositionLayer : public OpenXRLayer {
     WTF_MAKE_TZONE_ALLOCATED(OpenXRCompositionLayer);
     WTF_MAKE_NONCOPYABLE(OpenXRCompositionLayer);
 public:
-    std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) override = 0;
-    Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) override = 0;
+    std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) final;
+    Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) final;
 
 protected:
     OpenXRCompositionLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
+    virtual bool acquireAdditionalImages() { return true; }
+    virtual void releaseAdditionalImages() { }
+    virtual Vector<uint64_t> committedImages();
+
+    virtual size_t layerCount() const = 0;
+    virtual XrCompositionLayerBaseHeader* fillLayer(size_t index, XrEyeVisibility, const PlatformXR::DeviceLayer&) = 0;
+
     PlatformXR::LayerLayout m_layout;
+
+private:
+    void releaseImages();
 };
 
-class OpenXRQuadLayer final : public OpenXRCompositionLayer {
+template<typename XrLayerType, XrStructureType StructureType>
+class OpenXRTypedCompositionLayer : public OpenXRCompositionLayer {
+protected:
+    OpenXRTypedCompositionLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
+
+    Vector<XrLayerType> m_layers;
+
+private:
+    size_t layerCount() const final { return m_layers.size(); }
+};
+
+class OpenXRQuadLayer final : public OpenXRTypedCompositionLayer<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD> {
     WTF_MAKE_TZONE_ALLOCATED(OpenXRQuadLayer);
     WTF_MAKE_NONCOPYABLE(OpenXRQuadLayer);
 public:
     static std::unique_ptr<OpenXRQuadLayer> create(std::unique_ptr<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
-    std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) override;
-    Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) override;
-
 private:
-    explicit OpenXRQuadLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
+    OpenXRQuadLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
-    Vector<XrCompositionLayerQuad> m_layers;
+    XrCompositionLayerBaseHeader* fillLayer(size_t, XrEyeVisibility, const PlatformXR::DeviceLayer&) final;
 };
 
 #if defined(XR_KHR_composition_layer_equirect2)
-class OpenXREquirectLayer final : public OpenXRCompositionLayer {
+class OpenXREquirectLayer final : public OpenXRTypedCompositionLayer<XrCompositionLayerEquirect2KHR, XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR> {
     WTF_MAKE_TZONE_ALLOCATED(OpenXREquirectLayer);
     WTF_MAKE_NONCOPYABLE(OpenXREquirectLayer);
 public:
     static std::unique_ptr<OpenXREquirectLayer> create(std::unique_ptr<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
-    std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) override;
-    Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) override;
-
 private:
-    explicit OpenXREquirectLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
+    OpenXREquirectLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
-    Vector<XrCompositionLayerEquirect2KHR> m_layers;
+    XrCompositionLayerBaseHeader* fillLayer(size_t, XrEyeVisibility, const PlatformXR::DeviceLayer&) final;
 };
 #endif
 
 #if defined(XR_KHR_composition_layer_cylinder)
-class OpenXRCylinderLayer final : public OpenXRCompositionLayer {
+class OpenXRCylinderLayer final : public OpenXRTypedCompositionLayer<XrCompositionLayerCylinderKHR, XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR> {
     WTF_MAKE_TZONE_ALLOCATED(OpenXRCylinderLayer);
     WTF_MAKE_NONCOPYABLE(OpenXRCylinderLayer);
 public:
     static std::unique_ptr<OpenXRCylinderLayer> create(std::unique_ptr<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
-    std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) override;
-    Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) override;
-
 private:
-    explicit OpenXRCylinderLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
+    OpenXRCylinderLayer(UniqueRef<OpenXRSwapchain>&&, PlatformXR::LayerLayout);
 
-    Vector<XrCompositionLayerCylinderKHR> m_layers;
+    XrCompositionLayerBaseHeader* fillLayer(size_t, XrEyeVisibility, const PlatformXR::DeviceLayer&) final;
 };
 #endif
 
@@ -149,11 +164,15 @@ class OpenXRCubeLayer final : public OpenXRCompositionLayer {
 public:
     static std::unique_ptr<OpenXRCubeLayer> create(std::unique_ptr<OpenXRSwapchain>&&, std::unique_ptr<OpenXRSwapchain>&& rightSwapchain, PlatformXR::LayerLayout);
 
-    std::optional<PlatformXR::FrameData::LayerData> startFrame(OpenXRGraphicsBinding&) override;
-    Vector<XrCompositionLayerBaseHeader*> endFrame(OpenXRGraphicsBinding&, const PlatformXR::DeviceLayer&, XrSpace, const Vector<XrView>&) override;
-
 private:
     OpenXRCubeLayer(UniqueRef<OpenXRSwapchain>&&, std::unique_ptr<OpenXRSwapchain>&& rightSwapchain, PlatformXR::LayerLayout);
+
+    OpenXRGraphicsBinding::ExportDescriptor exportDescriptor() const override;
+    bool acquireAdditionalImages() override;
+    void releaseAdditionalImages() override;
+    Vector<uint64_t> committedImages() override;
+    size_t layerCount() const final { return m_layers.size(); }
+    XrCompositionLayerBaseHeader* fillLayer(size_t, XrEyeVisibility, const PlatformXR::DeviceLayer&) final;
 
     uint32_t cubeCount() const { return m_layout == PlatformXR::LayerLayout::Mono ? 1 : 2; }
     OpenXRSwapchain& swapchainForCube(uint32_t cube) { return cube && m_rightSwapchain ? *m_rightSwapchain : m_swapchain.get(); }

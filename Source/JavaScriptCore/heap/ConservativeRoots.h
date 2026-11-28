@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Heap.h"
+#include <JavaScriptCore/GCConductor.h>
 
 #if ASAN_ENABLED && __has_include(<sanitizer/asan_interface.h>)
 #include <sanitizer/asan_interface.h>
@@ -58,21 +59,6 @@ ALWAYS_INLINE bool isPoisonedForConservativeScan(const void* word)
 #endif
 }
 
-// A narrow reference needs four bytes, and an instrumented frame puts a redzone right behind a 32-bit local or an odd number of them.
-// This is a poisoned word with zero in place of each half that is not addressable.
-SUPPRESS_ASAN ALWAYS_INLINE uint64_t addressableHalvesForConservativeScan(const void* word)
-{
-    uint64_t bits = *static_cast<const uint64_t*>(word);
-#if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
-    char* bytes = static_cast<char*>(const_cast<void*>(word));
-    if (__asan_region_is_poisoned(bytes, sizeof(uint32_t)))
-        bits &= ~static_cast<uint64_t>(std::numeric_limits<uint32_t>::max());
-    if (__asan_region_is_poisoned(bytes + sizeof(uint32_t), sizeof(uint32_t)))
-        bits &= std::numeric_limits<uint32_t>::max();
-#endif
-    return bits;
-}
-
 class ConservativeRoots {
 public:
     ConservativeRoots(Heap&);
@@ -81,8 +67,8 @@ public:
     // Nothing but its header names the Structure of a compiled object that lies in a frame.
     static constexpr bool findsStructuresOfFrameCells = true;
 
-    void add(void* begin, void* end);
-    void add(void* begin, void* end, JITStubRoutineSet&, CodeBlockSet&);
+    void add(void* begin, void* end) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
+    void add(void* begin, void* end, JITStubRoutineSet&, CodeBlockSet&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
     
     size_t size() const;
     HeapCell** roots() const;
@@ -91,10 +77,10 @@ private:
     static constexpr size_t inlineCapacity = 2048;
     
     template<bool lookForWasmCallees, typename MarkHook>
-    void genericAddPointer(char*, HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, TinyBloomFilter<uintptr_t> jsGCFilter, TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter, MarkHook&);
+    void genericAddPointer(char*, HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, TinyBloomFilter<uintptr_t> jsGCFilter, TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter, MarkHook&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
 
     template<typename MarkHook>
-    void genericAddSpan(void* begin, void* end, MarkHook&);
+    void genericAddSpan(void* begin, void* end, MarkHook&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
     template<typename MarkHook>
     void genericAddSpanOfCompiledProcess(void* begin, void* end, MarkHook&);
     
@@ -104,7 +90,6 @@ private:
     size_t m_size;
     size_t m_capacity;
     JSC::Heap& m_heap;
-    MarkedBlockCage::Indices m_narrowReferences;
     MarkedBlockCage::Indices m_narrowReferencesInFrameCells;
     HeapCell* m_inlineRoots[inlineCapacity];
 };

@@ -29,12 +29,14 @@
 #include "CommonVM.h"
 #include "DOMWrapperWorld.h"
 #include "DebuggerSuspensionController.h"
+#include "DocumentPage.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMWindowCustom.h"
 #include "JSWindowProxy.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "Page.h"
+#include "PageInspectorController.h"
 #include "Timer.h"
 #include "WindowProxy.h"
 #include <JavaScriptCore/JSLock.h>
@@ -111,6 +113,11 @@ void FrameDebugger::didPause(JSGlobalObject* globalObject)
     ASSERT(!s_pausedFrameDebugger);
     s_pausedFrameDebugger = this;
 
+    if (RefPtr page = protect(m_frame.get())->page()) {
+        if (auto* client = page->inspectorController().inspectorBackendClient())
+            client->debuggerDidPause();
+    }
+
     DebuggerSuspensionController::frameDebuggerDidPause(protect(m_frame.get()));
 }
 
@@ -164,6 +171,11 @@ void FrameDebugger::runEventLoopWhilePausedInternal()
 bool FrameDebugger::isContentScript(JSGlobalObject* state) const
 {
     return &currentWorld(*state) != &mainThreadNormalWorldSingleton() || JSC::Debugger::isContentScript(state);
+}
+
+bool FrameDebugger::isInternalScript(JSGlobalObject* state) const
+{
+    return currentWorld(*state).type() == DOMWrapperWorld::Type::Internal || JSC::Debugger::isInternalScript(state);
 }
 
 URL FrameDebugger::sourceURLBase(JSGlobalObject* state) const

@@ -39,9 +39,9 @@
 #import <JavaScriptCore/MathCommon.h>
 #import "WebExtensionAPINamespace.h"
 #import "WebExtensionAPIPort.h"
-#import "WebExtensionContext.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionContextProxy.h"
+#import "WebExtensionMatchPattern.h"
 #import "WebExtensionMessageSenderParameters.h"
 #import "WebExtensionMessageTargetParameters.h"
 #import "WebExtensionScriptInjectionParameters.h"
@@ -161,6 +161,30 @@ static bool parseTabIdentifiers(NSObject *tabIDs, Vector<WebExtensionTabIdentifi
     }
 
     return true;
+}
+
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPITabs::tabStatus()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/TabStatus
+
+    static NSDictionary *statuses = @{
+        @"LOADING": loadingKey,
+        @"COMPLETE": completeKey,
+    };
+
+    return statuses;
+}
+
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPITabs::windowType()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/WindowType
+
+    static NSDictionary *types = @{
+        @"NORMAL": normalKey,
+        @"POPUP": popupKey,
+    };
+
+    return types;
 }
 
 bool WebExtensionAPITabs::parseTabCreateOptions(NSDictionary *options, WebExtensionTabParameters& parameters, NSString *sourceKey, NSString **outExceptionString)
@@ -817,8 +841,6 @@ void WebExtensionAPITabs::reload(WebPageProxyIdentifier webPageProxyIdentifier, 
     if (properties && !validateDictionary(properties, @"properties", nil, types, outExceptionString))
         return;
 
-    using ReloadFromOrigin = WebExtensionContext::ReloadFromOrigin;
-
     NSNumber *bypassCacheNumber = objectForKey<NSNumber>(properties, bypassCacheKey);
     ReloadFromOrigin reloadFromOrigin = bypassCacheNumber.boolValue ? ReloadFromOrigin::Yes : ReloadFromOrigin::No;
 
@@ -974,7 +996,7 @@ void WebExtensionAPITabs::captureVisibleTab(WebPageProxyIdentifier webPageProxyI
     }, extensionContext().identifier());
 }
 
-void WebExtensionAPITabs::sendMessage(WebFrame& frame, double tabID, const String& messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPITabs::sendMessage(WebFrame& frame, double tabID, const WebExtensionMessage& message, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/sendMessage
 
@@ -982,7 +1004,7 @@ void WebExtensionAPITabs::sendMessage(WebFrame& frame, double tabID, const Strin
     if (!isValid(tabIdentifer, outExceptionString))
         return;
 
-    if (messageJSON.length() > webExtensionMaxMessageLength) {
+    if (message.length() > webExtensionMaxMessageLength) {
         *outExceptionString = toErrorString(nullString(), @"message", @"it exceeded the maximum allowed length").createNSString().autorelease();
         return;
     }
@@ -1005,16 +1027,18 @@ void WebExtensionAPITabs::sendMessage(WebFrame& frame, double tabID, const Strin
         contentWorldType(),
         frame.url(),
         documentIdentifier,
+        std::nullopt, // windowIdentifier
     };
 
     bool userGesture = WebCore::UserGestureIndicator::processingUserGesture();
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::TabsSendMessage(tabIdentifer.value(), messageJSON, targetParameters, senderParameters, userGesture), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
+    // The message keeps any Blob it references alive, so hold it until the receiver replies.
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::TabsSendMessage(tabIdentifer.value(), message, targetParameters, senderParameters, userGesture), [protectedThis = Ref { *this }, callback = WTF::move(callback), message](std::expected<WebExtensionMessage, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
         }
 
-        callback->call(fromJSON(callback->globalContext(), JSON::Value::parseJSON(result.value())));
+        callback->call(result->toJSValue(callback->globalContext()));
     }, extensionContext().identifier());
 }
 
@@ -1047,6 +1071,7 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPITabs::connect(WebFrame& frame, JSCont
         contentWorldType(),
         frame.url(),
         documentIdentifier,
+        std::nullopt, // windowIdentifier
     };
 
     Ref port = WebExtensionAPIPort::create(*this, frame.page()->webPageProxyIdentifier(), WebExtensionContentWorldType::ContentScript, resolvedName);
@@ -1057,7 +1082,7 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPITabs::connect(WebFrame& frame, JSCont
             return;
 
         port->setError(globalContext.get(), protect(runtime())->reportError(result.error().createNSString().get(), globalContext.get()));
-        port->disconnect();
+        port->fireDisconnectEventIfNeeded();
     }, extensionContext().identifier());
 
     return port;
@@ -1323,11 +1348,11 @@ void WebExtensionContextProxy::dispatchTabsHighlightedEvent(const Vector<WebExte
     });
 }
 
-void WebExtensionContextProxy::dispatchTabsRemovedEvent(WebExtensionTabIdentifier tabIdentifier, WebExtensionWindowIdentifier windowIdentifier, WebExtensionContext::WindowIsClosing windowIsClosing)
+void WebExtensionContextProxy::dispatchTabsRemovedEvent(WebExtensionTabIdentifier tabIdentifier, WebExtensionWindowIdentifier windowIdentifier, WebExtensionContextWindowIsClosing windowIsClosing)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/onRemoved
 
-    auto *removeInfo = @{ windowIdKey: @(toWebAPI(windowIdentifier)), isWindowClosingKey: @(windowIsClosing == WebExtensionContext::WindowIsClosing::Yes) };
+    auto *removeInfo = @{ windowIdKey: @(toWebAPI(windowIdentifier)), isWindowClosingKey: @(windowIsClosing == WebExtensionContextWindowIsClosing::Yes) };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
         protect(protect(namespaceObject.tabs())->onRemoved())->invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), removeInfo);

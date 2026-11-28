@@ -76,11 +76,28 @@ static Plan::CompletionTask makeValidationCallback(Name&& sourceURL, Module::Asy
     });
 }
 
+static void completeSync(IPIntPlan& plan)
+{
+    // Nothing is left to compile.
+    if (plan.hasCodeInImage()) {
+        while (plan.hasWork())
+            plan.work();
+    } else
+        Wasm::ensureWorklist().enqueue(plan);
+    plan.waitForCompletion();
+}
+
 Module::ValidationResult Module::validateSync(VM& vm, Vector<uint8_t>&& source)
 {
     Ref<IPIntPlan> plan = adoptRef(*new IPIntPlan(vm, WTF::move(source), CompilerMode::Validation, Plan::dontFinalize()));
-    Wasm::ensureWorklist().enqueue(plan.get());
-    plan->waitForCompletion();
+    completeSync(plan.get());
+    return makeValidationResult(plan.get());
+}
+
+Module::ValidationResult Module::validateSync(VM& vm, std::span<const uint8_t> source)
+{
+    Ref<IPIntPlan> plan = adoptRef(*new IPIntPlan(vm, source, CompilerMode::Validation, Plan::dontFinalize()));
+    completeSync(plan.get());
     return makeValidationResult(plan.get());
 }
 
@@ -153,10 +170,7 @@ void Module::createInterpreterMetadataIfNeeded(const CalleeGroup& group)
     if (!info.moduleWithSkippedFunctions)
         return;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    std::span<const FunctionInImage> functionsInImage = CodeInImage::functionsOf(*info.moduleWithSkippedFunctions);
     for (unsigned index = 0; index < info.internalFunctionCount(); ++index) {
-        if (!functionsInImage[index].hasCode)
-            continue;
         info.functions[index].finishedValidating = false;
         auto metadata = parseAndCompileMetadata(info.functions[index].data, info.rtt(info.internalFunctionTypeSignatureIndices[index]), info, FunctionCodeIndex(index));
         RELEASE_ASSERT(metadata);

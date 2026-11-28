@@ -1,0 +1,92 @@
+# The cache holds a RegExp that took its error at the first match.
+# -- source: main.js
+# function make(a, b) {
+#   if (typeof a !== "string" || typeof b !== "string") throw 0;
+#   return new RegExp(a + b);
+# }
+# const a = "a{2147483648}a{2147483648}".repeat(1 + (Math.random() > 2)), b = "b".repeat(50);
+# try { make(a, b).test("a"); } catch (e) { print("test", e.name); }
+# try { make(a, b); print("made"); } catch (e) { print("new", e.name); }
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: test SyntaxError
+# CHECK-NEXT: new SyntaxError
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = String string="a{2147483648}a{2147483648}" @148
+    v3 = PropGet v2 key="repeat" @148
+    v4 = Integer integer=1 @184
+    v5 = Builtin builtin=Math @189
+    v6 = PropGet v5 key="random" @189
+    v7 = Convert v6 declared={type=builtin(MathRandom) flags=[IsExpected]} @189
+    v8 = Call v7, v5 calleeKey="random" calleeName="Math.random" @194
+    v9 = Integer integer=2 @205
+    v10 = Greater v8, v9 @189
+    v11 = Add v4, v10 @184
+    v12 = Call v3, v2, v11 calleeKey="repeat" calleeName="repeat" @177
+    v13 = String string="b" @214
+    v14 = PropGet v13 key="repeat" @214
+    v15 = Integer integer=50 @225
+    v16 = Call v14, v13, v15 calleeKey="repeat" calleeName="repeat" @218
+    Jump -> next b1() @230
+  b1() handler=b2():
+    v17 = Call v1, -, v12, v16 calleeName="make" @236
+    v18 = PropGet v17 key="test" @245
+    v19 = String string="a" @252
+    v20 = Call v18, v17, v19 calleeKey="test" calleeName="test" @247
+    Jump -> next b3() @236
+  b2() role=CatchHandler:
+    v21 = CatchValue @270
+    v22 = Builtin builtin=GlobalThis @272
+    v23 = PropGet v22 key="print" [isFreeName] @272
+    v24 = String string="test" @278
+    v25 = PropGet v21 key="name" @286
+    v26 = Call v23, -, v24, v25 calleeName="print" @272
+    Jump -> next b3() @272
+  b3():
+    Jump -> next b4() @297
+  b4() handler=b5():
+    v27 = Call v1, -, v12, v16 calleeName="make" @303
+    v28 = Builtin builtin=GlobalThis @315
+    v29 = PropGet v28 key="print" [isFreeName] @315
+    v30 = String string="made" @321
+    v31 = Call v29, -, v30 calleeName="print" @315
+    Jump -> next b6() @315
+  b5() role=CatchHandler:
+    v32 = CatchValue @342
+    v33 = Builtin builtin=GlobalThis @344
+    v34 = PropGet v33 key="print" [isFreeName] @344
+    v35 = String string="new" @350
+    v36 = PropGet v32 key="name" @357
+    v37 = Call v34, -, v35, v36 calleeName="print" @344
+    Jump -> next b6() @344
+  b6():
+    v38 = Undefined @344
+    Return v38 @344
+}
+function f1 name="make" module=m0 position=23 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    v2 = TypeTest v0 testedType=string @51
+    Branch v2 -> taken b1(| 0), notTaken b3() @51
+  b1(v3):
+    v4 = NarrowByTest v0, v3 @51
+    v5 = TypeTest v1 testedType=string @76
+    Branch v5 -> taken b2(| 0), notTaken b3() @76
+  b2(v6):
+    v7 = NarrowByTest v1, v6 @76
+    v8 = Builtin builtin=RegExp @121
+    v9 = Add v4, v7 @128
+    v10 = Construct v8, -, v9 calleeName="RegExp" @121 @117
+    Return v10 @117
+  b3():
+    v11 = Integer @105
+    Throw v11 @105
+}

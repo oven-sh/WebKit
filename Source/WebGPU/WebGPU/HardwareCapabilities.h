@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #include <Metal/Metal.h>
 #include <WebGPU/WebGPU.h>
 #include <WebGPU/WebGPUCpp.h>
@@ -50,9 +54,9 @@ struct HardwareCapabilities {
 };
 
 std::optional<HardwareCapabilities> hardwareCapabilities(id<MTLDevice>);
-bool LEGACY_NODELETE isValid(const Limits&);
-Limits LEGACY_NODELETE defaultLimits();
-bool LEGACY_NODELETE anyLimitIsBetterThan(const Limits& target, const Limits& reference);
+NODELETE bool isValid(const Limits&);
+NODELETE Limits defaultLimits();
+NODELETE bool anyLimitIsBetterThan(const Limits& target, const Limits& reference);
 bool includesUnsupportedFeatures(const Vector<WebGPU::FeatureName>& target, const Vector<WebGPU::FeatureName>& reference);
 bool isShaderValidationEnabled(id<MTLDevice>);
 bool isWebGPUSwiftEnabled();

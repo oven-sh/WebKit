@@ -71,12 +71,12 @@ public:
         return true;
     }
 
-    unsigned LEGACY_NODELETE lineNumber()
+    NODELETE unsigned lineNumber()
     {
         return m_lineNumber;
     }
 
-    const char* LEGACY_NODELETE currentBuffer()
+    NODELETE const char* currentBuffer()
     {
         if (!m_srcPtr || m_srcPtr == m_bufferEnd)
             return "";
@@ -468,7 +468,7 @@ void ConfigFile::parse()
 
         if (!jscOptionsBuilder.isEmpty()) {
             JSC::Config::enableRestrictedOptions();
-            Options::setOptions(jscOptionsBuilder.toString().utf8().legacyCStringPointer());
+            Options::setOptions(makeUTF8CString(jscOptionsBuilder.toString()).legacyCStringPointer());
         }
     } else
         WTF::dataLogF("Error in JSC Config file on or near line %u, parsing '%s'\n", scanner.lineNumber(), scanner.currentBuffer());

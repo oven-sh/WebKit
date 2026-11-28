@@ -25,4 +25,5 @@
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type=int[0, 9]|string}, {type=int[5, 20]}, {type=string}, {type="a"}, {type="a"|"b"}, {type=undefined|null|boolean}, {type=boolean}, {type=number}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=int[0, 9]|string}, {type=int[5, 20]}, {type=string}, {type="a"}, {type="a"|"b"}, {type=undefined|null|boolean}, {type=boolean}, {type=number}] results=[{type=undefined}]
+entry module=m0

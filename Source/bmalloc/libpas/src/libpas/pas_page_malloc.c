@@ -31,12 +31,14 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #if !PAS_OS(WINDOWS)
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
 #if PAS_OS(DARWIN)
+#include <Availability.h>
 #include <mach/vm_statistics.h>
 #endif
 #if PAS_OS(LINUX)
@@ -76,7 +78,66 @@ void pas_page_malloc_populate(void* base, size_t size)
         bytes[offset] = 0;
 }
 
+bool pas_page_malloc_fault_in_without_writing(void* base, size_t size, pas_memory_flavor flavor)
+{
+    /* Memory whose permissions the client manages may trap on the advice below. */
+    PAS_ASSERT(!pas_memory_flavor_client_owns_permissions(flavor), flavor);
+
+#if PAS_OS(DARWIN)
+    size_t page_size;
+    size_t offset;
+    volatile char* bytes;
+
+    /* Each step readies a different kind of page whose first write would otherwise trap. */
+
+    /* Pages that a decommit (MADV_FREE_REUSABLE) left resident. Only this takes them back: a load
+       would leave them trapping. */
+    madvise(base, size, MADV_FREE_REUSE);
+
+    /* Pages that are not mapped at all, such as ones never touched or ones the kernel compressed,
+       faulted in writable within this one call rather than by a fault per load below. */
+    madvise(base, size, MADV_WILLNEED);
+
+    /* Pages that are still mapped and dirty but that the kernel has aged. No advice reaches them,
+       only an access, which marks them in use again. By now every other page is mapped, so these are
+       the only loads that fault. */
+    page_size = pas_page_malloc_alignment();
+    bytes = (volatile char*)base;
+    for (offset = 0; offset < size; offset += page_size)
+        (void)bytes[offset];
+    return true;
+#elif PAS_OS(LINUX) && defined(MADV_POPULATE_WRITE)
+    /* Headers can be newer than the running kernel, which rejects advice it does not know. */
+    if (!madvise(base, size, MADV_POPULATE_WRITE))
+        return true;
+    return errno != EINVAL;
+#else
+    /* A load alone faults a fresh page in for reading only, so its first write would still trap. */
+    PAS_UNUSED_PARAM(base);
+    PAS_UNUSED_PARAM(size);
+    return false;
+#endif
+}
+
 #if PAS_USE_MADV_ZERO
+#if PAS_OS(DARWIN)
+/* Prefer MADV_ZERO over the mmap fallback from this version onwards. */
+#define PAS_MADV_ZERO_MIN_APPLE_OS 270200
+
+#if (PAS_PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= PAS_MADV_ZERO_MIN_APPLE_OS) \
+    || (PAS_PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= PAS_MADV_ZERO_MIN_APPLE_OS) \
+    || (PAS_PLATFORM(APPLETV) && __TV_OS_VERSION_MIN_REQUIRED >= PAS_MADV_ZERO_MIN_APPLE_OS) \
+    || (PAS_PLATFORM(WATCHOS) && __WATCH_OS_VERSION_MIN_REQUIRED >= PAS_MADV_ZERO_MIN_APPLE_OS) \
+    || (PAS_PLATFORM(VISION) && __VISION_OS_VERSION_MIN_REQUIRED >= PAS_MADV_ZERO_MIN_APPLE_OS)
+#define PAS_PREFER_MADV_ZERO 1
+#else
+#define PAS_PREFER_MADV_ZERO 0
+#endif
+#else /* !PAS_OS(DARWIN) */
+/* No Apple OS floor applies here. */
+#define PAS_PREFER_MADV_ZERO 1
+#endif /* PAS_OS(DARWIN) */
+
 /* It is possible that MADV_ZERO is defined but still not supported by the
  * running OS. In this case, we check once to see if we get ENOSUP, and if
  * we thereafter short-circuit to the fallback (mmap), thus avoiding the
@@ -333,8 +394,23 @@ pas_page_malloc_try_allocate_without_deallocating_padding(
 }
 
 #if PAS_USE_MADV_ZERO
+static bool should_try_madv_zero(void)
+{
+    /* madvise preserves the range's tagged status; remapping does not. */
+    if (pas_mte_is_mte_enabled())
+        return true;
+    if (getenv("LibpasForceMadvZero"))
+        return true;
+    return PAS_PREFER_MADV_ZERO;
+}
+
 static void pas_page_malloc_zero_fill_latch_if_madv_zero_is_supported(void)
 {
+    if (!should_try_madv_zero()) {
+        madv_zero_supported = false;
+        return;
+    }
+
     /* It is possible that the MADV_ZERO macro is defined but that the kernel
      * does not actually support it. In this case we want to avoid calling madvise
      * since it will just return -1 every time, and so just short-circuit

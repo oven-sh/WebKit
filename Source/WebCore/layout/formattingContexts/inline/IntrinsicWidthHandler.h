@@ -28,8 +28,7 @@
 #include "InlineContentCache.h"
 #include <WebCore/LineLayoutResult.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class AbstractLineBuilder;
 class InlineFormattingContext;
@@ -51,11 +50,11 @@ private:
     InlineLayoutUnit lineBuilderMinimumContentSize();
     InlineLayoutUnit simplifiedMaximumWidth(MayCacheLayoutResult = MayCacheLayoutResult::No);
 
-    InlineFormattingContext& LEGACY_NODELETE formattingContext() LIFETIME_BOUND;
-    const InlineFormattingContext& LEGACY_NODELETE formattingContext() const LIFETIME_BOUND;
+    NODELETE InlineFormattingContext& formattingContext() LIFETIME_BOUND;
+    NODELETE const InlineFormattingContext& formattingContext() const LIFETIME_BOUND;
     const InlineContentCache& formattingState() const LIFETIME_BOUND;
-    const ElementBox& LEGACY_NODELETE formattingContextRoot() const;
-    const ElementBox& LEGACY_NODELETE lineBuilderRoot() const;
+    NODELETE const ElementBox& formattingContextRoot() const;
+    NODELETE const ElementBox& lineBuilderRoot() const;
     const InlineItemList& inlineItemList() const LIFETIME_BOUND { return m_inlineItems.content(); }
 
 private:
@@ -69,5 +68,3 @@ private:
 };
 
 }
-}
-

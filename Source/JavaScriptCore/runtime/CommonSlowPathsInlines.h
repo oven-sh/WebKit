@@ -84,7 +84,10 @@ inline void tryCachePutToScopeGlobal(
     case GlobalPropertyWithVarInjectionChecks: {
         // Global Lexical Binding Epoch is changed. Update op_get_from_scope from GlobalProperty to GlobalLexicalVar.
         if (scope->isGlobalLexicalEnvironment()) {
-            cacheGlobalLexicalVar(codeBlock, metadata, uncheckedDowncast<JSGlobalLexicalEnvironment>(scope), ident);
+            auto* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(scope);
+            if (getVM(globalObject).hasCompiledCode() && globalLexicalEnvironment->symbolTable()->get(ident.impl()).isReadOnly())
+                return;
+            cacheGlobalLexicalVar(codeBlock, metadata, globalLexicalEnvironment, ident);
             return;
         }
         break;
@@ -249,6 +252,21 @@ ALWAYS_INLINE JSCellButterfly* trySpreadFast(JSGlobalObject* globalObject, JSCel
     }
 }
 
+ALWAYS_INLINE JSValue getByValObject(JSGlobalObject* globalObject, VM& vm, JSObject* base, PropertyName propertyName)
+{
+    Structure& structure = *base->structure();
+    if (JSCell::canUseFastGetOwnProperty(structure)) {
+        if (JSValue result = base->fastGetOwnProperty(vm, structure, propertyName))
+            return result;
+        if (structure.hasMonoProto() && structure.storedPrototype().isNull() && structure.typeInfo().isFinalObject()) {
+            if (std::optional<uint32_t> index = parseIndex(propertyName))
+                return base->get(globalObject, *index);
+            return jsUndefined();
+        }
+    }
+    return base->get(globalObject, propertyName);
+}
+
 inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue, JSValue propertyNameValue, JSValue value, ECMAMode ecmaMode, unsigned index, JSPropertyNameEnumerator::Flag mode, JSPropertyNameEnumerator* enumerator, ArrayProfile* arrayProfile = nullptr, uint8_t* enumeratorMetadata = nullptr)
 {
     VM& vm = getVM(globalObject);
@@ -268,7 +286,8 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
         if (baseValue.isCell()) [[likely]] {
             auto* baseCell = baseValue.asCell();
             auto* structure = baseCell->structure();
-            if (structure->id() == enumerator->cachedStructureID() && !structure->mayHaveImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
+            // Whoever gives a property of a prototype another value tells those who have looked it up from below, and a store by offset tells nobody.
+            if (structure->id() == enumerator->cachedStructureIDForNamesAndOffsets() && !structure->mayHaveImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !(structure->mayBePrototype() && vm.hasCompiledCode())) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());
                 scope.release();

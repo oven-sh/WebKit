@@ -64,8 +64,8 @@ public:
     EnvironmentVariables& environmentVariables() const LIFETIME_BOUND;
 
     struct LayoutDependencyUpdateContext {
-        HashSet<CheckedRef<const Element>> invalidatedContainers;
-        HashSet<CheckedRef<const Element>> invalidatedAnchorPositioned;
+        WeakHashSet<const Element, WeakPtrImplWithEventTargetData> invalidatedContainers;
+        WeakHashSet<const Element, WeakPtrImplWithEventTargetData> invalidatedAnchorPositioned;
 #if ENABLE(SMART_IMAGE_RESIZER)
         bool didUpdateForSmartImageResizer { false };
 #endif
@@ -82,16 +82,23 @@ public:
     struct ScrollState {
         // Edges the container can currently be scrolled further toward.
         RectEdges<bool> scrollableEdges { false, false, false, false };
+        // Edges the container has been scrolled toward by its most recent delta scroll.
+        RectEdges<bool> scrolledDirections { false, false, false, false };
 
         bool operator==(const ScrollState&) const = default;
     };
     // Runs as part of the snapshot post-layout state steps, invalidating the containers whose state changed.
     void updateScrollStateSnapshots();
-    ScrollState LEGACY_NODELETE scrollStateSnapshotFor(const Element&) const;
+    NODELETE ScrollState scrollStateSnapshotFor(const Element&) const;
 
     AnchorPositionedToAnchorMap& anchorPositionedToAnchorMap() LIFETIME_BOUND { return m_anchorPositionedToAnchorMap; }
     const AnchorPositionedToAnchorMap& anchorPositionedToAnchorMap() const LIFETIME_BOUND { return m_anchorPositionedToAnchorMap; }
     void updateAnchorPositioningStateAfterStyleResolution();
+
+    // Query containers whose descendants the current style resolution pass left unresolved.
+    // Style-interleaved layout sizes them without laying out their content.
+    void setQueryContainersWithUnresolvedDescendants(WeakHashSet<const Element, WeakPtrImplWithEventTargetData>&& containers) { m_queryContainersWithUnresolvedDescendants = WTF::move(containers); }
+    bool isQueryContainerWithUnresolvedDescendants(const Element* element) const { return element && m_queryContainersWithUnresolvedDescendants.contains(*element); }
 
     std::optional<size_t> lastSuccessfulPositionOptionIndexFor(const Styleable&);
     void setLastSuccessfulPositionOptionIndexMap(HashMap<WeakStyleable, size_t>&&);
@@ -137,6 +144,8 @@ private:
     HashMap<ResolverSharingKey, Ref<Resolver>> m_sharedShadowTreeResolvers;
 
     AnchorPositionedToAnchorMap m_anchorPositionedToAnchorMap;
+
+    WeakHashSet<const Element, WeakPtrImplWithEventTargetData> m_queryContainersWithUnresolvedDescendants;
 };
 
 }

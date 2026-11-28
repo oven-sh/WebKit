@@ -1,0 +1,61 @@
+# Once the realm of the build holds so many bytes, or so many characters have been made, the rehearsal is over, with what it has found.
+# export const first = new RegExp("a" + String("+b"));   const kept = []; for (let n = 0; ; n++) kept[n] = Array(1000000);   export function other() { return new RegExp("c" + String("+d")); }
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /a+b/
+# CHECK-NOT: text /
+# A text that grows without end is soon longer than any pattern with code, and is what nobody knows from then on: let text = "e"; while (true) text += text;
+# RUN(TEXT): regexp-texts mechanisms=all
+# TEXT-NOT: text /e
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="other" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="String" [isFreeName]
+    v3 = String string="+b"
+    v4 = Call v2, -, v3
+    v5 = String string="a"
+    v6 = Add v5, v4
+    v7 = Construct v0, -, v6
+    v8 = String string="e"
+    v9 = Integer
+    Jump -> next b1(v8, v9)
+  b1(v10: anything, v11: anything):
+    LoopHint
+    v13 = Add v10, v10
+    v14 = Increment v11
+    v15 = Integer integer=40
+    v16 = Less v14, v15
+    Branch v16 -> taken b1(v13, v14), notTaken b2()
+  b2():
+    v17 = Construct v0, -, v13
+    v18 = NewArray contents=anything
+    v19 = Builtin builtin=Array
+    v20 = Integer integer=1000000
+    Jump -> next b3(v9)
+  b3(v21: anything):
+    LoopHint
+    v23 = Call v19, -, v20
+    ElemSet v18, v21, v23 mode=Strict
+    v25 = Increment v21
+    v26 = Boolean boolean=true
+    Branch v26 -> taken b3(v25), notTaken b4()
+  b4():
+    Return v7
+}
+function f1 name="other" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="String" [isFreeName]
+    v3 = String string="+d"
+    v4 = Call v2, -, v3
+    v5 = String string="c"
+    v6 = Add v5, v4
+    v7 = Construct v0, -, v6
+    Return v7
+}

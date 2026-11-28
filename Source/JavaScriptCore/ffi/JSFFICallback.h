@@ -73,6 +73,7 @@ public:
     const char* setReturnCString(const UTF8CString&);
     FFI::Signature& signature() const { return m_signature.get(); }
     bool isThreadsafe() const { return m_threadsafe; }
+    bool hasCStringArguments() const { return m_hasCStringArguments; }
     void* embedderContext() const { return m_embedderContext; }
     static constexpr unsigned closedBit = 0x80000000u;
     static constexpr unsigned countMask = 0x7fffffffu;
@@ -90,6 +91,7 @@ public:
         unsigned state = m_threadsafeState.fetch_sub(1, std::memory_order_acq_rel) - 1;
         return (state & closedBit) && !(state & countMask);
     }
+    bool hasPendingInvocations() const { return m_threadsafeState.load(std::memory_order_relaxed) & countMask; }
     bool markClosedAndReportPending() { return m_threadsafeState.fetch_or(closedBit, std::memory_order_acq_rel) & countMask; }
     void unroot();
 
@@ -108,6 +110,7 @@ private:
     void* m_embedderContext { nullptr }; // opaque, embedder-owned; passed to threadsafe dispatch
     std::atomic<unsigned> m_threadsafeState { 0 }; // closedBit | pending-invocation count (see above)
     bool m_threadsafe { false };
+    bool m_hasCStringArguments { false };
     bool m_closed { false };
 };
 

@@ -56,7 +56,7 @@ public:
 private:
     bool isGraphicsLayerCoordinated() const override { return true; }
 
-    std::optional<PlatformLayerIdentifier> primaryLayerID() const override;
+    NODELETE std::optional<PlatformLayerIdentifier> primaryLayerID() const override;
 
     void setPosition(const FloatPoint&) override;
     void syncPosition(const FloatPoint&) override;
@@ -132,6 +132,10 @@ private:
     void transformRelatedPropertyDidChange() override;
     Vector<GraphicsLayer::AcceleratedAnimationForTesting> acceleratedAnimationsForTesting() const override;
 
+#if !USE(TEXTURE_MAPPER)
+    void setTileCoverage(TileCoverage) override;
+#endif
+
     void setNeedsDisplay() override;
     void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ShouldClipToLayer::Clip) override;
 
@@ -192,19 +196,25 @@ private:
     std::pair<FloatPoint, float> computePositionRelativeToBase() const;
     void computePixelAlignmentIfNeeded(float pageScaleFactor, const FloatPoint& positionRelativeToBase, FloatPoint& adjustedPosition, FloatPoint& adjustedBoundsOrigin, FloatPoint3D& adjustedAnchorPoint, FloatSize& adjustedSize);
     void computeLayerTransformIfNeeded(bool affectedByTransformAnimation);
+#if !USE(TEXTURE_MAPPER)
+    FloatRect computeCoverageRect(const FloatRect&, const FloatRect&, TileCoverage) const;
+#endif
     IntRect transformedRect(const FloatRect&) const;
     IntRect transformedRectIncludingFuture(const FloatRect&) const;
     void updateGeometry(float pageScaleFactor, const FloatPoint&);
+#if USE(TEXTURE_MAPPER)
     void updateBackdropFilters();
     void updateBackdropFiltersRect();
+#endif
     void updateAnimations();
-    void updateVisibleRect(const FloatRect&);
+    void updateVisibleAndCoverageRects(const FloatRect&, const FloatRect&);
     void updateIndicators();
     bool isRunningTransformAnimation() const;
     bool filtersCanBeComposited(const FilterOperations&) const;
 
     struct CommitState {
         FloatRect visibleRect;
+        FloatRect coverageRect;
         bool ancestorHadChanges { false };
         bool ancestorHasTransformAnimation { false };
     };
@@ -212,13 +222,20 @@ private:
     bool needsCommit(CommitState&) const;
     void recursiveCommitChanges(CommitState&, float pageScaleFactor = 1, const FloatPoint& positionRelativeToBase = FloatPoint(), bool affectedByPageScale = false);
 
+#if USE(CAIRO)
     bool updateBackingStoresIfNeeded();
     bool updateBackingStoreIfNeeded();
+#else
+    void updateBackingStoresIfNeeded();
+    void updateBackingStoreIfNeeded();
+#endif
 
     const Ref<CoordinatedPlatformLayer> m_platformLayer;
     EnumSet<Change> m_pendingChanges;
     bool m_hasDescendantsWithPendingChanges { false };
+#if USE(CAIRO)
     bool m_hasDescendantsWithPendingTilesCreation { false };
+#endif
     bool m_hasDescendantsWithRunningTransformAnimations { false };
     FloatSize m_pixelAlignmentOffset;
     std::optional<Damage> m_dirtyRegion;
@@ -237,11 +254,12 @@ private:
     RefPtr<GraphicsLayerContentsDisplayDelegate> m_contentsDisplayDelegate;
     RefPtr<NativeImage> m_contentsImage;
     Color m_contentsColor;
-    RefPtr<CoordinatedPlatformLayer> m_backdropLayer;
 #if USE(TEXTURE_MAPPER)
+    RefPtr<CoordinatedPlatformLayer> m_backdropLayer;
     TextureMapperAnimations m_animations;
 #else
     AcceleratedAnimations m_animations;
+    std::optional<TileCoverage> m_tileCoverage;
 #endif
 };
 

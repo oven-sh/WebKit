@@ -31,6 +31,8 @@
 #if ENABLE(WEB_AUDIO)
 #include "MessagePort.h"
 #include "Worklet.h"
+#include <wtf/CheckedPtr.h>
+#include <wtf/HashSet.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -38,19 +40,30 @@ namespace WebCore {
 class AudioWorkletNode;
 class BaseAudioContext;
 class AudioWorkletMessagingProxy;
+class MessageChannel;
 
 class AudioWorklet final : public Worklet {
     WTF_MAKE_TZONE_ALLOCATED(AudioWorklet);
 public:
     static Ref<AudioWorklet> create(BaseAudioContext&);
+    ~AudioWorklet();
 
-    AudioWorkletMessagingProxy* LEGACY_NODELETE proxy() const;
-    BaseAudioContext* LEGACY_NODELETE audioContext() const;
+    NODELETE AudioWorkletMessagingProxy* proxy() const;
+    NODELETE BaseAudioContext* audioContext() const;
+    MessagePort& port() LIFETIME_BOUND { return m_port.get(); }
+    TransferredMessagePort takeGlobalScopePort();
+
+    void addNode(AudioWorkletNode&);
+    void removeNode(AudioWorkletNode&);
+    // Processors ref the global scope. Hand them back to the worklet thread before the thread stops,
+    // or destroyWorkerGlobalScope asserts that the scope has one ref.
+    void releaseProcessors(AudioWorkletMessagingProxy&);
 
     void createProcessor(const String& name, TransferredMessagePort, Ref<SerializedScriptValue>&&, AudioWorkletNode&);
 
 private:
     explicit AudioWorklet(BaseAudioContext&);
+    AudioWorklet(BaseAudioContext&, Ref<MessageChannel>&&);
 
     bool isAudioWorklet() const final { return true; }
 
@@ -58,6 +71,9 @@ private:
     Vector<Ref<WorkletGlobalScopeProxy>> createGlobalScopes() final;
 
     WeakPtr<BaseAudioContext, WeakPtrImplWithEventTargetData> m_audioContext;
+    HashSet<CheckedPtr<AudioWorkletNode>> m_nodes;
+    const Ref<MessagePort> m_port;
+    RefPtr<MessagePort> m_globalScopePort;
 };
 
 } // namespace WebCore

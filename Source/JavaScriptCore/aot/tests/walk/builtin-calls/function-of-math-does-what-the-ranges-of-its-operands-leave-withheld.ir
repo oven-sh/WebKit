@@ -1,0 +1,20 @@
+# the same calls with unboxed numbers withheld: each goes by its row. The row of imul converts its operands by ToInt32 itself, so that conversion stands in front of its code in line with this rule and without it
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-5: = Call
+# RUN(NEGATIVE): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# NEGATIVE-LABEL: code f2:Body
+# NEGATIVE: = Call
+# RUN(HASH): walk f3 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# HASH-LABEL: code f3:Body
+# HASH: = CallInline {{*}}inlineBuiltin=MathImul
+# RUN(SMALL): walk f4 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# SMALL-LABEL: code f4:Body
+# SMALL: = CallInline {{*}}inlineBuiltin=MathImul
+# RUN(SQUARED): walk f5 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# SQUARED-LABEL: code f5:Body
+# SQUARED: = CallInline {{*}}inlineBuiltin=MathPow
+# RUN(NEVER): walk f2 f4 f5 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# NEVER-NOT: = Negate
+# NEVER-NOT: = Mul
+# PROGRAM-OF: function-of-math-does-what-the-ranges-of-its-operands-leave.ir

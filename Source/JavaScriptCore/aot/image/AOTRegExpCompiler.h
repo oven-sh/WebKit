@@ -25,6 +25,7 @@
 #include <span>
 #include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Variant.h>
@@ -70,6 +71,8 @@ struct RegExpCode {
     PCRelativeReach reach { PCRelativeReach::Near };
     unsigned analysisLimitHits { 0 };
     bool hasElidedFrame { false };
+    bool isBitParallel { false };
+    bool handsLongSearchesOver { false };
 };
 
 using RegExpCodeOrFailureReason = std::expected<std::unique_ptr<RegExpCode>, Yarr::JITFailureReason>;
@@ -77,13 +80,15 @@ using RegExpCodeOrFailureReason = std::expected<std::unique_ptr<RegExpCode>, Yar
 class JS_EXPORT_PRIVATE ImageCodeAddressing final : public Yarr::CodeAddressing {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(ImageCodeAddressing);
 public:
-    ImageCodeAddressing(CCallHelpers&, PCRelativeReach, const AssemblerPolicy&, BuildContext*);
+    ImageCodeAddressing(ImageAssembler&, PCRelativeReach, const AssemblerPolicy&, BuildContext*);
 
     void moveAddress(Yarr::SharedTableID, GPRReg dest) final;
     void moveAddress(const Yarr::ClassTable&, GPRReg dest) final;
     void moveAddressOfData(std::span<const uint8_t>, GPRReg dest) final;
     MacroAssembler::Jump branchTestBuiltInClassTable(MacroAssembler::ResultCondition, GPRReg character, Yarr::CharacterClass::Table) final;
     MacroAssembler::Jump branchTestLatin1Table(MacroAssembler::ResultCondition, GPRReg character, const Yarr::CharacterClass::ByteTable&) final;
+    MacroAssembler::Jump branchTestLatin1Set(MacroAssembler::ResultCondition, GPRReg character, const WTF::BitSet<256>&);
+    uint8_t moveAddressOfLatin1Set(const WTF::BitSet<256>&, GPRReg dest);
     void canonicalizeLatin1(GPRReg character) final;
     bool tryLoadConstant(uint64_t, GPRReg dest) final;
     void callRoutine(const Yarr::SharedRoutine&) final;
@@ -102,12 +107,12 @@ private:
     PCRelativeReach m_reach;
     BuildContext* m_context;
     Vector<RegExpSymbol> m_symbols;
+    HashMap<uint32_t, Vector<uint32_t, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_symbolsByHash;
     std::shared_ptr<bool> m_returnAddressesAreInReach;
 };
 
 RegExpCodeOrFailureReason compileSharedRoutine(const Yarr::SharedRoutine&, const AssemblerPolicy&, BuildContext*);
 
-// Takes the arguments of a body and answers JITCodeFailure, as a body does that gives a match up.
 RegExpCodeOrFailureReason compileFailureRoutine(const AssemblerPolicy&, BuildContext*);
 
 JS_EXPORT_PRIVATE size_t maxPrivateCopySize(const RegExpSymbol&);
@@ -117,8 +122,8 @@ struct CompiledRegExp {
 
     RegExpRecordForm form { RegExpRecordForm::NoMetadata };
     std::optional<RegExpDeclineReason> reason { };
-    // For 8-bit and for 16-bit subjects. Without the second, a 16-bit subject enters the failure routine, and the pattern is compiled at run time.
     std::array<std::unique_ptr<RegExpCode>, 2> code { };
+    std::unique_ptr<RegExpCode> matcher { };
 };
 
 enum class RegExpCodeFor16BitSubjects : uint8_t {
@@ -150,6 +155,7 @@ struct RegExpSectionItem {
     enum class Kind : uint8_t {
         Body,
         DuplicateBody,
+        Matcher,
         Routine,
         Table,
     };
@@ -164,21 +170,23 @@ struct RegExpSection {
     static constexpr size_t alignment = 4 * KB;
 
     Vector<uint8_t> bytes;
-    // A multiple of alignment. All code lies in front of it. Behind it lie tables alone.
     uint32_t dataOffset { 0 };
     Vector<std::array<uint32_t, 2>> entries;
+    Vector<std::optional<uint32_t>> matchers;
     Vector<RegExpSectionItem> items;
 };
 
 JS_EXPORT_PRIVATE std::optional<RegExpSection> layOutRegExpSection(std::span<const CompiledRegExp>, const AssemblerPolicy&, const CodeTemplates&, BuildContext*);
 
+class StringNumbers;
+
 struct RegExpRecordInputs {
     const RegExpRequests& requests;
     const CompiledRegExps& compiled;
     const RegExpSection& section;
+    const StringNumbers& strings;
 };
 
-// The match stub stores the start and the end of a match there for a RegExp without a Code record too: an atom, also one created at run time.
 inline constexpr uint32_t regExpOutputSizeWithoutSubpatterns = 2;
 
 struct RegExpSections {

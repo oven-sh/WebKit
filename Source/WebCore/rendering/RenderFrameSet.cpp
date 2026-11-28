@@ -56,7 +56,7 @@ static constexpr auto borderFillColor = SRGBA<uint8_t> { 208, 208, 208 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderFrameSet);
 
-RenderFrameSet::RenderFrameSet(HTMLFrameSetElement& frameSet, Style::ComputedStyle&& style)
+RenderFrameSet::RenderFrameSet(HTMLFrameSetElement& frameSet, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBox(Type::FrameSet, frameSet, WTF::move(style))
 {
     ASSERT(isRenderFrameSet());
@@ -65,7 +65,7 @@ RenderFrameSet::RenderFrameSet(HTMLFrameSetElement& frameSet, Style::ComputedSty
 
 RenderFrameSet::~RenderFrameSet() = default;
 
-HTMLFrameSetElement& LEGACY_NODELETE RenderFrameSet::frameSetElement() const
+NODELETE HTMLFrameSetElement& RenderFrameSet::frameSetElement() const
 {
     return downcast<HTMLFrameSetElement>(nodeForNonAnonymous());
 }
@@ -410,8 +410,8 @@ FrameEdgeInfo RenderFrameSet::edgeInfo() const
 {
     FrameEdgeInfo result(frameSetElement().noResize(), true);
     
-    int rows = frameSetElement().totalRows();
-    int cols = frameSetElement().totalCols();
+    size_t rows = m_rows.m_sizes.size();
+    size_t cols = m_cols.m_sizes.size();
     if (rows && cols) {
         result.setPreventResize(FrameEdge::Left, m_cols.m_preventResize[0]);
         result.setAllowBorder(FrameEdge::Left, m_cols.m_allowBorder[0]);
@@ -510,7 +510,7 @@ void RenderFrameSet::positionFrames()
             child->setBorderBoxHeight(height);
 #if PLATFORM(IOS_FAMILY)
             // FIXME: Is this iOS-specific?
-            child->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            child->setNeedsLayout(MarkingBehavior::OnlyThis);
 #else
             child->setNeedsLayout();
 #endif
@@ -651,11 +651,11 @@ CursorDirective RenderFrameSet::getCursor(const LayoutPoint& point, Cursor& curs
     IntPoint roundedPoint = roundedIntPoint(point);
     if (canResizeRow(roundedPoint)) {
         cursor = rowResizeCursor();
-        return CursorDirective::SetCursor;
+        return CursorDirective::Set;
     }
     if (canResizeColumn(roundedPoint)) {
         cursor = columnResizeCursor();
-        return CursorDirective::SetCursor;
+        return CursorDirective::Set;
     }
     return RenderBox::getCursor(point, cursor);
 }

@@ -1,0 +1,55 @@
+# var words; function start() { words = new Int32Array(64); } function swap(p) { var a = words[p], b = words[p + 1]; words[p] = b; words[p + 1] = a; } start(); swap(3); swap(-9);
+# The variable keeps the vector and the length of its view. The four accesses are checked together, and read nothing but the mirror and the elements.
+# LIBRARY: own
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetMirroredLength {{*}} variable=g0
+# CHECK: = GreaterEq
+# CHECK: = IsBelowLength
+# CHECK: = GetMirroredVector {{*}} variable=g0
+# CHECK: = GetTypedArrayElement {{*}} isInsideView, isMirroredView
+# CHECK: = GetTypedArrayElement {{*}} isInsideView, isMirroredView
+# CHECK: PutTypedArrayElement {{*}} isInsideView, isMirroredView
+# CHECK: PutTypedArrayElement {{*}} isInsideView, isMirroredView
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="words" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="start" module=m0 declared={type=anything} initialization=Function function=f1
+variable g2 name="swap" module=m0 declared={type=anything} initialization=Function function=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0, -
+    v2 = GetModuleVariable variable=g2
+    v3 = Integer integer=3
+    v4 = Call v2, -, v3
+    v5 = Integer integer=-9
+    v6 = Call v2, -, v5
+    Return v6
+}
+function f1 name="start" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=64
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Undefined
+    Return v4
+}
+function f2 name="swap" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    v3 = GetModuleVariable variable=g0
+    v4 = Integer integer=1
+    v5 = Add v0, v4
+    v6 = ElemGet v3, v5
+    v7 = GetModuleVariable variable=g0
+    ElemSet v7, v0, v6 mode=Sloppy
+    v9 = GetModuleVariable variable=g0
+    v10 = Add v0, v4
+    ElemSet v9, v10, v2 mode=Sloppy
+    v12 = Undefined
+    Return v12
+}

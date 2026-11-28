@@ -60,6 +60,12 @@
 #if ENABLE(MODEL_PROCESS)
 #import "PortalPresentationManagerProxy.h"
 #endif
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+#import "RemoteLayerTreeInteractionRegionLayers.h"
+#import "RemoteScrollingCoordinatorProxyIOS.h"
+#import "UIKitUtilities.h"
+#import "WKWebView.h"
+#endif
 #endif
 
 #import <pal/cocoa/CoreMaterialSoftLink.h>
@@ -72,9 +78,13 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeHost);
 
-RemoteLayerTreeHost::RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy& drawingArea)
+RemoteLayerTreeHost::RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy& drawingArea, Role role)
     : m_drawingArea(drawingArea)
+    , m_role(role)
 {
+#if PLATFORM(IOS_FAMILY)
+    ASSERT(role != Role::Mirror);
+#endif
 }
 
 RemoteLayerTreeHost::~RemoteLayerTreeHost()
@@ -114,6 +124,71 @@ bool RemoteLayerTreeHost::cssUnprefixedBackdropFilterEnabled() const
     RefPtr page = drawingArea().page();
     return page && protect(page->preferences())->cssUnprefixedBackdropFilterEnabled();
 }
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+void RemoteLayerTreeHost::updateScrollViewsHidingInteractionRegions()
+{
+    m_mainScrollViewHidesInteractionRegions = false;
+    m_scrollViewsHidingInteractionRegions.clear();
+
+    RefPtr page = drawingArea().page();
+    if (!isPrimary() || !page)
+        return;
+
+    RetainPtr mainScrollView = [page->cocoaView() scrollView];
+    if ([mainScrollView _wk_isHidingInteractionRegions]) {
+        m_mainScrollViewHidesInteractionRegions = true;
+        return;
+    }
+
+    if (RefPtr scrollingCoordinator = dynamicDowncast<RemoteScrollingCoordinatorProxyIOS>(page->scrollingCoordinatorProxy()))
+        m_scrollViewsHidingInteractionRegions = scrollingCoordinator->scrollViewsHidingInteractionRegions();
+}
+
+bool RemoteLayerTreeHost::shouldDeferInteractionRegionUpdate(const RemoteLayerTreeNode& node) const
+{
+    if (m_mainScrollViewHidesInteractionRegions)
+        return true;
+
+    RetainPtr view = node.uiView();
+    return std::ranges::any_of(m_scrollViewsHidingInteractionRegions, [&](auto& scrollView) {
+        return view.get() == scrollView.get() || [scrollView _wk_isAncestorOf:view.get()];
+    });
+}
+
+void RemoteLayerTreeHost::updateOrDeferInteractionRegions(RemoteLayerTreeNode& node)
+{
+    if (shouldDeferInteractionRegionUpdate(node)) {
+        m_layersWithDeferredInteractionRegionUpdates.add(node.layerID());
+        return;
+    }
+
+    updateLayersForInteractionRegions(node, this);
+}
+
+void RemoteLayerTreeHost::updateDeferredInteractionRegions()
+{
+    for (auto layerID : std::exchange(m_layersWithDeferredInteractionRegionUpdates, { })) {
+        if (RefPtr node = nodeForID(layerID))
+            updateLayersForInteractionRegions(*node, this);
+    }
+}
+
+static constexpr size_t interactionRegionGlowLayerPoolCapacity = 128;
+
+RetainPtr<CALayer> RemoteLayerTreeHost::takeInteractionRegionGlowLayer()
+{
+    if (m_interactionRegionGlowLayerPool.isEmpty())
+        return nil;
+    return m_interactionRegionGlowLayerPool.takeLast();
+}
+
+void RemoteLayerTreeHost::reclaimInteractionRegionGlowLayer(RetainPtr<CALayer>&& layer)
+{
+    if (m_interactionRegionGlowLayerPool.size() < interactionRegionGlowLayerPoolCapacity)
+        m_interactionRegionGlowLayerPool.append(WTF::move(layer));
+}
+#endif
 
 #if PLATFORM(MAC)
 bool RemoteLayerTreeHost::updateBannerLayers(const std::optional<MainFrameData>& mainFrameData)
@@ -211,8 +286,12 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
 #if ENABLE(THREADED_ANIMATIONS)
     // FIXME: with site isolation, a single process can send multiple transactions.
     // https://bugs.webkit.org/show_bug.cgi?id=301261
-    if (threadedAnimationsEnabled() && !transaction.timelinesUpdate().isEmpty())
+    if (isPrimary() && threadedAnimationsEnabled() && !transaction.timelinesUpdate().isEmpty())
         protect(*m_drawingArea)->updateTimelinesRegistration(processIdentifier, transaction.timelinesUpdate(), MonotonicTime::now());
+#endif
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    updateScrollViewsHidingInteractionRegions();
 #endif
 
     for (auto& changedLayer : transaction.changedLayerProperties()) {
@@ -236,7 +315,7 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
         if (properties.changedProperties.contains(LayerChange::DisplayOnlyImageChanged))
             applyDisplayOnlyImage(*node, processIdentifier, properties.displayOnlyImage);
 
-        if (m_isDebugLayerTreeHost) {
+        if (m_role == Role::DebugIndicator) {
             RetainPtr layer = node->layer();
             if (properties.changedProperties.contains(LayerChange::BorderWidthChanged))
                 layer.get().borderWidth = properties.borderWidth / indicatorScaleFactor;
@@ -261,8 +340,15 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
         }
     }
 
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    if (!m_mainScrollViewHidesInteractionRegions && m_scrollViewsHidingInteractionRegions.isEmpty())
+        updateDeferredInteractionRegions();
+    m_mainScrollViewHidesInteractionRegions = false;
+    m_scrollViewsHidingInteractionRegions.clear();
+#endif
+
 #if PLATFORM(MAC)
-    if (updateBannerLayers(mainFrameData))
+    if (isPrimary() && updateBannerLayers(mainFrameData))
         rootLayerChanged = true;
 #endif
 
@@ -385,11 +471,15 @@ void RemoteLayerTreeHost::layerWillBeRemoved(WebCore::ProcessIdentifier processI
         m_modelLayers.remove(layerID);
     }
 #endif
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    m_layersWithDeferredInteractionRegionUpdates.remove(layerID);
+#endif
 }
 
 void RemoteLayerTreeHost::animationDidStart(std::optional<WebCore::PlatformLayerIdentifier> layerID, CAAnimation *animation, MonotonicTime startTime)
 {
-    if (!m_drawingArea)
+    if (!m_drawingArea || !isPrimary())
         return;
 
     RetainPtr layer = layerForID(layerID);
@@ -397,8 +487,7 @@ void RemoteLayerTreeHost::animationDidStart(std::optional<WebCore::PlatformLayer
         return;
 
     String animationKey;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [layer animationKeys]) {
+    for (NSString *key in [layer animationKeys]) {
         if ([layer animationForKey:key] == animation) {
             animationKey = key;
             break;
@@ -411,7 +500,7 @@ void RemoteLayerTreeHost::animationDidStart(std::optional<WebCore::PlatformLayer
 
 void RemoteLayerTreeHost::animationDidEnd(std::optional<WebCore::PlatformLayerIdentifier> layerID, CAAnimation *animation)
 {
-    if (!m_drawingArea)
+    if (!m_drawingArea || !isPrimary())
         return;
 
     RetainPtr layer = layerForID(layerID);
@@ -419,8 +508,7 @@ void RemoteLayerTreeHost::animationDidEnd(std::optional<WebCore::PlatformLayerId
         return;
 
     String animationKey;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [layer animationKeys]) {
+    for (NSString *key in [layer animationKeys]) {
         if ([layer animationForKey:key] == animation) {
             animationKey = key;
             break;
@@ -445,6 +533,10 @@ void RemoteLayerTreeHost::clearLayers()
 
     m_nodes.clear();
     m_rootNode = nullptr;
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    m_layersWithDeferredInteractionRegionUpdates.clear();
+    m_interactionRegionGlowLayerPool.clear();
+#endif
 }
 
 RetainPtr<CALayer> RemoteLayerTreeHost::layerWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
@@ -542,11 +634,11 @@ RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const IPC::Connection&
 
     case PlatformCALayer::LayerType::LayerTypeCustom:
     case PlatformCALayer::LayerType::LayerTypeAVPlayerLayer:
-        if (m_isDebugLayerTreeHost)
+        if (m_role == Role::DebugIndicator)
             return RemoteLayerTreeNode::createWithPlainLayer(*properties.layerID);
 
 #if HAVE(AVKIT)
-        if (properties.videoElementData) {
+        if (properties.videoElementData && isPrimary()) {
             RefPtr page = drawingArea().page();
             if (RefPtr videoManager = page ? page->videoPresentationManager() : nullptr) {
                 auto playerIdentifier = PlaybackSessionContextIdentifier { properties.videoElementData->playerIdentifier, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier() };
@@ -575,11 +667,15 @@ void RemoteLayerTreeHost::detachRootLayer()
 #if ENABLE(THREADED_ANIMATIONS)
 void RemoteLayerTreeHost::animationsWereAddedToNode(RemoteLayerTreeNode& node)
 {
+    if (!isPrimary())
+        return;
     protect(drawingArea())->animationsWereAddedToNode(node);
 }
 
 void RemoteLayerTreeHost::animationsWereRemovedFromNode(RemoteLayerTreeNode& node)
 {
+    if (!isPrimary())
+        return;
     protect(drawingArea())->animationsWereRemovedFromNode(node);
 }
 

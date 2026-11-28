@@ -1,0 +1,69 @@
+# a text grows in a loop under a handler whose block lies behind the loop, and a second loop stands inside the first
+# function spelled() { let seen = "", sum = 0; try { for (let i = 0; i < 16; i++) { seen += "k"; for (let j = 0; j < 3; j++) sum += j * i; } } catch {} return seen + sum; }
+#   what may throw in the inner loop leads to a block of the walk's own that catches, makes the string of what the builder holds, and throws on. That block leaves both loops:
+#   the look at the inner loop, which writes nothing, need not have counted on the string. The walk is not given up for it: under the verifier a second walk is refused, so the lane that verifies holds this
+# the function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK: = StringBuilderBegin
+# RUN(LANDING): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# LANDING-LABEL: code f1:Body
+# LANDING: = CatchException
+# LANDING: = StringBuilderToString
+# LANDING: Rethrow
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = StringBuilderBegin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="spelled" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string=""
+    v1 = Integer
+    Jump -> next b1()
+  b1() handler=b9(v0, v1):
+    v2 = Integer
+    Jump -> next b2(v0, v1, v2)
+  b2(v3, v4, v5) handler=b9(v3, v4):
+    LoopHint
+    v7 = Integer integer=16
+    v8 = Less v5, v7
+    Branch v8 -> taken b3(), notTaken b8()
+  b3() handler=b9(v3, v4):
+    v9 = String string="k"
+    v10 = Add v3, v9
+    Jump -> next b4()
+  b4() handler=b9(v10, v4):
+    v11 = Integer
+    Jump -> next b5(v4, v11)
+  b5(v12, v13) handler=b9(v10, v12):
+    LoopHint
+    v15 = Integer integer=3
+    v16 = Less v13, v15
+    Branch v16 -> taken b6(), notTaken b7()
+  b6() handler=b9(v10, v12):
+    v17 = Mul v13, v5
+    v18 = Add v12, v17
+    v19 = Increment v13
+    Jump -> next b5(v18, v19)
+  b7() handler=b9(v10, v12):
+    v20 = Increment v5
+    Jump -> next b2(v10, v12, v20)
+  b8() handler=b9(v3, v4):
+    Jump -> next b10(v3, v4)
+  b9(v21, v22) role=CatchHandler:
+    v23 = CatchValue
+    Jump -> next b10(v21, v22)
+  b10(v24, v25):
+    v26 = Add v24, v25
+    Return v26
+}

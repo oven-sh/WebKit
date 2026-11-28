@@ -1,0 +1,45 @@
+# Promise.prototype.catch and then have a boxed call: where the walk knows the built-in and not the handler, the call goes to that stub with the number of the built-in's cell; the function itself is fetched only where the stub leaves for the host function
+# function run(f) { return work().catch(f); }
+# RUN: emit f2 mechanisms=all
+# CHECK-LABEL: unit f2:Body
+# CHECK: NumberOf(
+# function runThen(f) { return work().then(f); }
+# RUN(THEN): emit f3 mechanisms=all
+# THEN-LABEL: unit f3:Body
+# THEN: NumberOf(
+
+variable g0 name="work" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="work" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = Await v0
+    v2 = Integer integer=1
+    Return v2
+}
+function f2 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, - calleeName="work"
+    v3 = PropGet v2 key="catch"
+    v4 = Call v3, v2, v0 calleeKey="catch" calleeName="catch"
+    Return v4
+}
+function f3 name="runThen" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, - calleeName="work"
+    v3 = PropGet v2 key="then"
+    v4 = Call v3, v2, v0 calleeKey="then" calleeName="then"
+    Return v4
+}

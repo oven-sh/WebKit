@@ -75,7 +75,7 @@ static void notifyNodeInsertedIntoTree(ContainerNode& parentOfInsertedTree, Node
 // NodeVector has a large inline buffer and is thus not cheap to move.
 void notifyChildNodeInserted(ContainerNode& parentOfInsertedTree, Node& node, NodeVector& postInsertionNotificationTargets)
 {
-    ASSERT(ScriptDisallowedScope::InMainThread::hasDisallowedScope());
+    ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::InMainThread::hasDisallowedScope());
 
     Ref document { node.document() };
     Ref protectNode { node };
@@ -90,13 +90,21 @@ void notifyChildNodeInserted(ContainerNode& parentOfInsertedTree, Node& node, No
         notifyNodeInsertedIntoTree(parentOfInsertedTree, node, treeScopeChange);
 }
 
-inline RemovedSubtreeObservability LEGACY_NODELETE observabilityOfRemovedNode(Node& node)
+NODELETE inline RemovedSubtreeObservability observabilityOfRemovedNode(Node& node)
 {
     bool isRootOfRemovedTree = !node.parentNode();
     return node.refCount() > 1 && !isRootOfRemovedTree ? RemovedSubtreeObservability::MaybeObservableByRefPtr : RemovedSubtreeObservability::NotObservable;
 }
 
-inline void LEGACY_NODELETE updateObservability(RemovedSubtreeObservability& currentObservability, RemovedSubtreeObservability newStatus)
+NODELETE inline RemovedSubtreeObservability observabilityOfRemovedShadowRoot(ShadowRoot& shadowRoot)
+{
+    constexpr unsigned referenceCountHeldByThisRemoval = 2;
+    ASSERT(!shadowRoot.parentNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(shadowRoot.refCount() >= referenceCountHeldByThisRemoval);
+    return shadowRoot.refCount() > referenceCountHeldByThisRemoval ? RemovedSubtreeObservability::MaybeObservableByRefPtr : RemovedSubtreeObservability::NotObservable;
+}
+
+NODELETE inline void updateObservability(RemovedSubtreeObservability& currentObservability, RemovedSubtreeObservability newStatus)
 {
     if (newStatus == RemovedSubtreeObservability::MaybeObservableByRefPtr)
         currentObservability = newStatus;
@@ -117,6 +125,7 @@ static RemovedSubtreeResult notifyNodeRemovedFromDocument(ContainerNode& oldPare
         updateCanDelayNodeDeletion(canDelayNodeDeletion, AsyncNodeDeletionQueue::canNodeBeDeletedAsync(*currentNode));
         updateObservability(observability, observabilityOfRemovedNode(*currentNode));
         if (RefPtr root = currentNode->shadowRoot()) {
+            updateObservability(observability, observabilityOfRemovedShadowRoot(*root));
             auto [shadowTreeSize, newObservability, canBeDelayed] = notifyNodeRemovedFromDocument(oldParentOfRemovedTree, TreeScopeChange::DidNotChange, *root);
             subTreeSize += shadowTreeSize;
             updateCanDelayNodeDeletion(canDelayNodeDeletion, canBeDelayed);
@@ -139,6 +148,7 @@ static RemovedSubtreeResult notifyNodeRemovedFromTree(ContainerNode& oldParentOf
         updateCanDelayNodeDeletion(canDelayNodeDeletion, AsyncNodeDeletionQueue::canNodeBeDeletedAsync(*currentNode));
         updateObservability(observability, observabilityOfRemovedNode(*currentNode));
         if (RefPtr root = currentNode->shadowRoot()) {
+            updateObservability(observability, observabilityOfRemovedShadowRoot(*root));
             auto [shadowTreeSize, newObservability, canBeDelayed] = notifyNodeRemovedFromTree(oldParentOfRemovedTree, TreeScopeChange::DidNotChange, *root);
             subTreeSize += shadowTreeSize;
             updateCanDelayNodeDeletion(canDelayNodeDeletion, canBeDelayed);
@@ -151,7 +161,7 @@ static RemovedSubtreeResult notifyNodeRemovedFromTree(ContainerNode& oldParentOf
 RemovedSubtreeResult notifyChildNodeRemoved(ContainerNode& oldParentOfRemovedTree, Node& child)
 {
     // Assert that the caller of this function has an instance of ScriptDisallowedScope.
-    ASSERT(!isMainThread() || ScriptDisallowedScope::InMainThread::hasDisallowedScope());
+    ASSERT_WITH_SECURITY_IMPLICATION(!isMainThread() || ScriptDisallowedScope::InMainThread::hasDisallowedScope());
     ContainerChildRemovalScope removalScope(oldParentOfRemovedTree, child);
 
     // Tree scope has changed if the container node from which "node" is removed is in a document or a shadow root.
@@ -167,7 +177,7 @@ void removeDetachedChildrenInContainer(ContainerNode& container)
 
     RefPtr<Node> next;
     for (RefPtr node = container.firstChild(); node; node = WTF::move(next)) {
-        ASSERT(!node->deletionHasBegun());
+        ASSERT_WITH_SECURITY_IMPLICATION(!node->deletionHasBegun());
 
         next = node->nextSibling();
         node->setNextSibling(nullptr);
@@ -182,6 +192,8 @@ void removeDetachedChildrenInContainer(ContainerNode& container)
             notifyChildNodeRemoved(container, *node);
         else if (node->refCount() > 1)
             node->updateShadowIncludingRootForSubtree();
+        else
+            node->resetShadowIncludingRoot();
         ASSERT_WITH_SECURITY_IMPLICATION(!node->isInTreeScope());
     }
 }

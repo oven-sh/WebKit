@@ -29,9 +29,12 @@
 
 namespace WebCore {
 
+class SecurityOrigin;
+
 class URLDecomposition {
 public:
-    String origin() const;
+    RefPtr<SecurityOrigin> extractOrigin() const;
+    WEBCORE_EXPORT String origin() const;
 
     WEBCORE_EXPORT String protocol() const;
     void setProtocol(StringView);
@@ -60,7 +63,7 @@ public:
     WEBCORE_EXPORT String hash() const;
     void setHash(StringView);
 
-    static std::optional<uint16_t> LEGACY_NODELETE parsePort(StringView);
+    NODELETE static std::optional<uint16_t> parsePort(StringView);
 
 protected:
     virtual ~URLDecomposition() = default;

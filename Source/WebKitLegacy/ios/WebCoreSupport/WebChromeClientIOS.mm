@@ -161,7 +161,7 @@ void WebChromeClientIOS::runOpenPanel(LocalFrame&, FileChooser& chooser)
     };
 
     if (WebThreadIsCurrent()) {
-        RunLoop::mainSingleton().dispatch([weakWebView = WeakObjCPtr<WebView>(webView()), listener = WTF::move(listener), configuration = WTF::move(configuration)] {
+        RunLoop::mainSingleton().dispatch([weakWebView = WeakObjCPtr<WebView>(protect(webView())), listener = WTF::move(listener), configuration = WTF::move(configuration)] {
             RetainPtr webView = weakWebView.get();
             [[webView _UIKitDelegateForwarder] webView:webView runOpenPanelForFileButtonWithResultListener:listener.get() configuration:configuration.get()];
         });
@@ -185,10 +185,10 @@ void WebChromeClientIOS::didPreventDefaultForEvent()
 
 #endif
 
-void WebChromeClientIOS::didReceiveMobileDocType(bool isMobileDoctype)
+void WebChromeClientIOS::updateViewportDefaultConfiguration(bool hasMobileDoctype)
 {
     RetainPtr webView = this->webView();
-    if (isMobileDoctype)
+    if (hasMobileDoctype)
         [[webView _UIKitDelegateForwarder] webViewDidReceiveMobileDocType:webView];
 }
 

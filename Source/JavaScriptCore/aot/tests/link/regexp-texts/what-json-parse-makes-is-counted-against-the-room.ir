@@ -1,0 +1,53 @@
+# JSON.parse makes a cell out of as little as two characters: far more than the text itself takes. What parses may have made is counted in front of each call: half the characters, each the largest cell with its place in the holder. A parse that does not fit is not made: it gives what nobody knows. The count is its own, so parses take no room from anything else: the rehearsal goes on, and the texts behind are found.
+# let text = "[],"; (doubled fourteen times by +); text = "[" + text + "[]]"; for (let n = 0; n < 400; n++) new RegExp("b" + n + "x" + JSON.parse(text).length); new RegExp("end");   49157 characters a turn: 36 bytes each: 256 MB have space for some 150 turns: the turn of 99 is parsed, the last is not
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /end/
+# CHECK-NOT: text /b399x16385/
+# CHECK: text /b99x16385/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=JSONParse
+    v2 = String string="[],"
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = String string="["
+    v18 = Add v17, v16
+    v19 = String string="[]]"
+    v20 = Add v18, v19
+    v21 = String string="b"
+    v22 = String string="x"
+    v23 = Integer
+    Jump -> next b1(v23)
+  b1(v24: anything):
+    LoopHint
+    v26 = Call v1, -, v20
+    v27 = PropGet v26 key="length"
+    v28 = Add v21, v24
+    v29 = Add v28, v22
+    v30 = Add v29, v27
+    v31 = Construct v0, -, v30
+    v32 = Increment v24
+    v33 = Integer integer=400
+    v34 = Less v32, v33
+    Branch v34 -> taken b1(v32), notTaken b2()
+  b2():
+    v35 = String string="end"
+    v36 = Construct v0, -, v35
+    Return v23
+}

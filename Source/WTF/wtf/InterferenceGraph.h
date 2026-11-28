@@ -104,6 +104,19 @@ public:
         }
     }
 
+    template<typename LiveSet>
+    void addAllBut(IndexType u, IndexType alsoNot, const LiveSet& others)
+    {
+        const uint64_t bit = static_cast<uint64_t>(1) << (alsoNot % 64);
+        const bool hadEdge = row(u)[alsoNot / 64] & bit;
+        addAllBut(u, others);
+        if (hadEdge || u == alsoNot)
+            return;
+        row(u)[alsoNot / 64] &= ~bit;
+        if (!m_mirrorsEdgesAtOnce)
+            row(alsoNot)[u / 64] &= ~(static_cast<uint64_t>(1) << (u % 64));
+    }
+
     void mirrorEdges()
     {
         if (!m_mirrorsEdgesAtOnce)
@@ -404,6 +417,15 @@ public:
         });
     }
 
+    template<typename LiveSet>
+    void addAllBut(IndexType u, IndexType alsoNot, const LiveSet& others)
+    {
+        others.forEachSetBit([&](unsigned v) {
+            if (v != u && v != alsoNot)
+                add(u, static_cast<IndexType>(v));
+        });
+    }
+
     void mirrorEdges() { }
 
     size_t countInterferingIn(IndexType u, std::span<const uint64_t> others)
@@ -552,7 +574,7 @@ public:
     void dumpMemoryUseInKB() const { dataLog(memoryUse() / 1024); }
 
 private:
-    UncheckedKeyHashSet<InterferenceEdge> m_set;
+    HashSet<InterferenceEdge> m_set;
 };
 
 template <typename T, typename U>
@@ -677,8 +699,8 @@ using DenseInterferenceGraph = InstrumentedInterferenceGraph<ReferenceInterferen
 using LargeInterferenceGraph = InstrumentedInterferenceGraph<ReferenceInterferenceGraph, DefaultLargeInterferenceGraph>;
 using HugeInterferenceGraph = InstrumentedInterferenceGraph<HugeReferenceInterferenceGraph, DefaultHugeInterferenceGraph>;
 
-using ReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<UncheckedKeyHashSet<uint16_t, IntHash<uint16_t>, UnsignedWithZeroKeyHashTraits<uint16_t>>, uint16_t>>;
-using HugeReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, UnsignedWithZeroKeyHashTraits<uint32_t>>, uint32_t>>;
+using ReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<HashSet<uint16_t>, uint16_t>>;
+using HugeReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<HashSet<uint32_t>, uint32_t>>;
 
 using DenseIterableInterferenceGraph = InstrumentedIterableInterferenceGraph<ReferenceIterableInterferenceGraph, DefaultDenseIterableInterferenceGraph>;
 using LargeIterableInterferenceGraph = InstrumentedIterableInterferenceGraph<ReferenceIterableInterferenceGraph, DefaultLargeIterableInterferenceGraph>;

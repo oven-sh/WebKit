@@ -60,7 +60,7 @@ Ref<WebNotificationManagerProxy> WebNotificationManagerProxy::create(WebProcessP
 
 WebNotificationManagerProxy& WebNotificationManagerProxy::serviceWorkerManagerSingleton()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     static NeverDestroyed<Ref<WebNotificationManagerProxy>> sharedManager = adoptRef(*new WebNotificationManagerProxy(nullptr));
     return sharedManager->get();
 }
@@ -96,7 +96,7 @@ HashMap<String, bool> WebNotificationManagerProxy::notificationPermissions()
     return m_provider->notificationPermissions();
 }
 
-static std::optional<WebPageProxyIdentifier> LEGACY_NODELETE identifierForPagePointer(WebPageProxy* webPage)
+NODELETE static std::optional<WebPageProxyIdentifier> identifierForPagePointer(WebPageProxy* webPage)
 {
     return webPage ? std::optional { webPage->identifier() } : std::nullopt;
 }
@@ -148,8 +148,7 @@ void WebNotificationManagerProxy::clearNotifications(WebPageProxy* webPage)
 
 void WebNotificationManagerProxy::clearNotifications(WebPageProxy* webPage, const Vector<WTF::UUID>& pageNotificationIDs)
 {
-    Vector<WebNotificationIdentifier> globalNotificationIDs;
-    globalNotificationIDs.reserveInitialCapacity(m_globalNotificationMap.size());
+    Vector<WebNotificationIdentifier> globalNotificationIDs(ReserveCapacityTag { }, m_globalNotificationMap.size());
 
     // We always check page identity.
     // If the set of notification IDs is non-empty, we also check that.
@@ -322,7 +321,7 @@ static Vector<String> apiArrayToSecurityOriginStrings(API::Array* origins)
 
 void WebNotificationManagerProxy::providerDidUpdateNotificationPolicy(const API::SecurityOrigin* origin, bool enabled)
 {
-    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", origin->securityOrigin().toString().utf8(), enabled);
+    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", makeUTF8CString(origin->securityOrigin().toString()), enabled);
 
     auto originString = origin->securityOrigin().toString();
     if (originString.isEmpty())

@@ -56,6 +56,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ArrayConstructor, InternalFunction);
 
 JSArray* constructArrayWithSizeQuirk(JSGlobalObject*, ArrayAllocationProfile*, JSValue length, JSValue prototype = JSValue());
 
+// A new array of all that an iteration over `items` would hand out, where nobody could see that iteration. Null otherwise, and behind an exception.
+JSArray* tryCreateArrayFromIterableFast(JSGlobalObject*, JSValue items);
+
 JSC_DECLARE_HOST_FUNCTION(arrayConstructorIsArray);
 JSC_DECLARE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn);
 JSC_DECLARE_HOST_FUNCTION(arrayConstructorPrivateFuncIsArraySlow);

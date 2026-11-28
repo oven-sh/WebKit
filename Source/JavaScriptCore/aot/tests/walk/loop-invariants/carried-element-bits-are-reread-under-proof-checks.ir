@@ -1,0 +1,62 @@
+# function lower(list) { for (let i = list.length - 2; i > 1; i -= 1) list[i - 1] = list[i] | 0; return list; }
+# The loop carries list[i], which the turn before has stored, as an int32. Where proofs are checked at run time the element is read again and cut. That read may find nothing by its type, so its cut was refused,
+# and the loop over a tested list was given up under the proofs' word alone: nothing there was checked.
+# RUN(CHECKED): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: ({{*}}, [[carried]]: i32 @Int32) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.sink = (list) => { print(list.join(" ")); };
+# SHELL: -5 4 4 4 4.5 8
+# SHELL: 3 5 5 5 5 1
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Integer integer=-5
+    v4 = Double number=7.5
+    v5 = Integer integer=2
+    v6 = Integer integer=9
+    v7 = Double number=4.5
+    v8 = Integer integer=8
+    v9 = NewArray v3, v4, v5, v6, v7, v8
+    v10 = Call v0, -, v9 calleeName="lower"
+    v11 = Call v2, -, v10 calleeName="sink"
+    v12 = Integer integer=3
+    v13 = Integer integer=7
+    v14 = Integer integer=5
+    v15 = Integer integer=1
+    v16 = NewArray v12, v13, v5, v6, v14, v15
+    v17 = Call v0, -, v16 calleeName="lower"
+    v18 = Call v2, -, v17 calleeName="sink"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="lower" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = PropGet v0 key="length"
+    v2 = Integer integer=2
+    v3 = Sub v1, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Integer integer=1
+    v8 = Greater v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Integer integer=1
+    v10 = Sub v5, v9
+    v11 = ElemGet v0, v5
+    v12 = Integer
+    v13 = BitOr v11, v12
+    ElemSet v0, v10, v13 mode=Sloppy
+    v15 = Integer integer=1
+    v16 = Sub v5, v15
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v17)
+  b3():
+    Return v0
+}

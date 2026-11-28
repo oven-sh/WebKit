@@ -340,14 +340,14 @@ bool JSTestReadOnlyMapLikeOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unk
     return false;
 }
 
-void JSTestReadOnlyMapLikeOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestReadOnlyMapLikeOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestReadOnlyMapLike = static_cast<JSTestReadOnlyMapLike*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestReadOnlyMapLike->wrapped(), jsTestReadOnlyMapLike);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -363,7 +363,7 @@ static inline void verifyVTable(TestReadOnlyMapLike* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestReadOnlyMapLike@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore19TestReadOnlyMapLikeE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore19TestReadOnlyMapLikeE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -374,7 +374,6 @@ static inline void verifyVTable(TestReadOnlyMapLike* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestReadOnlyMapLike>&& impl)
 {

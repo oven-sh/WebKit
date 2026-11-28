@@ -29,6 +29,7 @@
 #include "MIMETypeRegistry.h"
 #include <array>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebCore::StringEntropyHelpers {
 
@@ -48,7 +49,7 @@ enum class Symbol : uint8_t {
 
 static constexpr size_t numberOfSymbols = static_cast<size_t>(Symbol::NumberOfSymbols);
 
-static Symbol LEGACY_NODELETE symbol(UChar32 character)
+NODELETE static Symbol symbol(UChar32 character)
 {
     if (character >= 'a' && character <= 'f')
         return Symbol::HexLower;
@@ -97,20 +98,20 @@ static constexpr std::array<uint8_t, numberOfSymbols * numberOfSymbols> quantize
     158, 160, 112,  53, 167, 187, 131, 174, 182, 163, // OtherCharacter
 } };
 
-static double LEGACY_NODELETE dequantize(uint8_t quantizedWeight)
+NODELETE static double dequantize(uint8_t quantizedWeight)
 {
     static constexpr double weightScale = 0.0273696267;
     static constexpr double weightZeroPoint = -4.0833584258;
     return quantizedWeight * weightScale + weightZeroPoint;
 }
 
-static double LEGACY_NODELETE bigramWeight(Symbol first, Symbol second)
+NODELETE static double bigramWeight(Symbol first, Symbol second)
 {
     auto tableOffset = numberOfSymbols * static_cast<uint8_t>(first) + static_cast<uint8_t>(second);
     return dequantize(quantizedBigramWeights[tableOffset]);
 }
 
-static double LEGACY_NODELETE entropyScore(StringView text)
+NODELETE static double entropyScore(StringView text)
 {
     auto textLength = text.length();
     if (textLength <= 1)
@@ -143,33 +144,66 @@ bool isProbablyHumanReadable(StringView text)
     return entropyScore(text) >= 0;
 }
 
+static StringView fileExtensionWithoutFullStop(StringView component)
+{
+    auto fullStopIndex = component.reverseFind('.');
+    if (fullStopIndex == notFound || fullStopIndex >= component.length() - 1)
+        return { };
+
+    auto extensionWithoutFullStop = component.right(component.length() - fullStopIndex - 1);
+    auto firstNonAlphaNumericCharacterIndex = extensionWithoutFullStop.find([](char16_t character) {
+        return !u_isalpha(character) && !u_isdigit(character);
+    });
+
+    if (firstNonAlphaNumericCharacterIndex != notFound)
+        extensionWithoutFullStop = extensionWithoutFullStop.left(firstNonAlphaNumericCharacterIndex);
+
+    return extensionWithoutFullStop;
+}
+
+String humanReadableLastPathComponent(const URL& url)
+{
+    if (url.protocolIsData() || url.protocolIsBlob() || url.protocolIsJavaScript())
+        return { };
+
+    auto component = url.lastPathComponent();
+    if (isProbablyHumanReadable(component))
+        return component.toString();
+
+    auto extensionWithoutFullStop = fileExtensionWithoutFullStop(component);
+    if (extensionWithoutFullStop.isEmpty())
+        return { };
+
+    StringBuilder humanReadableName;
+    for (auto segment : component.left(component.reverseFind('.')).split('.')) {
+        if (!isProbablyHumanReadable(segment))
+            continue;
+
+        if (!humanReadableName.isEmpty())
+            humanReadableName.append('.');
+        humanReadableName.append(segment);
+    }
+
+    if (humanReadableName.isEmpty())
+        return { };
+
+    humanReadableName.append('.', extensionWithoutFullStop);
+    return humanReadableName.toString();
+}
+
 String lowEntropyLastPathComponent(const URL& url, const String& fallbackName, const String& mimeType)
 {
     if (url.protocolIsData() || url.protocolIsBlob() || url.protocolIsJavaScript())
         return fallbackName;
 
-    auto result = [&url, &fallbackName] -> String {
-        auto component = url.lastPathComponent();
-        if (isProbablyHumanReadable(component))
-            return component.toString();
-
-        auto fullStopIndex = component.reverseFind('.');
-        if (fullStopIndex == notFound || fullStopIndex >= component.length() - 1)
-            return fallbackName;
-
-        auto extensionWithoutFullStop = component.right(component.length() - fullStopIndex - 1);
-        auto firstNonAlphaNumericCharacterIndex = extensionWithoutFullStop.find([](char16_t character) {
-            return !u_isalpha(character) && !u_isdigit(character);
-        });
-
-        if (firstNonAlphaNumericCharacterIndex != notFound)
-            extensionWithoutFullStop = extensionWithoutFullStop.left(firstNonAlphaNumericCharacterIndex);
-
-        if (extensionWithoutFullStop.isEmpty())
-            return fallbackName;
-
-        return makeString(fallbackName, '.', WTF::move(extensionWithoutFullStop));
-    }();
+    auto component = url.lastPathComponent();
+    auto result = humanReadableLastPathComponent(url);
+    if (result.isNull() && !component.isEmpty()) {
+        if (auto extensionWithoutFullStop = fileExtensionWithoutFullStop(component); !extensionWithoutFullStop.isEmpty())
+            result = makeString(fallbackName, '.', extensionWithoutFullStop);
+        else
+            result = fallbackName;
+    }
 
     return MIMETypeRegistry::appendFileExtensionIfNecessary(WTF::move(result), mimeType);
 }

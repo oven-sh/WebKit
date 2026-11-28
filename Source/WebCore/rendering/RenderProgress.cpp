@@ -22,6 +22,7 @@
 #include "RenderProgress.h"
 
 #include "HTMLProgressElement.h"
+#include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderTheme.h"
@@ -33,7 +34,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderProgress);
 
-RenderProgress::RenderProgress(HTMLElement& element, Style::ComputedStyle&& style)
+RenderProgress::RenderProgress(HTMLElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(Type::Progress, element, WTF::move(style))
     , m_position(HTMLProgressElement::InvalidPosition)
     , m_animationTimer(*this, &RenderProgress::animationTimerFired)
@@ -114,7 +115,7 @@ void RenderProgress::updateAnimationState()
         m_animationTimer.stop();
 }
 
-HTMLProgressElement* LEGACY_NODELETE RenderProgress::progressElement() const
+NODELETE HTMLProgressElement* RenderProgress::progressElement() const
 {
     if (!element())
         return nullptr;

@@ -162,8 +162,7 @@ Vector<String> FontCache::systemFontFamilies()
 {
     auto& manager = fontManager();
     int count = manager.countFamilies();
-    Vector<String> fontFamilies;
-    fontFamilies.reserveInitialCapacity(count);
+    Vector<String> fontFamilies(ReserveCapacityTag { }, count);
     for (int i = 0; i < count; ++i) {
         SkString familyName;
         manager.getFamilyName(i, &familyName);
@@ -216,11 +215,11 @@ static bool isSystemUIFamilyFont(const String& family)
 }
 #endif
 
-static String getFamilyNameStringFromFamily(const String& family)
+static AtomString getFamilyNameStringFromFamily(const AtomString& family)
 {
 #if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
     if (isSystemUIFamilyFont(family))
-        return SystemSettings::singleton().defaultSystemFont();
+        return AtomString { SystemSettings::singleton().defaultSystemFont() };
 #endif
 
     // If we're creating a fallback font (e.g. "-webkit-monospace"), convert the name into
@@ -241,7 +240,7 @@ static String getFamilyNameStringFromFamily(const String& family)
     if (family == *familyNamesData->at(FamilyNamesIndex::MathFamily))
         return "math"_s;
 
-    return emptyString();
+    return emptyAtom();
 }
 
 Vector<hb_feature_t> FontCache::computeFeatures(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
@@ -398,11 +397,17 @@ Vector<hb_feature_t> FontCache::computeFeatures(const FontDescription& fontDescr
     if (featuresToBeApplied.isEmpty())
         return { };
 
-    Vector<hb_feature_t> features;
-    features.reserveInitialCapacity(featuresToBeApplied.size());
+    Vector<hb_feature_t> features(ReserveCapacityTag { }, featuresToBeApplied.size());
     for (const auto& iter : featuresToBeApplied)
         features.append({ HB_TAG(iter.key[0], iter.key[1], iter.key[2], iter.key[3]), static_cast<uint32_t>(iter.value), 0, static_cast<unsigned>(-1) });
     return features;
+}
+
+sk_sp<SkTypeface> FontCache::matchFamilyStyle(const AtomString& familyName, const SkFontStyle& style)
+{
+    return m_typefaceCache.ensure({ familyName, style }, [&] {
+        return fontManager().matchFamilyStyle(makeUTF8CString(familyName.string()).legacyCStringPointer(), style);
+    }).iterator->value;
 }
 
 static bool isUnsupportedFamilyFont(const AtomString& family)
@@ -417,7 +422,7 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
         return nullptr;
     auto familyName = getFamilyNameStringFromFamily(family);
     auto skFontStyle = skiaFontStyle(fontDescription);
-    auto typeface = fontManager().matchFamilyStyle(familyName.utf8().legacyCStringPointer(), skFontStyle);
+    auto typeface = matchFamilyStyle(familyName, skFontStyle);
     if (!typeface)
         return nullptr;
 
@@ -453,6 +458,7 @@ void FontCache::platformInvalidate()
 
 void FontCache::platformPurgeInactiveFontData()
 {
+    m_typefaceCache.clear();
     m_harfBuzzFontCache.clear();
 #if !OS(ANDROID) && !PLATFORM(WIN)
     m_skiaSystemFallbackFontCache.clear();

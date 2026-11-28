@@ -1,0 +1,39 @@
+# An accessor that may stand on the prototype of typed arrays gets the typed array. The instance beside it answers for itself.
+#   class Point { constructor(x) { this.x = x; } }
+#   const values = [new Point(1), new Uint8Array(2)];  module.exports = values[1].x;
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[]
+
+layout L0 kind=Instance name="Point" module=m0 position=20 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] place=20 ownFieldCount=1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=12
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=32
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @14
+    v1 = NewClass v0 layout=L0 @14
+    PutModuleVariable v1 variable=g1 @14
+    v3 = FinishClass v1 layout=L0 @14
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @14
+    v5 = Integer integer=1 @87
+    v6 = Construct v4, -, v5 calleeName="Point" @81
+    v7 = Builtin builtin=Uint8Array @95
+    v8 = Integer integer=2 @106
+    v9 = Construct v7, -, v8 calleeName="Uint8Array" @95
+    v10 = NewArray v6, v9 contents=anything @76
+    v11 = Integer integer=1 @137
+    v12 = ElemGet v10, v11 @159
+    v13 = PropGet v12 key="x" @166
+    PutModuleVariable v13 variable=g0 @176
+    v15 = Undefined @176
+    Return v15 @176
+}
+function f1 name="Point" module=m0 position=39 sourceRange={start=14 end=60} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @39
+    v3 = NewObject v2 layout=L0 @39
+    v4 = Convert v3 declared={type=L0} @39
+    PropSet v4, v1 key="x" @45
+    Return v4 @45
+}

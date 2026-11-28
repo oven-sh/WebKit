@@ -1,0 +1,195 @@
+# fields that are stored behind the birth are declared by the types that the objects are written as, and by no layout of the objects
+# interface Sym { id: number }
+# interface Type { flags: number; symbol: Sym; widened?: Type; label: string; loose: string }
+# interface ObjectType extends Type { members?: Map<string, number>; isResolved?: boolean; target: Type }
+# interface Reference extends Type { target: Sym }
+# function TypeConstructor(this: Type, flags: number) { this.flags = flags; }
+# function create(flags: number, symbol: Sym, label: string, loose: any): Type { const made = new TypeConstructor(flags); made.symbol = symbol; made.label = label; made.loose = loose; (made as any).odd = symbol; return made; }
+# function fill(type: Type, other: Type) { const o = type as ObjectType; o.members = new Map(); o.isResolved = true; o.target = other; o.widened = other; }
+# function point(type: Type, symbol: Sym) { (type as Reference).target = symbol; }
+# function symbolOf(type: Type) { return type.symbol; }   function membersOf(type: Type) { return (type as ObjectType).members; }   function targetOf(type: Type) { return (type as ObjectType).target; }
+# function isResolvedOf(type: Type) { return (type as ObjectType).isResolved; }   function labelOf(type: Type) { return type.label; }
+# publish(create, fill, point, symbolOf, membersOf, targetOf, isResolvedOf, labelOf);
+# The shell hands each of the compiled functions what nobody has written: numbers, texts, booleans, a symbol, a bigint, objects and functions of its own. An object of the text is no Sym either
+# Each line: what the compiled reads find | what the shell finds by name | the keys in their order. Seven lines a value:
+#   made . filled . pointed . stored by the shell . filled with what fits . target deleted . target stored again, so that it comes last
+# RUN: run-in-shell globalThis.publish = (create, fill, point, symbolOf, membersOf, targetOf, isResolvedOf, labelOf) => { const show = v => v === null ? "null" : typeof v === "object" ? (v instanceof Map ? "Map" : "flags" in v ? "T" + v.flags : "object") : typeof v === "function" ? "function" : typeof v === "symbol" ? "symbol" : typeof v + ":" + String(v); const keysOf = t => { let text = ""; for (const key in t) text += (text ? "," : "") + key; return text; }; const line = t => show(symbolOf(t)) + " " + show(membersOf(t)) + " " + show(targetOf(t)) + " " + show(isResolvedOf(t)) + " " + show(labelOf(t)) + " | " + show(t.symbol) + " " + show(t.members) + " " + show(t.target) + " " + show(t.isResolved) + " " + show(t.label) + " | " + keysOf(t); const other = create(1, null, "o", 0); const values = [1, 1.5, "s", true, null, undefined, Symbol.iterator, 10n, {}, [], () => 1, other]; for (let i = 0; i < values.length; i++) { const value = values[i]; const a = create(2, value, value, value); print(line(a)); fill(a, value); print(line(a)); point(a, value); print(line(a)); a.members = value; a.isResolved = value; a.widened = value; print(line(a)); fill(a, other); print(line(a)); delete a.target; print(line(a)); point(a, null); print(line(a)); } };
+# CHECK: number:1 undefined:undefined undefined:undefined undefined:undefined number:1 | number:1 undefined:undefined undefined:undefined undefined:undefined number:1 | flags,symbol,label,loose,odd
+# CHECK-NEXT: number:1 Map number:1 boolean:true number:1 | number:1 Map number:1 boolean:true number:1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1 Map number:1 boolean:true number:1 | number:1 Map number:1 boolean:true number:1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1 number:1 number:1 number:1 number:1 | number:1 number:1 number:1 number:1 number:1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1 Map T1 boolean:true number:1 | number:1 Map T1 boolean:true number:1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1 Map undefined:undefined boolean:true number:1 | number:1 Map undefined:undefined boolean:true number:1 | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: number:1 Map null boolean:true number:1 | number:1 Map null boolean:true number:1 | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: number:1.5 undefined:undefined undefined:undefined undefined:undefined number:1.5 | number:1.5 undefined:undefined undefined:undefined undefined:undefined number:1.5 | flags,symbol,label,loose,odd
+# CHECK-NEXT: number:1.5 Map number:1.5 boolean:true number:1.5 | number:1.5 Map number:1.5 boolean:true number:1.5 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1.5 Map number:1.5 boolean:true number:1.5 | number:1.5 Map number:1.5 boolean:true number:1.5 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1.5 number:1.5 number:1.5 number:1.5 number:1.5 | number:1.5 number:1.5 number:1.5 number:1.5 number:1.5 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1.5 Map T1 boolean:true number:1.5 | number:1.5 Map T1 boolean:true number:1.5 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: number:1.5 Map undefined:undefined boolean:true number:1.5 | number:1.5 Map undefined:undefined boolean:true number:1.5 | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: number:1.5 Map null boolean:true number:1.5 | number:1.5 Map null boolean:true number:1.5 | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: string:s undefined:undefined undefined:undefined undefined:undefined string:s | string:s undefined:undefined undefined:undefined undefined:undefined string:s | flags,symbol,label,loose,odd
+# CHECK-NEXT: string:s Map string:s boolean:true string:s | string:s Map string:s boolean:true string:s | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: string:s Map string:s boolean:true string:s | string:s Map string:s boolean:true string:s | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: string:s string:s string:s string:s string:s | string:s string:s string:s string:s string:s | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: string:s Map T1 boolean:true string:s | string:s Map T1 boolean:true string:s | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: string:s Map undefined:undefined boolean:true string:s | string:s Map undefined:undefined boolean:true string:s | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: string:s Map null boolean:true string:s | string:s Map null boolean:true string:s | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: boolean:true undefined:undefined undefined:undefined undefined:undefined boolean:true | boolean:true undefined:undefined undefined:undefined undefined:undefined boolean:true | flags,symbol,label,loose,odd
+# CHECK-NEXT: boolean:true Map boolean:true boolean:true boolean:true | boolean:true Map boolean:true boolean:true boolean:true | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: boolean:true Map boolean:true boolean:true boolean:true | boolean:true Map boolean:true boolean:true boolean:true | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: boolean:true boolean:true boolean:true boolean:true boolean:true | boolean:true boolean:true boolean:true boolean:true boolean:true | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: boolean:true Map T1 boolean:true boolean:true | boolean:true Map T1 boolean:true boolean:true | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: boolean:true Map undefined:undefined boolean:true boolean:true | boolean:true Map undefined:undefined boolean:true boolean:true | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: boolean:true Map null boolean:true boolean:true | boolean:true Map null boolean:true boolean:true | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: null undefined:undefined undefined:undefined undefined:undefined null | null undefined:undefined undefined:undefined undefined:undefined null | flags,symbol,label,loose,odd
+# CHECK-NEXT: null Map null boolean:true null | null Map null boolean:true null | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: null Map null boolean:true null | null Map null boolean:true null | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: null null null null null | null null null null null | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: null Map T1 boolean:true null | null Map T1 boolean:true null | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: null Map undefined:undefined boolean:true null | null Map undefined:undefined boolean:true null | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: null Map null boolean:true null | null Map null boolean:true null | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: undefined:undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined | undefined:undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined | flags,symbol,label,loose,odd
+# CHECK-NEXT: undefined:undefined Map undefined:undefined boolean:true undefined:undefined | undefined:undefined Map undefined:undefined boolean:true undefined:undefined | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: undefined:undefined Map undefined:undefined boolean:true undefined:undefined | undefined:undefined Map undefined:undefined boolean:true undefined:undefined | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: undefined:undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined | undefined:undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: undefined:undefined Map T1 boolean:true undefined:undefined | undefined:undefined Map T1 boolean:true undefined:undefined | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: undefined:undefined Map undefined:undefined boolean:true undefined:undefined | undefined:undefined Map undefined:undefined boolean:true undefined:undefined | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: undefined:undefined Map null boolean:true undefined:undefined | undefined:undefined Map null boolean:true undefined:undefined | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: symbol undefined:undefined undefined:undefined undefined:undefined symbol | symbol undefined:undefined undefined:undefined undefined:undefined symbol | flags,symbol,label,loose,odd
+# CHECK-NEXT: symbol Map symbol boolean:true symbol | symbol Map symbol boolean:true symbol | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: symbol Map symbol boolean:true symbol | symbol Map symbol boolean:true symbol | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: symbol symbol symbol symbol symbol | symbol symbol symbol symbol symbol | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: symbol Map T1 boolean:true symbol | symbol Map T1 boolean:true symbol | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: symbol Map undefined:undefined boolean:true symbol | symbol Map undefined:undefined boolean:true symbol | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: symbol Map null boolean:true symbol | symbol Map null boolean:true symbol | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: bigint:10 undefined:undefined undefined:undefined undefined:undefined bigint:10 | bigint:10 undefined:undefined undefined:undefined undefined:undefined bigint:10 | flags,symbol,label,loose,odd
+# CHECK-NEXT: bigint:10 Map bigint:10 boolean:true bigint:10 | bigint:10 Map bigint:10 boolean:true bigint:10 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: bigint:10 Map bigint:10 boolean:true bigint:10 | bigint:10 Map bigint:10 boolean:true bigint:10 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: bigint:10 bigint:10 bigint:10 bigint:10 bigint:10 | bigint:10 bigint:10 bigint:10 bigint:10 bigint:10 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: bigint:10 Map T1 boolean:true bigint:10 | bigint:10 Map T1 boolean:true bigint:10 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: bigint:10 Map undefined:undefined boolean:true bigint:10 | bigint:10 Map undefined:undefined boolean:true bigint:10 | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: bigint:10 Map null boolean:true bigint:10 | bigint:10 Map null boolean:true bigint:10 | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: object undefined:undefined undefined:undefined undefined:undefined object | object undefined:undefined undefined:undefined undefined:undefined object | flags,symbol,label,loose,odd
+# CHECK-NEXT: object Map object boolean:true object | object Map object boolean:true object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object Map object boolean:true object | object Map object boolean:true object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object object object object object | object object object object object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object Map T1 boolean:true object | object Map T1 boolean:true object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object Map undefined:undefined boolean:true object | object Map undefined:undefined boolean:true object | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: object Map null boolean:true object | object Map null boolean:true object | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: object undefined:undefined undefined:undefined undefined:undefined object | object undefined:undefined undefined:undefined undefined:undefined object | flags,symbol,label,loose,odd
+# CHECK-NEXT: object Map object boolean:true object | object Map object boolean:true object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object Map object boolean:true object | object Map object boolean:true object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object object object object object | object object object object object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object Map T1 boolean:true object | object Map T1 boolean:true object | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: object Map undefined:undefined boolean:true object | object Map undefined:undefined boolean:true object | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: object Map null boolean:true object | object Map null boolean:true object | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: function undefined:undefined undefined:undefined undefined:undefined function | function undefined:undefined undefined:undefined undefined:undefined function | flags,symbol,label,loose,odd
+# CHECK-NEXT: function Map function boolean:true function | function Map function boolean:true function | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: function Map function boolean:true function | function Map function boolean:true function | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: function function function function function | function function function function function | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: function Map T1 boolean:true function | function Map T1 boolean:true function | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: function Map undefined:undefined boolean:true function | function Map undefined:undefined boolean:true function | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: function Map null boolean:true function | function Map null boolean:true function | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: T1 undefined:undefined undefined:undefined undefined:undefined T1 | T1 undefined:undefined undefined:undefined undefined:undefined T1 | flags,symbol,label,loose,odd
+# CHECK-NEXT: T1 Map T1 boolean:true T1 | T1 Map T1 boolean:true T1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: T1 Map T1 boolean:true T1 | T1 Map T1 boolean:true T1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: T1 T1 T1 T1 T1 | T1 T1 T1 T1 T1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: T1 Map T1 boolean:true T1 | T1 Map T1 boolean:true T1 | flags,symbol,label,loose,odd,members,isResolved,target,widened
+# CHECK-NEXT: T1 Map undefined:undefined boolean:true T1 | T1 Map undefined:undefined boolean:true T1 | flags,symbol,label,loose,odd,members,isResolved,widened
+# CHECK-NEXT: T1 Map null boolean:true T1 | T1 Map null boolean:true T1 | flags,symbol,label,loose,odd,members,isResolved,widened,target
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="TypeConstructor" module=m0 position=300 constructor=f1 fields=[{key="flags" declared={type=number} flags=[IsRequired] originLayout=L1 originField=0}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 name="Type" module=m0 position=40 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="loose" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="symbol" declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="widened" declared={type=undefined|null|L0 flags=[OmitsNull]}}] supertypes=[L2, L3] flags=[IsNeverAllocated] ownFieldCount=5
+layout L2 name="ObjectType" module=m0 position=120 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="isResolved" declared={type=undefined|boolean}}, {key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="loose" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="members" declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull]}}, {key="symbol" declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="target" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="widened" declared={type=undefined|null|L0 flags=[OmitsNull]}}] supertypes=[L1] flags=[IsNeverAllocated] ownFieldCount=8
+layout L3 name="Reference" module=m0 position=220 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="loose" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="symbol" declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="target" declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="widened" declared={type=undefined|null|L0 flags=[OmitsNull]}}] supertypes=[L1] flags=[IsNeverAllocated] ownFieldCount=6
+layout L4 name="Sym" module=m0 position=10 fields=[{key="id" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="TypeConstructor" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f5
+    v4 = NewClosure function=f6
+    v5 = NewClosure function=f7
+    v6 = NewClosure function=f8
+    v7 = NewClosure function=f9
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v0, v1, v2, v3, v4, v5, v6, v7 calleeName="publish"
+    Return v10
+}
+function f1 name="TypeConstructor" module=m0 position=300 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Convert v1 declared={type=number}
+    PropSet v0, v2 key="flags"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="create" module=m0 position=400 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|L4, v2: undefined|null|string, v3: anything):
+    v4 = GetModuleVariable variable=g0
+    v5 = Construct v4, -, v0 calleeName="TypeConstructor"
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Convert v1 declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v6, v7 key="symbol"
+    PropSet v6, v2 key="label"
+    PropSet v6, v3 key="loose"
+    PropSet v6, v1 key="odd"
+    Return v6
+}
+function f3 name="fill" module=m0 position=600 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v3 = Builtin builtin=Map
+    v4 = Construct v3, - calleeName="Map"
+    PropSet v2, v4 key="members"
+    v6 = Boolean boolean=true
+    PropSet v2, v6 key="isResolved"
+    v8 = Convert v1 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v2, v8 key="target"
+    v10 = Convert v1 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    PropSet v2, v10 key="widened"
+    v12 = Undefined
+    Return v12
+}
+function f4 name="point" module=m0 position=800 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L4):
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v3 = Convert v1 declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v2, v3 key="target"
+    v5 = Undefined
+    Return v5
+}
+function f5 name="symbolOf" module=m0 position=900 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="symbol"
+    Return v1
+}
+function f6 name="membersOf" module=m0 position=1000 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v2 = PropGet v1 key="members"
+    Return v2
+}
+function f7 name="targetOf" module=m0 position=1100 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v2 = PropGet v1 key="target"
+    Return v2
+}
+function f8 name="isResolvedOf" module=m0 position=1200 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v2 = PropGet v1 key="isResolved"
+    Return v2
+}
+function f9 name="labelOf" module=m0 position=1300 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="label"
+    Return v1
+}

@@ -89,6 +89,10 @@ void StackManager::setStopsAtFunctionEntries(bool stops)
 
 void StackManager::setStackSoftLimit(void* newStackLimit)
 {
+    // Here, and not where VMTraps is made: the VM is still being made around that, and requestStop() asks the VM whether it has compiled code.
+    // In a VM that lies in memory which was used before, the answer was whatever lay there.
+    if (Options::forceTrapAwareStackChecks() && !hasStopRequest()) [[unlikely]]
+        requestStop();
     m_softStackLimit = newStackLimit;
 
     Locker lock { m_mirrorLock };

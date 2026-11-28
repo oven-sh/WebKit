@@ -28,8 +28,7 @@
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserOptions.h"
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 bool consumeCommaIncludingWhitespace(CSSParserTokenRange& range)
 {
@@ -44,6 +43,14 @@ bool consumeSlashIncludingWhitespace(CSSParserTokenRange& range)
 {
     auto& value = range.peek();
     if (value.type() != DelimiterToken || value.delimiter() != '/')
+        return false;
+    range.consumeIncludingWhitespace();
+    return true;
+}
+
+bool consumeSemicolon(CSSParserTokenRange& range)
+{
+    if (range.peek().type() != SemicolonToken)
         return false;
     range.consumeIncludingWhitespace();
     return true;
@@ -86,5 +93,4 @@ std::optional<CSSParserTokenRange> consumeArgument(CSSParserTokenRange& range, u
     return argumentStart.rangeUntil(range);
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

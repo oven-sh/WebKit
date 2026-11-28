@@ -1,0 +1,31 @@
+# If the promise of an async function held no reason because no summary stores one, the handler that `catch` or `then` is given would be proven never to be entered with a value, and the walk would compile a trap in place of its body
+# async function fails() { throw "no"; }  function handle(e) { return e; }  fails().then(undefined, handle);
+# What a coroutine or a callee of it throws is laid into its promise by the run time: the reason holds anything.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known
+# CHECK-NEXT: parameter 0
+# RUN(NOTHING): link functions mechanisms=all
+# NOTHING-NOT: parameter 0 {{*}}proven=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, - calleeName="fails"
+    v2 = PropGet v1 key="then"
+    v3 = Undefined
+    v4 = NewClosure function=f2
+    v5 = Call v2, v1, v3, v4 calleeKey="then"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="fails" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="no"
+    Throw v0
+}
+function f2 name="handle" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

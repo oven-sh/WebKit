@@ -66,6 +66,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         WI.SourceCode.addEventListener(WI.SourceCode.Event.SourceMapAdded, this._handleSourceCodeSourceMapAdded, this);
 
+        this._pauseSession = null;
+
         this._breakpointsEnabledSetting = new WI.Setting("breakpoints-enabled", true);
         this._asyncStackTraceDepthSetting = new WI.Setting("async-stack-trace-depth", 200);
 
@@ -121,6 +123,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             this._temporarilyDisabledBreakpointsRestoreSetting.value = null;
         }
         this._temporarilyDisableBreakpointsRequestCount = 0;
+        this._breakpointsDisabledForTimelineCapture = false;
 
         this._ignoreBreakpointDisplayLocationDidChangeEvent = false;
 
@@ -351,6 +354,11 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         }
 
         return false;
+    }
+
+    get pauseSession()
+    {
+        return this._pauseSession;
     }
 
     get activeCallFrame()
@@ -780,6 +788,18 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         return this.dataForTarget(target).continueUntilNextRunLoop();
     }
 
+    resumeThread(target)
+    {
+        let targetData = this.dataForTarget(target);
+
+        // A frame target pauses independently of everything else, so resuming one is a full resume.
+        // Other targets live in the page's process, so keep the bounded advance (bug 164305): resuming
+        // fully would let the target run free while the rest of the process is still paused.
+        if (target instanceof WI.FrameTarget)
+            return targetData.resumeIfNeeded();
+        return targetData.continueUntilNextRunLoop();
+    }
+
     continueToLocation(script, lineNumber, columnNumber)
     {
         return script.target.DebuggerAgent.continueToLocation({scriptId: script.id, lineNumber, columnNumber});
@@ -1031,7 +1051,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         this._ignoreBreakpointDisplayLocationDidChangeEvent = false;
 
-        this.dispatchEventToListeners(WI.DebuggerManager.Event.ScriptsCleared);
+        this.dispatchEventToListeners(WI.DebuggerManager.Event.ScriptsCleared, {target});
 
         // `paused` spans every target, so only resume if no other target is still paused.
         if (wasPaused && !this.paused)
@@ -1125,6 +1145,13 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         this._didResumeInternal(target);
     }
 
+    debuggerPauseSessionChanged(sessionId, state, stoppingTargetIds)
+    {
+        let isPaused = state === InspectorBackend.Enum.Target.DebuggerPauseSessionState.Paused;
+        this._pauseSession = isPaused ? {sessionId, stoppingTargetIds} : null;
+        this.dispatchEventToListeners(WI.DebuggerManager.Event.PauseSessionChanged, {sessionId, state, stoppingTargetIds});
+    }
+
     playBreakpointActionSound(breakpointActionIdentifier)
     {
         InspectorFrontendHost.beep();
@@ -1134,7 +1161,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
     {
         let targetData = this.dataForTarget(target);
 
-        // COMPATIBILITY (macOS X.Y, iOS X.Y): Older backends could report the same script more than once.
+        // COMPATIBILITY (macOS 27.0, iOS 27.0): Older backends could report the same script more than once.
         let existingScript = targetData.scriptForIdentifier(scriptIdentifier);
         if (existingScript) {
             console.assert(existingScript.url === (url || null));
@@ -1722,13 +1749,20 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
     {
         switch (WI.timelineManager.capturingState) {
         case WI.TimelineManager.CapturingState.Starting:
-            this._startDisablingBreakpointsTemporarily();
+            // Capturing can restart before it becomes inactive, so only count one request until it does.
+            if (!this._breakpointsDisabledForTimelineCapture) {
+                this._breakpointsDisabledForTimelineCapture = true;
+                this._startDisablingBreakpointsTemporarily();
+            }
             if (this.paused)
                 this.resume();
             break;
 
         case WI.TimelineManager.CapturingState.Inactive:
-            this._stopDisablingBreakpointsTemporarily();
+            if (this._breakpointsDisabledForTimelineCapture) {
+                this._breakpointsDisabledForTimelineCapture = false;
+                this._stopDisablingBreakpointsTemporarily();
+            }
             break;
         }
     }
@@ -1804,11 +1838,6 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
     _mainResourceDidChange(event)
     {
         this._tryAssociateScripts(event.target.mainResource);
-
-        if (!event.target.isMainFrame())
-            return;
-
-        this._didResumeInternal(WI.mainTarget);
     }
 
     _handleResourceAdded(event)
@@ -1913,6 +1942,7 @@ WI.DebuggerManager.Event = {
     ProbeSetAdded: "debugger-manager-probe-set-added",
     ProbeSetRemoved: "debugger-manager-probe-set-removed",
     BlackboxChanged: "blackboxed-urls-changed",
+    PauseSessionChanged: "debugger-manager-pause-session-changed",
 };
 
 WI.DebuggerManager.PauseReason = {

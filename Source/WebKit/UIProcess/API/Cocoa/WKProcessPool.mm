@@ -79,7 +79,7 @@
 @end
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-static RetainPtr<WKProcessPool>& LEGACY_NODELETE sharedProcessPool()
+NODELETE static RetainPtr<WKProcessPool>& sharedProcessPool()
 {
     static NeverDestroyed<RetainPtr<WKProcessPool>> sharedProcessPool;
     return sharedProcessPool;
@@ -187,6 +187,17 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #endif // PLATFORM(IOS_FAMILY)
 
 @end
+
+static BOOL requestWebProcessTermination(WebKit::WebProcessPool& processPool, pid_t pid, WebKit::ProcessTerminationReason reason)
+{
+    for (Ref process : borrow(processPool.processes()).get()) {
+        if (process->processID() == pid) {
+            process->requestTermination(reason);
+            return YES;
+        }
+    }
+    return NO;
+}
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 @implementation WKProcessPool (WKPrivate)
@@ -365,12 +376,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (void)_addSupportedPlugin:(NSString *) domain named:(NSString *) name withMimeTypes: (NSSet<NSString *> *) nsMimeTypes withExtensions: (NSSet<NSString *> *) nsExtensions
 {
     HashSet<String> mimeTypes;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *mimeType in nsMimeTypes)
+    for (NSString *mimeType in nsMimeTypes)
         mimeTypes.add(mimeType);
     HashSet<String> extensions;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *extension in nsExtensions)
+    for (NSString *extension in nsExtensions)
         extensions.add(extension);
 
     protect(*_processPool)->addSupportedPlugin(domain, name, WTF::move(mimeTypes), WTF::move(extensions));
@@ -446,11 +455,35 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (BOOL)_requestWebProcessTermination:(pid_t)pid
 {
-    for (Ref process : borrow(_processPool->processes()).get()) {
-        if (process->processID() == pid) {
-            process->requestTermination(WebKit::ProcessTerminationReason::RequestedByClient);
-            return YES;
+    return requestWebProcessTermination(protect(*_processPool), pid, WebKit::ProcessTerminationReason::RequestedByClient);
+}
+
+- (BOOL)_requestWebProcessTerminationForTesting:(pid_t)pid reason:(_WKProcessTerminationReason)reason
+{
+    auto terminationReason = [&] {
+        switch (reason) {
+        case _WKProcessTerminationReasonExceededMemoryLimit:
+            return WebKit::ProcessTerminationReason::ExceededMemoryLimit;
+        case _WKProcessTerminationReasonExceededCPULimit:
+            return WebKit::ProcessTerminationReason::ExceededCPULimit;
+        case _WKProcessTerminationReasonRequestedByClient:
+            return WebKit::ProcessTerminationReason::RequestedByClient;
+        case _WKProcessTerminationReasonCrash:
+            return WebKit::ProcessTerminationReason::Crash;
+        case _WKProcessTerminationReasonExceededSharedProcessCrashLimit:
+            return WebKit::ProcessTerminationReason::GPUProcessCrashedTooManyTimes;
         }
+        ASSERT_NOT_REACHED();
+        return WebKit::ProcessTerminationReason::Crash;
+    }();
+    return requestWebProcessTermination(protect(*_processPool), pid, terminationReason);
+}
+
+- (BOOL)_detectAndHandleTerminationForTesting:(pid_t)pid
+{
+    for (Ref process : borrow(_processPool->processes()).get()) {
+        if (process->processID() == pid)
+            return process->detectAndHandleTermination();
     }
     return NO;
 }
@@ -467,6 +500,25 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (void)_makeNextWebProcessLaunchFailForTesting
 {
     _processPool->setShouldMakeNextWebProcessLaunchFailForTesting(true);
+}
+
+static WebKit::WebProcessPool::AXAuthenticationTestingMode toAXAuthenticationTestingMode(_WKAXAuthenticationTestingMode mode)
+{
+    switch (mode) {
+    case _WKAXAuthenticationTestingModeDefault:
+        return WebKit::WebProcessPool::AXAuthenticationTestingMode::Default;
+    case _WKAXAuthenticationTestingModeAllow:
+        return WebKit::WebProcessPool::AXAuthenticationTestingMode::Allow;
+    case _WKAXAuthenticationTestingModeDeny:
+        return WebKit::WebProcessPool::AXAuthenticationTestingMode::Deny;
+    }
+    ASSERT_NOT_REACHED();
+    return WebKit::WebProcessPool::AXAuthenticationTestingMode::Default;
+}
+
+- (void)_setAXAuthenticationModeForTesting:(_WKAXAuthenticationTestingMode)mode
+{
+    _processPool->setAXAuthenticationTestingMode(toAXAuthenticationTestingMode(mode));
 }
 
 - (BOOL)_hasPrewarmedWebProcess
@@ -567,11 +619,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 + (void)_crashOnMessageCheckFailureForTesting
 {
     IPC::Connection::setShouldCrashOnMessageCheckFailure(true);
-}
-
-+ (void)_forceUseSharedMemoryForSendingForTesting:(BOOL)force
-{
-    IPC::Connection::setForceUseSharedMemoryForSendingForTesting(force);
 }
 
 + (void)_setLinkedOnOrAfterEverything
@@ -789,7 +836,7 @@ static NSArray<_WKProcessInfo *> *allWebContentProcessInfo()
 @synthesize totalSystemCPUTime = _totalSystemCPUTime;
 @synthesize physicalFootprint = _physicalFootprint;
 
-static _WKProcessState LEGACY_NODELETE processStateFromThrottleState(WebKit::ProcessThrottleState state)
+NODELETE static _WKProcessState processStateFromThrottleState(WebKit::ProcessThrottleState state)
 {
     switch (state) {
     case WebKit::ProcessThrottleState::Foreground:

@@ -1,0 +1,12 @@
+# An arena goes on with what the arena before it remembered. Once L0 holds dictionaries no test tells its objects from other ordinary objects, so what was remembered of it is not believed. The second run sets the word and does not tell the table: it shows that the first run can fail
+# RUN(TOLD): memos-at-rest L0 L1
+# TOLD: t0 is tested otherwise and described otherwise
+# TOLD-NEXT: t1 is tested as before and described as before
+# RUN(UNTOLD): memos-at-rest-untold L0 L1
+# UNTOLD: t0 is tested as before and described as before
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Table"
+layout L1 name="Other"
+function f0 name="types" role=Signature results=[{type=undefined}]
+entry module=m0

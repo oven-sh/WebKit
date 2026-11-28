@@ -9,7 +9,6 @@
 
 #include "AOTID.h"
 #include "AOTLimits.h"
-#include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
@@ -17,6 +16,7 @@
 #include "LineColumn.h"
 #include <atomic>
 #include <optional>
+#include <span>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/ASCIILiteral.h>
@@ -68,10 +68,8 @@ struct UserDiagnostic {
     Typed::LayoutID layout { };
     LimitID limit { LimitID::None };
     uint32_t count { 0 };
-    // A string of the program that the message quotes.
     Typed::StringID text { };
     SourceLocation location { noSourceLocation };
-    // About an int32 promise: the type site of the position, and the least and the greatest number that may enter it.
     SourceLocation origin { noSourceLocation };
     Typed::TypeSiteKind siteKind { Typed::TypeSiteKind::Unknown };
     double minimum { 0 };
@@ -86,18 +84,16 @@ struct InternalError {
     Typed::LayoutID layout { };
     LimitID limit { LimitID::None };
     uint32_t count { 0 };
-    // A string of the program that the message quotes.
     Typed::StringID text { };
     SourceLocation location { noSourceLocation };
     std::optional<LineColumn> textPosition { };
-    PassID pass { PassID::None };
-    // What only the reporter knows, in words. It ends the message.
     String detail { };
+    ASCIILiteral operation { };
 };
 
-Typed::FunctionID findFunctionAsRead(const Typed::Program*, Typed::FunctionID);
-Typed::LayoutID findLayoutAsRead(const Typed::Program*, Typed::LayoutID);
 std::optional<SourceLocation> findLocation(const Typed::Program*, const Subject&);
+
+JS_EXPORT_PRIVATE size_t collectReturnAddressesOfCallers(std::span<void*>);
 
 class Diagnostics {
     WTF_MAKE_NONCOPYABLE(Diagnostics);
@@ -122,10 +118,12 @@ public:
 
 private:
     template<typename Record> void appendTo(Vector<Record> Diagnostics::*, Vector<Record>&&);
+    void resolveLocationsOfRecords(const Typed::Program&) WTF_REQUIRES_LOCK(m_lock);
 
-    Lock m_lock;
+    mutable Lock m_lock;
     Vector<UserDiagnostic> m_userDiagnostics WTF_GUARDED_BY_LOCK(m_lock);
     Vector<InternalError> m_internalErrors WTF_GUARDED_BY_LOCK(m_lock);
+    bool m_hasReadBodies WTF_GUARDED_BY_LOCK(m_lock) { false };
     Vector<String> m_userDiagnosticMessages;
     Vector<String> m_internalErrorMessages;
     std::atomic<bool> m_hasErrors { false };

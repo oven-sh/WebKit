@@ -26,7 +26,7 @@
 #include "config.h"
 #include "DMABufBuffer.h"
 
-#if USE(GBM)
+#if USE(COORDINATED_GRAPHICS) && !OS(ANDROID)
 #include "BitmapTexturePool.h"
 #include "CoordinatedPlatformLayerBuffer.h"
 #include "GBMVersioning.h"
@@ -80,6 +80,7 @@ std::optional<DMABufBuffer::Attributes> DMABufBuffer::takeAttributes()
     return DMABufBuffer::Attributes { WTF::move(m_attributes.size), std::exchange(m_attributes.fourcc, 0), WTF::move(m_attributes.fds), WTF::move(m_attributes.offsets), WTF::move(m_attributes.strides), std::exchange(m_attributes.modifier, 0) };
 }
 
+#if USE(GBM)
 std::optional<DMABufBufferAttributes> DMABufBufferAttributes::fromGBMBufferObject(struct gbm_bo* bo, EnableModifiers enableModifiers)
 {
     if (!bo)
@@ -107,6 +108,7 @@ std::optional<DMABufBufferAttributes> DMABufBufferAttributes::fromGBMBufferObjec
 
     return attributes;
 }
+#endif
 
 EGLImage DMABufBuffer::createEGLImage(GLDisplay& display) const
 {
@@ -128,8 +130,7 @@ static std::optional<Vector<EGLAttrib>> buildEGLAttributesForDMABuf(const DMABuf
     static constexpr unsigned modifierAttributeCount = 4;
     static constexpr unsigned colorSpaceAttributeCount = 4;
 
-    Vector<EGLAttrib> eglAttributes;
-    eglAttributes.reserveInitialCapacity(baseAttributeCount + planeCount * (planeAttributeCount + (hasModifiers ? modifierAttributeCount : 0)) + (hasColorSpaceHint ? colorSpaceAttributeCount : 0) + 1);
+    Vector<EGLAttrib> eglAttributes(ReserveCapacityTag { }, baseAttributeCount + planeCount * (planeAttributeCount + (hasModifiers ? modifierAttributeCount : 0)) + (hasColorSpaceHint ? colorSpaceAttributeCount : 0) + 1);
 
     eglAttributes.appendList<EGLAttrib>({
         EGL_WIDTH, static_cast<EGLAttrib>(dmaBufAttributes.size.width()),
@@ -234,14 +235,6 @@ std::optional<Vector<EGLint>> DMABufBuffer::buildEGLImageAttributes(const Attrib
     });
 }
 
-#if USE(TEXTURE_MAPPER)
-void DMABufBuffer::setBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&& buffer)
-{
-    m_buffer = WTF::move(buffer);
-}
-
-#else
-
 static bool formatIsYUV(uint32_t fourcc)
 {
     switch (fourcc) {
@@ -318,6 +311,17 @@ static const HashMap<uint32_t, Vector<YUVPlaneInfo>>& yuvFormatPlaneInfo()
         return map;
     }();
     return yuvFormatsMap;
+}
+
+Vector<uint32_t, 4> DMABufBuffer::allPlaneFormats(uint32_t fourcc)
+{
+    const auto& iter = yuvFormatPlaneInfo().find(fourcc);
+    if (iter == yuvFormatPlaneInfo().end())
+        return { fourcc };
+
+    return iter->value.map<Vector<uint32_t, 4>>([](const YUVPlaneInfo& plane) {
+        return plane.fourcc;
+    });
 }
 
 bool DMABufBuffer::importIfNeeded()
@@ -589,8 +593,7 @@ sk_sp<SkImage> DMABufBuffer::createPromiseImageForQualcommVideoFrame(const sk_sp
         }, &context.leakRef());
 }
 #endif
-#endif
 
 } // namespace WebCore
 
-#endif // USE(GBM)
+#endif // USE(COORDINATED_GRAPHICS) && !OS(ANDROID)

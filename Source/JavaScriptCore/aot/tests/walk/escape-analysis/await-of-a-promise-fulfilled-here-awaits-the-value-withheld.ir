@@ -1,0 +1,7 @@
+# the same functions with escape analysis withheld: the promise is made, fulfilled and awaited
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = NewPromise
+# CHECK: FulfillFreshPromise
+# CHECK: = AwaitBySavingFrame
+# PROGRAM-OF: await-of-a-promise-fulfilled-here-awaits-the-value.ir

@@ -46,8 +46,9 @@ public:
     String language() const final;
     int trackIndex() const final;
     std::optional<bool> defaultEnabled() const final;
-    uint32_t LEGACY_NODELETE width() const;
-    uint32_t LEGACY_NODELETE height() const;
+    NODELETE uint32_t width() const;
+    NODELETE uint32_t height() const;
+    bool hasAlpha() const;
 
 private:
     VideoTrackPrivateWebM(webm::TrackEntry&&);
@@ -55,8 +56,8 @@ private:
     void setFormatDescription(Ref<VideoInfo>&&);
 
     String codec() const;
-    double LEGACY_NODELETE framerate() const;
-    PlatformVideoColorSpace LEGACY_NODELETE colorSpace() const;
+    NODELETE double framerate() const;
+    NODELETE PlatformVideoColorSpace colorSpace() const;
     void updateConfiguration();
 
     webm::TrackEntry m_track;

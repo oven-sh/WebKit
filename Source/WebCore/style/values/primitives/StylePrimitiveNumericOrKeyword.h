@@ -27,17 +27,15 @@
 #include <WebCore/StylePrimitiveNumeric.h>
 #include <WebCore/StyleUnevaluatedCalcSize.h>
 
-namespace WebCore {
-namespace Style {
-
+namespace WebCore::Style {
 
 // `PrimitiveNumericOrKeyword` provides an efficient representation of `Variant<N, Ks...>`.
 // It should be preferred over `ValueOrKeyword<>` when the value is a numeric type.
 
 // FIXME: Add support for non-LengthPercentage<> and non-float ResolveValueType numeric types.
 
-// Adds a calc-size() alternative, which only the sizing properties accept. Off by default so the
-// other types pay nothing for it.
+// Adds the calc-size(), stretch() and fit-content() alternatives, which only the sizing properties accept. Off by
+// default so the other types pay nothing for them.
 enum class CalcSizeSupport : bool { No, Yes };
 
 template<Numeric N, CalcSizeSupport calcSizeSupport, CSS::SpecificKeyword... Ks>
@@ -60,6 +58,8 @@ public:
     using Calc = typename Numeric::Calc;
     using CalcSize = UnevaluatedCalcSize;
     static_assert(!hasCalcSize || CalcSize::range == Calc::range, "calc-size() clamps to the property's range");
+    using StretchFunction = FunctionNotation<CSSValueID::Stretch, Numeric>;
+    using FitContentFunction = FunctionNotation<CSSValueID::FitContent, Numeric>;
     using Dimension = typename Numeric::Dimension;
     using Percentage = typename Numeric::Percentage;
 
@@ -103,6 +103,16 @@ public:
 
     PrimitiveNumericOrKeywordOrOptionalCalcSize(const CalcSize& calcSize) requires (hasCalcSize)
         : m_value(indexForCalcSize, CalcSize { calcSize })
+    {
+    }
+
+    PrimitiveNumericOrKeywordOrOptionalCalcSize(const StretchFunction& stretch) requires (hasCalcSize)
+        : m_value(toRepresentation(stretch.parameters).withSizesMarginBox(true))
+    {
+    }
+
+    PrimitiveNumericOrKeywordOrOptionalCalcSize(const FitContentFunction& fitContent) requires (hasCalcSize)
+        : m_value(toFitContentRepresentation(fitContent.parameters))
     {
     }
 
@@ -169,13 +179,22 @@ public:
 
     template<typename T> bool holdsAlternative() const
     {
+        // A stretch() is its argument with the bit that it sizes the margin box, so it answers to the <length-percentage> alternatives too.
         if constexpr (std::same_as<T, Numeric>)
             return m_value.type() == indexForType<Dimension>() || m_value.type() == indexForType<Percentage>() || m_value.type() == indexForType<Calc>();
+        else if constexpr (hasCalcSize && std::same_as<T, StretchFunction>)
+            return m_value.sizesMarginBox();
+        else if constexpr (hasCalcSize && std::same_as<T, FitContentFunction>)
+            return isFitContentFunction(m_value.type());
         else if constexpr (hasCalcSize && WebCore::CSS::ValidKeywordForList<T, Keywords>) {
             // A calc-size() with this keyword as its basis answers to the keyword as well, matching
-            // how switchOn() hands it to the keyword visitor.
+            // how switchOn() hands it to the keyword visitor. So does fit-content() to fit-content.
             if (m_value.type() == indexForType<T>())
                 return true;
+            if constexpr (std::same_as<T, WebCore::CSS::Keyword::FitContent>) {
+                if (isFitContentFunction(m_value.type()))
+                    return true;
+            }
             if (m_value.type() != indexForCalcSize)
                 return false;
             SUPPRESS_FORWARD_DECL_ARG return calcSizeBasisKeyword(m_value.calcSizeValue()) == T::value;
@@ -192,6 +211,14 @@ public:
                 return Keywords::visitKeywordAtOffset(offset, visitor);
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // fit-content() is the fit-content keyword with the available space replaced by its argument, so
+    // everything except resolving the size treats it as the keyword. Hand it to that visitor.
+    template<typename Visitor> static decltype(auto) visitFitContentFunctionAsKeyword(NOESCAPE const Visitor& visitor) requires (hasCalcSize)
+    {
+        static_assert(WebCore::CSS::ValidKeywordForList<WebCore::CSS::Keyword::FitContent, Keywords>, "fit-content() requires the fit-content keyword");
+        return Keywords::visitKeywordAtOffset(Keywords::offsetForKeyword(WebCore::CSS::Keyword::FitContent { }), visitor);
     }
 
     template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
@@ -221,6 +248,8 @@ public:
                 }
                 return visitor(calcSize);
             }
+            if (isFitContentFunction(opaqueType))
+                return visitFitContentFunctionAsKeyword(visitor);
         }
 
         RELEASE_ASSERT_NOT_REACHED();
@@ -243,11 +272,15 @@ public:
                 if (basisKeyword != CSSValueID::Invalid)
                     return visitCalcSizeBasisKeyword(basisKeyword, visitor);
             }
+            if (isFitContentFunction(opaqueType))
+                return visitFitContentFunctionAsKeyword(visitor);
         }
 
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    // Unlike switchOn(), hands the <length-percentage> alternatives over as one Numeric copied whole,
+    // so its stretch() and quirk bits come along.
     template<typename... F> decltype(auto) switchOnUsingNumeric(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
@@ -268,6 +301,8 @@ public:
                 }
                 return visitor(calcSize);
             }
+            if (isFitContentFunction(opaqueType))
+                return visitFitContentFunctionAsKeyword(visitor);
         }
 
         // Due to following static assertion, the underlying Representation can be
@@ -290,6 +325,10 @@ public:
             SUPPRESS_FORWARD_DECL_ARG return T { m_value.calculationValue() };
         else if constexpr (hasCalcSize && std::same_as<T, CalcSize>)
             SUPPRESS_FORWARD_DECL_ARG return T { m_value.calcSizeValue() };
+        else if constexpr (hasCalcSize && std::same_as<T, StretchFunction>)
+            return T { Numeric { m_value.withSizesMarginBox(false) } };
+        else if constexpr (hasCalcSize && std::same_as<T, FitContentFunction>)
+            return T { fitContentArgument() };
         else if constexpr (std::same_as<T, Numeric>) {
             // Due to following static assertion, the underlying Representation can be directly copied for conversion to Numeric.
             static_assert(hasSameIndicesAsNumeric());
@@ -312,6 +351,10 @@ public:
             SUPPRESS_FORWARD_DECL_ARG return std::optional<T>(std::in_place, m_value.calculationValue());
         else if constexpr (hasCalcSize && std::same_as<T, CalcSize>)
             SUPPRESS_FORWARD_DECL_ARG return std::optional<T>(std::in_place, m_value.calcSizeValue());
+        else if constexpr (hasCalcSize && std::same_as<T, StretchFunction>)
+            return std::optional<T>(T { Numeric { m_value.withSizesMarginBox(false) } });
+        else if constexpr (hasCalcSize && std::same_as<T, FitContentFunction>)
+            return std::optional<T>(T { fitContentArgument() });
         else if constexpr (std::same_as<T, Numeric>) {
             // Due to following static assertion, the underlying Representation can be directly copied for conversion to Numeric.
             static_assert(hasSameIndicesAsNumeric());
@@ -339,8 +382,19 @@ public:
 
 protected:
     // For predicates that must not construct a CalcSize, since its Ref would run a destructor in
-    // callers annotated LEGACY_NODELETE.
+    // callers annotated NODELETE.
     ALWAYS_INLINE CalcSizeValue& calcSizeValue() const requires (hasCalcSize) { return m_value.calcSizeValue(); }
+
+    Numeric fitContentArgument() const requires (hasCalcSize)
+    {
+        RELEASE_ASSERT(isFitContentFunction(m_value.type()));
+        auto argumentType = m_value.type() - indexForFirstFitContent;
+        if (argumentType == indexForDimension)
+            return Numeric { Dimension { m_value.value() } };
+        if (argumentType == indexForPercentage)
+            return Numeric { Percentage { m_value.value() } };
+        SUPPRESS_FORWARD_DECL_ARG return Numeric { Calc { m_value.calculationValue() } };
+    }
 
 private:
     template<typename> friend struct Blending;
@@ -355,12 +409,30 @@ private:
     static constexpr uint8_t indexForPercentage         = 1;
     static constexpr uint8_t indexForCalc               = 2;
     static constexpr uint8_t indexForCalcSize           = hasCalcSize ? 3 : 0;
-    static constexpr uint8_t indexForFirstNonNumeric    = hasCalcSize ? 4 : 3;
+    static constexpr uint8_t indexForFirstFitContent    = hasCalcSize ? 4 : 0;
+    static constexpr uint8_t indexForLastFitContent     = hasCalcSize ? indexForFirstFitContent + indexForCalc : 0;
+    static constexpr uint8_t indexForFirstNonNumeric    = hasCalcSize ? indexForLastFitContent + 1 : 3;
     static constexpr uint8_t indexForFirstKeyword       = hasKeywords ? indexForFirstNonNumeric : 0;
     static constexpr uint8_t indexForLastKeyword        = hasKeywords ? indexForFirstKeyword + Keywords::count - 1 : 0;
 
-    static constexpr uint8_t maxIndexWithoutKeywords    = hasCalcSize ? indexForCalcSize : indexForCalc;
+    static constexpr uint8_t maxIndexWithoutKeywords    = hasCalcSize ? indexForLastFitContent : indexForCalc;
     static constexpr uint8_t maxIndex                   = hasKeywords ? indexForLastKeyword : maxIndexWithoutKeywords;
+
+    // fit-content() stores its argument as the <length-percentage> alternatives do, at their indices
+    // offset by indexForFirstFitContent.
+    static constexpr bool isFitContentFunction(uint8_t opaqueType) requires (hasCalcSize)
+    {
+        return opaqueType >= indexForFirstFitContent && opaqueType <= indexForLastFitContent;
+    }
+
+    static Representation toFitContentRepresentation(const Numeric& argument) requires (hasCalcSize)
+    {
+        return argument.switchOn(
+            [](const Dimension& dimension) { return Representation { indexForFirstFitContent + indexForDimension, dimension.unresolvedValue() }; },
+            [](const Percentage& percentage) { return Representation { indexForFirstFitContent + indexForPercentage, percentage.unresolvedValue() }; },
+            [](const Calc& calc) { return Representation { indexForFirstFitContent + indexForCalc, calc }; }
+        );
+    }
 
     static consteval bool hasSameIndicesAsNumeric()
     {
@@ -417,6 +489,8 @@ private:
                 SUPPRESS_FORWARD_DECL_ARG auto basisKeyword = calcSizeBasisKeyword(m_value.calcSizeValue());
                 return basisKeyword != CSSValueID::Invalid ? PrimitiveDataEvaluationKind::Flag : PrimitiveDataEvaluationKind::CalcSize;
             }
+            if (isFitContentFunction(opaqueType))
+                return PrimitiveDataEvaluationKind::Flag;
         }
 
         if (opaqueType == indexForType<Dimension>())
@@ -448,7 +522,6 @@ template<typename T> T get(PrimitiveNumericOrKeywordDerived auto const& value)
     return value.template get<T>();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 template<typename N, WebCore::Style::CalcSizeSupport S, typename... Ks> inline constexpr auto WebCore::TreatAsVariantLike<WebCore::Style::PrimitiveNumericOrKeywordOrOptionalCalcSize<N, S, Ks...>> = true;

@@ -61,12 +61,13 @@ public:
     WEBCORE_EXPORT Vector<Vector<TargetedElementInfo>> findAllTargets(float);
 
     WEBCORE_EXPORT TargetedTextSearchResult searchTextInLocalFrames(TargetedElementRequest&&);
+    WEBCORE_EXPORT std::optional<TargetedFrameContent> contentForLocalFrame(LocalFrame&);
 
     WEBCORE_EXPORT bool adjustVisibility(Vector<TargetedElementAdjustment>&&);
     void adjustVisibilityInRepeatedlyTargetedRegions(Document&);
 
     void reset();
-    void LEGACY_NODELETE didChangeMainDocument(Document* newDocument);
+    NODELETE void didChangeMainDocument(Document* newDocument);
 
     WEBCORE_EXPORT uint64_t numberOfVisibilityAdjustmentRects();
     WEBCORE_EXPORT bool resetVisibilityAdjustments(const Vector<TargetedElementIdentifiers>&);
@@ -89,7 +90,7 @@ private:
     FindElementFromSelectorsResult findElementFromSelectors(const TargetedElementSelectors&);
     static FindElementFromSelectorsResult findElementFromSelectors(Document&, const TargetedElementSelectors&);
 
-    RefPtr<Document> LEGACY_NODELETE mainDocument() const;
+    NODELETE RefPtr<Document> mainDocument() const;
 
     void dispatchVisibilityAdjustmentStateDidChange();
     void selectorBasedVisibilityAdjustmentTimerFired();

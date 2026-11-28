@@ -1,0 +1,8 @@
+# the same function with escape analysis withheld: the call ends what was known of the slot, so the field is read again and the object is made
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK: = Call
+# CHECK: [[x]]: {{*}}Get{{*}}key="x"
+# CHECK: Return [[x]]
+# PROGRAM-OF: object-that-never-leaves-is-read-out-of-the-state.ir

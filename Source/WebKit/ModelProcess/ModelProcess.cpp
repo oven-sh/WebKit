@@ -129,9 +129,9 @@ void ModelProcess::sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdent
     completionHandler();
 }
 
-void ModelProcess::securityFlagsDidChange(SecurityFlags&& securityFlags)
+void ModelProcess::securityFlagsDidChange(SecurityFlags::Storage&& securityFlags)
 {
-    m_securityFlags.replaceWith(securityFlags);
+    SecurityFlags::Storage::update(WTF::move(securityFlags));
 }
 
 void ModelProcess::removeModelConnectionToWebProcess(ModelConnectionToWebProcess& connection)
@@ -153,7 +153,7 @@ bool ModelProcess::shouldTerminate()
 
 bool ModelProcess::canExitUnderMemoryPressure() const
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     for (auto& webProcessConnection : m_webProcessConnections.values()) {
         if (!webProcessConnection->allowsExitUnderMemoryPressure())
             return false;
@@ -172,7 +172,7 @@ void ModelProcess::tryExitIfUnusedAndUnderMemoryPressure()
 
 void ModelProcess::tryExitIfUnused()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     if (!canExitUnderMemoryPressure()) {
         m_idleExitTimer.stop();
         return;
@@ -211,7 +211,7 @@ void ModelProcess::initializeModelProcess(ModelProcessCreationParameters&& param
 {
     CompletionHandlerCallingScope callCompletionHandler(WTF::move(completionHandler));
 
-    m_securityFlags.replaceWith(parameters.securityFlags);
+    SecurityFlags::Storage::update(WTF::move(parameters.securityFlags));
     m_debugEntityMemoryLimit = parameters.debugEntityMemoryLimit;
     m_debugImmersiveEntityMemoryLimit = parameters.debugImmersiveEntityMemoryLimit;
 #if HAVE(CORE_RE)

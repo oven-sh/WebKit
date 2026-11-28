@@ -129,6 +129,7 @@ struct BasicShapePath {
     }
 
 private:
+    friend BorderShape;
     friend ClipPath;
     friend OffsetPath;
     friend std::optional<WebCore::Path> tryPath(const BasicShapePath&, const TransformOperationData&, ZoomFactor);
@@ -210,7 +211,7 @@ template<> struct Serialize<BasicShapePath> { void operator()(StringBuilder&, co
 template<> struct Evaluation<RayPath, AcceleratedEffectRayPath> { AcceleratedEffectRayPath operator()(const RayPath&, const TransformOperationData& data, ZoomFactor); };
 template<> struct Evaluation<ReferencePath, AcceleratedEffectReferencePath> { AcceleratedEffectReferencePath operator()(const ReferencePath&, const TransformOperationData&, ZoomFactor); };
 template<> struct Evaluation<BasicShapePath, AcceleratedEffectBasicShapePath> { AcceleratedEffectBasicShapePath operator()(const BasicShapePath&, const FloatRect&, ZoomFactor); };
-template<> struct Evaluation<BoxPath, AcceleratedEffectBoxPath> { AcceleratedEffectBoxPath LEGACY_NODELETE operator()(const BoxPath&, const TransformOperationData&, ZoomFactor); };
+template<> struct Evaluation<BoxPath, AcceleratedEffectBoxPath> { NODELETE AcceleratedEffectBoxPath operator()(const BoxPath&, const TransformOperationData&, ZoomFactor); };
 
 #endif
 

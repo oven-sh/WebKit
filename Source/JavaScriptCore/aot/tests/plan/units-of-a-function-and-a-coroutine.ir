@@ -1,0 +1,33 @@
+# which units exist, with every mechanism withheld: a function has its body and a generic entry that goes on to it, a coroutine has the ramp and the body as written, and every parameter and result is boxed
+# function plain(a, b) { return a; }  async function waits(p) { return await p; }
+# RUN: plan units mechanisms=none
+# CHECK: mechanisms none
+# CHECK: unit f1:Body (JSValue, JSValue) -> (JSValue)
+# CHECK-NEXT: unit f1:GenericCallEntry -> f1:Body
+# CHECK: unit f2:Body (JSValue) -> (JSValue)
+# CHECK-NEXT: unit f2:GenericCallEntry -> f2:Body
+# CHECK-NEXT: unit f2:CoroutineBody (JSValue, JSValue) -> (JSValue)
+# RUN(NEVER): plan units mechanisms=none
+# NEVER-NOT: Table
+# NEVER-NOT: f1:CoroutineBody
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="plain" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="waits" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}

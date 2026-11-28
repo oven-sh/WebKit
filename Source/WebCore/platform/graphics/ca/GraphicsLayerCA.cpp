@@ -44,7 +44,6 @@
 #include "GraphicsLayerTransformAnimationValue.h"
 #include "HTMLVideoElement.h"
 #include "HostingContext.h"
-#include "Image.h"
 #include "Logging.h"
 #include "Model.h"
 #include "PlatformCAAnimationCocoa.h"
@@ -119,7 +118,7 @@ static const unsigned cMaxScaledTiledLayerMemorySize = 1024 * 1024 * 156;
 // of 250ms. So send a very small value instead.
 static const float cAnimationAlmostZeroDuration = 1e-3f;
 
-static bool LEGACY_NODELETE isTransformTypeTransformationMatrix(TransformOperation::Type transformType)
+NODELETE static bool isTransformTypeTransformationMatrix(TransformOperation::Type transformType)
 {
     switch (transformType) {
     case TransformOperation::Type::SkewX:
@@ -137,7 +136,7 @@ static bool LEGACY_NODELETE isTransformTypeTransformationMatrix(TransformOperati
     }
 }
 
-static bool LEGACY_NODELETE isTransformTypeFloatPoint3D(TransformOperation::Type transformType)
+NODELETE static bool isTransformTypeFloatPoint3D(TransformOperation::Type transformType)
 {
     switch (transformType) {
     case TransformOperation::Type::Scale:
@@ -150,12 +149,12 @@ static bool LEGACY_NODELETE isTransformTypeFloatPoint3D(TransformOperation::Type
     }
 }
 
-static bool LEGACY_NODELETE isTransformTypeNumber(TransformOperation::Type transformType)
+NODELETE static bool isTransformTypeNumber(TransformOperation::Type transformType)
 {
     return !isTransformTypeTransformationMatrix(transformType) && !isTransformTypeFloatPoint3D(transformType);
 }
 
-static void LEGACY_NODELETE getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, float& value)
+NODELETE static void getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, float& value)
 {
     switch (transformType) {
     case TransformOperation::Type::Rotate:
@@ -186,7 +185,7 @@ static void LEGACY_NODELETE getTransformFunctionValue(const TransformOperation* 
     }
 }
 
-static void LEGACY_NODELETE getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, FloatPoint3D& value)
+NODELETE static void getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, FloatPoint3D& value)
 {
     switch (transformType) {
     case TransformOperation::Type::Scale:
@@ -232,7 +231,7 @@ static void getTransformFunctionValue(const TransformOperation* transformOp, Tra
     }
 }
 
-static PlatformCAAnimation::ValueFunctionType LEGACY_NODELETE getValueFunctionNameForTransformOperation(TransformOperation::Type transformType)
+NODELETE static PlatformCAAnimation::ValueFunctionType getValueFunctionNameForTransformOperation(TransformOperation::Type transformType)
 {
     // Use literal strings to avoid link-time dependency on those symbols.
     switch (transformType) {
@@ -265,7 +264,7 @@ static PlatformCAAnimation::ValueFunctionType LEGACY_NODELETE getValueFunctionNa
     }
 }
 
-static bool LEGACY_NODELETE animatedPropertyIsTransformOrRelated(AnimatedProperty property)
+NODELETE static bool animatedPropertyIsTransformOrRelated(AnimatedProperty property)
 {
     return property == AnimatedProperty::Transform || property == AnimatedProperty::Translate || property == AnimatedProperty::Scale || property == AnimatedProperty::Rotate;
 }
@@ -287,12 +286,12 @@ static bool animationHasStepsTimingFunction(const GraphicsLayerKeyframeValueList
     return false;
 }
 
-static inline bool LEGACY_NODELETE supportsAcceleratedFilterAnimations()
+NODELETE static inline bool supportsAcceleratedFilterAnimations()
 {
     return true;
 }
 
-static PlatformCALayer::FilterType LEGACY_NODELETE toPlatformCALayerFilterType(GraphicsLayer::ScalingFilter filter)
+NODELETE static PlatformCALayer::FilterType toPlatformCALayerFilterType(GraphicsLayer::ScalingFilter filter)
 {
     switch (filter) {
     case GraphicsLayer::ScalingFilter::Linear:
@@ -393,7 +392,7 @@ Ref<PlatformCAAnimation> GraphicsLayerCA::createPlatformCAAnimation(PlatformCAAn
 
 using LayerDisplayListHashMap = HashMap<const GraphicsLayerCA*, std::pair<FloatRect, Ref<const DisplayList::DisplayList>>>;
 
-static LayerDisplayListHashMap& LEGACY_NODELETE layerDisplayListMap()
+NODELETE static LayerDisplayListHashMap& layerDisplayListMap()
 {
     static NeverDestroyed<LayerDisplayListHashMap> sharedHashMap;
     return sharedHashMap;
@@ -512,6 +511,13 @@ String GraphicsLayerCA::debugName() const
 std::optional<PlatformLayerIdentifier> GraphicsLayerCA::primaryLayerID() const
 {
     return primaryLayer()->layerID();
+}
+
+std::optional<PlatformLayerIdentifier> GraphicsLayerCA::backdropLayerID() const
+{
+    if (m_backdropLayer)
+        return m_backdropLayer->layerID();
+    return std::nullopt;
 }
 
 std::optional<PlatformLayerIdentifier> GraphicsLayerCA::layerIDIgnoringStructuralLayer() const
@@ -987,6 +993,26 @@ void GraphicsLayerCA::setIsBackdropRoot(bool isBackdropRoot)
     GraphicsLayer::setIsBackdropRoot(isBackdropRoot);
     noteLayerPropertyChanged(BackdropRootChanged);
 }
+
+void GraphicsLayerCA::setHidesFromScreenCapture(bool hides)
+{
+    if (hides == hidesFromScreenCapture())
+        return;
+
+    GraphicsLayer::setHidesFromScreenCapture(hides);
+    noteLayerPropertyChanged(HidesFromScreenCaptureChanged);
+}
+
+#if ENABLE(SPATIAL_PORTAL)
+void GraphicsLayerCA::setIsHostedInSpatialPortalScene(bool hosted)
+{
+    if (hosted == isHostedInSpatialPortalScene())
+        return;
+
+    GraphicsLayer::setIsHostedInSpatialPortalScene(hosted);
+    noteLayerPropertyChanged(HostedInSpatialPortalSceneChanged);
+}
+#endif
 
 void GraphicsLayerCA::setBackdropFiltersRect(const FloatRoundedRect& backdropFiltersRect)
 {
@@ -1644,6 +1670,9 @@ void GraphicsLayerCA::flushCompositingState(const FloatRect& visibleRect)
     // will be opaque. RenderLayerBacking will force an explicit backdrop root outside
     // of any filters if needed.
     commitState.backdropRootIsOpaque = client().backdropRootIsOpaque(this);
+#if ENABLE(THREADED_ANIMATIONS)
+    commitState.renderingUpdateTimestamp = client().renderingUpdateTimestamp();
+#endif
     m_previousCommittedVisibleRect = visibleRect;
 
 #if PLATFORM(IOS_FAMILY)
@@ -1672,7 +1701,7 @@ void GraphicsLayerCA::flushCompositingStateForThisLayerOnly()
         client().didChangePlatformLayerForLayer(this);
 }
 
-static inline bool LEGACY_NODELETE accumulatesTransform(const GraphicsLayerCA& layer)
+NODELETE static inline bool accumulatesTransform(const GraphicsLayerCA& layer)
 {
     return !layer.masksToBounds() && (layer.preserves3D() || (layer.parent() && layer.parent()->preserves3D()));
 }
@@ -1823,13 +1852,18 @@ void GraphicsLayerCA::setContentsScaleLimitingFactor(float factor)
     noteLayerPropertyChanged(ContentsScaleChanged);
 }
 
-GraphicsLayerCA::VisibleAndCoverageRects GraphicsLayerCA::computeVisibleAndCoverageRect(TransformState& state, bool preserves3D, ComputeVisibleRectFlags flags) const
+GraphicsLayerCA::VisibleAndCoverageRects GraphicsLayerCA::computeVisibleAndCoverageRect(TransformState& state, bool preserves3D, ComputeVisibleRectFlags flags, const TransformationMatrix* animatingTransform) const
 {
     FloatPoint position = approximatePosition();
     client().customPositionForVisibleRectComputation(this, position);
 
     TransformationMatrix currentTransform;
     auto transform = [&]() {
+        if (animatingTransform) {
+            currentTransform = *animatingTransform;
+            return layerTransform(position, &currentTransform);
+        }
+
         if ((flags & RespectAnimatingTransforms) && client().getCurrentTransform(this, currentTransform))
             return layerTransform(position, &currentTransform);
 
@@ -1948,6 +1982,90 @@ bool GraphicsLayerCA::adjustCoverageRect(VisibleAndCoverageRects& rects, const F
     return true;
 }
 
+#if ENABLE(THREADED_ANIMATIONS)
+bool GraphicsLayerCA::adjustCoverageRectForTransformAnimations(VisibleAndCoverageRects& rects, const TransformState& state, bool accumulateTransform, const CommitState& commitState)
+{
+    // Tile coverage is updated in the Web process while threaded animations for a GraphicsLayerCA
+    // run in the remote layer tree hosted in the UI process. To cater for the immediate needs of those
+    // animations, we compute a set of rects to use to pre-populate tiles happening in the next 100ms.
+    static constexpr auto samplingDuration = 100_ms;
+
+    m_rectsForTransformAnimationTileCoverage.clear();
+
+    if (!m_layer->usesTiledBackingLayer() || !commitState.renderingUpdateTimestamp)
+        return false;
+
+    RefPtr effectStack = acceleratedEffectStack();
+    if (!effectStack)
+        return false;
+
+    Vector<std::pair<Ref<AcceleratedEffect>, Seconds>> transformEffectsAndOriginTimes;
+    for (auto& effect : effectStack->primaryLayerEffects()) {
+        if (!effect->animatesTransformRelatedProperty())
+            continue;
+        // Progress-based timelines don't advance with time, so the effects associated with them can't be anticipated.
+        RefPtr timeline = effect->timeline();
+        auto originTime = timeline ? timeline->originTime() : std::nullopt;
+        if (!originTime)
+            return false;
+        transformEffectsAndOriginTimes.append({ effect, *originTime });
+    }
+
+    if (transformEffectsAndOriginTimes.isEmpty())
+        return false;
+
+    // Evaluate the transform at the start of the rendering update, which precedes the time the current transform
+    // was computed for, and then right after each step the animations will reach over the next few frames.
+    static constexpr auto delayAfterStep = 1_ms;
+    static constexpr unsigned maximumEvaluationCount = 12;
+
+    auto coverageRect = rects.coverageRect;
+    auto startTime = *commitState.renderingUpdateTimestamp;
+    auto anticipationEndTime = startTime + samplingDuration;
+    FloatRect bounds { m_boundsOrigin, size() };
+    std::optional<MonotonicTime> evaluationTime = startTime;
+    for (unsigned i = 0; evaluationTime && i < maximumEvaluationCount; ++i) {
+        auto values = effectStack->baseValues().clone();
+        for (auto& [effect, originTime] : transformEffectsAndOriginTimes)
+            effect->apply(values, evaluationTime->secondsSinceEpoch() - originTime, std::nullopt);
+        auto anticipatedTransform = values.computedTransformationMatrix(bounds);
+        auto anticipatedState = state;
+        auto anticipatedCoverageRect = computeVisibleAndCoverageRect(anticipatedState, accumulateTransform, RespectAnimatingTransforms, &anticipatedTransform).coverageRect;
+
+        if (!anticipatedCoverageRect.isEmpty()) {
+            if (unionRect(coverageRect, anticipatedCoverageRect).area() <= coverageRect.area() + anticipatedCoverageRect.area())
+                coverageRect.unite(anticipatedCoverageRect);
+            else
+                m_rectsForTransformAnimationTileCoverage.append(anticipatedCoverageRect);
+        }
+
+        std::optional<MonotonicTime> nextStepTime;
+        for (auto& [effect, originTime] : transformEffectsAndOriginTimes) {
+            if (auto timeUntilNextStep = effect->timeUntilNextTransformRelatedStep(evaluationTime->secondsSinceEpoch() - originTime, std::nullopt)) {
+                auto effectNextStepTime = *evaluationTime + *timeUntilNextStep;
+                if (!nextStepTime || effectNextStepTime < *nextStepTime)
+                    nextStepTime = effectNextStepTime;
+            }
+        }
+        if (nextStepTime && *nextStepTime <= anticipationEndTime)
+            evaluationTime = *nextStepTime + delayAfterStep;
+        else
+            evaluationTime = std::nullopt;
+    }
+
+    if (!m_rectsForTransformAnimationTileCoverage.isEmpty())
+        addUncommittedChanges(CoverageRectChanged);
+
+    if (rects.coverageRect == coverageRect)
+        return false;
+
+    LOG_WITH_STREAM(Layers, stream << "GraphicsLayerCA " << this << " id " << primaryLayerID() << " adjustCoverageRectForTransformAnimations: coverage rect adjusted from " << rects.coverageRect << " to  " << coverageRect);
+
+    rects.coverageRect = coverageRect;
+    return true;
+}
+#endif
+
 void GraphicsLayerCA::setVisibleAndCoverageRects(const VisibleAndCoverageRects& rects)
 {
     bool visibleRectChanged = rects.visibleRect != m_visibleRect;
@@ -2024,10 +2142,13 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
 
     bool accumulateTransform = accumulatesTransform(*this);
     VisibleAndCoverageRects rects = computeVisibleAndCoverageRect(localState, accumulateTransform);
-    if (adjustCoverageRect(rects, m_visibleRect)) {
-        if (state.isMappingSecondaryQuad())
-            localState.setSecondaryQuadInMappedSpace(FloatQuad { rects.coverageRect });
-    }
+    bool coverageRectWasAdjusted = adjustCoverageRect(rects, m_visibleRect);
+#if ENABLE(THREADED_ANIMATIONS)
+    if (adjustCoverageRectForTransformAnimations(rects, state, accumulateTransform, commitState))
+        coverageRectWasAdjusted = true;
+#endif
+    if (coverageRectWasAdjusted && state.isMappingSecondaryQuad())
+        localState.setSecondaryQuadInMappedSpace(FloatQuad { rects.coverageRect });
     setVisibleAndCoverageRects(rects);
 
     if (commitState.ancestorStartedOrEndedTransformAnimation)
@@ -2112,8 +2233,13 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
 
     commitState.totalBackdropFilterArea = childCommitState.totalBackdropFilterArea;
 
-    if (RefPtr replicaLayer = downcast<GraphicsLayerCA>(m_replicaLayer.get()))
+    if (RefPtr replicaLayer = downcast<GraphicsLayerCA>(m_replicaLayer))
         replicaLayer->recursiveCommitChanges(childCommitState, localState, pageScaleFactor, baseRelativePosition, affectedByPageScale);
+
+#if ENABLE(THREADED_ANIMATIONS)
+    if (acceleratedEffectStack())
+        protect(primaryLayer())->setAnimationExtent(animationExtent());
+#endif
 
     if (RefPtr maskLayer = downcast<GraphicsLayerCA>(m_maskLayer.get()))
         maskLayer->commitLayerChangesAfterSublayers(childCommitState);
@@ -2224,11 +2350,6 @@ void GraphicsLayerCA::platformCALayerLayerDisplay(PlatformCALayer* layer)
     ASSERT(layer == m_contentsLayer);
     if (RefPtr delegate = m_contentsDisplayDelegate)
         delegate->display(*layer);
-}
-
-bool GraphicsLayerCA::platformCALayerNeedsPlatformContext(const PlatformCALayer*) const
-{
-    return client().layerNeedsPlatformContext(*this);
 }
 
 void GraphicsLayerCA::commitLayerTypeChangesBeforeSublayers(CommitState&, float pageScaleFactor, bool& layerTypeChanged)
@@ -2346,6 +2467,14 @@ void GraphicsLayerCA::commitLayerChangesBeforeSublayers(CommitState& commitState
 
     if (m_uncommittedChanges & BackdropRootChanged)
         updateBackdropRoot();
+
+    if (m_uncommittedChanges & HidesFromScreenCaptureChanged)
+        updateHidesFromScreenCapture();
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_uncommittedChanges & HostedInSpatialPortalSceneChanged)
+        updatePrimaryLayerHidden();
+#endif
 
     if (m_uncommittedChanges & BackdropFiltersRectChanged)
         updateBackdropFiltersRect();
@@ -2621,8 +2750,7 @@ void GraphicsLayerCA::updateGeometry(float pageScaleFactor, const FloatPoint& po
     // Push the layer to device pixel boundary (setPosition()), but move the content back to its original position (setBounds())
     RefPtr layer = m_layer;
     layer->setPosition(adjustedPosition);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST FloatRect adjustedBounds = FloatRect(FloatPoint(m_boundsOrigin - pixelAlignmentOffset), scaledSize);
+    FloatRect adjustedBounds = FloatRect(FloatPoint(m_boundsOrigin - pixelAlignmentOffset), scaledSize);
     layer->setBounds(adjustedBounds);
     layer->setAnchorPoint(scaledAnchorPoint);
 
@@ -2703,12 +2831,22 @@ void GraphicsLayerCA::updateContentsVisibility()
     if (RefPtr backdropLayer = m_backdropLayer)
         backdropLayer->setHidden(!m_contentsVisible);
 
-#if HAVE(MATERIAL_HOSTING)
-    if (RefPtr structuralLayer = m_structuralLayer; structuralLayer && structuralLayerPurpose() == StructuralLayerForMaterial)
-        structuralLayer->setHidden(!m_contentsVisible);
-#endif
+    updatePrimaryLayerHidden();
 
     layer->setContentsHidden(!m_contentsVisible);
+}
+
+void GraphicsLayerCA::updatePrimaryLayerHidden()
+{
+    bool hidden = false;
+#if HAVE(MATERIAL_HOSTING)
+    if (m_structuralLayer && structuralLayerPurpose() == StructuralLayerForMaterial)
+        hidden = !m_contentsVisible;
+#endif
+#if ENABLE(SPATIAL_PORTAL)
+    hidden = hidden || isHostedInSpatialPortalScene();
+#endif
+    protect(primaryLayer())->setHidden(hidden);
 }
 
 void GraphicsLayerCA::updateUserInteractionEnabled()
@@ -2816,6 +2954,12 @@ void GraphicsLayerCA::updateBackdropFilters(CommitState& commitState)
         else
 #endif
             backdropLayer->setName(MAKE_STATIC_STRING_IMPL("backdrop"));
+#if ENABLE(THREADED_ANIMATIONS)
+        if (RefPtr effectsStack = acceleratedEffectStack()) {
+            if (!effectsStack->backdropLayerEffects().isEmpty())
+                backdropLayer->setAcceleratedEffectsAndBaseValues(effectsStack->backdropLayerEffects(), effectsStack->baseValues());
+        }
+#endif
     }
 
     Ref backdropLayer = *m_backdropLayer;
@@ -2885,6 +3029,11 @@ void GraphicsLayerCA::updateBackdropFiltersRect()
 void GraphicsLayerCA::updateBackdropRoot()
 {
     protect(m_layer)->setIsBackdropRoot(isBackdropRoot());
+}
+
+void GraphicsLayerCA::updateHidesFromScreenCapture()
+{
+    protect(m_layer)->setHidesFromScreenCapture(hidesFromScreenCapture());
 }
 
 void GraphicsLayerCA::updateBlendMode()
@@ -2974,7 +3123,7 @@ bool GraphicsLayerCA::updateStructuralLayer()
 
 bool GraphicsLayerCA::ensureStructuralLayer(StructuralLayerPurpose purpose)
 {
-    const LayerChangeFlags structuralLayerChangeFlags = NameChanged
+    LayerChangeFlags structuralLayerChangeFlags = NameChanged
         | GeometryChanged
         | TransformChanged
         | ChildrenTransformChanged
@@ -2986,6 +3135,9 @@ bool GraphicsLayerCA::ensureStructuralLayer(StructuralLayerPurpose purpose)
         | BackdropRootChanged
         | MaskLayerChanged
         | OpacityChanged;
+#if ENABLE(SPATIAL_PORTAL)
+    structuralLayerChangeFlags |= HostedInSpatialPortalSceneChanged;
+#endif
 
     bool structuralLayerChanged = false;
 
@@ -3060,6 +3212,7 @@ bool GraphicsLayerCA::ensureStructuralLayer(StructuralLayerPurpose purpose)
     layer->setTransform(TransformationMatrix());
     layer->setOpacity(1);
     layer->setBlendMode(BlendMode::Normal);
+    layer->setHidden(false);
     if (m_layerClones) {
         for (auto& cloneLayer : m_layerClones->primaryLayerClones.values()) {
             cloneLayer->setPosition(point);
@@ -3113,6 +3266,13 @@ void GraphicsLayerCA::updateCoverage(const CommitState& commitState)
     if (CheckedPtr backing = tiledBacking()) {
         backing->setVisibleRect(m_visibleRect);
         backing->setCoverageRect(m_coverageRect);
+#if ENABLE(THREADED_ANIMATIONS)
+        // Tiles are revalidated after the coverage is updated, in the same commit.
+        for (auto rect : std::exchange(m_rectsForTransformAnimationTileCoverage, { })) {
+            rect.scale(backing->tilingScaleFactor());
+            backing->prepopulateRect(rect);
+        }
+#endif
     }
 
     RefPtr layer = m_layer;
@@ -3901,7 +4061,7 @@ void GraphicsLayerCA::updateContentsNeedsDisplay()
         contentsLayer->setNeedsDisplay();
 }
 
-static bool LEGACY_NODELETE isKeyframe(const GraphicsLayerKeyframeValueList& list)
+NODELETE static bool isKeyframe(const GraphicsLayerKeyframeValueList& list)
 {
     return list.size() > 1;
 }
@@ -3958,12 +4118,12 @@ bool GraphicsLayerCA::appendToUncommittedAnimations(const GraphicsLayerKeyframeV
     return true;
 }
 
-static const TransformOperations& LEGACY_NODELETE transformationAnimationValueAt(const GraphicsLayerKeyframeValueList& valueList, unsigned i)
+NODELETE static const TransformOperations& transformationAnimationValueAt(const GraphicsLayerKeyframeValueList& valueList, unsigned i)
 {
     return downcast<GraphicsLayerTransformAnimationValue>(valueList.at(i)).value();
 }
 
-static bool LEGACY_NODELETE hasBig3DRotation(const GraphicsLayerKeyframeValueList& valueList, const TransformOperationsSharedPrimitivesPrefix<TransformOperation::Type>& prefix)
+NODELETE static bool hasBig3DRotation(const GraphicsLayerKeyframeValueList& valueList, const TransformOperationsSharedPrimitivesPrefix<TransformOperation::Type>& prefix)
 {
     // Hardware non-matrix animations are used for every function in the shared primitives prefix.
     // These kind of animations have issues with large rotation angles, so for every function that
@@ -4855,6 +5015,10 @@ ASCIILiteral GraphicsLayerCA::layerChangeAsString(LayerChange layerChange)
     case LayerChange::TonemappingEnabledChanged: return "TonemappingEnabledChanged"_s;
 #endif
     case LayerChange::ShadowPathChanged: return "ShadowPathChanged"_s;
+    case LayerChange::HidesFromScreenCaptureChanged: return "HidesFromScreenCaptureChanged"_s;
+#if ENABLE(SPATIAL_PORTAL)
+    case LayerChange::HostedInSpatialPortalSceneChanged: return "HostedInSpatialPortalSceneChanged"_s;
+#endif
     }
     ASSERT_NOT_REACHED();
     return ""_s;
@@ -5050,6 +5214,7 @@ void GraphicsLayerCA::changeLayerTypeTo(PlatformCALayer::LayerType newLayerType)
         | SeparatedChanged
 #endif
         | ShadowPathChanged
+        | HidesFromScreenCaptureChanged
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION) || HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
         | CoverageRectChanged);
 #else
@@ -5057,6 +5222,10 @@ void GraphicsLayerCA::changeLayerTypeTo(PlatformCALayer::LayerType newLayerType)
 
         if (isTiledLayer)
             addUncommittedChanges(CoverageRectChanged);
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+    addUncommittedChanges(HostedInSpatialPortalSceneChanged);
 #endif
 
     adjustContentsScaleLimitingFactor();

@@ -27,7 +27,6 @@
 #include <WebCore/CSSLinkParameter.h>
 #include <WebCore/CSSString.h>
 #include <WebCore/CSSValueTypes.h>
-#include <WebCore/LoadedFromOpaqueSource.h>
 
 namespace WebCore {
 
@@ -80,9 +79,6 @@ struct URLModifiers {
     std::optional<URLReferrerPolicyFunction> referrerPolicy { };
     URLLinkParameterList linkParameters { };
 
-    // This is not a parsed value, but is implicit from context the modifiers were parsed with.
-    LoadedFromOpaqueSource loadedFromOpaqueSource { LoadedFromOpaqueSource::No };
-
     bool operator==(const URLModifiers&) const = default;
 };
 
@@ -100,6 +96,10 @@ template<size_t I> const auto& get(const URLModifiers& value)
 
 // Applies `URLModifiers` to `ResourceLoaderOptions`.
 void applyModifiersToLoaderOptions(const URLModifiers&, ResourceLoaderOptions&);
+
+// MARK: - Hashing
+
+void add(Hasher&, const URLModifiers&);
 
 } // namespace CSS
 } // namespace WebCore

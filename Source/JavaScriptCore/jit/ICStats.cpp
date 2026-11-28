@@ -45,17 +45,17 @@ public:
     }
 
     void append(ICEvent::Kind kind) { m_chain.append(kind); }
-    bool LEGACY_NODELETE isEmpty() const { return m_chain.isEmpty(); }
-    void LEGACY_NODELETE clear()
+    NODELETE bool isEmpty() const { return m_chain.isEmpty(); }
+    NODELETE void clear()
     {
         m_chain.shrink(0);
         m_totalNumberOfHandlersInChain = 0;
     }
-    unsigned LEGACY_NODELETE size() const { return m_chain.size(); }
+    NODELETE unsigned size() const { return m_chain.size(); }
     ICEvent::Kind operator[](unsigned i) const { return m_chain[i]; }
 
-    void LEGACY_NODELETE setTotalNumberOfHandlersInChain(unsigned length) { m_totalNumberOfHandlersInChain = length; }
-    unsigned LEGACY_NODELETE totalNumberOfHandlersInChain() const { return m_totalNumberOfHandlersInChain; }
+    NODELETE void setTotalNumberOfHandlersInChain(unsigned length) { m_totalNumberOfHandlersInChain = length; }
+    NODELETE unsigned totalNumberOfHandlersInChain() const { return m_totalNumberOfHandlersInChain; }
 
     bool operator==(const ICHandlerChain& other) const
     {
@@ -159,7 +159,7 @@ ICStats::ICStats()
         stats.dumpChains();
     });
 
-    m_thread = Thread::create(
+    lazyInitialize(m_thread, Thread::create(
         "JSC ICStats"_s,
         [this] () {
             Locker locker { m_lock };
@@ -185,7 +185,7 @@ ICStats::ICStats()
                 }
                 dumpChains();
             }
-        });
+        }));
 }
 
 ICStats::~ICStats()
@@ -199,7 +199,7 @@ ICStats::~ICStats()
     m_thread->waitForCompletion();
 }
 
-static bool LEGACY_NODELETE shouldRecord()
+NODELETE static bool shouldRecord()
 {
     constexpr bool shouldMeasureOutsideSignpost = false;
     if (shouldMeasureOutsideSignpost)
@@ -257,7 +257,7 @@ void ICStats::dumpChains()
     }
 
     auto dumpHistogram = [&](const char* title, auto keyFn) {
-        UncheckedKeyHashMap<unsigned, uint64_t, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> histogram;
+        HashMap<unsigned, uint64_t> histogram;
         uint64_t total = 0;
         for (unsigned i = 0; i < list.size(); i++) {
             histogram.add(keyFn(i), 0).iterator->value += list[i].count;

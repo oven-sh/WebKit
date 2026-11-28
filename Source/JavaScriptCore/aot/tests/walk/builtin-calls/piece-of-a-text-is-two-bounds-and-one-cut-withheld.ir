@@ -1,0 +1,13 @@
+# the same functions with calls of built-ins withheld: the method is called by value, no bound is computed in the code, and what is compared or converted is what the call gave
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = StringRange
+# CHECK-NOT: = Substring
+# CHECK: = Call v
+# RUN(EQUAL): walk f6 mechanisms=none+TypedOperations+DirectCalls
+# EQUAL-LABEL: code f6:Body
+# EQUAL-NOT: literal="ab"
+# EQUAL: = StrictEq
+# RUN(NUMBER): walk f8 mechanisms=none+TypedOperations+DirectCalls
+# NUMBER-NOT: = StringRangeToNumber
+# PROGRAM-OF: piece-of-a-text-is-two-bounds-and-one-cut.ir

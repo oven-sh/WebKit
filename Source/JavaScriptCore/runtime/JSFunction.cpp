@@ -28,6 +28,7 @@
 
 #include "AOTCompiledCallee.h"
 #include "AOTBuiltinModules.h"
+#include "AOTRuntimeHooks.h"
 #include "AsyncGeneratorPrototype.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
@@ -266,10 +267,6 @@ String JSFunction::nameWithoutGC(VM& vm)
 
 String JSFunction::displayName(VM& vm)
 {
-#if ENABLE(AOT)
-    if (isCompiledClosure())
-        return AOT::CompiledCallee::ownDisplayName(this);
-#endif
     JSValue displayName = getDirect(vm, vm.propertyNames->displayName);
     
     if (displayName && isJSString(displayName))
@@ -287,8 +284,9 @@ const String JSFunction::calculatedDisplayName(VM& vm)
 
 #if ENABLE(AOT)
     if (isCompiledClosure()) {
+        // Anonymous functions have no name, as below. The caller then uses the name of the built-in class.
         if (String displayName = AOT::CompiledCallee::displayName(this); !displayName.isNull())
-            return displayName;
+            return displayName.isEmpty() ? String() : displayName;
     }
 #endif
     
@@ -444,9 +442,16 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
     }
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE bool rejectsNewProperty(VM& vm, JSFunction* function, PropertyName propertyName)
+{
+    return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->realm(), propertyName) && !function->isHostFunction() && function->jsExecutable()->isPrivateBuiltinFunction() && !isValidOffset(function->structure()->get(vm, propertyName));
+}
+#endif
+
 bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (!isThisValueAltered(slot, asObject(cell)) && cell->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
         return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -472,8 +477,16 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
 
     PropertyStatus propertyType = thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isLazy(propertyType))
-        slot.disableCaching();
+    if (propertyType != PropertyStatus::Eager) {
+        if (isLazy(propertyType) || slot.thisValue() == JSValue(thisObject))
+            slot.disableCaching();
+#if ENABLE(AOT)
+        if (propertyType == PropertyStatus::Locked && slot.thisValue() == JSValue(thisObject)) {
+            bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
+            return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        }
+#endif
+    }
     RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 }
 
@@ -499,7 +512,6 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);
 
-
     if (propertyName == vm.propertyNames->prototype) {
         if (FunctionRareData* rareData = thisObject->rareData())
             rareData->clear("Store to prototype property of a function");
@@ -516,8 +528,14 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
             thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
         }
     } else {
-        thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
+        PropertyStatus propertyType = thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
+#if ENABLE(AOT)
+        if (propertyType == PropertyStatus::Locked && (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName))) [[unlikely]]
+            return typeError(globalObject, scope, throwException, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+#else
+        UNUSED_VARIABLE(propertyType);
+#endif
     }
 
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException));
@@ -547,8 +565,6 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
 #if ENABLE(AOT)
         if (function->isCompiledClosure()) {
-            if (String ownDisplayName = AOT::CompiledCallee::ownDisplayName(function); !ownDisplayName.isNull())
-                return ownDisplayName;
             if (String displayName = AOT::CompiledCallee::displayName(function); !displayName.isNull())
                 return displayName;
         }
@@ -653,9 +669,15 @@ template <JSFunction::SetHasModifiedLengthOrName set>
 JSFunction::PropertyStatus JSFunction::reifyLazyPropertyIfNeeded(VM& vm, JSGlobalObject* globalObject, PropertyName propertyName)
 {
     JSFunction::PropertyStatus status;
-    if (isHostOrBuiltinFunction())
+    if (isHostOrBuiltinFunction()) {
         status = reifyLazyPropertyForHostOrBuiltinIfNeeded(vm, globalObject, propertyName);
-    else if (PropertyStatus lazyPrototype = reifyLazyPrototypeIfNeeded(vm, globalObject, propertyName); isLazy(lazyPrototype))
+#if ENABLE(AOT)
+        if constexpr (set == SetHasModifiedLengthOrName::Yes) {
+            if (vm.mayLockBuiltins() && status == PropertyStatus::Eager && rejectsNewProperty(vm, this, propertyName)) [[unlikely]]
+                return PropertyStatus::Locked;
+        }
+#endif
+    } else if (PropertyStatus lazyPrototype = reifyLazyPrototypeIfNeeded(vm, globalObject, propertyName); isLazy(lazyPrototype))
         status = lazyPrototype;
     else if (PropertyStatus lazyLength = reifyLazyLengthIfNeeded(vm, globalObject, propertyName); isLazy(lazyLength))
         status = lazyLength;
@@ -796,7 +818,7 @@ void JSFunction::assertTypeInfoFlagInvariants()
     // If you change this, you'll need to update speculationFromClassInfoInheritance.
     const ClassInfo* info = classInfo();
     if (!(inlineTypeFlags() & ImplementsDefaultHasInstance))
-        RELEASE_ASSERT(info == JSBoundFunction::info());
+        RELEASE_ASSERT(info->methodTable.customHasInstance != JSCell::customHasInstance);
     else
         RELEASE_ASSERT(info != JSBoundFunction::info());
 }

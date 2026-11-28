@@ -1,0 +1,6 @@
+# the same program with every mechanism withheld: no record says what a function does given its arguments
+# RUN: link functions mechanisms=none
+# CHECK: function f1 {{*}}returns=anything throws=anything
+# RUN(NEVER): link functions mechanisms=none
+# NEVER-NOT: given-arguments
+# PROGRAM-OF: function-that-unseen-code-has-does-little-given-arguments-as-expected.ir

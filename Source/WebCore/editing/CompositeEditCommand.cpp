@@ -168,7 +168,7 @@ String AccessibilityUndoReplacedText::textDeletedByReapply()
 static void postTextStateChangeNotification(AXObjectCache* cache, const VisiblePosition& position, const String& deletedText, const String& insertedText)
 {
     ASSERT(cache);
-    RefPtr node { highestEditableRoot(position.deepEquivalent(), HasEditableAXRole) };
+    RefPtr node { highestEditableRoot(position.deepEquivalent(), EditableType::AXRole) };
     if (!node)
         return;
     if (insertedText.length() && deletedText.length())
@@ -875,7 +875,7 @@ void CompositeEditCommand::insertNodeAtTabSpanPosition(Ref<Node>&& node, const P
     insertNodeAt(WTF::move(node), positionOutsideTabSpan(pos));
 }
 
-static EditAction LEGACY_NODELETE deleteSelectionEditingActionForEditingAction(EditAction editingAction)
+NODELETE static EditAction deleteSelectionEditingActionForEditingAction(EditAction editingAction)
 {
     switch (editingAction) {
     case EditAction::Cut:
@@ -907,7 +907,7 @@ void CompositeEditCommand::setNodeAttribute(Element& element, const QualifiedNam
     applyCommandToComposite(SetNodeAttributeCommand::create(element, attribute, value));
 }
 
-static inline bool LEGACY_NODELETE containsOnlyDeprecatedEditingWhitespace(const String& text)
+NODELETE static inline bool containsOnlyDeprecatedEditingWhitespace(const String& text)
 {
     for (unsigned i = 0; i < text.length(); ++i) {
         if (!deprecatedIsEditingWhitespace(text[i]))
@@ -960,7 +960,7 @@ void CompositeEditCommand::rebalanceWhitespaceAt(const Position& position)
     rebalanceWhitespaceOnTextSubstring(*textNode, position.offsetInContainerNode(), position.offsetInContainerNode());
 }
 
-static bool LEGACY_NODELETE isWhitespaceForRebalance(Text& textNode, char16_t character)
+NODELETE static bool isWhitespaceForRebalance(Text& textNode, char16_t character)
 {
     return deprecatedIsEditingWhitespace(character) && (character != '\n' || !textNode.renderer() || !textNode.renderer()->style().preserveNewline());
 }
@@ -1504,8 +1504,8 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
         }
     }
 
-    auto beforeParagraph = startOfParagraphToMove.previous(CannotCrossEditingBoundary);
-    auto afterParagraph = endOfParagraphToMove.next(CannotCrossEditingBoundary);
+    auto beforeParagraph = startOfParagraphToMove.previous(EditingBoundaryCrossingRule::CannotCross);
+    auto afterParagraph = endOfParagraphToMove.next(EditingBoundaryCrossingRule::CannotCross);
 
     // We upstream() the end and downstream() the start so that we don't include collapsed whitespace in the move.
     // When we paste a fragment, spaces after the end and before the start are treated as though they were rendered.
@@ -1700,7 +1700,7 @@ bool CompositeEditCommand::breakOutOfEmptyMailBlockquotedParagraph()
     if (!isStartOfParagraph(caret) || !isEndOfParagraph(caret))
         return false;
 
-    VisiblePosition previous(caret.previous(CannotCrossEditingBoundary));
+    VisiblePosition previous(caret.previous(EditingBoundaryCrossingRule::CannotCross));
     // Only move forward if there's nothing before the caret, or if there's unquoted content before it.
     if (enclosingNodeOfType(previous.deepEquivalent(), &isMailBlockquote))
         return false;

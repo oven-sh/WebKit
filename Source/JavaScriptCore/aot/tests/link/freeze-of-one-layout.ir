@@ -1,0 +1,42 @@
+# If the freeze were not noted for the layout that arrives, a store to a field of it would be compiled as a plain write of the slot, where JavaScript throws or leaves the value. If it were noted by letting the object escape, one `Object.freeze` would cost the types of all its fields
+# function ice(o) { Object.freeze(o); }  function look(o) { return o.y; }  ice({ x: "a" }); look({ y: "a" });
+# RUN: summary f1
+# CHECK: change {{*}} v2 Freezes Parameter 0
+# RUN(KEPT): summary f1
+# KEPT-NOT: Parameter 0 -> Unknown
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# LINK: field L1.0 "y" proven=string writers-known written-at-construction-alone
+# LINK: layout L0 changes=[IsFrozen]
+# LINK: layout L1 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2 calleeName="ice"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v4 calleeName="look"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="ice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectFreeze [isNotReadFromHolder]
+    v2 = Call v1, -, v0
+    v3 = Undefined
+    Return v3
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    Return v1
+}

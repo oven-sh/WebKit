@@ -43,12 +43,14 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceMasker);
 
-RenderSVGResourceMasker::RenderSVGResourceMasker(SVGMaskElement& element, Style::ComputedStyle&& style)
+RenderSVGResourceMasker::RenderSVGResourceMasker(SVGMaskElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGResourceContainer(Type::SVGResourceMasker, element, WTF::move(style))
 {
 }
 
 RenderSVGResourceMasker::~RenderSVGResourceMasker() = default;
+
+static constexpr size_t maximumCachedMasksPerClient = 4;
 
 static RefPtr<ImageBuffer> createImageBuffer(const FloatRect& targetRect, const AffineTransform& absoluteTransform, const ColorSpace& colorSpace, const GraphicsContext& context)
 {
@@ -109,7 +111,22 @@ void RenderSVGResourceMasker::applyMask(PaintInfo& paintInfo, const RenderLayerM
 
     decoratedBounds.intersect(maskBoundsInLocalCoordinates(objectBoundingBox, RepaintRectCalculation::Accurate));
 
-    RefPtr<ImageBuffer> maskImage = m_masker.get(targetRenderer);
+    auto absoluteTransformWithoutTranslation = absoluteTransform;
+    absoluteTransformWithoutTranslation.setE(0);
+    absoluteTransformWithoutTranslation.setF(0);
+
+    RefPtr<ImageBuffer> maskImage;
+    if (auto it = m_masker.find(targetRenderer); it != m_masker.end()) {
+        const auto& cachedMasks = it->value;
+        auto matchesTransform = [&](const auto& mask) {
+            return mask.absoluteTransformWithoutTranslation == absoluteTransformWithoutTranslation;
+        };
+        if (cachedMasks.objectBoundingBox != objectBoundingBox || cachedMasks.decoratedBounds != decoratedBounds)
+            m_masker.remove(it);
+        else if (auto index = cachedMasks.masks.findIf(matchesTransform); index != notFound)
+            maskImage = cachedMasks.masks[index].image.ptr();
+    }
+
     bool missingMaskerData = !maskImage;
     if (missingMaskerData && !decoratedBounds.isEmpty())
         maskImage = createImageBuffer(decoratedBounds, absoluteTransform, maskColorSpace, context);
@@ -129,7 +146,12 @@ void RenderSVGResourceMasker::applyMask(PaintInfo& paintInfo, const RenderLayerM
 
             if (style().maskType() == MaskType::Luminance)
                 maskImage->convertToLuminanceMask();
-            m_masker.set(targetRenderer, maskImage);
+            auto& cachedMasks = m_masker.ensure(targetRenderer, [&] {
+                return CachedMasks { objectBoundingBox, decoratedBounds, { } };
+            }).iterator->value;
+            if (cachedMasks.masks.size() == maximumCachedMasksPerClient)
+                cachedMasks.masks.removeAt(0);
+            cachedMasks.masks.append({ absoluteTransformWithoutTranslation, *maskImage });
         }
         context.setCompositeOperation(CompositeOperator::SourceOver);
 
@@ -190,24 +212,24 @@ void RenderSVGResourceMasker::removeReferencingCSSClient(const RenderElement& cl
 bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, const FloatRect& objectBoundingBox)
 {
     // Eventually adjust the mask image context according to the target objectBoundingBox.
-    AffineTransform maskContentTransformation;
+    AffineTransform maskContentTransform;
 
     if (protect(maskElement())->maskContentUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        maskContentTransformation.translate(objectBoundingBox.location());
-        maskContentTransformation.scale(objectBoundingBox.size());
+        maskContentTransform.translate(objectBoundingBox.location());
+        maskContentTransform.scale(objectBoundingBox.size());
     }
 
     // Draw the content into the ImageBuffer.
-    protect(layer())->paintResourceLayerForSVG(context, maskContentTransformation);
+    protect(layer())->paintResourceLayerForSVG(context, maskContentTransform);
     return true;
 }
 
-bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions options)
+bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, const ImageDrawDescriptor& descriptor)
 {
     GraphicsContextStateSaver stateSaver(context);
-    context.setCompositeOperation(options.compositeOperator(), options.blendMode());
-    if (options.interpolationQuality() != InterpolationQuality::Default)
-        context.setImageInterpolationQuality(options.interpolationQuality());
+    context.setCompositeOperation(descriptor.compositeOperator, descriptor.blendMode);
+    if (descriptor.rendition.interpolationQuality != InterpolationQuality::Default)
+        context.setImageInterpolationQuality(descriptor.rendition.interpolationQuality);
     context.translate(destinationRect.location());
 
     if (destinationRect.size() != sourceRect.size())

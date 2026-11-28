@@ -1,0 +1,90 @@
+# const rows = new Map();
+# rows.set("first", { kept: 1 });
+# rows.set("second", id("text"));
+# function read(name) { const row = rows.get(name); return row === undefined ? "none" : row.kept; }
+# print(read("first"));
+# print(read("second"));
+# print("went on");
+# The program and the injected fault are those of what-a-map-gives-is-asked-where-it-comes-out.ir. This test checks the code of the crash path.
+# The cold end of the code holds one call. Its thunk puts one word into a register and enters the stub that throws at sites.
+# The word names the register that holds the value and the source of the proof, so all crash paths of one kind share one thunk.
+# The function and the source position are found from the call's return address, also where read() is inlined into the module's body. The code holds no position.
+# A program written as IR text, like this one, has no lines, so the position is 1:1.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(BYTES): bytes f1:Body mechanisms=all
+# BYTES: argument thunk {{*}}ThrowAtSite.WordInRegister
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 1
+# ALL-NEXT: bun: internal AOT error: type check failed at {{*}} (read)
+# ALL-NEXT: found string in
+# ALL-NOT: went on
+# ALL: crashed with
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: 1
+# CALLS-NEXT: bun: internal AOT error: type check failed at {{*}} (read)
+# CALLS-NEXT: found string in
+# CALLS-NOT: went on
+# CALLS: crashed with
+
+layout L0 module=m0 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="rows" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=Map
+    v3 = Construct v2 calleeName="Map"
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v3 key="set"
+    v6 = String string="first"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="id" [isFreeName]
+    v9 = Integer integer=1
+    v10 = Integer integer=1
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    v13 = Call v5, v3, v6, v12 calleeKey="set" calleeName="rows.set"
+    v14 = PropGet v3 key="set"
+    v15 = String string="second"
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="id" [isFreeName]
+    v18 = String string="text"
+    v19 = Call v17, -, v18 calleeName="id"
+    v20 = Call v14, v3, v15, v19 calleeKey="set" calleeName="rows.set"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="print" [isFreeName]
+    v23 = String string="first"
+    v24 = Call v1, -, v23 calleeName="read"
+    v25 = Call v22, -, v24 calleeName="print"
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="print" [isFreeName]
+    v28 = String string="second"
+    v29 = Call v1, -, v28 calleeName="read"
+    v30 = Call v27, -, v29 calleeName="print"
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="print" [isFreeName]
+    v33 = String string="went on"
+    v34 = Call v32, -, v33 calleeName="print"
+    v35 = Undefined
+    Return v35
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="rows"
+    v3 = PropGet v2 key="get"
+    v4 = Call v3, v2, v0 calleeKey="get" calleeName="rows.get" @421
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    v7 = String string="none"
+    Jump -> next b3(v7)
+  b2(v8):
+    v9 = NarrowByTest v4, v8
+    v10 = PropGet v9 key="kept"
+    Jump -> next b3(v10)
+  b3(v11):
+    Return v11
+}
+entry module=m0

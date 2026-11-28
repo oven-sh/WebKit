@@ -1,0 +1,48 @@
+# function sum(view: Uint8Array) { let total = 0; for (let i = 0; i < view.length; i++) total += view[i]; return total; }   sink(sum(new Uint8Array(4)));
+# Link says that what arrives stays as made, so the length is GetTypedArrayLength. No turn writes the storage of views or runs other code, so it is read once, in front of the loop, with the name of the view that it takes.
+# The counter is an integer below it, so the read asks no bound.
+# The look once typed the length `anything`, and the Unbox of the view stayed in the loop because it makes no code: 12 instructions a turn, 9 since.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayLength
+# CHECK: isLoopHead=true
+# CHECK-NOT: GetTypedArrayLength
+# CHECK: = Less {{*}} form=Integers
+# CHECK: = GetTypedArrayElement {{*}}isInsideView]
+# CHECK: = Increment {{*}} form=Integers
+# RUN(SHELL): run-in-shell globalThis.sink = (total) => { print(total); };
+# SHELL: 0
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Uint8Array
+    v2 = Integer integer=4
+    v3 = Construct v1, -, v2
+    v4 = Call v0, -, v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v4
+    Return v7
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}

@@ -61,7 +61,7 @@ static Ref<LegacyPreviewLoaderClient> makeClient(const ResourceLoader& loader, c
         return client.releaseNonNull();
     if (!loader.frameLoader())
         return emptyClient();
-    if (RefPtr client = loader.frameLoader()->client().createPreviewLoaderClient(converter.previewFileName(), converter.previewUTI()))
+    if (RefPtr client = protect(loader.frameLoader()->client())->createPreviewLoaderClient(converter.previewFileName(), converter.previewUTI()))
         return client.releaseNonNull();
     return emptyClient();
 }
@@ -107,6 +107,14 @@ bool LegacyPreviewLoader::didFinishLoading()
     m_client->didFinishLoading();
     return true;
 }
+
+#if USE(QUICK_LOOK)
+void LegacyPreviewLoader::didFinishQuickLookLoading(URL&& temporaryQuickLookFileURL)
+{
+    if (RefPtr converter = m_converter)
+        converter->receivedTemporaryFileURL(WTF::move(temporaryQuickLookFileURL));
+}
+#endif // USE(QUICK_LOOK)
 
 void LegacyPreviewLoader::didFail()
 {

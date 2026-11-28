@@ -37,7 +37,7 @@ class RenderTreeBuilder;
 class RenderTreeBuilder::Ruby {
     WTF_MAKE_TZONE_ALLOCATED(Ruby);
 public:
-    Ruby(RenderTreeBuilder&);
+    NODELETE Ruby(RenderTreeBuilder&);
 
     CheckedRef<RenderElement> findOrCreateParentForStyleBasedRubyChild(RenderElement& parent, const RenderObject& child, RenderObject*& beforeChild);
     void attachForStyleBasedRuby(RenderElement& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
@@ -46,7 +46,7 @@ private:
     RenderTreeBuilder& m_builder;
 };
 
-Style::ComputedStyle createAnonymousStyleForRuby(const Style::ComputedStyle& parentStyle, Style::Display);
+UniqueRef<Style::ComputedStyle> createAnonymousStyleForRuby(const Style::ComputedStyle& parentStyle, Style::Display);
 
 }
 

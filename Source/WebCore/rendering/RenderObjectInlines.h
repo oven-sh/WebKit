@@ -68,9 +68,7 @@ inline TreeScope& RenderObject::treeScopeForSVGReferences() const
 
 inline CheckedRef<const Style::ComputedStyle> RenderObject::firstLineStyle() const
 {
-    if (isRenderText())
-        return parent()->firstLineStyle();
-    return downcast<RenderElement>(*this).firstLineStyle();
+    return layoutBox().firstLineStyle();
 }
 
 inline Page& RenderObject::page() const
@@ -94,7 +92,7 @@ inline void RenderObject::setNeedsLayout(MarkingBehavior markParents)
     if (InspectorInstrumentationPublic::hasFrontends()) [[unlikely]]
         notifyInspectorOfLayoutInvalidate();
     m_stateBitfields.setFlag(StateFlag::NeedsLayout);
-    if (markParents == MarkingBehavior::MarkContainingBlockChain)
+    if (markParents == MarkingBehavior::ContainingBlockChain)
         scheduleLayout(CheckedPtr { markContainingBlocksForLayout() });
     if (hasLayer())
         setLayerNeedsFullRepaint();
@@ -104,6 +102,11 @@ inline void RenderObject::setNeedsLayoutAndInvalidateContentLogicalWidths()
 {
     setNeedsLayout();
     invalidateContentLogicalWidths();
+}
+
+inline bool RenderObject::isListMarkerBox() const
+{
+    return isRenderElement() && style().isListMarkerStyle();
 }
 
 inline bool RenderObject::isNonReplacedAtomicInlineLevelBox() const

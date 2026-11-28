@@ -29,6 +29,7 @@
 #include <WebCore/FloatSize.h>
 #include <WebCore/FourCC.h>
 #include <WebCore/ImmersiveVideoMetadata.h>
+#include <WebCore/MediaChannelLayout.h>
 #include <WebCore/MediaPlayerEnums.h>
 #include <WebCore/PlatformVideoColorSpace.h>
 #include <WebCore/SharedBuffer.h>
@@ -170,12 +171,31 @@ struct VideoSpecificInfoData {
     Vector<TrackInfo::AtomData> extensionAtoms { };
     std::optional<uint8_t> reorderQueueMaxSize { };
     std::optional<VideoPixelFormat> pixelFormat { };
+    bool hasSeparateAlphaStream { false };
 
 #if PLATFORM(VISION)
     std::optional<ImmersiveVideoMetadata> immersiveVideoMetadata { };
 #endif
 
-    bool operator==(const VideoSpecificInfoData&) const = default;
+    bool operator==(const VideoSpecificInfoData& other) const
+    {
+#if PLATFORM(VISION)
+        if (immersiveVideoMetadata != other.immersiveVideoMetadata)
+            return false;
+#endif
+        return size == other.size
+            && displaySize == other.displaySize
+            && bitDepth == other.bitDepth
+            && colorSpace == other.colorSpace
+            && fieldCount == other.fieldCount
+            && fieldDetail == other.fieldDetail
+            && std::ranges::equal(extensionAtoms, other.extensionAtoms, [](auto& atom, auto& otherAtom) {
+                return atom.first == otherAtom.first && atom.second.get() == otherAtom.second.get();
+            })
+            && reorderQueueMaxSize == other.reorderQueueMaxSize
+            && pixelFormat == other.pixelFormat
+            && hasSeparateAlphaStream == other.hasSeparateAlphaStream;
+    }
 };
 
 using VideoInfoData = std::pair<TrackInfoData, VideoSpecificInfoData>;
@@ -195,6 +215,7 @@ public:
     std::optional<uint8_t> reorderQueueMaxSize() const { return m_data.reorderQueueMaxSize; }
     std::optional<VideoPixelFormat> pixelFormat() const { return m_data.pixelFormat; }
     bool isDecoded() const { return !!m_data.pixelFormat; }
+    bool hasSeparateAlphaStream() const { return m_data.hasSeparateAlphaStream; }
 
     const Vector<AtomData>& extensionAtoms() const LIFETIME_BOUND { return m_data.extensionAtoms; }
 
@@ -232,6 +253,7 @@ struct AudioSpecificInfoData {
 
     RefPtr<SharedBuffer> cookieData { };
     std::optional<AudioSampleFormat> sampleFormat { };
+    std::optional<MediaChannelLayout> channelLayout { };
 
     bool operator==(const AudioSpecificInfoData&) const = default;
 };
@@ -250,6 +272,7 @@ public:
     RefPtr<SharedBuffer> cookieData() const { return m_data.cookieData; }
     std::optional<AudioSampleFormat> sampleFormat() const { return m_data.sampleFormat; }
     bool isDecoded() const { return !!m_data.sampleFormat; }
+    std::optional<MediaChannelLayout> channelLayout() const { return m_data.channelLayout; }
 
     AudioInfoData toAudioInfoData() const
     {

@@ -1,0 +1,61 @@
+# Both v3 and v6 go to `area`, which only looks, each by a single chain of names. But v3 is made below a prototype that the Code names: an accessor there would answer a read off it and be handed it as `this`.
+# Nothing but its own fields answers for v6. v6 lies in the frame, v3 stays in the heap.
+# RUN: sweep-code mechanisms=all
+# CHECK: v3: L0 @Cell = NewObject v2, v0, v0 layout=L0 fields=[0, 1] traits=
+# CHECK: v6: L0 @Cell = NewObject -, v0, v0 layout=L0 fields=[0, 1] storage=Frame
+# CHECK: # cells of the frame: verified
+# -- code
+# code f3:Body {
+#   b0(v0: anything @JSValue, v1: boolean @Boolean) entry=0:
+#     v2: L0 @Cell = NewObject -, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
+#     v3: L0 @Cell = NewObject v2, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
+#     v4: L0 @JSValue = Box v3
+#     v5: anything @JSValue = CallDirect v4 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: L0 @Cell = NewObject -, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
+#     v7: L0 @JSValue = Box v6
+#     v8: anything @JSValue = CallDirect v7 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v8
+# }
+# -- end of code
+
+variable g0 name="held" module=m0 declared={type=anything} initialization=Undefined
+layout L0 module=m0 fields=[{key="w" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f4
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1 calleeName="publish"
+    Return v4
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="w"
+    v2 = PropGet v0 key="h"
+    v3 = Mul v1, v2
+    Return v3
+}
+function f2 name="keep" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    Return v2
+}
+function f3 name="maker" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = CallDirect v3 function=f1
+    v5 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallDirect v6 function=f2
+    Return v4
+}
+function f4 name="reader" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

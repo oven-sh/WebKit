@@ -1,0 +1,35 @@
+# A conversion to double storage keeps the length of the array. The first read rests on the length that was read before the conversion and passes. The second read is behind a store of the length, and there
+# the verifier stops.
+# RUN: verify-grounds access=v7 view=v0 position=v1 length=v3 below=v6 passed=v6 access=v9 view=v0 position=v1 length=v3 below=v6 passed=v6
+# CHECK: v9 (GetArrayElement): the storage or the length of a list is written between a ground of an access and the access: v8 (SetArrayLength)
+# -- code
+# code f1:Body {
+#   constants:
+#     v2: undefined @JSValue = Undefined
+#   b0(v0: Array @Cell, v1: int[0, 2147483647] @Int32) entry=0:
+#     v3: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v4 @Void = ConvertToDoubleStorage v0 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v5: int[0, 2147483647] @Int64 = WidenInteger v1
+#     v6: boolean @Boolean = Less v5, v3 form=Integers
+#     Branch v6 -> taken b1(), notTaken b2()
+#   b1():
+#     v7: anything @JSValue = GetArrayElement v0, v1 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     v8 @Void = SetArrayLength v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v9: anything @JSValue = GetArrayElement v0, v1 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     Return v9
+#   b2():
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

@@ -1,0 +1,27 @@
+# const e = new SuppressedError(a, b); f(e); define(e, "name", b);
+# v4 stores into v2, which nothing has marked where the way comes by v4: the store waits. v3, in front of it, reads v2, so v2 stays, and v4 goes through the worklist and is visited once more: 3 + 1.
+# It stands in the order of its block where it stood, and counts among the uses of v2 and v1 once.
+# RUN: sweep-code
+# CHECK: v2: anything @Cell = NewSuppressedError v0, v1{{*}}uses=2
+# CHECK-NEXT: v3: anything @JSValue = Call v1, -, v2
+# CHECK-NEXT: v4 @Void = PropDefine v2, v1
+# CHECK-NEXT: Return
+# CHECK: visits of operations: 4
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @Cell = NewSuppressedError v0, v1 traits=[mayCollect, mayTouchMemory]
+#     v3: anything @JSValue = Call v1, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4 @Void = PropDefine v2, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

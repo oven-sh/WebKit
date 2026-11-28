@@ -37,6 +37,10 @@ public:
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGScriptElement, SVGElement, SVGURIReference>;
 
+    String crossOrigin() const;
+
+    String referrerPolicyForBindings() const;
+
     // ActiveDOMObject
     void ref() const final { SVGElement::ref(); }
     void deref() const final { SVGElement::deref(); }
@@ -55,7 +59,7 @@ private:
     void finishParsingChildren() final;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
-    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    NODELETE bool isURLAttribute(const Attribute&) const final;
     void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
 
     Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const final;
@@ -70,7 +74,7 @@ private:
     bool hasAsyncAttribute() const final;
     bool hasDeferAttribute() const final { return false; }
     bool hasNoModuleAttribute() const final { return false; }
-    ReferrerPolicy referrerPolicy() const final { return ReferrerPolicy::EmptyString; }
+    ReferrerPolicy referrerPolicy() const final;
     bool hasSourceAttribute() const final { return hasAttribute(SVGNames::hrefAttr) || hasAttribute(XLinkNames::hrefAttr); }
     void dispatchLoadEvent() final;
     void dispatchErrorEvent() final;

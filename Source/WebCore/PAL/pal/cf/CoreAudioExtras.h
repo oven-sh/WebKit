@@ -55,6 +55,11 @@ inline std::span<const AudioBuffer> span(const AudioBufferList& list)
     return unsafeMakeSpan(list.mBuffers, list.mNumberBuffers);
 }
 
+inline std::span<const AudioChannelDescription> span(const AudioChannelLayout& layout)
+{
+    return unsafeMakeSpan(layout.mChannelDescriptions, layout.mNumberChannelDescriptions);
+}
+
 inline size_t allocationSize(const AudioBufferList& list)
 {
     return offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer) * std::max<uint32_t>(1U, list.mNumberBuffers);
@@ -76,7 +81,7 @@ inline std::unique_ptr<AudioBufferList, WTF::SystemFree<AudioBufferList>> create
         ? SystemMallocBase<AudioBufferList>::zeroedMalloc(bufferListSize.value())
         : SystemMallocBase<AudioBufferList>::malloc(bufferListSize.value()));
     bufferList->mNumberBuffers = bufferCount;
-    ASSERT(allocationSize(*bufferList) == bufferListSize.value());
+    RELEASE_ASSERT(allocationSize(*bufferList) == bufferListSize.value());
     return bufferList;
 }
 
@@ -90,7 +95,7 @@ inline std::unique_ptr<AudioChannelLayout, WTF::SystemFree<AudioChannelLayout>> 
         ? SystemMallocBase<AudioChannelLayout>::zeroedMalloc(channelLayoutSize.value())
         : SystemMallocBase<AudioChannelLayout>::malloc(channelLayoutSize.value()));
     channelLayout->mNumberChannelDescriptions = channelCount;
-    ASSERT(allocationSize(*channelLayout) == channelLayoutSize.value());
+    RELEASE_ASSERT(allocationSize(*channelLayout) == channelLayoutSize.value());
     return channelLayout;
 }
 

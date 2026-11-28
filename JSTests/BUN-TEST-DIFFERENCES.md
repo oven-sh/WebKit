@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 131 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -127,22 +127,51 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
+### A11. A definition that gives a value to a custom value with a setter calls the setter
+
+- Fork code: `validateAndApplyPropertyDescriptor` (`runtime/JSObject.cpp`), the block under `USE(BUN_JSC_ADDITIONS)` in front of
+  its last `putDirect`. A definition that gives a value and changes no attribute hands the value to the setter of a
+  `CustomValue` that has one and is not read-only, and the property stays what it is. Upstream puts the value in the
+  property's place. Since 324876@main a store through a proxy that only forwards ends in such a definition, and Bun has
+  custom values whose setters keep state elsewhere (`onmessage`, `Error.prepareStackTrace`). Upstream's comment in
+  `definePropertyOnReceiverSlow`, that the definition "replaces the custom value", does not hold here for those.
+- The rule stands in two more places. `canPutDirectFast` (`runtime/CommonSlowPaths.h`) sends a class field on a returned
+  object to the definition where the name is a custom value: `putDirect()` would put the value in its place. The extra
+  properties of a compiled object have it in `tryHandValueToSetterOfExtraProperty` (`aot/object/AOTObjectMethodTable.cpp`).
+- What replaces the property as upstream has it: a definition that changes an attribute, a definition of an accessor,
+  `delete`. `Object.seal()` and `Object.freeze()` are of the first kind for most objects: `setIntegrityLevel`
+  (`runtime/ObjectConstructor.cpp`) defines each property again with `configurable: false`, so the custom value becomes a
+  plain value, and a sealed one that can still be written reaches no setter. A `JSFinalObject` and a `JSArray` are sealed
+  and frozen by one transition of the structure, which leaves a custom value what it is. Upstream moves that line: a final
+  object with indexed properties and an array joined the transition in 325271@main. `Object.preventExtensions()` defines
+  nothing.
+- When it can go: the rule serves the custom values with a setter that Bun gives to scripts as data properties (`onmessage`
+  and `onerror` of the global object, `Error.prepareStackTrace`, `Module.prototype.require`, the `exports` of a compiled
+  module). When Bun has none left, the three places go, and the file below gets upstream's line back.
+- How to recognize it: a test expects that a native setter did not run, or that a custom value became a plain value, behind
+  `Object.defineProperty(o, k, { value })`, `Reflect.set(target, k, v, proxy)`, `proxy.k = v` or a class field
+  (`class extends Base { k = v }` where the constructor of `Base` returns the object).
+- File: `stress/reflect-set-proxy-receiver-custom-value.js`: `Object.hasOwn(reified, 'value2')` is `true` (upstream:
+  `false`). A row of a static table that is not reified keeps upstream's result, so the other lines of the file stand.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
 
 | file(s) | directive | reason |
 |---|---|---|
-| 32 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
+| 35 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
 | `stress/sampling-profiler-bound-function-name.js` | `requireOptions("--useExecutableAllocationFuzz=false")` | with the DFG enabled it waits for the stack `foo < baz`, which exists only once the DFG has inlined the bound function. In the same mode, a process in which the compilations of `baz` and its caller fail sees `foo < bound foo < baz` for the 50 s the test allows itself |
 | `stress/sampling-profiler-line-column.js` | `$skipModes` for `ftl-eager`; the lines it waits for are 13 to 18 (upstream: 11 to 16), because the two lines added at the top move `test()` down by two | it waits for a sample of `test()` with a line inside `test()`. A frame of FTL code is sampled with no line (4294967295), so a sample has to fall into the few milliseconds before `test()` is compiled by the FTL; a process that misses them waits its 50 s in vain. 35 of 600 runs on a busy machine with `main`'s own shell (87ee10da), each over in under 5 s or never |
+| `stress/intl-datetimeformat-language-change-mid-construction.js` | `serial!` | a worker changes the language every millisecond, and the test fails when the formatter that comes out of the cache names one old language for 25 turns of the event loop (1 ms) while a formatter built afresh names the new one. `WTF::overrideUserPreferredLanguages()` stores the new language, lets `languagesLock` go, and only then, in `languageDidChange()`, bumps the epoch by which a VM entry resets the cache. A worker that loses its processor in between leaves the main thread up to 360 such turns (10 ms, a time slice): the reset is late, not dropped, and no larger number of turns would do. 1,000 runs a cell with `main`'s own shell (b83d8a12, `linux-arm64-lto-hardened`): 0 alone, and 0 pinned to 4, to 2 and to 1 processor with nothing beside it; beside one busy loop a processor 2 on 4, 4 on 2 and 23 on 1; 7 with eight of it at once on 4. `serial!`, the runner's own directive, runs it behind the parallel tests |
 | `stress/buffer-accessor-jit-byteoffset.js`, `-fractional-value.js`, `-large.js` | `$skipModes << :lockdown` | they check `numberOfDFGCompiles()`; lockdown runs with the JIT off |
 | `stress/regress-174463162.js` | `$skipModes` for `dfg-eager`, `dfg-eager-no-cjit-validate`, `ftl-eager`, `ftl-eager-no-cjit`, `no-cjit-collect-continuously` | its `$vm` helper scribbles a live cell's header; a collection before the script ends marks a cell with no Structure. Only the `--collectContinuously=true` modes collect that early. Upstream's bots hit it too |
-| `stress/regexp-legacy-static-properties-rematch-failure.js` | `$skipModes` for `regexp-flat-program`, `regexp-image-mode` | after a `test()` that matched, it expects the second match, which `RegExp.lastMatch` and the other legacy properties start for the captures, to run out of stack and throw a `RangeError` (upstream 191803bb23). A flat program and the code of an image make that match within `--maxRegExpStackSize=65536`: the properties have their values and `exec()` returns the 1601 entries |
+| `stress/regexp-legacy-static-properties-rematch-failure.js` | `$skipModes` for `regexp-flat-program`, `regexp-image-mode` | after a `test()` that matched, it expects the second match, which `RegExp.lastParen`, `RegExp.$1` and the setter of `RegExp.input` start for the captures, to run out of stack and throw a `RangeError` (upstream 191803bb23). `RegExp.lastMatch`, `leftContext` and `rightContext` start no second match since upstream 3a02a45241, and the test expects their values. A flat program and the code of an image make the second match within `--maxRegExpStackSize=65536`: the properties have their values and `exec()` returns the 1601 entries |
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
+| `stress/new-largeish-contiguous-array-with-size.js` | `--smallHeapRAMFraction=0.25`, `--mediumHeapRAMFraction=0.5` added to `runWithRAMSize` | it allocates 1,000 arrays of 50,000 elements and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. With `USE(MEMORY_FOOTPRINT_API)`, which Bun's builds have, the two fractions are 0.8 and 0.9, so the heap may pass the bound before a full collection; more often, the more processes share the processors. The bound holds for the values of a build without it, which the test names |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
 
@@ -162,9 +191,7 @@ Rules for an edit to an upstream test:
 
 Upstream's tests as upstream has them. A failure with the message given here is not a regression.
 
-| file | message | what it depends on |
-|---|---|---|
-| `stress/new-largeish-contiguous-array-with-size.js` | `Error: heap too big before forced GC: <bytes>` | with `--forceRAMSize=10000000` it allocates 1,000 arrays of 50,000 elements in a loop and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. The bound holds if the concurrent collector gets processor time before the loop ends. Run alone it passes; the more processes share the processors, the more often it fails |
+None at present.
 
 ---
 
@@ -202,7 +229,13 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
+| `stress/bun-definition-of-a-value-reaches-the-setter-of-a-custom-value.js` | a definition that gives a value and changes no attribute, and every store through a proxy that ends in one, calls the setter of a custom value with the holder and in the holder's realm, and leaves the property a custom value; a definition that changes an attribute, an accessor definition and `delete` replace it (A11) |
+| `stress/bun-json-parse-long-string-has-the-width-of-its-text.js` | a long string value of `JSON.parse` has the width of the text it is parsed from, also where the same value was parsed from text of the other width before (`JSONCache::longStringMatches`) |
+| `stress/bun-streaming-json-parse-text-that-ends-after-a-backslash-is-incomplete.js` | `streamingJSONParse()` (Bun.JSONL) answers "needMoreData" for text that ends right after a backslash in a string, as it did before WebKit/WebKit@25d03d20cc, and "error" for an escape that no further text completes (`Lexer::lexStringError`, `USE(BUN_JSC_ADDITIONS)`). This is one cut of several: text that ends inside a `\uXXXX` or behind the sign of an exponent is still an "error", as before the merge. oven-sh/WebKit#638 is open for those |
+| `stress/bun-unshift-of-one-element-moves-the-start-of-a-long-dense-array.js` | with `--keepDenseArraysDense=1`, which a process that runs a compiled image has, `unshift()` of one element onto an Int32, Double or Contiguous array above the shift threshold moves the start of the elements and copies nothing: `JSArray::fastUnshift()` (WebKit/WebKit@293f970fc4) returns for it, as `fastShift()` does |
+| `stress/bun-without-nonextensible-applies-to-private-*.js` (ten files), `wasm/gc/bun-without-nonextensible-applies-to-private-fields-and-methods.js` | with `--useNonExtensibleAppliesToPrivate=0`, which Bun and every process that runs a compiled image have, an object that is not extensible takes a private field and the brand of private methods, as before WebKit/WebKit@b0be2f45a9. Nine are upstream's tests from before that commit. One is a frozen array, whose elements stay read-only behind the definition. One runs `stress/immutable-properties-private-names.js` again: an object with immutable properties and a WebAssembly GC object are refused by tests of the engine's own (`JSObject::definePrivateField`, `JSObject::setPrivateBrand`) |
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
+| `stress/bun-object-assign-keeps-indexed-property-attributes.js` | `Object.assign()` stores onto an element that the target already has and keeps its attributes: one that is non-enumerable or not configurable stays so, and a read-only one refuses the store |
 | `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
 | `stress/function-prototype-call-not-called-as-a-method.js` | `f.call(...)` is compiled to a call of `f`, so only other ways reach `Function.prototype.call` itself: `call.bind(f)`, `Reflect.apply`, `call.call` and `call.apply`. Through each of them `this`, the arguments and `new.target` arrive as they should, and a callee that is not callable is a `TypeError`, in every tier |
 | `stress/regexp-greedy-group-in-tail-position.js` | a greedy `*` or `+` group that nothing can fail after runs without the state of its earlier iterations: `exec()`, `match()` and `replace()` give the listed results |
@@ -234,6 +267,9 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/inline-cache-stub-freed-during-call-to-custom-setter.js` | an inline cache stub that has called native code stays until the call returns, also when the callee signed the return address that it saved (`JITStubRoutineSet::mark`). The setter of `$vm`'s `customAccessor` is compiled with `pac-ret` on ARM64 Linux in every build. On a processor without pointer authentication nothing is signed and the test passes whatever the code does |
 | `stress/bun-return-address-of-function-is-signed.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function signs the return address that it saves in LLInt, Baseline, the DFG and the FTL alike: `$vm.returnAddressOfCallerIsSigned()` signs the address again and compares. Elsewhere, and on a processor without pointer authentication (`$vm.functionsSignReturnAddress()`), the test ends at once |
 | `stress/bun-return-address-with-wrong-signature-is-not-returned-to.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function does not return once a bit of the signature of its saved return address was flipped, in each of the four tiers: the run must crash. Where nothing is signed the test crashes by itself |
+| `stress/bun-frozen-array-push.js` | `push()` throws for an array that was frozen in place, with copy-on-write storage (`JSObject::tryFreezeArrayInPlace`), in every tier and with no arguments too: the DFG makes no `GetArrayLength` of that push (`ArrayPushIntrinsic` in `dfg/DFGByteCodeParser.cpp`) |
+| `stress/regexp-flat-program-builder-at-end-of-stack.js` | the builder of flat programs checks the stack: a deep nest of groups near the end of the stack is declined, and the process goes on |
+| `stress/regexp-image-start-search-large-minimum-size.js` | with `--useRegExpImageMode=1`: the search for a start reads inside the subject also where the minimum size of a match is 2^30 units |
 | the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 
@@ -244,7 +280,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

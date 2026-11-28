@@ -16,15 +16,21 @@ template<typename... Arguments>
 inline bool isExtendedForm(Opcode opcode, Arguments... arguments)
 {
     constexpr size_t size = sizeof...(Arguments);
-    const std::array<Arg::Kind, size + 2> kinds { arguments..., Arg::Invalid, Arg::Invalid };
+    const std::array<Arg::Kind, size + 3> kinds { arguments..., Arg::Invalid, Arg::Invalid, Arg::Invalid };
     switch (opcode) {
     case Mul64:
         return size == 3 && kinds[0] == Arg::Imm;
     case SignExtend32To64:
         return size == 2 && kinds[0] != Arg::Tmp;
+    case Move:
+        return size == 2 && kinds[0] == Arg::Imm && kinds[1] == Arg::Index;
     case Test64:
     case MoveConditionallyTest64:
         return kinds[1] == Arg::Addr;
+    case Branch32:
+        return kinds[2] == Arg::Index || (kinds[1] == Arg::Index && kinds[2] == Arg::Tmp);
+    case Branch64:
+        return kinds[2] == Arg::Index || (kinds[1] == Arg::Index && kinds[2] == Arg::Imm);
     default:
         return false;
     }

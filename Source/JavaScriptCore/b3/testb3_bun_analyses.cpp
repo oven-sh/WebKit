@@ -438,6 +438,58 @@ static void testRelationImpliedAt()
     checkRelationQueriesStopAtLimit();
 }
 
+static void testReturnsBoolAnswersOnceForEachValue()
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    Value* number = root->appendNew<Value>(proc, Trunc, Origin(), root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+    Value* otherNumber = root->appendNew<Value>(proc, Trunc, Origin(), root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* boolean = root->appendNew<Value>(proc, Equal, Origin(), number, otherNumber);
+    Value* otherBoolean = root->appendNew<Value>(proc, Below, Origin(), number, otherNumber);
+
+    // As the definition says, worked out from the operands upward.
+    Vector<std::pair<Value*, bool>> values {
+        { number, false }, { otherNumber, false }, { boolean, true }, { otherBoolean, true },
+        { root->appendIntConstant(proc, Origin(), Int32, 0), true }, { root->appendIntConstant(proc, Origin(), Int32, 1), true }, { root->appendIntConstant(proc, Origin(), Int32, 2), false },
+    };
+    WeakRandom random(4077);
+    for (unsigned count = 0; count < 400; ++count) {
+        auto [first, firstIsBoolean] = values[random.getUint32(values.size())];
+        auto [second, secondIsBoolean] = values[random.getUint32(values.size())];
+        switch (random.getUint32(5)) {
+        case 0:
+            values.append({ root->appendNew<Value>(proc, BitAnd, Origin(), first, second), firstIsBoolean || secondIsBoolean });
+            break;
+        case 1:
+            values.append({ root->appendNew<Value>(proc, BitOr, Origin(), first, second), firstIsBoolean && secondIsBoolean });
+            break;
+        case 2:
+            values.append({ root->appendNew<Value>(proc, BitXor, Origin(), first, second), firstIsBoolean && secondIsBoolean });
+            break;
+        case 3:
+            values.append({ root->appendNew<Value>(proc, Select, Origin(), number, first, second), firstIsBoolean && secondIsBoolean });
+            break;
+        default:
+            values.append({ root->appendNew<Value>(proc, Identity, Origin(), first), firstIsBoolean });
+            break;
+        }
+    }
+    for (auto [value, isBoolean] : values)
+        CHECK_EQ(value->returnsBool(), isBoolean);
+
+    // Each value is computed from the two in front of it: asked again for every way that leads to a value, neither question ends.
+    auto lastOfChain = [&](Value* a, Value* b) {
+        for (unsigned turn = 0; turn < 300; ++turn) {
+            Value* next = root->appendNew<Value>(proc, BitXor, Origin(), root->appendNew<Value>(proc, BitAnd, Origin(), a, b), b);
+            b = a;
+            a = next;
+        }
+        return a;
+    };
+    CHECK(!lastOfChain(number, otherNumber)->returnsBool());
+    CHECK(lastOfChain(boolean, otherBoolean)->returnsBool());
+}
+
 void addBunAnalysisTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testConditionAtHead());
@@ -446,6 +498,7 @@ void addBunAnalysisTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testConditionStackLayers());
     RUN(testRangeImpliedBy());
     RUN(testRelationImpliedAt());
+    RUN(testReturnsBoolAnswersOnceForEachValue());
 }
 
 #endif // ENABLE(B3_JIT)

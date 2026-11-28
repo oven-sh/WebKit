@@ -1,0 +1,22 @@
+# Function.prototype.apply takes the operands out of a list
+# (5).toLocaleString.apply(5, [globalThis.input]);
+# LIBRARY: own
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = PropGet v1 key="apply"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = NewArray v4 contents=anything
+    v6 = Call v2, v1, v0, v5 calleeKey="apply"
+    Return v6
+}

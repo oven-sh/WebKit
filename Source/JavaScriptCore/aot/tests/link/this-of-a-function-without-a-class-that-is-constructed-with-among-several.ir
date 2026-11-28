@@ -1,0 +1,50 @@
+# function Parent() { this.kind = "made"; }  function ChildA() { Parent.call(this); }  function ChildB() { Parent.call(this); }  new (globalThis.flag ? ChildA : ChildB)();
+# neither child has a class: each only hands `this` on. The construction makes an object for whichever is entered, so `this` holds something and the call of Parent is entered: Parent is reached
+# RUN: link functions mechanisms=all
+# CHECK: function f3 {{*}}result=undefined
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f3 unreached
+# RUN(OLDEST): link functions oldest-first mechanisms=all
+# OLDEST-NOT: function f3 unreached
+# RUN(SCATTERED): link functions scattered mechanisms=all
+# SCATTERED-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = NewClosure v2 function=f1
+    v4 = NewClosure v2 function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Construct v5
+    Return v6
+}
+function f1 name="ChildA" module=m0 flags=[HasThis, HasExplicitName] captures=[{type=f3 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: f3, v1: anything):
+    v2 = PropGet v0 key="call"
+    v3 = Call v2, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f2 name="ChildB" module=m0 flags=[HasThis, HasExplicitName] captures=[{type=f3 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: f3, v1: anything):
+    v2 = PropGet v0 key="call"
+    v3 = Call v2, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f3 name="Parent" module=m0 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="made"
+    PropSet v0, v1 key="kind"
+    v3 = Undefined
+    Return v3
+}

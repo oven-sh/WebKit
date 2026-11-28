@@ -1,0 +1,70 @@
+# A function that waited because no reached code named it is reached as soon as such code is. If it went on waiting, unseen code that loads the file and makes an object of the class would enter a constructor without code.
+# main.js: class A { constructor() { this.x = 1; } }  sink(new A());  function later() { return import("./behind.js"); }  sink(later);
+# behind.js: class B extends A { constructor() { super(); this.y = helper(); } }  function helper() { return 2; }
+# The escape of A asks for the constructor of B before anything has reached behind.js, or behind it: in every order B and what it calls are reached.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: unreached
+# RUN(OLDEST): link functions mechanisms=all oldest-first
+# OLDEST-NOT: unreached
+# RUN(SCATTERED): link functions mechanisms=all scattered
+# SCATTERED-NOT: unreached
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Instance name="B" module=m1 base=L0 constructor=f4 fields=[{key="y" declared={type=anything}}] supertypes=[L0] flags=[HasHeritage]
+variable g0 name="A" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="helper" module=m1 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/behind.js" displayPath="behind.js" body=f3 requests=[{target=m0 completes=true}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = Construct v2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v4
+    v8 = NewClosure function=f2
+    v9 = Call v6, -, v8
+    v10 = Undefined
+    Return v10
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    Return v2
+}
+function f2 name="later" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f4
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Undefined
+    Return v5
+}
+function f4 name="B" module=m1 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, - calleeName="helper"
+    PropSet v3, v5 key="y"
+    Return v3
+}
+function f5 name="helper" module=m1 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

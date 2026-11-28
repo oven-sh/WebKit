@@ -1,0 +1,119 @@
+# a function of the library that saves the registers of its callers has saved those that it writes itself. Its one operation is a conversion that runs valueOf or toString by way of C++, and behind it the function reads nothing: the stub still saves what a C function may write, because the callers keep values there
+# by hand: in today's library the two functions whose rows ask for the convention each make a call in tail position, which the rule refuses (tests/plan/tail-calls/search-of-the-library-saves-the-registers-of-its-callers.ir)
+# f1 holds ten integers and fourteen fractions in registers across both calls. f2 and f3 stand for indexOf and includes, and are not copied in line
+# LIBRARY: own
+# RUN: plan units mechanisms=-Inlining
+# CHECK: unit f2:Body {{*}}saves-registers-of-callers
+# CHECK: unit f3:Body {{*}}saves-registers-of-callers
+# RUN(NEVER): bytes f2 f3 mechanisms=-Inlining
+# NEVER-NOT: KeepsNoFPRs
+# RUN(SHELL): run-in-shell mechanisms=-Inlining globalThis.sink = holds => { const busy = () => { let t = 0; for (let i = 1; i < 40; i++) t += Math.pow(i, 1.5) * Math.sin(i) + Math.atan2(i, t) / Math.hypot(i, 3, t); return t; }; const odd = { valueOf() { return busy() > 1e99 ? 0 : 5; }, toString() { return busy() > 1e99 ? "" : "7"; } }; let bad = 0; for (let round = 0; round < 300; round++) { const a = round, b = round * 3 + 1, c = round * 5 + 2, d = round * 7 + 3; if (holds(odd, a, b, c, d) !== ((a >>> 0) ^ 17) + ((b >>> 0) ^ 34) + ((c >>> 0) ^ 51) + ((d >>> 0) ^ 68) + ((a >>> 0) ^ 85) + ((b >>> 0) ^ 102) + ((c >>> 0) ^ 119) + ((d >>> 0) ^ 136) + ((a >>> 0) ^ 153) + ((b >>> 0) ^ 170) + ((a >>> 0) + 0.25) + ((b >>> 0) + 1.25) + ((c >>> 0) + 2.25) + ((d >>> 0) + 3.25) + ((a >>> 0) + 4.25) + ((b >>> 0) + 5.25) + ((c >>> 0) + 6.25) + ((d >>> 0) + 7.25) + ((a >>> 0) + 8.25) + ((b >>> 0) + 9.25) + ((c >>> 0) + 10.25) + ((d >>> 0) + 11.25) + ((a >>> 0) + 12.25) + ((b >>> 0) + 13.25) + 5 + "7") bad++; } print("bad", bad); };
+# SHELL: bad 0
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=ArraySearchIncludes function=f3
+runtimefunction id=ArraySearchIndexOf function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="holds" module=m0 length=5 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
+    v5 = Integer integer=0
+    v6 = URShift v1, v5
+    v7 = URShift v2, v5
+    v8 = URShift v3, v5
+    v9 = URShift v4, v5
+    v10 = Integer integer=17
+    v11 = Integer integer=34
+    v12 = Integer integer=51
+    v13 = Integer integer=68
+    v14 = Integer integer=85
+    v15 = Integer integer=102
+    v16 = Integer integer=119
+    v17 = Integer integer=136
+    v18 = Integer integer=153
+    v19 = Integer integer=170
+    v20 = Double number=0.25
+    v21 = Double number=1.25
+    v22 = Double number=2.25
+    v23 = Double number=3.25
+    v24 = Double number=4.25
+    v25 = Double number=5.25
+    v26 = Double number=6.25
+    v27 = Double number=7.25
+    v28 = Double number=8.25
+    v29 = Double number=9.25
+    v30 = Double number=10.25
+    v31 = Double number=11.25
+    v32 = Double number=12.25
+    v33 = Double number=13.25
+    v34 = BitXor v6, v10
+    v35 = BitXor v7, v11
+    v36 = BitXor v8, v12
+    v37 = BitXor v9, v13
+    v38 = BitXor v6, v14
+    v39 = BitXor v7, v15
+    v40 = BitXor v8, v16
+    v41 = BitXor v9, v17
+    v42 = BitXor v6, v18
+    v43 = BitXor v7, v19
+    v44 = Add v6, v20
+    v45 = Add v7, v21
+    v46 = Add v8, v22
+    v47 = Add v9, v23
+    v48 = Add v6, v24
+    v49 = Add v7, v25
+    v50 = Add v8, v26
+    v51 = Add v9, v27
+    v52 = Add v6, v28
+    v53 = Add v7, v29
+    v54 = Add v8, v30
+    v55 = Add v9, v31
+    v56 = Add v6, v32
+    v57 = Add v7, v33
+    v58 = CallDirect v0, v0, v0 function=f2
+    v59 = CallDirect v0, v0, v0 function=f3
+    v60 = Add v34, v35
+    v61 = Add v60, v36
+    v62 = Add v61, v37
+    v63 = Add v62, v38
+    v64 = Add v63, v39
+    v65 = Add v64, v40
+    v66 = Add v65, v41
+    v67 = Add v66, v42
+    v68 = Add v67, v43
+    v69 = Add v68, v44
+    v70 = Add v69, v45
+    v71 = Add v70, v46
+    v72 = Add v71, v47
+    v73 = Add v72, v48
+    v74 = Add v73, v49
+    v75 = Add v74, v50
+    v76 = Add v75, v51
+    v77 = Add v76, v52
+    v78 = Add v77, v53
+    v79 = Add v78, v54
+    v80 = Add v79, v55
+    v81 = Add v80, v56
+    v82 = Add v81, v57
+    v83 = Add v82, v58
+    v84 = Add v83, v59
+    Return v84
+}
+function f2 name="indexOf" role=Library flags=[HasThis] length=1 enclosingRuntimeFunction=ArraySearchIndexOf thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToNumeric v0
+    Return v3
+}
+function f3 name="includes" role=Library flags=[HasThis] length=1 enclosingRuntimeFunction=ArraySearchIncludes thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToString v0
+    Return v3
+}

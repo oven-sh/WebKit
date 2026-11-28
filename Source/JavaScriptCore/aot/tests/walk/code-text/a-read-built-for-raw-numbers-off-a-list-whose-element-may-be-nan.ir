@@ -1,0 +1,22 @@
+# the maker names raw doubles, but an element that may be NaN at run time sends the birth its slow way, where the list is born boxed: the name of the maker proves no kind
+# RUN: verify-code
+# CHECK: InvalidGuard: {{*}}an access names a kind of storage that a maker of its list is not surely born with
+# -- code
+# code f0:Body {
+#   constants:
+#     v2: 1 @JSValue = Integer integer=1
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v3: int[0, 1] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: number @Double = Div v3, v3 form=CheckedIntegers
+#     v5: Array @Cell = NewArray v4, v4 contents=anything arrayStorage=Double traits=[mayCollect, mayTouchMemory]
+#     v6: undefined|number @JSValue = GetArrayElement v5, v3 arrayStorage=Double level=Proven [keyIsIntegral] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     Return v6
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="reads" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+entry module=m0

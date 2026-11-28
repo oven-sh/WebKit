@@ -33,8 +33,7 @@
 #include <WebCore/CSSValueTypes.h>
 #include <wtf/Markable.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // The following color kinds are forward declared and stored in UniqueRefs to
 // avoid unnecessarily growing the size of Color for the uncommon cases.
@@ -155,11 +154,11 @@ public:
 
     bool operator==(const Color&) const;
 
-    bool LEGACY_NODELETE isResolved() const;
+    NODELETE bool isResolved() const;
     std::optional<ResolvedColor> resolved() const;
-    bool LEGACY_NODELETE isKeyword() const;
+    NODELETE bool isKeyword() const;
     std::optional<KeywordColor> keyword() const;
-    bool LEGACY_NODELETE isHex() const;
+    NODELETE bool isHex() const;
     std::optional<HexColor> hex() const;
 
     // Return an absolute color if possible, otherwise an invalid color.
@@ -182,6 +181,7 @@ private:
 
 WebCore::Color createColor(const Color&, PlatformColorResolutionState&);
 bool containsCurrentColor(const Color&);
+// NOTE: color scheme dependant color also includes AccentColor.
 bool containsColorSchemeDependentColor(const Color&);
 
 template<> struct Serialize<Color> { void operator()(StringBuilder&, const SerializationContext&, const Color&); };
@@ -189,8 +189,7 @@ template<> struct ComputedStyleDependenciesCollector<Color> { void operator()(Co
 template<> struct CSSValueChildrenVisitor<Color> { IterationStatus operator()(NOESCAPE const Function<IterationStatus(CSSValue&)>&, const Color&); };
 template<> struct DeprecatedCSSOMValueCreation<Color> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, CSSStyleDeclaration&, const Color&); };
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS
 
 namespace WTF {
 

@@ -1,0 +1,202 @@
+# A fixed loop whose turn takes nothing does not run to its count.
+# -- source: main.js
+# function make(text, flags) { return new RegExp(text + "(?:)".repeat(1 + (Math.random() > 2)), flags); }
+# const subject = "a".repeat(499);
+# print(subject.replace(make("()\\1{4000000000}", "g"), "-").length);
+# print(subject.replace(make("(b*)\\1{4000000000}", "g"), "-").length);
+# print(subject.replace(make("(?<=()\\1{4000000000})", "g"), "-").length);
+# print(subject.replace(make("(?<=\\1{4000000000}())", "g"), "-").length);
+# print(JSON.stringify(make("(ab)\\1{3}c").exec("xababababc")));
+# print(JSON.stringify(make("(a?)\\1{3}c").exec("aac")));
+# print(JSON.stringify(make("(?<=(a)\\1{2})c").exec("aaac")));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: 999
+# CHECK-NEXT: 999
+# CHECK-NEXT: 999
+# CHECK-NEXT: 999
+# CHECK-NEXT: ["ababababc","ab"]
+# CHECK-NEXT: ["c",""]
+# CHECK-NEXT: ["c","a"]
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/RegExpStringIteratorPrototype.ts" displayPath="/$bun/js/engine/RegExpStringIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = String string="a" @143
+    v3 = PropGet v2 key="repeat" @143
+    v4 = Integer integer=499 @154
+    v5 = Call v3, v2, v4 calleeKey="repeat" calleeName="repeat" @147
+    v6 = Builtin builtin=GlobalThis @160
+    v7 = PropGet v6 key="print" [isFreeName] @160
+    v8 = PropGet v5 key="replace" @166
+    v9 = String string="()\\1{4000000000}" @187
+    v10 = String string="g" @208
+    v11 = Call v1, -, v9, v10 calleeName="make" @182
+    v12 = String string="-" @214
+    v13 = Call v8, v5, v11, v12 calleeKey="replace" calleeName="subject.replace" @174
+    v14 = PropGet v13 key="length" @217
+    v15 = Call v7, -, v14 calleeName="print" @160
+    v16 = Builtin builtin=GlobalThis @228
+    v17 = PropGet v16 key="print" [isFreeName] @228
+    v18 = PropGet v5 key="replace" @234
+    v19 = String string="(b*)\\1{4000000000}" @255
+    v20 = String string="g" @278
+    v21 = Call v1, -, v19, v20 calleeName="make" @250
+    v22 = String string="-" @284
+    v23 = Call v18, v5, v21, v22 calleeKey="replace" calleeName="subject.replace" @242
+    v24 = PropGet v23 key="length" @287
+    v25 = Call v17, -, v24 calleeName="print" @228
+    v26 = Builtin builtin=GlobalThis @298
+    v27 = PropGet v26 key="print" [isFreeName] @298
+    v28 = PropGet v5 key="replace" @304
+    v29 = String string="(?<=()\\1{4000000000})" @325
+    v30 = String string="g" @351
+    v31 = Call v1, -, v29, v30 calleeName="make" @320
+    v32 = String string="-" @357
+    v33 = Call v28, v5, v31, v32 calleeKey="replace" calleeName="subject.replace" @312
+    v34 = PropGet v33 key="length" @360
+    v35 = Call v27, -, v34 calleeName="print" @298
+    v36 = Builtin builtin=GlobalThis @371
+    v37 = PropGet v36 key="print" [isFreeName] @371
+    v38 = PropGet v5 key="replace" @377
+    v39 = String string="(?<=\\1{4000000000}())" @398
+    v40 = String string="g" @424
+    v41 = Call v1, -, v39, v40 calleeName="make" @393
+    v42 = String string="-" @430
+    v43 = Call v38, v5, v41, v42 calleeKey="replace" calleeName="subject.replace" @385
+    v44 = PropGet v43 key="length" @433
+    v45 = Call v37, -, v44 calleeName="print" @371
+    v46 = Builtin builtin=GlobalThis @444
+    v47 = PropGet v46 key="print" [isFreeName] @444
+    v48 = Builtin builtin=JSON @450
+    v49 = PropGet v48 key="stringify" @450
+    v50 = Convert v49 declared={type=builtin(JSONStringify) flags=[IsExpected]} @450
+    v51 = String string="(ab)\\1{3}c" @470
+    v52 = Call v1, -, v51 calleeName="make" @465
+    v53 = PropGet v52 key="exec" @483
+    v54 = String string="xababababc" @490
+    v55 = Call v53, v52, v54 calleeKey="exec" calleeName="exec" @485
+    v56 = Call v50, v48, v55 calleeKey="stringify" calleeName="JSON.stringify" @455
+    v57 = Call v47, -, v56 calleeName="print" @444
+    v58 = Builtin builtin=GlobalThis @507
+    v59 = PropGet v58 key="print" [isFreeName] @507
+    v60 = Builtin builtin=JSON @513
+    v61 = PropGet v60 key="stringify" @513
+    v62 = Convert v61 declared={type=builtin(JSONStringify) flags=[IsExpected]} @513
+    v63 = String string="(a?)\\1{3}c" @533
+    v64 = Call v1, -, v63 calleeName="make" @528
+    v65 = PropGet v64 key="exec" @546
+    v66 = String string="aac" @553
+    v67 = Call v65, v64, v66 calleeKey="exec" calleeName="exec" @548
+    v68 = Call v62, v60, v67 calleeKey="stringify" calleeName="JSON.stringify" @518
+    v69 = Call v59, -, v68 calleeName="print" @507
+    v70 = Builtin builtin=GlobalThis @563
+    v71 = PropGet v70 key="print" [isFreeName] @563
+    v72 = Builtin builtin=JSON @569
+    v73 = PropGet v72 key="stringify" @569
+    v74 = Convert v73 declared={type=builtin(JSONStringify) flags=[IsExpected]} @569
+    v75 = String string="(?<=(a)\\1{2})c" @589
+    v76 = Call v1, -, v75 calleeName="make" @584
+    v77 = PropGet v76 key="exec" @606
+    v78 = String string="aaac" @613
+    v79 = Call v77, v76, v78 calleeKey="exec" calleeName="exec" @608
+    v80 = Call v74, v72, v79 calleeKey="stringify" calleeName="JSON.stringify" @574
+    v81 = Call v71, -, v80 calleeName="print" @563
+    v82 = Undefined @563
+    Return v82 @563
+}
+function f1 name="make" module=m0 position=23 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    v2 = Builtin builtin=RegExp @63
+    v3 = String string="(?:)" @77
+    v4 = PropGet v3 key="repeat" @77
+    v5 = Integer integer=1 @91
+    v6 = Builtin builtin=Math @96
+    v7 = PropGet v6 key="random" @96
+    v8 = Convert v7 declared={type=builtin(MathRandom) flags=[IsExpected]} @96
+    v9 = Call v8, v6 calleeKey="random" calleeName="Math.random" @101
+    v10 = Integer integer=2 @112
+    v11 = Greater v9, v10 @96
+    v12 = Add v5, v11 @91
+    v13 = Call v4, v3, v12 calleeKey="repeat" calleeName="repeat" @84
+    v14 = Add v0, v13 @70
+    v15 = Construct v2, -, v14, v1 calleeName="RegExp" @63 @59
+    Return v15 @59
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f3 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+function f4 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=RegExpStringIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b5(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @388
+    v5 = StepMatchIterator v4 @388
+    v6 = TypeTest v5 testedType=null @425
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0) @425
+  b2(v7):
+    v8 = Undefined @462
+    v9 = Boolean boolean=true @473
+    v10 = Convert v9 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @442
+    v11 = CreateIteratorResult v8, v10 @442
+    Jump -> next b4(v11) @442
+  b3(v12):
+    v13 = NarrowByTest v5, v12 @425
+    v14 = Boolean @508
+    v15 = Convert v14 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @481
+    v16 = CreateIteratorResult v13, v15 @481
+    Jump -> next b4(v16) @481
+  b4(v17):
+    Return v17 @481
+  b5(v18):
+    v19 = TypeTest v0 testedType=object @124
+    Branch v19 -> taken b6(| 0), notTaken b7(| 0) @124
+  b6(v20):
+    v21 = ThrowNewError errorKind=TypeError message="%RegExpStringIteratorPrototype%.next requires |this| to be a RegExp String Iterator instance" @250
+    Unreachable @250
+  b7(v22):
+    v23 = ThrowNewError errorKind=TypeError message="%RegExpStringIteratorPrototype%.next requires |this| to be an Object" @153
+    Unreachable @153
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f3
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
+runtimefunction id=RegExpStringIteratorPrototypeNext function=f4 visibility=Private

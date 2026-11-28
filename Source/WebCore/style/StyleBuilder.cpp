@@ -62,14 +62,13 @@
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Builder);
 
 static const CSSPropertyID firstLowPriorityProperty = static_cast<CSSPropertyID>(std::to_underlying(lastHighPriorityProperty) + 1);
 
-inline bool LEGACY_NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
+NODELETE inline bool isValidVisitedLinkProperty(CSSPropertyID id)
 {
     switch (id) {
     case CSSPropertyID::BackgroundColor:
@@ -96,12 +95,12 @@ inline bool LEGACY_NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
     return false;
 }
 
-static const StyleProperties* LEGACY_NODELETE positionTryFallbackProperties(const BuilderContext& context)
+NODELETE static const StyleProperties* positionTryFallbackProperties(const BuilderContext& context)
 {
     return context.positionTryFallback ? context.positionTryFallback->properties.get() : nullptr;
 }
 
-static bool LEGACY_NODELETE isInheritedCustomProperty(const CSSRegisteredCustomProperty* registered)
+NODELETE static bool isInheritedCustomProperty(const CSSRegisteredCustomProperty* registered)
 {
     return !registered || registered->inherits;
 }
@@ -133,6 +132,9 @@ void Builder::applyHighlightInheritance()
     ASSERT(m_state->isBuildingHighlightStyle());
 
     BuilderGenerated::applyHighlightInheritAllProperties(m_state);
+
+    if (CheckedPtr parentHighlightStyle = m_state->parentHighlightStyle(); parentHighlightStyle && parentHighlightStyle->hasAuthorHighlightColors())
+        m_state->style().setHasAuthorHighlightColors();
 }
 
 // Top priority properties affect resolution of high priority properties.
@@ -484,8 +486,8 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
 
     apply(valueType);
 
-    if (!isAnyRevert)
-        m_state->disableNativeAppearanceIfNeeded(id, cascadeOrigin);
+    if (!isAnyRevert && (cascadeOrigin == PropertyCascade::Origin::Author || cascadeOrigin == PropertyCascade::Origin::Quirk))
+        m_state->didApplyAuthorProperty(id);
 
     if (!isUnset && !isAnyRevert && m_state->isCurrentPropertyInvalidAtComputedValueTime()) {
         // https://drafts.csswg.org/css-variables-2/#invalid-variables
@@ -842,6 +844,10 @@ const PropertyCascade* Builder::ensureRollbackCascadeForRevert()
     auto rollbackOrigin = m_state->m_currentProperty->origin;
 
     switch (rollbackOrigin) {
+    case PropertyCascade::Origin::Quirk:
+        // Reverting a quirk declaration falls back to everything below the quirk origin.
+        rollbackOrigin = PropertyCascade::Origin::PositionFallback;
+        break;
     case PropertyCascade::Origin::PositionFallback:
         // "Similar to the Animation Origin, use of the revert value acts as if the property was part of the Author Origin."
         // https://drafts.csswg.org/css-anchor-position-1/#fallback-rule
@@ -908,5 +914,4 @@ auto Builder::makeRollbackCascadeKeyForRevertRule(const PropertyCascade& parentC
     return { &parentCascade, 0, 0, 0, true };
 }
 
-}
 }

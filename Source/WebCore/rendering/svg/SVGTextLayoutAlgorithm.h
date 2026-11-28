@@ -72,6 +72,7 @@ private:
         bool isAddressable : 1 { false };
         bool isClusterStart : 1 { false };
         bool startsAnchoredChunk : 1 { false };
+        bool startsShapingRun : 1 { false };
         bool isHidden : 1 { false };
         bool isPositioned : 1 { false };
         bool isOnPath : 1 { false };
@@ -115,18 +116,20 @@ private:
     void collectTextBoxes();
     void computeCSSPositions();
     void resolveCharacterPositioning();
-    void LEGACY_NODELETE adjustRelativePositions();
+    void computeShapingRunStarts();
+    void measureText();
+    NODELETE void adjustRelativePositions();
     void applyTextLength();
-    void LEGACY_NODELETE adjustAbsolutePositions();
+    NODELETE void adjustAbsolutePositions();
     void applyAnchoring();
     void positionOnPaths();
     void buildFragments();
 
-    float LEGACY_NODELETE anchorShift(std::span<const unsigned> chunk) const;
-    std::pair<float, float> LEGACY_NODELETE extent(std::span<const unsigned> characterIndexes) const;
-    float LEGACY_NODELETE glyphLength(const Character&) const;
-    const SVGTextMetrics& LEGACY_NODELETE metrics(const Character&) const;
-    unsigned LEGACY_NODELETE typographicCharacterCount(std::span<const unsigned> characterIndexes) const;
+    NODELETE float anchorShift(std::span<const unsigned> chunk) const;
+    NODELETE std::pair<float, float> extent(std::span<const unsigned> characterIndexes) const;
+    NODELETE float glyphLength(const Character&) const;
+    NODELETE const SVGTextMetrics& metrics(const Character&) const;
+    NODELETE unsigned typographicCharacterCount(std::span<const unsigned> characterIndexes) const;
 
     const CheckedRef<const Layout::ElementBox> m_root;
     const InlineDisplay::Boxes& m_displayBoxes;

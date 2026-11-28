@@ -1,0 +1,82 @@
+# function grows() { return new Array(0); }   function called() { return Array(0); }   function one() { return new Array(1); }
+# function remembers(a, b) { const made = $newArrayLike(0, undefined); const product = (a | 0) * (b | 0); if (!$tryPutByValDirect(made, 0, product) && !$tryPutIndex(made, 0, product)) $putByValDirect(made, 0, product); return made; }
+# A written length of nothing is a list that will grow. The one stub that bears a list of a length gives room for the length alone: one place, so that the second push moved the list; the birth that remembers at its site did the same.
+# Both give it the room of `[]`: five places. A written length of one keeps the one stub and its one place.
+# REQUIRES: as-written
+# RUN: bytes f1 mechanisms=all
+# CHECK: Call Stub NewArrayWithLength.
+# REQUIRES(CALLED): as-written
+# RUN(CALLED): bytes f2 mechanisms=all
+# CALLED: Call Stub NewArrayWithLength.
+# REQUIRES(ONE): as-written
+# RUN(ONE): bytes f3 mechanisms=all
+# ONE: Call Stub NewArrayOfLength.
+# REQUIRES(SITE): as-written
+# RUN(SITE): bytes f4 mechanisms=all
+# SITE: Call Stub NewArrayWithLengthAtSite.
+# THE ROOM ITSELF: the elements lie where they lay until five are in: true; a list of one place has moved: false.
+# RUN(ROOM): run-in-shell mechanisms=all globalThis.sink = (grows, called, one, remembers) => { const where = list => /butterfly (0x[0-9a-f]+)/.exec(describe(list))[1]; print([grows, called, one, remembers].map(make => { const list = make(2, 3), at = where(list); while (list.length < 5) list.push(7); return where(list) === at; }).join(" ")); };
+# ROOM: true true false true
+# ROOM-NEXT: exited with 0
+# RUN(ANSWER): run-in-shell globalThis.sink = (grows, called, one, remembers) => { for (const make of [grows, called, one, remembers]) { const list = make(65536, 65536); const was = list.length; for (let i = 0; i < 9; i++) list.push(i); print(was + ":" + list.length + ":" + list.join()); } };
+# ANSWER: 0:9:0,1,2,3,4,5,6,7,8
+# ANSWER-NEXT: 0:9:0,1,2,3,4,5,6,7,8
+# ANSWER-NEXT: 1:10:,0,1,2,3,4,5,6,7,8
+# ANSWER-NEXT: 1:10:4294967296,0,1,2,3,4,5,6,7,8
+# ANSWER-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/aot/written-lists.ts" displayPath="/$bun/aot/written-lists.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="grows" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = Integer
+    v2 = Construct v0, -, v1 calleeName="Array"
+    Return v2
+}
+function f2 name="called" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = Integer
+    v2 = Call v0, -, v1 calleeName="Array"
+    Return v2
+}
+function f3 name="one" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = Integer integer=1
+    v2 = Construct v0, -, v1 calleeName="Array"
+    Return v2
+}
+function f4 name="remembers" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Undefined
+    v4 = NewArrayLike v2, v3 @12
+    v5 = BitOr v0, v2
+    v6 = BitOr v1, v2
+    v7 = Mul v5, v6
+    v8 = TryPutByValDirect v4, v2, v7
+    Branch v8 -> taken b3(), notTaken b1()
+  b1():
+    v9 = TryPutIndex v4, v2, v7
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    ElemDefine v4, v2, v7
+    Jump -> next b3()
+  b3():
+    Return v4
+}

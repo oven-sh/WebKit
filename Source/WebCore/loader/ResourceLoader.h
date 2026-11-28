@@ -86,7 +86,7 @@ public:
     virtual const ResourceRequest& iOSOriginalRequest() const { return request(); }
 #endif
 
-    WEBCORE_EXPORT FrameLoader* LEGACY_NODELETE frameLoader() const;
+    NODELETE WEBCORE_EXPORT FrameLoader* frameLoader() const;
     DocumentLoader* documentLoader() const { return m_documentLoader.get(); }
     const ResourceRequest& originalRequest() const LIFETIME_BOUND { return m_originalRequest; }
 
@@ -113,7 +113,7 @@ public:
     const FragmentedSharedBuffer* resourceData() const;
     void clearResourceData();
     
-    virtual bool LEGACY_NODELETE isSubresourceLoader() const;
+    NODELETE virtual bool isSubresourceLoader() const;
 
     virtual void willSendRequest(ResourceRequest&&, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& callback);
     virtual void didSendData(unsigned long long bytesSent, unsigned long long totalBytesToBeSent);
@@ -121,6 +121,9 @@ public:
     virtual void didReceiveData(const SharedBuffer&, long long encodedDataLength, DataPayloadType);
     virtual void didReceiveBuffer(const FragmentedSharedBuffer&, long long encodedDataLength, DataPayloadType);
     virtual void didFinishLoading(const NetworkLoadMetrics&);
+#if USE(QUICK_LOOK)
+    virtual void didFinishQuickLookLoading(URL&& temporaryQuickLookFileURL);
+#endif
     virtual void didFail(const ResourceError&);
 
     WEBCORE_EXPORT void didBlockAuthenticationChallenge();
@@ -143,7 +146,7 @@ public:
     bool shouldSniffContent() const { return m_options.sniffContent == ContentSniffingPolicy::SniffContent; }
     ContentEncodingSniffingPolicy contentEncodingSniffingPolicy() const { return m_options.contentEncodingSniffingPolicy; }
     WEBCORE_EXPORT bool isAllowedToAskUserForCredentials() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE shouldIncludeCertificateInfo() const;
+    NODELETE WEBCORE_EXPORT bool shouldIncludeCertificateInfo() const;
 
     virtual CachedResource* cachedResource() const { return nullptr; }
 
@@ -161,17 +164,17 @@ public:
     void unschedule(WTF::SchedulePair&);
 #endif
 
-    WEBCORE_EXPORT LocalFrame* LEGACY_NODELETE frame() const;
+    NODELETE WEBCORE_EXPORT LocalFrame* frame() const;
 
     const ResourceLoaderOptions& options() const LIFETIME_BOUND { return m_options; }
 
     const ResourceRequest& deferredRequest() const LIFETIME_BOUND { return m_deferredRequest; }
     ResourceRequest takeDeferredRequest() { return std::exchange(m_deferredRequest, { }); }
 
-    bool LEGACY_NODELETE isPDFJSResourceLoad() const;
+    NODELETE bool isPDFJSResourceLoad() const;
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    WEBCORE_EXPORT ResourceMonitor* LEGACY_NODELETE resourceMonitorIfExists();
+    NODELETE WEBCORE_EXPORT ResourceMonitor* resourceMonitorIfExists();
 #endif
 
 protected:
@@ -183,6 +186,7 @@ protected:
     bool wasCancelled() const { return m_cancellationStatus >= Cancelled; }
 
     void setReferrerPolicy(ReferrerPolicy referrerPolicy) { m_options.referrerPolicy = referrerPolicy; }
+    void setStoredCredentialsPolicy(StoredCredentialsPolicy storedCredentialsPolicy) { m_options.storedCredentialsPolicy = storedCredentialsPolicy; }
     ReferrerPolicy referrerPolicy() const { return m_options.referrerPolicy; }
 
 #if PLATFORM(COCOA)

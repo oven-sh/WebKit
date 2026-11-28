@@ -74,6 +74,7 @@ void Policy::disable(PolicySwitch policySwitch)
         loops.unrolls = false;
         loops.pollsBetweenStretches = false;
         break;
+    CLEAR_FIELD_CASE(PromoteLoopMemory, loops.promotesMemory);
     CLEAR_FIELD_CASE(BitTests, switchLowering.usesBitTests);
     CLEAR_FIELD_CASE(KnownRanges, knownProperties.trustsKnownRanges);
     CLEAR_FIELD_CASE(KnownDereferenceableBytes, knownProperties.trustsKnownDereferenceableBytes);
@@ -252,6 +253,7 @@ static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& l
     PRINT_IF_SET(loops, clampsLoopBounds);
     PRINT_IF_SET(loops, pollsBetweenStretches);
     PRINT_IF_SET(loops, vectorizes);
+    PRINT_IF_SET(loops, promotesMemory);
     PRINT_IF_SET(loops, unrolls);
     PRINT_IF_DIFFERENT(loops, minFrequencyOfUnrolledLoop);
     PRINT_IF_SET(loops, hoistsOnlyFromLikelyPaths);
@@ -280,7 +282,7 @@ static void dumpValidation(PrintStream& out, CommaPrinter& comma, const Validati
     PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
     PRINT_IF_SET(validation, logsMovedLoads);
     PRINT_IF_SET(validation, logsDecidedComparisons);
-    PRINT_IF_SET(validation, keepsOriginsOfAccessesThatTakeTraps);
+    PRINT_IF_SET(validation, keepsOriginsOfTrappingAccesses);
 }
 
 #undef PRINT_IF_DIFFERENT

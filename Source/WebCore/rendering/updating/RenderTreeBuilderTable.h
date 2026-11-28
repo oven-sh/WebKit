@@ -26,6 +26,7 @@
 #pragma once
 
 #include "RenderTreeUpdater.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -41,17 +42,17 @@ class RenderTreeBuilder;
 class RenderTreeBuilder::Table {
     WTF_MAKE_TZONE_ALLOCATED(Table);
 public:
-    Table(RenderTreeBuilder&);
+    NODELETE Table(RenderTreeBuilder&);
 
-    RenderElement& findOrCreateParentForChild(RenderTableRow& parent, const RenderObject& child, RenderObject*& beforeChild);
-    RenderElement& findOrCreateParentForChild(RenderTableSection& parent, const RenderObject& child, RenderObject*& beforeChild);
-    RenderElement& findOrCreateParentForChild(RenderTable& parent, const RenderObject& child, RenderObject*& beforeChild);
+    CheckedRef<RenderElement> findOrCreateParentForChild(RenderTableRow& parent, const RenderObject& child, RenderObject*& beforeChild);
+    CheckedRef<RenderElement> findOrCreateParentForChild(RenderTableSection& parent, const RenderObject& child, RenderObject*& beforeChild);
+    CheckedRef<RenderElement> findOrCreateParentForChild(RenderTable& parent, const RenderObject& child, RenderObject*& beforeChild);
 
     void attach(RenderTable& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
     void attach(RenderTableSection& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
     void attach(RenderTableRow& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
 
-    bool LEGACY_NODELETE childRequiresTable(const RenderElement& parent, const RenderObject& child);
+    NODELETE bool childRequiresTable(const RenderElement& parent, const RenderObject& child);
 
     void collapseAndDestroyAnonymousSiblingCells(const RenderTableCell& willBeDestroyed);
     void collapseAndDestroyAnonymousSiblingRows(const RenderTableRow& willBeDestroyed);

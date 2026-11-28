@@ -30,6 +30,7 @@
 #include <JavaScriptCore/GenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
@@ -92,7 +93,7 @@ bool DecompressionStreamDecoder::didInflateFinish(int result) const
 }
 
 // See https://www.zlib.net/manual.html#Constants
-static bool LEGACY_NODELETE didInflateFail(int result)
+NODELETE static bool didInflateFail(int result)
 {
     return result != Z_OK && result != Z_STREAM_END && result != Z_BUF_ERROR;
 }
@@ -102,12 +103,12 @@ bool DecompressionStreamDecoder::didInflateContainExtraBytes(int result) const
     return result == Z_STREAM_END && m_zstream.getPlatformStream().avail_in;
 }
 
-static bool LEGACY_NODELETE didInflateIncompleteInput(int result, bool didFinish)
+NODELETE static bool didInflateIncompleteInput(int result, bool didFinish)
 {
     return result == Z_BUF_ERROR && didFinish;
 }
 
-static ZStream::Algorithm LEGACY_NODELETE decompressionAlgorithm(Formats::CompressionFormat format)
+NODELETE static ZStream::Algorithm decompressionAlgorithm(Formats::CompressionFormat format)
 {
     switch (format) {
     case Formats::CompressionFormat::Brotli:
@@ -164,7 +165,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> DecompressionStreamDecoder::decompressZlib(st
             m_didDetectExtraBytes = true;
             shouldDecompress = false;
             output.shrink(allocateSize - m_zstream.getPlatformStream().avail_out);
-            storage.append(output);
+            storage.append(borrow(output)->span());
             break;
         }
 
@@ -176,7 +177,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> DecompressionStreamDecoder::decompressZlib(st
                 allocateSize *= 2;
         }
 
-        storage.append(output);
+        storage.append(borrow(output)->span());
     }
 
     RefPtr decompressedData = storage.takeBufferAsArrayBuffer();

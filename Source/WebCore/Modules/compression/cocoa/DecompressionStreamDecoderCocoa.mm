@@ -27,6 +27,7 @@
 
 #include "ExceptionOr.h"
 #include <compression.h>
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
@@ -36,7 +37,7 @@ namespace WebCore {
 //
 // When src_size is empty we can normally exit performing compression, but during the flush
 // step we may have data buffered and will need to continue to keep flushing out the rest.
-bool LEGACY_NODELETE DecompressionStreamDecoder::didInflateFinishAppleCompressionFramework(int result)
+NODELETE bool DecompressionStreamDecoder::didInflateFinishAppleCompressionFramework(int result)
 {
     return !m_compressionStream.getPlatformStream().src_size && (!m_didFinish || (m_didFinish && result == COMPRESSION_STATUS_END));
 }
@@ -81,7 +82,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> DecompressionStreamDecoder::decompressAppleCo
             m_didDetectExtraBytes = true;
             shouldDecompress = false;
             output.shrink(allocateSize - m_compressionStream.getPlatformStream().dst_size);
-            storage.append(output);
+            storage.append(borrow(output)->span());
             break;
         }
 
@@ -93,7 +94,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> DecompressionStreamDecoder::decompressAppleCo
                 allocateSize *= 2;
         }
 
-        storage.append(output);
+        storage.append(borrow(output)->span());
     }
 
     RefPtr decompressedData = storage.takeBufferAsArrayBuffer();

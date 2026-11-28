@@ -1,0 +1,70 @@
+# function weigh(m, xs) { let s = 0; for (let i = 0; i < xs.length; i++) s += m[0] * xs[i] + m[1]; return s; }
+# m[0] and m[1] are asked for and read in front of the typed copy. An element that is shown to be there is no hole: the read bears no word that a hole is read as NaN. With that word left on it the checks that hold the number against memory
+# (a StrictEq, which tells NaN from undefined) were refused by the verifier: no build under those checks and the verifier together.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isPresent, admitsInt32Storage]
+# CHECK-NOT: isPresent, readsHoleAsNaN
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="weigh" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = PropGet v1 key="length"
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Integer
+    v10 = ElemGet v0, v9
+    v11 = ElemGet v1, v5
+    v12 = Mul v10, v11
+    v13 = Integer integer=1
+    v14 = ElemGet v0, v13
+    v15 = Add v12, v14
+    v16 = Add v4, v15
+    v17 = Increment v5
+    Jump -> next b1(v16, v17)
+  b3():
+    Return v4
+}
+function f2 name="stores" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>, v2: undefined|null|Array<number>):
+    v3 = Integer
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v2 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Integer
+    v11 = ElemGet v0, v10
+    v12 = ElemGet v2, v6
+    v13 = Mul v11, v12
+    v14 = Integer integer=1
+    v15 = ElemGet v0, v14
+    v16 = Add v13, v15
+    v17 = Add v5, v16
+    v18 = Integer
+    ElemSet v1, v18, v17
+    v20 = Increment v6
+    Jump -> next b1(v17, v20)
+  b3():
+    Return v5
+}

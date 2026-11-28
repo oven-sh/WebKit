@@ -33,12 +33,14 @@ namespace WebCore {
 
 class LineSelection {
 public:
-    static float logicalTop(const InlineIterator::LineBox& lineBox) { return lineBox.contentLogicalTopAdjustedForPrecedingLineBox(); }
-    static float logicalBottom(const InlineIterator::LineBox& lineBox) { return lineBox.contentLogicalBottomAdjustedForFollowingLineBox(); }
+    // The line box grown to fit overflowing content. The caret and hit-testing use the content instead (webkit.org/b/210622),
+    // see LineBox::contentAreaLogicalRectAdjustedForAdjacentLineBoxes.
+    static float logicalTop(const InlineIterator::LineBox& lineBox) { return lineBox.selectionLogicalTop(); }
+    static float logicalBottom(const InlineIterator::LineBox& lineBox) { return lineBox.selectionLogicalBottom(); }
 
     static FloatRect logicalRect(const InlineIterator::LineBox& lineBox)
     {
-        return { FloatPoint { lineBox.contentLogicalLeft(), lineBox.contentLogicalTopAdjustedForPrecedingLineBox() }, FloatPoint { lineBox.contentLogicalRight(), lineBox.contentLogicalBottomAdjustedForFollowingLineBox() } };
+        return { FloatPoint { lineBox.contentLogicalLeft(), lineBox.selectionLogicalTop() }, FloatPoint { lineBox.contentLogicalRight(), lineBox.selectionLogicalBottom() } };
     }
 
     static FloatRect physicalRect(const InlineIterator::LineBox& lineBox)
@@ -46,8 +48,17 @@ public:
         auto physicalRect = logicalRect(lineBox);
         if (!lineBox.isHorizontal())
             physicalRect = physicalRect.transposedRect();
-        protect(lineBox.formattingContextRoot())->flipForWritingMode(physicalRect);
+        protect(lineBox.formattingContextRoot())->blockStartRelativeToPhysical(physicalRect);
         return physicalRect;
+    }
+
+    // Selection painters, the text backgrounds and the gaps between and around them, meet at edges taken from the same float
+    // layout values. Truncating each edge, never a size, gives all of them the same LayoutUnit edge to snap to a device pixel.
+    static LayoutRect logicalRectForPainting(const FloatRect& logicalRect)
+    {
+        auto left = LayoutUnit { logicalRect.x() };
+        auto top = LayoutUnit { logicalRect.y() };
+        return { left, top, std::max(LayoutUnit { }, LayoutUnit { logicalRect.maxX() } - left), std::max(LayoutUnit { }, LayoutUnit { logicalRect.maxY() } - top) };
     }
 
     static float logicalTopAdjustedForPrecedingBlock(const InlineIterator::LineBox& lineBox)
@@ -55,7 +66,7 @@ public:
         if (auto blockLevelBox = lineBox.blockLevelBox())
             return blockLevelBox->logicalTop();
         // FIXME: Move adjustEnclosingTopForPrecedingBlock from RenderBlockFlow to here.
-        return protect(lineBox.formattingContextRoot())->adjustEnclosingTopForPrecedingBlock(LayoutUnit { lineBox.contentLogicalTopAdjustedForPrecedingLineBox() });
+        return protect(lineBox.formattingContextRoot())->adjustEnclosingTopForPrecedingBlock(LayoutUnit { logicalTop(lineBox) });
     }
 
     static RenderObject::HighlightState selectionState(const InlineIterator::LineBox& lineBox)

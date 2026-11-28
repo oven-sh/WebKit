@@ -1,0 +1,30 @@
+# If a store under a key that nobody knows kept every field of the layout, a name that only a type spells could be read out of the executable wherever an object is filled under names from outside
+# interface Reached { zzz..: number; qqq..?: string }  const reached: Reached = { zzz..: 1 };  reached[nameFromOutside()] = 2;  hold(reached);
+# The name comes from outside, so no text of the program is it. The store adds a property, as under any name that the layout does not declare.
+# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else.
+# RUN(KEPT): image Text
+# KEPT: 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a
+# RUN(GONE): image Text
+# GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+# RUN: run-in-shell globalThis.nameFromOutside = () => "q".repeat(32); globalThis.hold = o => { const all = Object.keys(o); let text = ""; for (let i = 0; i < all.length; i++) text += all[i][0]; print(text, o["q".repeat(32)]); };
+# CHECK: zq 2
+# CHECK-NEXT: exited with 0
+
+layout L0 fields=[{key="qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" declared={type=undefined|string} flags=[IsNeverWritten]}, {key="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="nameFromOutside" [isFreeName]
+    v4 = Call v3 calleeName="nameFromOutside"
+    v5 = Integer integer=2
+    ElemSet v1, v4, v5
+    v7 = PropGet v2 key="hold" [isFreeName]
+    v8 = Call v7, -, v1 calleeName="hold"
+    v9 = Undefined
+    Return v9
+}

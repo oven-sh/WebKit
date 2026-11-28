@@ -50,6 +50,7 @@ from webkitcorepy import unicode, Version
 from webkitpy.style.checkers.common import match, search, sub, subn
 from webkitpy.style.checkers.computed_style_inline_includes import ComputedStyleInlineIncludesChecker
 from webkitpy.style.checkers.inclusive_language import InclusiveLanguageChecker
+from webkitpy.style.checkers.license import LicenseChecker
 from webkitpy.common.memoized import memoized
 from webkitpy.common.version_name_map import VersionNameMap
 
@@ -887,23 +888,98 @@ def cleanse_comments(line):
     return _RE_PATTERN_CLEANSE_LINE_C_COMMENTS.sub('', line)
 
 
+# Matches the start of a C++ raw string literal, such as R"(, u8R"DL( or LR"(.
+# The delimiter has at most 16 characters and does not contain spaces,
+# parentheses or backslashes.
+_RE_PATTERN_RAW_STRING_START = re.compile(
+    r'^(?P<prefix>.*?)\b(?:R|u8R|uR|UR|LR)"(?P<delimiter>[^\s\\()]{0,16})\((?P<contents>.*)$')
+
+
+def is_in_cpp_string_or_comment(line):
+    """Does line terminate so, that the next symbol is in a string constant or in a //-comment.
+
+    Args:
+      line: is a partial line of code starting from the 0..n.
+
+    Returns:
+      True, if next character appended to 'line' is inside a
+      string constant or a //-comment.
+    """
+    if is_cpp_string(line):
+        return True
+    comment_position = line.find('//')
+    return comment_position != -1 and not is_cpp_string(line[:comment_position])
+
+
+def cleanse_raw_strings(lines):
+    """Replaces the contents of C++ raw string literals with "".
+
+    The contents of a raw string literal, such as R"DL(...)DL", may span
+    multiple lines and contain arbitrary text that should not be checked.
+    Each raw string literal is replaced with "", and each line inside a
+    multi-line raw string literal is replaced with "" indented like the
+    line that starts the literal, so that line numbers are preserved.
+    Code before the start and after the end of a raw string literal is kept.
+
+    Args:
+      lines: A list of lines of C++ source.
+
+    Returns:
+      A list of the same length as lines, with raw string contents removed.
+    """
+    lines_without_raw_strings = []
+    delimiter = None
+    indentation = ''
+    for line in lines:
+        if delimiter:
+            end = line.find(delimiter)
+            if end == -1:
+                lines_without_raw_strings.append(indentation + '""')
+                continue
+            line = indentation + '""' + line[end + len(delimiter):]
+            delimiter = None
+
+        # A line may contain several raw string literals.
+        while True:
+            matched = _RE_PATTERN_RAW_STRING_START.match(line)
+            if not matched or is_in_cpp_string_or_comment(matched.group('prefix')):
+                break
+            end_delimiter = ')' + matched.group('delimiter') + '"'
+            contents = matched.group('contents')
+            end = contents.find(end_delimiter)
+            if end == -1:
+                delimiter = end_delimiter
+                indentation = match(r'\s*', line).group(0)
+                line = matched.group('prefix') + '""'
+                break
+            line = matched.group('prefix') + '""' + contents[end + len(end_delimiter):]
+
+        lines_without_raw_strings.append(line)
+    return lines_without_raw_strings
+
+
 class CleansedLines(object):
     """Holds 3 copies of all lines with different preprocessing applied to them.
 
     1) elided member contains lines without strings and comments,
     2) lines member contains lines without comments, and
-    3) raw member contains all the lines without processing.
+    3) lines_without_raw_strings member contains the lines as written,
+       except for the contents of raw string literals.
     All these three members are of <type 'list'>, and of the same length.
     """
 
-    def __init__(self, lines):
+    def __init__(self, lines_without_raw_strings):
+        """Args:
+          lines_without_raw_strings: A list of lines of C++ source, with raw
+                                     string literals removed by cleanse_raw_strings().
+        """
         self.elided = []
         self.lines = []
-        self.raw_lines = lines
-        self._num_lines = len(lines)
-        for line_number in range(len(lines)):
-            self.lines.append(cleanse_comments(lines[line_number]))
-            elided = self.collapse_strings(lines[line_number])
+        self.lines_without_raw_strings = lines_without_raw_strings
+        self._num_lines = len(lines_without_raw_strings)
+        for line in lines_without_raw_strings:
+            self.lines.append(cleanse_comments(line))
+            elided = self.collapse_strings(line)
             self.elided.append(cleanse_comments(elided))
 
     def num_lines(self):
@@ -1088,6 +1164,48 @@ def check_for_unicode_replacement_characters(lines, error):
         if u'\ufffd' in line:
             error(line_number, 'readability/utf8', 5,
                   'Line contains invalid UTF-8 (or Unicode replacement character).')
+
+
+_RE_PATTERN_DIAGNOSTIC_PRAGMA_SCOPE = re.compile(
+    r'\b[A-Z0-9_]*(?:IGNORE|ALLOW)[A-Z0-9_]*_(BEGIN|END)\b'
+    r'|#\s*pragma\s+(?:clang|GCC)\s+diagnostic\s+(push|pop)\b')
+
+
+def check_for_unbalanced_diagnostic_pragmas(clean_lines, error):
+    """Logs an error for each diagnostic BEGIN / push without a matching END / pop in the
+    same file, and vice versa.
+
+    This covers macros such as IGNORE_WARNINGS_BEGIN / IGNORE_WARNINGS_END and
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN / WTF_ALLOW_UNSAFE_BUFFER_USAGE_END, as well as raw
+    '#pragma clang diagnostic push / pop'. Since the diagnostic state is a single stack, an
+    unmatched push in a header makes the END of any enclosing pair (e.g. in a header that
+    includes it) pop the wrong entry, leaking that pair's suppressions into the rest of the
+    translation unit.
+
+    Args:
+      clean_lines: A CleansedLines instance containing the file.
+      error: The function to call with any errors found.
+    """
+    unmatched_begin_line_numbers = []
+    in_macro_definition = False
+    for line_number in range(clean_lines.num_lines()):
+        line = clean_lines.elided[line_number]
+        # Macro definitions (e.g. the definition of IGNORE_WARNINGS_BEGIN itself) are not uses.
+        if in_macro_definition or match(r'\s*#\s*define\b', line):
+            in_macro_definition = line.rstrip().endswith('\\')
+            continue
+        for begin_or_end, push_or_pop in _RE_PATTERN_DIAGNOSTIC_PRAGMA_SCOPE.findall(line):
+            if begin_or_end == 'BEGIN' or push_or_pop == 'push':
+                unmatched_begin_line_numbers.append(line_number)
+            elif unmatched_begin_line_numbers:
+                unmatched_begin_line_numbers.pop()
+            else:
+                error(line_number, 'build/unbalanced_diagnostic_pragma', 5,
+                      'Diagnostic END / pop without a matching BEGIN / push in this file.')
+    for line_number in unmatched_begin_line_numbers:
+        error(line_number, 'build/unbalanced_diagnostic_pragma', 5,
+              'Diagnostic BEGIN / push without a matching END / pop in this file. This leaks '
+              'warning suppressions of enclosing BEGIN / END pairs into the rest of the translation unit.')
 
 
 def check_for_missing_new_line_at_eof(lines, error):
@@ -1404,7 +1522,7 @@ class _FileState(object):
                 io = _unit_test_config.get(INCLUDE_IO_INJECTION_KEY, codecs)
                 try:
                     header_lines = [line.rstrip('\r\n') for line in io.open(header, 'r', 'utf8', 'replace')]
-                    lines += CleansedLines(header_lines).elided
+                    lines += CleansedLines(cleanse_raw_strings(header_lines)).elided
                 except IOError:
                     pass
             self._smart_pointer_declarations = {}
@@ -1496,7 +1614,9 @@ class _EnumState(object):
 
 def regex_for_lambdas_and_blocks(line, line_number, file_state, error):
     cpp_result = search(r'\[.*?\]\s*[\(\{]', line)
-    objc_result = search(r'(\^(.*)?\(.*?\)|\^\s*\{)', line)
+    # Block type declarators like "void (^name)(int)" or "(void (^)(int))" are not block
+    # literals, so drop the "(^name)" part before looking for one.
+    objc_result = search(r'(\^(.*)?\(.*?\)|\^\s*\{)', sub(r'\(\s*\^[\w\s]*\)', '()', line))
     if cpp_result:
         group = cpp_result.group()
         targ_error = None
@@ -1816,8 +1936,7 @@ def detect_functions(clean_lines, line_number, function_state, error):
 
     lines = clean_lines.lines
     line = lines[line_number]
-    raw = clean_lines.raw_lines
-    raw_line = raw[line_number]
+    raw_line = clean_lines.lines_without_raw_strings[line_number]
 
     # Lines ending with a \ indicate a macro. Don't try to check them.
     if raw_line.endswith('\\'):
@@ -1907,8 +2026,7 @@ def check_for_function_lengths(clean_lines, line_number, function_state, error):
     """
     lines = clean_lines.lines
     line = lines[line_number]
-    raw = clean_lines.raw_lines
-    raw_line = raw[line_number]
+    raw_line = clean_lines.lines_without_raw_strings[line_number]
 
     if function_state.end_position.row == line_number:  # last line
         if not search(r'\bNOLINT\b', raw_line):
@@ -2285,7 +2403,7 @@ def check_spacing(file_extension, clean_lines, line_number, file_state, error):
       error: The function to call with any errors found.
     """
 
-    raw = clean_lines.raw_lines
+    raw = clean_lines.lines_without_raw_strings
     line = raw[line_number]
 
     # Before nixing comments, check if the line is blank for no good
@@ -2606,7 +2724,7 @@ def check_member_initialization_list(clean_lines, line_number, error):
       error: The function to call with any errors found.
     """
 
-    raw = clean_lines.raw_lines
+    raw = clean_lines.lines_without_raw_strings
     line = raw[line_number]
 
     if search(r'\b([A-Za-z0-9_]*_)\(\1\)', line):
@@ -2742,7 +2860,7 @@ def check_enum_members(clean_lines, line_number, enum_state, error):
       error: The function to call with any errors found.
     """
 
-    enum_state.is_webidl_enum |= bool(match(r'\s*// Web(?:Kit)?IDL enum\s*$', clean_lines.raw_lines[line_number]))
+    enum_state.is_webidl_enum |= bool(match(r'\s*// Web(?:Kit)?IDL enum\s*$', clean_lines.lines_without_raw_strings[line_number]))
 
     line = clean_lines.elided[line_number]  # Get rid of comments and strings.
     enum_state.process_clean_line(line, line_number, error)
@@ -3661,7 +3779,8 @@ def check_posix_string_wrappers(clean_lines, line_number, file_state, error):
     _check_string_wrappers(clean_lines, line_number, file_state, error, _POSIX_STRING_WRAPPERS, '<wtf/posix/POSIXExtras.h>', 'runtime/posix_string_wrappers', {})
 
 
-_STRING_EXPRESSION = r'((?:[A-Za-z_]\w*(?:\(\s*\))?\s*(?:\.|->)\s*)*[A-Za-z_]\w*(?:\(\s*\))?)'
+_STRING_CHAIN = r'(?:[A-Za-z_]\w*(?:\(\s*\))?\s*(?:\.|->)\s*)*[A-Za-z_]\w*(?:\(\s*\))?'
+_STRING_EXPRESSION = r'(makeUTF8CString\(\s*' + _STRING_CHAIN + r'\s*\)|' + _STRING_CHAIN + r')'
 _LEGACY_CSTRING_POINTER_WITH_LENGTH_PATTERN = re.compile(
     r'\b' + _STRING_EXPRESSION + r'\s*\.\s*legacyCStringPointer\s*\(\s*\)\s*,\s*' + _STRING_EXPRESSION + r'\s*\.\s*(?:length|size)\s*\(\s*\)')
 
@@ -3790,7 +3909,7 @@ def check_log_string_conversions(clean_lines, line_number, file_state, error):
             continue
         if pointer_call.group(1):
             error(line_number, 'runtime/log_string_conversion', 4,
-                  "Pass '.utf8()' instead of '.%s().data()' to '%s()'. It converts typed strings itself, and %s loses non-ASCII characters."
+                  "Pass 'makeUTF8CString(string)' instead of 'string.%s().data()' to '%s()'. It converts typed strings itself, and %s loses non-ASCII characters."
                   % (pointer_call.group(1), macro, 'ASCII conversion' if pointer_call.group(1) == 'ascii' else 'a Latin-1 pointer'))
         else:
             error(line_number, 'runtime/log_string_conversion', 4,
@@ -4378,10 +4497,9 @@ def check_check(clean_lines, line_number, error):
     """
 
     # Decide the set of replacement macros that should be suggested
-    raw_lines = clean_lines.raw_lines
     current_macro = ''
     for macro in _CHECK_MACROS:
-        if raw_lines[line_number].find(macro) >= 0:
+        if clean_lines.lines_without_raw_strings[line_number].find(macro) >= 0:
             current_macro = macro
             break
     if not current_macro:
@@ -4444,7 +4562,7 @@ def check_for_null(clean_lines, line_number, file_state, error):
         error(line_number, 'readability/null', 5, 'Use nullptr instead of NULL.')
         return
 
-    line = clean_lines.raw_lines[line_number]
+    line = clean_lines.lines_without_raw_strings[line_number]
     # See if NULL occurs in any comments in the line. If the search for NULL using the raw line
     # matches, then do the check with strings collapsed to avoid giving errors for
     # NULLs occurring in strings.
@@ -4802,8 +4920,7 @@ def check_style(clean_lines, line_number, file_extension, class_state, file_stat
       error: The function to call with any errors found.
     """
 
-    raw_lines = clean_lines.raw_lines
-    line = raw_lines[line_number]
+    line = clean_lines.lines_without_raw_strings[line_number]
 
     check_namespace_indentation(clean_lines, line_number, file_extension, file_state, error)
     check_enum_members(clean_lines, line_number, enum_state, error)
@@ -5115,8 +5232,8 @@ def check_include_line(filename, file_extension, clean_lines, line_number, inclu
 
     # Check to make sure we have a blank line after and none before primary header.
     if not error_message and header_type == _PRIMARY_HEADER:
-        next_line = clean_lines.raw_lines[line_number + 1]
-        previous_line = clean_lines.raw_lines[line_number - 1]
+        next_line = clean_lines.lines_without_raw_strings[line_number + 1]
+        previous_line = clean_lines.lines_without_raw_strings[line_number - 1]
         if not is_blank_line(next_line):
             error(line_number, 'build/include_order', 4,
                 'You should add a blank line after implementation file\'s own header.')
@@ -5217,12 +5334,12 @@ def check_language(filename, clean_lines, line_number, file_extension, include_s
                   'Use static_cast<%s>(...) instead' %
                   matched.group(1))
 
-    check_c_style_cast(line_number, line, clean_lines.raw_lines[line_number],
+    check_c_style_cast(line_number, line, clean_lines.lines_without_raw_strings[line_number],
                        'static_cast',
                        r'\((int|float|double|bool|char|u?int(16|32|64))\)',
                        error)
     # This doesn't catch all cases.  Consider (const char * const)"hello".
-    check_c_style_cast(line_number, line, clean_lines.raw_lines[line_number],
+    check_c_style_cast(line_number, line, clean_lines.lines_without_raw_strings[line_number],
                        'reinterpret_cast', r'\((\w+\s?\*+\s?)\)', error)
 
     # In addition, we look for people taking the address of a cast.  This
@@ -6005,14 +6122,14 @@ def process_line(filename, file_extension,
              line number, error level, and message
 
     """
-    raw_lines = clean_lines.raw_lines
+    lines_without_raw_strings = clean_lines.lines_without_raw_strings
     detect_functions(clean_lines, line, function_state, error)
     check_for_function_lengths(clean_lines, line, function_state, error)
-    if search(r'\bNOLINT\b', raw_lines[line]):  # ignore nolint lines
+    if search(r'\bNOLINT\b', lines_without_raw_strings[line]):  # ignore nolint lines
         return
-    if match(r'\s*\b__asm\b', raw_lines[line]):  # Ignore asm lines as they format differently.
+    if match(r'\s*\b__asm\b', lines_without_raw_strings[line]):  # Ignore asm lines as they format differently.
         return
-    asm_state.process_line(raw_lines[line])
+    asm_state.process_line(lines_without_raw_strings[line])
     if asm_state.is_in_asm():  # Ignore further checks because asm blocks formatted differently.
         return
     check_function_definition(filename, file_extension, clean_lines, line, class_state, function_state, error)
@@ -6078,8 +6195,9 @@ def _process_lines(filename, file_extension, lines, error, min_confidence, line_
         if filename == 'Source/WTF/wtf/Platform.h':
             check_platformh_comments(lines, error)
 
-    remove_multi_line_comments(lines, error)
-    clean_lines = CleansedLines(lines)
+    lines_without_raw_strings = cleanse_raw_strings(lines)
+    remove_multi_line_comments(lines_without_raw_strings, error)
+    clean_lines = CleansedLines(lines_without_raw_strings)
     file_state = _FileState(clean_lines, file_extension)
     enum_state = _EnumState()
     asm_state = _InlineASMState()
@@ -6090,6 +6208,8 @@ def _process_lines(filename, file_extension, lines, error, min_confidence, line_
     class_state.check_finished(error)
 
     check_for_include_what_you_use(filename, clean_lines, include_state, error, line_numbers)
+
+    check_for_unbalanced_diagnostic_pragmas(clean_lines, error)
 
     # We check here rather than inside process_line so that we see raw
     # lines rather than "cleaned" lines.
@@ -6126,6 +6246,7 @@ class CppChecker(object):
         'build/printf_format',
         'build/storage_class',
         'build/using_std',
+        'build/unbalanced_diagnostic_pragma',
         'build/using_namespace',
         'build/variant',
         'build/cpp_comment',
@@ -6291,6 +6412,7 @@ class CppChecker(object):
         self.handle_style_error = handle_style_error
         self.min_confidence = min_confidence
         self._inclusive_language_checker = InclusiveLanguageChecker(handle_style_error)
+        self._license_checker = LicenseChecker(handle_style_error)
         self._computed_style_inline_includes_checker = ComputedStyleInlineIncludesChecker(file_path, handle_style_error)
         _unit_test_config = unit_test_config
 
@@ -6327,4 +6449,5 @@ class CppChecker(object):
                        self.handle_style_error, self.min_confidence,
                        set(line_numbers) if line_numbers is not None else None)
         self._inclusive_language_checker.check(lines)
+        self._license_checker.check(lines, line_numbers)
         self._computed_style_inline_includes_checker.check(lines, line_numbers)

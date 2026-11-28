@@ -32,10 +32,8 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 class InlineContent;
-}
 }
 
 namespace WTF {
@@ -69,8 +67,8 @@ public:
 
     InlineDisplay::Content& displayContent()  LIFETIME_BOUND { return m_displayContent; }
     const InlineDisplay::Content& displayContent() const LIFETIME_BOUND { return m_displayContent; }
-    bool LEGACY_NODELETE hasContentfulInFlowBox() const;
-    bool LEGACY_NODELETE hasContentfulInlineLevelBox() const;
+    NODELETE bool hasContentfulInFlowBox() const;
+    NODELETE bool hasContentfulInlineLevelBox() const;
 
     FloatRect scrollableOverflow() const { return m_scrollableOverflow; }
     FloatRect inkOverflow() const { return m_inkOverflow; }
@@ -81,31 +79,32 @@ public:
     float clearBeforeAfterGaps() const { return m_clearGapBeforeFirstLine + m_clearGapAfterLastLine; }
     float clearGapBeforeFirstLine() const { return m_clearGapBeforeFirstLine; }
     bool hasBlockLevelBoxes() const { return m_hasBlockLevelBoxes; }
+    bool hasFloats() const { return m_hasFloats; }
     bool hasPaintedInlineLevelBoxes() const { return m_hasPaintedInlineLevelBoxes; }
     bool contentFitsWithinMaximumLines() const { return m_contentFitsWithinMaximumLines; }
 
     IteratorRange<const InlineDisplay::Box*> boxesForRect(const LayoutRect&) const;
 
     const InlineDisplay::Line& lineForBox(const InlineDisplay::Box& box) const LIFETIME_BOUND { return displayContent().lines[box.lineIndex()]; }
-    size_t LEGACY_NODELETE indexForBox(const InlineDisplay::Box&) const;
+    NODELETE size_t indexForBox(const InlineDisplay::Box&) const;
     const InlineDisplay::Box* firstBoxForLayoutBox(const Layout::Box&) const LIFETIME_BOUND;
     std::optional<size_t> firstBoxIndexForLayoutBox(const Layout::Box&) const;
 
     // Returns a block level box if the line is for block-in-inline.
-    const InlineDisplay::Box* LEGACY_NODELETE blockLevelBoxForLine(const InlineDisplay::Line&) const LIFETIME_BOUND;
-    bool LEGACY_NODELETE isInlineBoxWrapperForBlockLevelBox(const InlineDisplay::Box&) const;
+    NODELETE const InlineDisplay::Box* blockLevelBoxForLine(const InlineDisplay::Line&) const LIFETIME_BOUND;
+    NODELETE bool isInlineBoxWrapperForBlockLevelBox(const InlineDisplay::Box&) const;
 
     template<typename Function> void traverseNonRootInlineBoxes(const Layout::Box&, NOESCAPE const Function&);
 
-    const RenderBlockFlow& LEGACY_NODELETE formattingContextRoot() const;
+    NODELETE const RenderBlockFlow& formattingContextRoot() const;
 
-    const Vector<SVGTextFragment>& LEGACY_NODELETE svgTextFragments(size_t boxIndex) const LIFETIME_BOUND;
+    NODELETE const Vector<SVGTextFragment>& svgTextFragments(size_t boxIndex) const LIFETIME_BOUND;
     Vector<Vector<SVGTextFragment>>& svgTextFragmentsForBoxes() LIFETIME_BOUND { return m_svgTextFragmentsForBoxes; }
 
     void shrinkToFit();
     void releaseCaches();
 
-    void LEGACY_NODELETE clearFormattingContextRoot();
+    NODELETE void clearFormattingContextRoot();
 
 private:
     friend class InlineContentBuilder;
@@ -113,11 +112,12 @@ private:
 
     void setInkOverflow(const FloatRect& inkOverflow) { m_inkOverflow = inkOverflow; }
     void setScrollableOverflow(const FloatRect& scrollableOverflow) { m_scrollableOverflow = scrollableOverflow; }
-    void setHasMultilinePaintOverlap() { m_hasMultilinePaintOverlap = true; }
+    void setHasMultilinePaintOverlap(bool hasMultilinePaintOverlap) { m_hasMultilinePaintOverlap = hasMultilinePaintOverlap; }
     void setClearGapBeforeFirstLine(float clearGapBeforeFirstLine) { m_clearGapBeforeFirstLine = clearGapBeforeFirstLine; }
     void setClearGapAfterLastLine(float clearGapAfterLastLine) { m_clearGapAfterLastLine = clearGapAfterLastLine; }
     void setFirstLinePaginationOffset(float firstLinePaginationOffset) { m_firstLinePaginationOffset = firstLinePaginationOffset; }
     void setHasBlockLevelBoxes() { m_hasBlockLevelBoxes = true; }
+    void setHasFloats(bool hasFloats) { m_hasFloats = hasFloats; }
     void setContentMayHaveInkOverflow(bool mayHaveInkOverflow) { m_contentMayHaveInkOverflow = mayHaveInkOverflow; }
     bool contentMayHaveInkOverflow() const { return m_contentMayHaveInkOverflow; }
     void setHasPaintedInlineLevelBoxes() { m_hasPaintedInlineLevelBoxes = true; }
@@ -142,6 +142,7 @@ private:
 
     bool m_hasMultilinePaintOverlap { false };
     bool m_hasBlockLevelBoxes { false };
+    bool m_hasFloats { false };
     bool m_contentMayHaveInkOverflow { false };
     bool m_hasPaintedInlineLevelBoxes { false };
 

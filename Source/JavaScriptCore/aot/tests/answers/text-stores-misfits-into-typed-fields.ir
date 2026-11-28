@@ -1,0 +1,117 @@
+# type Point = { x: number }
+# class Item { b: boolean; n: number; p: Point; r: number; s: string; constructor() { this.b = true; this.n = 7; this.p = { x: 1 }; this.r = 0.25; this.s = "text"; } }
+# function read(o: Item) { report(o.b, o.n, o.p, o.r, o.s); }
+# function check(make, read, store) { const item = new make(); for (const value of [null, undefined, 0.5, "x"]) { store(item, value); read(item); } }
+# for (const name of ["b", "n", "p", "r", "s"]) check(Item, read, new Function("o", "v", "o." + name + " = v"));
+# Text that nobody has read stores null, undefined, a fraction and a string into a boolean, two numbers, an object and a string of an object that typed code has made. No hook holds a slot to its type:
+# null and undefined lie in a slot of numbers or booleans as marks, which are NaNs in a slot of fractions, and whatever else the slot cannot hold moves the field to the extra properties and leaves the slot empty.
+# Typed code reads each field behind each store and finds what an ordinary object would hold, never the words of the mark.
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell globalThis.report = (...values) => print(values.map(value => typeof value === "object" && value ? "point" : String(value)).join(" "));
+# ANSWER: null 7 point 0.25 text
+# ANSWER-NEXT: undefined 7 point 0.25 text
+# ANSWER-NEXT: 0.5 7 point 0.25 text
+# ANSWER-NEXT: x 7 point 0.25 text
+# ANSWER-NEXT: true null point 0.25 text
+# ANSWER-NEXT: true undefined point 0.25 text
+# ANSWER-NEXT: true 0.5 point 0.25 text
+# ANSWER-NEXT: true x point 0.25 text
+# ANSWER-NEXT: true 7 null 0.25 text
+# ANSWER-NEXT: true 7 undefined 0.25 text
+# ANSWER-NEXT: true 7 0.5 0.25 text
+# ANSWER-NEXT: true 7 x 0.25 text
+# ANSWER-NEXT: true 7 point null text
+# ANSWER-NEXT: true 7 point undefined text
+# ANSWER-NEXT: true 7 point 0.5 text
+# ANSWER-NEXT: true 7 point x text
+# ANSWER-NEXT: true 7 point 0.25 null
+# ANSWER-NEXT: true 7 point 0.25 undefined
+# ANSWER-NEXT: true 7 point 0.25 0.5
+# ANSWER-NEXT: true 7 point 0.25 x
+# ANSWER-NEXT: exited with 0
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Item" module=m0 constructor=f1 fields=[{key="b" declared={type=boolean} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}, {key="p" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="r" declared={type=number} flags=[IsRequired]}, {key="s" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=5
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Builtin builtin=Function
+    v6 = String string="o"
+    v7 = String string="v"
+    v8 = String string="o.b = v"
+    v9 = Construct v5, -, v6, v7, v8
+    v10 = Call v4, -, v2, v3, v9 calleeName="check"
+    v11 = String string="o.n = v"
+    v12 = Construct v5, -, v6, v7, v11
+    v13 = Call v4, -, v2, v3, v12 calleeName="check"
+    v14 = String string="o.p = v"
+    v15 = Construct v5, -, v6, v7, v14
+    v16 = Call v4, -, v2, v3, v15 calleeName="check"
+    v17 = String string="o.r = v"
+    v18 = Construct v5, -, v6, v7, v17
+    v19 = Call v4, -, v2, v3, v18 calleeName="check"
+    v20 = String string="o.s = v"
+    v21 = Construct v5, -, v6, v7, v20
+    v22 = Call v4, -, v2, v3, v21 calleeName="check"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="Item" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Boolean boolean=true
+    PropSet v3, v4 key="b"
+    v6 = Integer integer=7
+    PropSet v3, v6 key="n"
+    v8 = Integer integer=1
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    v10 = FinishObject v9
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v3, v11 key="p"
+    v13 = Double number=0.25
+    PropSet v3, v13 key="r"
+    v15 = String string="text"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PropSet v3, v16 key="s"
+    Return v3
+}
+function f2 name="read" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = PropGet v0 key="b"
+    v4 = PropGet v0 key="n"
+    v5 = PropGet v0 key="p"
+    v6 = PropGet v0 key="r"
+    v7 = PropGet v0 key="s"
+    v8 = Call v2, -, v3, v4, v5, v6, v7 calleeName="report"
+    v9 = Undefined
+    Return v9
+}
+function f3 name="check" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Construct v0 calleeName="make"
+    v4 = Null
+    v5 = Call v2, -, v3, v4 calleeName="store"
+    v6 = Call v1, -, v3 calleeName="read"
+    v7 = Undefined
+    v8 = Call v2, -, v3, v7 calleeName="store"
+    v9 = Call v1, -, v3 calleeName="read"
+    v10 = Double number=0.5
+    v11 = Call v2, -, v3, v10 calleeName="store"
+    v12 = Call v1, -, v3 calleeName="read"
+    v13 = String string="x"
+    v14 = Call v2, -, v3, v13 calleeName="store"
+    v15 = Call v1, -, v3 calleeName="read"
+    v16 = Undefined
+    Return v16
+}

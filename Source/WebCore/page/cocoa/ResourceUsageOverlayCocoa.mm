@@ -82,13 +82,13 @@ public:
         m_data.fill(0);
     }
 
-    void LEGACY_NODELETE append(T v)
+    NODELETE void append(T v)
     {
         m_data[m_current] = WTF::move(v);
         incrementIndex(m_current);
     }
 
-    T& LEGACY_NODELETE last()
+    NODELETE T& last()
     {
         unsigned index = m_current;
         decrementIndex(index);
@@ -105,13 +105,13 @@ public:
     }
 
 private:
-    static void LEGACY_NODELETE incrementIndex(unsigned& index)
+    NODELETE static void incrementIndex(unsigned& index)
     {
         if (++index == size)
             index = 0;
     }
 
-    static void LEGACY_NODELETE decrementIndex(unsigned& index)
+    NODELETE static void decrementIndex(unsigned& index)
     {
         if (index)
             --index;
@@ -195,7 +195,7 @@ static HistoricResourceUsageData& historicUsageData()
 
 static void appendDataToHistory(const ResourceUsageData& data)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     auto& historicData = historicUsageData();
     historicData.cpu.append(data.cpu);

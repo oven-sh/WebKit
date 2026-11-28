@@ -162,6 +162,7 @@
 #include <JavaScriptCore/FastJITPermissions.h>
 #include <JavaScriptCore/GCOwnedDataScope.h>
 #include <JavaScriptCore/GCSegmentedArray.h>
+#include <JavaScriptCore/GenericArgumentsImplInlines.h>
 #include <JavaScriptCore/GenericOffset.h>
 #include <JavaScriptCore/GetPutInfo.h>
 #include <JavaScriptCore/GetVM.h>
@@ -173,6 +174,7 @@
 #include <JavaScriptCore/IterationKind.h>
 #include <JavaScriptCore/JITCompilationEffort.h>
 #include <JavaScriptCore/JSBigInt.h>
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCJSValueCell.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSCell.h>
@@ -336,6 +338,7 @@
 #include <WebCore/GainMap.h>
 #include <WebCore/GlobalFrameIdentifier.h>
 #include <WebCore/GraphicsTypes.h>
+#include <WebCore/HTMLElement.h>
 #include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/HTTPHeaderNames.h>
 #include <WebCore/HitTestRequest.h>
@@ -343,7 +346,7 @@
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/Image.h>
 #include <WebCore/ImageAdapter.h>
-#include <WebCore/ImageDrawingOptions.h>
+#include <WebCore/ImageDrawDescriptor.h>
 #include <WebCore/ImageOrientation.h>
 #include <WebCore/ImageTypes.h>
 #include <WebCore/IntPoint.h>

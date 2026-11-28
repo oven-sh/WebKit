@@ -51,6 +51,7 @@
 #include "PropertyNameArray.h"
 #include "PropertyRun.h"
 #include "ProxyObject.h"
+#include "ReflectObject.h"
 #include "RegExpObject.h"
 #include "ResourceExhaustion.h"
 #include "StringObject.h"
@@ -66,6 +67,7 @@
 #include "AOTMembersLeftOut.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeHooks.h"
+#include "AOTRuntimeReporter.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -82,6 +84,8 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
+const ASCIILiteral NonExtensibleObjectPrivateFieldDefineError { "Attempting to define private field on object that is not extensible."_s };
+const ASCIILiteral NonExtensibleObjectPrivateMethodDefineError { "Attempting to define private method on object that is not extensible."_s };
 const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
 
 // Where a rejected write to a locked property came from, which decides whether it throws.
@@ -442,17 +446,50 @@ bool JSObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject
 }
 #endif // ASSERT_ENABLED
 
+#if ENABLE(AOT)
+// No structure below a typed array tells of it.
+static bool inheritsFromTypedArray(JSObject* object)
+{
+    for (JSValue next = object->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        if (isTypedArrayType(asObject(next)->type()))
+            return true;
+    }
+    return false;
+}
+#endif
+
+// The result holds only until user code runs. [[GetOwnProperty]] on it can add a trap to, or revoke, a skipped
+// proxy, so callers walk again afterwards and define through the original receiver if the walk ends elsewhere.
+static ALWAYS_INLINE JSObject* skipProxiesForwardingOwnPropertyDefinition(JSObject* receiver)
+{
+    while (receiver->type() == ProxyObjectType) {
+        auto* proxy = uncheckedDowncast<ProxyObject>(receiver);
+        if (!proxy->forwardsOwnPropertyDefinitionToTarget())
+            break;
+        receiver = proxy->target();
+    }
+    return receiver;
+}
+
+static ALWAYS_INLINE JSObject* receiverForDefinePropertyOnReceiver(JSObject* receiver)
+{
+    receiver = skipProxiesForwardingOwnPropertyDefinition(receiver);
+    if (receiver->type() == GlobalProxyType)
+        receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
+    return receiver;
+}
+
 // https://tc39.github.io/ecma262/#sec-ordinaryset
 bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value, JSValue receiver, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    // The receiver is a proxy of the object that hands definitions on to it. Where an element can be set quickly nothing above the object takes the store, so the store ends in the object as it does without the proxy.
-    if (std::optional<uint32_t> index = parseIndex(propertyName); index && !object->structure()->hasImmutableIndexedProperties()) {
-        JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver);
+    // The receiver is a proxy for this object, and its handler forwards defineProperty to it. An element that is there is the object's own. Where none is there and one can be set quickly, nothing on the prototype chain but a typed array intercepts the store, so the store ends in the object.
+    if (std::optional<uint32_t> index = vm.hasCompiledCode() ? parseIndex(propertyName) : std::nullopt; index && !object->structure()->hasImmutableIndexedProperties()) {
+        JSObject* defineTarget = AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver);
         RETURN_IF_EXCEPTION(scope, false);
-        if (definedOn == object && object->trySetIndexQuickly(vm, *index, value))
+        if (defineTarget == object && (object->canGetIndexQuickly(*index) || !inheritsFromTypedArray(object)) && object->trySetIndexQuickly(vm, *index, value))
             return true;
     }
 #endif
@@ -528,10 +565,12 @@ bool ordinarySetWithOwnDescriptor(JSGlobalObject* globalObject, JSObject* object
         // So, we perform [[GetOwnProperty]] onto the receiver while we already perform [[GetOwnProperty]] onto the object.
 
         // 9.1.9.1-4-c Let existingDescriptor be ? Receiver.[[GetOwnProperty]](P).
-        JSObject* receiverObject = asObject(receiver);
+        JSObject* receiverObject = skipProxiesForwardingOwnPropertyDefinition(asObject(receiver));
         PropertyDescriptor existingDescriptor;
         bool existingDescriptorFound = receiverObject->getOwnPropertyDescriptor(globalObject, propertyName, existingDescriptor);
         RETURN_IF_EXCEPTION(scope, false);
+        if (skipProxiesForwardingOwnPropertyDefinition(asObject(receiver)) != receiverObject)
+            receiverObject = asObject(receiver);
 
         // 9.1.9.1-4-d If existingDescriptor is not undefined, then
         if (existingDescriptorFound) {
@@ -698,7 +737,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver. A put of the value the property holds changes nothing and
     // succeeds, like a definition that changes nothing: `Object.assign = Object.assign || polyfill`.
-    if (structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, this)) [[unlikely]] {
+    if (!isThisValueAltered(slot, this) && structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
         bool holdsValue = holdsInWritableProperty(globalObject, this, propertyName, value);
         RETURN_IF_EXCEPTION(scope, false);
         StoreToLockedProto store = holdsValue ? StoreToLockedProto::ChangesNothing : classifyStoreToLockedProto(vm, this, propertyName, value);
@@ -820,7 +859,7 @@ bool JSObject::mightBeSpecialProperty(VM& vm, JSType type, UniquedStringImpl* ui
     }
 }
 
-static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, JSObject* receiver, bool shouldThrow)
+static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, JSObject* originalReceiver, JSObject* receiver, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -828,13 +867,16 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasProperty = receiver->methodTable()->getOwnPropertySlot(receiver, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
+    JSObject* definitionReceiver = receiverForDefinePropertyOnReceiver(originalReceiver) == receiver ? receiver : originalReceiver;
 
     if (hasProperty) {
         // FIXME: For an accessor with setter, the error message is misleading.
         if (slot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
-        if (slot.attributes() & PropertyAttribute::CustomValue) {
+        // A custom setter stands in for [[Set]] on the receiver itself. Through a proxy, the property is
+        // reached by [[DefineOwnProperty]] instead, which replaces the custom value.
+        if (originalReceiver->type() != ProxyObjectType && (slot.attributes() & PropertyAttribute::CustomValue)) {
             // (Not for a receiver with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
             PutValueFunc customSetter = slot.customSetter();
             if (customSetter && !receiver->structure()->isImmutableProperty(propertyName.uid()))
@@ -843,10 +885,10 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
 
         PropertyDescriptor descriptor;
         descriptor.setValue(value);
-        RELEASE_AND_RETURN(scope, receiver->methodTable()->defineOwnProperty(receiver, globalObject, propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, definitionReceiver->methodTable()->defineOwnProperty(definitionReceiver, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    RELEASE_AND_RETURN(scope, receiver->createDataProperty(globalObject, propertyName, value, shouldThrow));
+    RELEASE_AND_RETURN(scope, definitionReceiver->createDataProperty(globalObject, propertyName, value, shouldThrow));
 }
 
 // https://tc39.es/ecma262/#sec-ordinaryset (step 3)
@@ -861,11 +903,15 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     // FIXME: For a failure due to primitive receiver, the error message is misleading.
     if (!receiver)
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-    if (receiver->type() == GlobalProxyType)
-        receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
+    JSObject* originalReceiver = receiver;
+    receiver = receiverForDefinePropertyOnReceiver(receiver);
+    // Bun: whether the walk above goes through a proxy depends on what the proxy has cached of its handler. Such a store is
+    // judged as it is while nothing is cached, where the proxy's [[DefineOwnProperty]] asks the target: not as a store
+    // that starts at the target.
+    bool lookedThroughForwardingProxy = originalReceiver->type() == ProxyObjectType && receiver != originalReceiver;
 #if ENABLE(AOT)
-    if (JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver); definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
-        receiver = definedOn;
+    if (JSObject* defineTarget = vm.hasCompiledCode() ? AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver) : nullptr; defineTarget && defineTarget->type() != ProxyObjectType && defineTarget->type() != CompiledObjectType)
+        receiver = defineTarget;
     RETURN_IF_EXCEPTION(scope, false);
 #endif
     scope.release();
@@ -874,23 +920,26 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
         // Same policy as in putInlineSlow(), where the store starts at the receiver.
         LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, receiver, propertyName.uid(), false);
         bool shouldThrow = slot.isStrictMode()
-            || ((slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
-        return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, shouldThrow);
+            || (!lookedThroughForwardingProxy && (slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
+        return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, shouldThrow);
     }
 
     if (slot.isTaintedByOpaqueObject() || receiver->methodTable()->defineOwnProperty != JSObject::defineOwnProperty) {
         if (mightBeSpecialProperty(vm, receiver->type(), propertyName.uid()))
-            return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, slot.isStrictMode());
+            return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, slot.isStrictMode());
     }
 
     if (receiver->structure()->hasAnyKindOfGetterSetterProperties()) {
         unsigned attributes;
         if (receiver->getDirectOffset(vm, propertyName, attributes) != invalidOffset && (attributes & PropertyAttribute::CustomValue))
-            return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, slot.isStrictMode());
+            return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, slot.isStrictMode());
     }
 
-    if (receiver->hasNonReifiedStaticProperties()) [[unlikely]]
+    if (receiver->hasNonReifiedStaticProperties()) [[unlikely]] {
+        if (originalReceiver->type() == ProxyObjectType)
+            return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, slot.isStrictMode());
         return receiver->putInlineFastReplacingStaticPropertyIfNeeded(globalObject, propertyName, value, slot);
+    }
     return receiver->putInlineFast(globalObject, propertyName, value, slot);
 }
 
@@ -1092,7 +1141,7 @@ ArrayStorage* JSObject::enterDictionaryIndexingModeWhenArrayStorageAlreadyExists
     return newButterfly->arrayStorage();
 }
 
-void JSObject::enterDictionaryIndexingMode(VM& vm)
+ArrayStorage* JSObject::enterDictionaryIndexingMode(VM& vm)
 {
     switch (indexingType()) {
     case NonArray:
@@ -1103,7 +1152,7 @@ void JSObject::enterDictionaryIndexingMode(VM& vm)
         // allocated ArrayStorage, so do not skip for JSArray subclasses that
         // use NonArray indexing (e.g. $vm RuntimeArray with DerivedArrayType).
         if (!inherits<JSArray>()) [[likely]]
-            return;
+            return nullptr;
         [[fallthrough]];
     case ArrayClass:
     case ALL_UNDECIDED_INDEXING_TYPES:
@@ -1115,14 +1164,13 @@ void JSObject::enterDictionaryIndexingMode(VM& vm)
         // doesn't support traditional indexed properties. At the time of writing, this just affects
         // typed arrays.
         if (ArrayStorage* storage = ensureArrayStorageSlow(vm))
-            enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, storage);
-        break;
+            return enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, storage);
+        return nullptr;
     case ALL_ARRAY_STORAGE_INDEXING_TYPES:
-        enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, this->butterfly()->arrayStorage());
-        break;
+        return enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, this->butterfly()->arrayStorage());
         
     default:
-        break;
+        return nullptr;
     }
 }
 
@@ -1490,6 +1538,8 @@ ContiguousJSValues JSObject::convertInt32ToContiguous(VM& vm)
 {
     ASSERT(hasInt32(indexingType()));
     
+    // Elements first, then the structure.
+    WTF::storeStoreFence();
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -1783,7 +1833,7 @@ void JSObject::convertInt32ForValue(VM& vm, JSValue value)
     convertInt32ToContiguous(vm);
 }
 
-void JSObject::convertFromCopyOnWrite(VM& vm)
+void JSObject::convertFromCopyOnWrite(VM& vm, unsigned additionalLength)
 {
     ASSERT(isCopyOnWrite(indexingMode()));
     // Every caller that reaches this for an object with immutable properties is about to write its elements in place, except defineOwnIndexedProperty() where it
@@ -1793,12 +1843,20 @@ void JSObject::convertFromCopyOnWrite(VM& vm)
 
     const bool hasIndexingHeader = true;
     Butterfly* oldButterfly = this->butterfly();
+    ASSERT(oldButterfly->publicLength() == oldButterfly->vectorLength());
     size_t propertyCapacity = 0;
-    unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(propertyCapacity, std::min<size_t>(nextLength(oldButterfly->vectorLength()), MAX_STORAGE_VECTOR_LENGTH));
+    unsigned oldVectorLength = oldButterfly->vectorLength();
+    unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(propertyCapacity, oldVectorLength);
+    if (newVectorLength < oldVectorLength + additionalLength)
+        newVectorLength = Butterfly::optimalContiguousVectorLength(propertyCapacity, std::min<size_t>(nextLength(oldVectorLength + additionalLength), MAX_STORAGE_VECTOR_LENGTH));
     Butterfly* newButterfly = Butterfly::createUninitialized(vm, this, 0, propertyCapacity, hasIndexingHeader, newVectorLength * sizeof(JSValue));
 
     // memcpy is fine since newButterfly is not tied to any object yet.
     memcpy(newButterfly->propertyStorage(), oldButterfly->propertyStorage(), oldButterfly->vectorLength() * sizeof(JSValue) + sizeof(IndexingHeader));
+    if (additionalLength) {
+        Butterfly::clearRange(indexingType(), newButterfly, oldVectorLength, newVectorLength);
+        newButterfly->setVectorLength(newVectorLength);
+    }
 
     WTF::storeStoreFence();
     TransitionKind transition = ([&] () {
@@ -1856,7 +1914,7 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
             return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, Int32Shape) == Int32Shape) {
             ASSERT(hasInt32(indexingMode()));
-            convertFromCopyOnWrite(vm);
+            convertFromCopyOnWrite(vm, /* additionalLength */ 0);
             return this->butterfly()->contiguousInt32();
         }
         return ContiguousJSValues();
@@ -1895,7 +1953,7 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, DoubleShape) == DoubleShape) {
-            convertFromCopyOnWrite(vm);
+            convertFromCopyOnWrite(vm, /* additionalLength */ 0);
             if (hasDouble(indexingMode()))
                 return this->butterfly()->contiguousDouble();
             ASSERT(hasInt32(indexingMode()));
@@ -1937,7 +1995,7 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, ContiguousShape) == ContiguousShape) {
-            convertFromCopyOnWrite(vm);
+            convertFromCopyOnWrite(vm, /* additionalLength */ 0);
             if (hasContiguous(indexingMode()))
                 return this->butterfly()->contiguous();
             ASSERT(hasInt32(indexingMode()) || hasDouble(indexingMode()));
@@ -2188,6 +2246,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 #endif
         ImmutablePropertyNames* names = this->structure()->listedImmutablePropertyNames();
         String message = names && shouldThrowIfCantSet ? names->setPrototypeErrorMessage() : String();
+#if ENABLE(AOT)
+        if (!names && shouldThrowIfCantSet)
+            message = AOT::RuntimeHooks::lockedObjectErrorMessage(globalObject, this, nullptr, AOT::RejectedWrite::Prototype);
+#endif
         if (!message.isNull())
             return typeError(globalObject, scope, true, message);
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
@@ -2571,7 +2633,7 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
         Butterfly* butterfly = thisObject->butterfly();
         if (i >= butterfly->vectorLength())
             return true;
-        thisObject->convertFromCopyOnWrite(vm);
+        thisObject->convertFromCopyOnWrite(vm, /* additionalLength */ 0);
         [[fallthrough]];
     }
 
@@ -2588,7 +2650,7 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
         Butterfly* butterfly = thisObject->butterfly();
         if (i >= butterfly->vectorLength())
             return true;
-        thisObject->convertFromCopyOnWrite(vm);
+        thisObject->convertFromCopyOnWrite(vm, /* additionalLength */ 0);
         [[fallthrough]];
     }
 
@@ -3030,7 +3092,8 @@ void JSObject::seal(VM& vm)
     if (isSealed(vm))
         return;
     materializeLazyOwnProperties(vm);
-    enterDictionaryIndexingMode(vm);
+    if (ArrayStorage* storage = enterDictionaryIndexingMode(vm))
+        storage->m_sparseMap->seal();
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -3054,7 +3117,14 @@ void JSObject::freeze(VM& vm)
     if (isFrozen(vm))
         return;
     materializeLazyOwnProperties(vm);
-    enterDictionaryIndexingMode(vm);
+    if (ArrayStorage* storage = enterDictionaryIndexingMode(vm)) {
+        SparseArrayValueMap* map = storage->m_sparseMap.get();
+        map->freeze();
+        if (indexingType() & IsArray)
+            map->setLengthIsReadOnly();
+        if (!map->isEmpty())
+            notifyPresenceOfIndexedAccessors(vm);
+    }
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -3064,9 +3134,24 @@ void JSObject::freeze(VM& vm)
     }
 }
 
+bool JSObject::isSealedWithArrayStorage(VM& vm)
+{
+    return structure()->isSealed(vm) && arrayStorage()->m_sparseMap->isSealed();
+}
+
+bool JSObject::isFrozenWithArrayStorage(VM& vm)
+{
+    if (!structure()->isFrozen(vm))
+        return false;
+    SparseArrayValueMap* map = arrayStorage()->m_sparseMap.get();
+    if ((indexingType() & IsArray) && !map->lengthIsReadOnly())
+        return false;
+    return map->isFrozen();
+}
+
 void JSObject::materializeLazyOwnProperties(VM& vm)
 {
-    if (!structure()->typeInfo().overridesGetOwnSpecialPropertyNames())
+    if (!structure()->typeInfo().overridesGetOwnSpecialPropertyNames() || isJSArray(this))
         return;
 
     // Force reifying lazy properties. Special properties (e.g. function "length" / "name",
@@ -3330,11 +3415,6 @@ bool JSObject::isExtensible(JSObject* obj, JSGlobalObject*)
     return obj->isStructureExtensible();
 }
 
-bool JSObject::isExtensible(JSGlobalObject* globalObject)
-{ 
-    return methodTable()->isExtensible(this, globalObject);
-}
-
 void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -3365,22 +3445,25 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
 #if ENABLE(AOT)
-                // Compiled code may hold the object already. The property is that object.
-                JSObject* madeAhead = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(this, key.impl()) : nullptr;
-                if (madeAhead) [[unlikely]] {
+                // Compiled code may already hold the object for this property. If so, store that same object.
+                JSObject* preallocated = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takePreallocatedStaticProperty(this, key.impl()) : nullptr;
+                if (preallocated) [[unlikely]] {
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                    putDirect(vm, key, madeAhead, attributesForStructure(value.attributes()));
+                    putDirect(vm, key, preallocated, attributesForStructure(value.attributes()));
                 } else
 #endif
                     reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
                 // Leave the rest lazy on throw; the caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)
-                    JSValue standIn = vm.hasCompiledCode() ? AOT::takeStandInForMemberLeftOut(globalObject, key.string()) : JSValue();
-                    if (!standIn)
+                    JSValue placeholder = vm.hasCompiledCode() ? AOT::takeOmittedMemberPlaceholder(globalObject, key.string()) : JSValue();
+                    if (!placeholder)
                         return;
+                    // It is stored as a getter that throws the error naming the member. No read returns it as a value.
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                    putDirect(vm, key, standIn, attributesForStructure(value.attributes()));
+                    unsigned attributesOfGetter = (attributesForStructure(value.attributes()) & ~static_cast<unsigned>(PropertyAttribute::ReadOnly)) | PropertyAttribute::Accessor;
+                    putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(placeholder), nullptr), attributesOfGetter);
+                    continue;
 #else
                     return;
 #endif
@@ -4327,7 +4410,7 @@ bool JSObject::increaseVectorLength(VM& vm, unsigned newLength)
 bool JSObject::ensureLengthSlow(VM& vm, unsigned length)
 {
     if (isCopyOnWrite(indexingMode())) {
-        convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm, /* additionalLength */ 0);
         if (this->butterfly()->vectorLength() >= length)
             return true;
     }
@@ -4492,6 +4575,39 @@ static bool onlyRepeatsOrRestrictsProperty(JSGlobalObject* globalObject, const P
     return !descriptor.value() || sameValue(globalObject, descriptor.value(), current.value());
 }
 
+// True if reflection reports a locked property differently from the structure.
+static bool repeatsReportedDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    if (!descriptor.isDataDescriptor() || !descriptor.value() || !descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent())
+        return false;
+    PropertyDescriptor reported = current;
+    return reportIfLocked(object, propertyName, reported) && reported.equalTo(globalObject, descriptor);
+}
+
+static bool definesInheritedValue(JSObject* object, PropertyName propertyName, const PropertyDescriptor& descriptor)
+{
+#if ENABLE(AOT)
+    return AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor);
+#else
+    UNUSED_PARAM(object);
+    UNUSED_PARAM(propertyName);
+    UNUSED_PARAM(descriptor);
+    return false;
+#endif
+}
+
+static NEVER_INLINE bool tryDefineInheritedValue(VM& vm, JSObject* object, PropertyName propertyName, const PropertyDescriptor& descriptor)
+{
+    if (!definesInheritedValue(object, propertyName, descriptor))
+        return false;
+    AllowLazyMaterializationOfImmutableProperties allowDefinition(vm);
+#if ENABLE(AOT)
+    AOT::countEvent(vm, AOT::RuntimeCounterID::InheritedValuesDefined);
+#endif
+    object->putDirect(vm, propertyName, descriptor.value(), descriptor.attributes() & ~PropertyAttribute::Accessor);
+    return true;
+}
+
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
 bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException)
@@ -4509,8 +4625,11 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
                 return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, NonExtensibleObjectPropertyDefineError);
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
-        if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
-            return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, ImmutablePropertyDefineError);
+        if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
+            if (!tryDefineInheritedValue(vm, object, propertyName, descriptor))
+                return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, ImmutablePropertyDefineError);
+            return true;
+        }
 
         if (object) {
             if (descriptor.isAccessorDescriptor()) {
@@ -4541,9 +4660,14 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         RETURN_IF_EXCEPTION(scope, false);
         if (isUnchanged)
             return true;
+        bool repeatsReported = repeatsReportedDescriptor(globalObject, object, propertyName, current, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (repeatsReported)
+            return true;
         bool onlyRestricts = onlyRepeatsOrRestrictsProperty(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!onlyRestricts)
+        bool keepsInheritedValue = !onlyRestricts && current.value() && current.value() == descriptor.value() && definesInheritedValue(object, propertyName, descriptor);
+        if (!onlyRestricts && !keepsInheritedValue)
             return rejectWriteToLockedProperty(globalObject, scope, throwException, current.configurable() ? WriteOrigin::Reflect : WriteOrigin::RejectedBySpec, object, propertyName, ImmutablePropertyDefineError);
         restrictsImmutableProperty = true;
     }
@@ -4615,6 +4739,21 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun: a definition that gives a value and changes no attribute is a store of that value. Where native code
+        // stands behind the property (a CustomValue with a setter), the setter gets the value and the property stays
+        // what it is, as V8 has it for its native data properties. Upstream puts the value in the property's place
+        // (JSTests/stress/reflect-set-proxy-receiver-custom-value.js), and since 324876@main a store through a proxy
+        // that only forwards ends here.
+        if (descriptor.value() && attributes == current.attributes() && object->structure()->hasAnyKindOfGetterSetterProperties()) {
+            unsigned storedAttributes;
+            PropertyOffset offset = object->getDirectOffset(vm, propertyName, storedAttributes);
+            if (isValidOffset(offset) && (storedAttributes & PropertyAttribute::CustomValue) && !(storedAttributes & PropertyAttribute::ReadOnly)) {
+                if (PutValueFunc setter = uncheckedDowncast<CustomGetterSetter>(object->getDirect(offset))->setter())
+                    RELEASE_AND_RETURN(scope, setter(object->realm(), JSValue::encode(object), JSValue::encode(descriptor.value()), propertyName));
+            }
+        }
+#endif
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
         object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }
@@ -4967,7 +5106,7 @@ constexpr unsigned butterflyInButterflySpace = 10; // out-of-line only: in vm.au
 constexpr unsigned butterflyOutOfLineStorageIsZeroFilled = 11; // out-of-line only
 constexpr unsigned structureIsDictionary = 12;
 constexpr unsigned structureIsUncacheableDictionary = 13; // the kind flattenDictionaryStructure() renumbers
-constexpr unsigned structureHasBeenFlattenedBefore = 14; // ineligible for further flattening
+constexpr unsigned structureHasBeenFlattenedBefore = 14;
 constexpr unsigned structureInlineCapacity = 15; // saturated to 4 bits
 }
 

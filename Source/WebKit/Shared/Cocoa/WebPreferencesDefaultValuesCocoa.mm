@@ -37,12 +37,16 @@
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/text/WTFString.h>
 
+#if PLATFORM(APPLETV)
+#import <pal/system/ios/Device.h>
+#endif
+
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPreferencesDefaultValuesCocoaAdditions.mm>)
 #import <WebKitAdditions/WebPreferencesDefaultValuesCocoaAdditions.mm>
 #else
 
 #if HAVE(LIQUID_GLASS)
-static bool LEGACY_NODELETE platformIsLiquidGlassEnabled()
+NODELETE static bool platformIsLiquidGlassEnabled()
 {
     return true;
 }
@@ -52,7 +56,7 @@ namespace WebKit {
 
 #if ENABLE(VIDEO)
 
-bool LEGACY_NODELETE defaultCaptionDisplaySettingsEnabled()
+NODELETE bool defaultCaptionDisplaySettingsEnabled()
 {
     return false;
 }
@@ -61,50 +65,40 @@ bool LEGACY_NODELETE defaultCaptionDisplaySettingsEnabled()
 
 #if PLATFORM(MAC)
 
-bool LEGACY_NODELETE defaultUseAppKitGestures()
-{
-    return false;
-}
-
-bool LEGACY_NODELETE defaultTextInputClientSelectionUpdatesEnabled()
+NODELETE bool defaultTextInputClientSelectionUpdatesEnabled()
 {
     return false;
 }
 
 #endif // PLATFORM(MAC)
 
-#if ENABLE(CONTENT_CHANGE_OBSERVER)
-bool defaultContentChangeObserverEnabled()
-{
-#if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
-    return true;
-#else
-    return false;
-#endif
-}
-#endif
-
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
-bool LEGACY_NODELETE defaultWebContentRestrictionsAskToEnabled()
+NODELETE bool defaultWebContentRestrictionsAskToEnabled()
 {
     return false;
 }
 #endif
 
-}
+} // namespace WebKit
 
-#endif // namespace WebKit
+#endif // USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPreferencesDefaultValuesCocoaAdditions.mm>)
 
 namespace WebKit {
 
+bool defaultCompressionDictionaryEnabled()
+{
+    static SEL sel = NSSelectorFromString(@"_supportsCompressionDictionary");
+    return [NSURLSession.class respondsToSelector:sel];
+}
+
 #if HAVE(LIQUID_GLASS)
-static std::optional<bool>& LEGACY_NODELETE cachedIsLiqudGlassEnabled()
+NODELETE static std::optional<bool>& cachedIsLiqudGlassEnabled()
 {
     static std::optional<bool> isLiquidGlassEnabled;
     return isLiquidGlassEnabled;
 }
 
-bool LEGACY_NODELETE isLiquidGlassEnabled()
+NODELETE bool isLiquidGlassEnabled()
 {
     if (auto isLiquidGlassEnabled = cachedIsLiqudGlassEnabled())
         return *isLiquidGlassEnabled;
@@ -112,11 +106,22 @@ bool LEGACY_NODELETE isLiquidGlassEnabled()
     return platformIsLiquidGlassEnabled();
 }
 
-void LEGACY_NODELETE setLiquidGlassEnabled(bool isLiquidGlassEnabled)
+NODELETE void setLiquidGlassEnabled(bool isLiquidGlassEnabled)
 {
     cachedIsLiqudGlassEnabled() = isLiquidGlassEnabled;
 }
 #endif // HAVE(LIQUID_GLASS)
+
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+bool defaultContentChangeObserverEnabled()
+{
+#if (PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)) || HAVE(APPKIT_GESTURES_SUPPORT)
+    return true;
+#else
+    return false;
+#endif
+}
+#endif
 
 #if PLATFORM(MAC)
 bool defaultScrollAnimatorEnabled()
@@ -185,7 +190,7 @@ bool defaultScreenTimeEnabled()
 }
 #endif // ENABLE(SCREEN_TIME)
 
-bool LEGACY_NODELETE defaultContentInsetBackgroundFillEnabled()
+NODELETE bool defaultContentInsetBackgroundFillEnabled()
 {
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
     return isLiquidGlassEnabled();
@@ -195,7 +200,7 @@ bool LEGACY_NODELETE defaultContentInsetBackgroundFillEnabled()
 }
 
 #if HAVE(MATERIAL_HOSTING)
-bool LEGACY_NODELETE defaultHostedBlurMaterialInMediaControlsEnabled()
+NODELETE bool defaultHostedBlurMaterialInMediaControlsEnabled()
 {
     return isLiquidGlassEnabled();
 }
@@ -213,10 +218,12 @@ bool defaultIOSurfaceLosslessCompressionEnabled()
 }
 
 #if ENABLE(UNIFIED_PDF)
-bool LEGACY_NODELETE defaultUnifiedPDFEnabled()
+NODELETE bool defaultUnifiedPDFEnabled()
 {
 #if ENABLE(UNIFIED_PDF_BY_DEFAULT)
     return true;
+#elif PLATFORM(APPLETV)
+    return PAL::deviceClassIsHomeView();
 #else
     return false;
 #endif
@@ -225,7 +232,7 @@ bool LEGACY_NODELETE defaultUnifiedPDFEnabled()
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS) && !USE(APPLE_INTERNAL_SDK)
 
-bool LEGACY_NODELETE defaultHorizontalBannerViewOverlaysEnabled()
+NODELETE bool defaultHorizontalBannerViewOverlaysEnabled()
 {
     return false;
 }

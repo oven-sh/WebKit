@@ -26,6 +26,7 @@
 #include "config.h"
 #include "LocalFrameViewLayoutContext.h"
 
+#include "ContainerNodeInlines.h"
 #include "DebugPageOverlays.h"
 #include "Document.h"
 #include "DocumentEnums.h"
@@ -100,8 +101,17 @@ public :
 
         checkAndReportNeedsLayoutError(m_renderView);
 
-        for (auto* descendant = m_renderView.firstChild(); descendant; descendant = descendant->nextInPreOrder(&m_renderView))
+        // Style-interleaved layout doesn't lay out the content of query containers with unresolved descendants (see RenderBlock::layout()).
+        Ref document = m_renderView.document();
+        CheckedRef styleScope = document->styleScope();
+        for (auto* descendant = m_renderView.firstChild(); descendant;) {
             checkAndReportNeedsLayoutError(*descendant);
+            if (styleScope->isQueryContainerWithUnresolvedDescendants(dynamicDowncast<Element>(descendant->node()))) {
+                descendant = descendant->nextInPreOrderAfterChildren(&m_renderView);
+                continue;
+            }
+            descendant = descendant->nextInPreOrder(&m_renderView);
+        }
     }
 
 private:
@@ -199,6 +209,8 @@ void LocalFrameViewLayoutContext::interleavedLayout()
 
     performLayout(false);
 
+    RenderBlock::restoreLayoutBitsAfterInterleavedLayout();
+
     Style::DocumentScope::LayoutDependencyUpdateContext layoutDependencyUpdateContext;
     protect(document()->styleScope())->invalidateForLayoutDependencies(layoutDependencyUpdateContext);
 }
@@ -207,8 +219,8 @@ void LocalFrameViewLayoutContext::performLayout(bool canDeferUpdateLayerPosition
 {
     Ref frame = this->frame();
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!document()->inRenderTreeUpdate());
-    ASSERT(LayoutDisallowedScope::isLayoutAllowed());
-    ASSERT(!view().isPainting());
+    ASSERT_WITH_SECURITY_IMPLICATION(LayoutDisallowedScope::isLayoutAllowed());
+    ASSERT_WITH_SECURITY_IMPLICATION(!view().isPainting());
     ASSERT(frame->view() == &view());
     ASSERT(document());
     ASSERT(document()->backForwardCacheState() == Document::NotInBackForwardCache
@@ -300,7 +312,7 @@ void LocalFrameViewLayoutContext::performLayout(bool canDeferUpdateLayerPosition
         protect(layoutRoot)->absoluteQuads(layoutAreas);
 
         clearSubtreeLayoutRoot();
-        ASSERT(m_percentHeightIgnoreList.isEmptyIgnoringNullReferences());
+        ASSERT(m_percentHeightIgnoreList.computeIsEmpty());
 
 #if !LOG_DISABLED && ENABLE(TREE_DEBUGGING)
         auto layoutLogEnabled = [] {
@@ -499,7 +511,7 @@ void LocalFrameViewLayoutContext::flushPendingSVGTransformAttributeUpdatesIfNeed
     // container happens once per parent in Pass 3, not once per child.
     auto childRectInParentSpace = [](const RenderSVGModelObject& shape) -> LayoutRect {
         auto localRect = shape.visualOverflowRectEquivalent();
-        auto transform = shape.localTransform();
+        auto transform = shape.nominalTransform();
         auto rect = transform.isIdentity() ? localRect : enclosingLayoutRect(transform.mapRect(FloatRect { localRect }));
         rect.move(shape.locationOffsetEquivalent());
         return rect;
@@ -520,9 +532,8 @@ void LocalFrameViewLayoutContext::flushPendingSVGTransformAttributeUpdatesIfNeed
         SingleThreadWeakPtr<const RenderLayerModelObject> repaintContainer;
         LayoutRect oldRect;
     };
-    Vector<FastRecord> fastRecords;
+    Vector<FastRecord> fastRecords(ReserveCapacityTag { }, pending.size());
     Vector<SlowRecord> slowRecords;
-    fastRecords.reserveInitialCapacity(pending.size());
     for (auto& weakRenderer : pending) {
         CheckedPtr renderer = weakRenderer.get();
         if (!renderer || renderer->renderTreeBeingDestroyed())
@@ -1012,7 +1023,7 @@ void LocalFrameViewLayoutContext::popLayoutState()
 bool LocalFrameViewLayoutContext::DetachedRendererList::append(RenderPtr<RenderObject>&& detachedRenderer)
 {
     ASSERT(!detachedRenderer->parent());
-    ASSERT(!detachedRenderer->beingDestroyed());
+    ASSERT_WITH_SECURITY_IMPLICATION(!detachedRenderer->beingDestroyed());
 
     if (detachedRenderer->renderTreeBeingDestroyed())
         return false;
@@ -1056,13 +1067,13 @@ void LocalFrameViewLayoutContext::deleteDetachedInlineContentNow() const
     m_detachedInlineContent.clear();
 }
 
-void LocalFrameViewLayoutContext::setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox& box, RenderBlock& container)
+void LocalFrameViewLayoutContext::setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox& box, RenderBoxModelObject& container)
 {
     auto it = m_containersWithDescendantsNeedingTransformUpdate.ensure(container, [] { return Vector<SingleThreadWeakPtr<RenderBox>>({ }); });
     it.iterator->value.append(WeakPtr { box });
 }
 
-Vector<SingleThreadWeakPtr<RenderBox>> LocalFrameViewLayoutContext::takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBlock& container)
+Vector<SingleThreadWeakPtr<RenderBox>> LocalFrameViewLayoutContext::takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBoxModelObject& container)
 {
     return m_containersWithDescendantsNeedingTransformUpdate.take(container);
 }
@@ -1208,18 +1219,18 @@ Document* LocalFrameViewLayoutContext::document() const
     return frame().document();
 }
 
-ListItemExcludedMarkerScope::ListItemExcludedMarkerScope(LocalFrameViewLayoutContext& layoutContext, RenderListOutsideMarker& excludedMarker)
+ListItemOutsideMarkerScope::ListItemOutsideMarkerScope(LocalFrameViewLayoutContext& layoutContext, RenderListItem& listItem)
     : m_layoutContext(layoutContext)
 {
     // Nested list items lay out inside their ancestor's layout, so this is a stack: an ancestor stays in it while
     // its descendant list item lays out, because the line that descendant produces may well be the ancestor's
     // first formatted line too, and then it has to align both markers.
-    layoutContext.m_excludedMarkers.append(excludedMarker);
+    layoutContext.m_listItemsWithOutsideMarker.append(listItem);
 }
 
-ListItemExcludedMarkerScope::~ListItemExcludedMarkerScope()
+ListItemOutsideMarkerScope::~ListItemOutsideMarkerScope()
 {
-    m_layoutContext->m_excludedMarkers.removeLast();
+    m_layoutContext->m_listItemsWithOutsideMarker.removeLast();
 }
 
 } // namespace WebCore

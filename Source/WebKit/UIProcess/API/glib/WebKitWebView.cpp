@@ -451,6 +451,7 @@ struct _WebKitWebViewPrivate {
 #endif
 
     GRefPtr<WebKitAuthenticationRequest> authenticationRequest;
+    Markable<WebCore::NavigationIdentifier> authenticationRequestNavigationID;
 
 #if ENABLE(2022_GLIB_API)
     GRefPtr<WebKitNetworkSession> networkSession;
@@ -508,7 +509,7 @@ void PageLoadStateObserver::didChangeIsLoading()
 
 void PageLoadStateObserver::didChangeTitle()
 {
-    m_webView->priv->title = getPage(m_webView).pageLoadState().title().utf8();
+    m_webView->priv->title = makeUTF8CString(getPage(m_webView).pageLoadState().title());
     g_object_notify_by_pspec(G_OBJECT(m_webView), sObjProperties[PROP_TITLE]);
     g_object_thaw_notify(G_OBJECT(m_webView));
 }
@@ -524,7 +525,7 @@ void PageLoadStateObserver::didChangeActiveURL()
 {
     if (m_webView->priv->isActiveURIChangeBlocked)
         return;
-    m_webView->priv->activeURI = getPage(m_webView).pageLoadState().activeURL().string().utf8();
+    m_webView->priv->activeURI = makeUTF8CString(getPage(m_webView).pageLoadState().activeURL().string());
     g_object_notify_by_pspec(G_OBJECT(m_webView), sObjProperties[PROP_URI]);
     g_object_thaw_notify(G_OBJECT(m_webView));
 }
@@ -2775,6 +2776,11 @@ static void webkitWebViewCompleteAuthenticationRequest(WebKitWebView* webView)
     priv->authenticationRequest = nullptr;
 }
 
+static bool webkitWebViewAuthenticationRequestIsForNavigation(WebKitWebView* webView, API::Navigation* navigation)
+{
+    return navigation && webView->priv->authenticationRequest && navigation->navigationID() == webView->priv->authenticationRequestNavigationID;
+}
+
 WebPageProxy& webkitWebViewGetPage(WebKitWebView* webView)
 {
     return getPage(webView);
@@ -2802,7 +2808,7 @@ void webkitWebViewWillStartLoad(WebKitWebView* webView)
         error.get());
 }
 
-void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
+void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent, API::Navigation* navigation)
 {
     WebKitWebViewPrivate* priv = webView->priv;
     switch (loadEvent) {
@@ -2811,12 +2817,13 @@ void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
         webkitWebViewCancelFaviconRequest(webView);
         webkitWebViewWatchForChangesInFavicon(webView);
 #endif
-        webkitWebViewCompleteAuthenticationRequest(webView);
+        if (!webkitWebViewAuthenticationRequestIsForNavigation(webView, navigation))
+            webkitWebViewCompleteAuthenticationRequest(webView);
         priv->mainResource = nullptr;
         webView->priv->isActiveURIChangeBlocked = false;
         break;
     case WEBKIT_LOAD_COMMITTED: {
-        auto activeURL = getPage(webView).pageLoadState().activeURL().string().utf8();
+        auto activeURL = makeUTF8CString(getPage(webView).pageLoadState().activeURL().string());
         // Active URL is trusted now. If it's different to our active URI, due to the
         // update block before WEBKIT_LOAD_STARTED, we update it here to be in sync
         // again with the page load state.
@@ -2847,7 +2854,7 @@ void webkitWebViewLoadFailed(WebKitWebView* webView, WebKitLoadEvent loadEvent, 
     webkitWebViewCompleteAuthenticationRequest(webView);
 
     gboolean returnValue;
-    gSignalEmit(webView, signals[LOAD_FAILED], 0, loadEvent, failingURI.utf8(), error, &returnValue);
+    gSignalEmit(webView, signals[LOAD_FAILED], 0, loadEvent, makeUTF8CString(failingURI), error, &returnValue);
     g_signal_emit(webView, signals[LOAD_CHANGED], 0, WEBKIT_LOAD_FINISHED);
 }
 
@@ -2862,7 +2869,7 @@ void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const String& 
     WebKitTLSErrorsPolicy tlsErrorsPolicy = webkit_website_data_manager_get_tls_errors_policy(websiteDataManager);
 #endif
     if (tlsErrorsPolicy == WEBKIT_TLS_ERRORS_POLICY_FAIL) {
-        auto failingURIUTF8 = failingURI.utf8();
+        auto failingURIUTF8 = makeUTF8CString(failingURI);
         gboolean returnValue;
         gSignalEmit(webView, signals[LOAD_FAILED_WITH_TLS_ERRORS], 0, failingURIUTF8, certificate, tlsErrors, &returnValue);
         if (!returnValue)
@@ -2873,7 +2880,7 @@ void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const String& 
 }
 
 #if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
-void webkitWebViewGetLoadDecisionForIcons(WebKitWebView* webView, const HashMap<CallbackID, WebCore::LinkIcon>& icons, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
+void webkitWebViewGetLoadDecisionForIcons(WebKitWebView* webView, const Vector<std::pair<CallbackID, WebCore::LinkIcon>>& icons, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
 {
     struct CallbackAggregator final : public ThreadSafeRefCounted<CallbackAggregator>  {
         explicit CallbackAggregator(CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
@@ -2918,7 +2925,7 @@ void webkitWebViewUpdatePageIcons(WebKitWebView *webView)
         return;
 
     auto cancellable = adoptGRef(g_cancellable_new());
-    webkit_favicon_database_get_page_icons(database, getPage(webView).pageLoadState().activeURL().string().utf8().legacyCStringPointer(), cancellable.get(), [](GObject* database, GAsyncResult* result, gpointer userData) {
+    webkit_favicon_database_get_page_icons(database, makeUTF8CString(getPage(webView).pageLoadState().activeURL().string()).legacyCStringPointer(), cancellable.get(), [](GObject* database, GAsyncResult* result, gpointer userData) {
         auto webView = adoptGRef(WEBKIT_WEB_VIEW(userData));
 
         GUniqueOutPtr<GError> error;
@@ -3269,6 +3276,7 @@ void webkitWebViewHandleAuthenticationChallenge(WebKitWebView* webView, Authenti
     bool credentialStorageEnabled = webkit_website_data_manager_get_persistent_credential_storage_enabled(websiteDataManager);
 #endif
     webView->priv->authenticationRequest = adoptGRef(webkitAuthenticationRequestCreate(authenticationChallenge, webkitWebViewIsEphemeral(webView), credentialStorageEnabled));
+    webView->priv->authenticationRequestNavigationID = getPage(webView).pageLoadState().pendingAPIRequest().navigationID;
     gboolean returnValue;
     g_signal_emit(webView, signals[AUTHENTICATE], 0, webView->priv->authenticationRequest.get(), &returnValue);
 }
@@ -3349,8 +3357,7 @@ void webkitWebViewRequestPointerLock(WebKitWebView* webView, CompletionHandler<v
 #endif
 
 #if PLATFORM(WPE)
-    webView->priv->view->requestPointerLock();
-    completionHandler(true);
+    completionHandler(webView->priv->view->requestPointerLock());
 #endif
 }
 
@@ -4108,7 +4115,7 @@ const gchar* webkit_web_view_get_custom_charset(WebKitWebView* webView)
     if (customTextEncoding.isEmpty())
         return 0;
 
-    webView->priv->customTextEncoding = customTextEncoding.utf8();
+    webView->priv->customTextEncoding = makeUTF8CString(customTextEncoding);
     return webView->priv->customTextEncoding.legacyCStringPointer();
 }
 
@@ -4550,7 +4557,7 @@ static void webkitWebViewRunJavaScriptWithParams(WebKitWebView* webView, WebKit:
             }
             builder.append(exceptionDetails.message);
             SAFE_G_TASK_RETURN_NEW_ERROR(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED,
-                "%s", builder.toString().utf8());
+                "%s", makeUTF8CString(builder.toString()));
         }
     });
 }
@@ -5690,6 +5697,8 @@ void webkit_web_view_remove_frame_displayed_callback(WebKitWebView* webView, uns
  * webkit_web_view_send_message_to_page_finish() to get the message reply.
  *
  * Since: 2.28
+ *
+ * Deprecated: 2.56
  */
 void webkit_web_view_send_message_to_page(WebKitWebView* webView, WebKitUserMessage* message, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer userData)
 {
@@ -5733,6 +5742,8 @@ void webkit_web_view_send_message_to_page(WebKitWebView* webView, WebKitUserMess
  * Returns: (transfer full): a #WebKitUserMessage with the reply or %NULL in case of error.
  *
  * Since: 2.28
+ *
+ * Deprecated: 2.56
  */
 WebKitUserMessage* webkit_web_view_send_message_to_page_finish(WebKitWebView* webView, GAsyncResult* result, GError** error)
 {

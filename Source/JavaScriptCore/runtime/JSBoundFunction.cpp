@@ -26,7 +26,6 @@
 #include "config.h"
 #include "JSBoundFunction.h"
 
-#include "AOTAllocationCounts.h"
 #include "AOTCompiledCallee.h"
 #include "DeferTermination.h"
 #include "ExecutableBaseInlines.h"
@@ -253,10 +252,6 @@ JSBoundFunction::JSBoundFunction(VM& vm, NativeExecutable* executable, JSGlobalO
     , m_boundArgsLength(boundArgsLength)
     , m_isTainted(taintedness >= SourceTaintedOrigin::IndirectlyTainted)
 {
-#if ENABLE(AOT)
-    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
-        AOT::AllocationCounts::didMake(vm, "bound_function"_s, targetFunction->classInfo()->className.characters());
-#endif
     m_boundArgs[0].setWithoutWriteBarrier(arg0);
     m_boundArgs[1].setWithoutWriteBarrier(arg1);
     m_boundArgs[2].setWithoutWriteBarrier(arg2);
@@ -324,7 +319,7 @@ JSString* JSBoundFunction::nameSlow(VM& vm)
             if (builder.hasOverflowed())
                 terminal = jsEmptyString(vm);
             else
-                terminal = jsNontrivialString(vm, builder.toString());
+                terminal = jsNontrivialString(vm, WTF::move(builder).toString());
         }
     }
 
@@ -348,9 +343,11 @@ String JSBoundFunction::nameStringWithoutGCSlow(VM& vm)
     String terminal;
     while (true) {
 #if ENABLE(AOT)
-        if (isSlimClosureType(cursor->type())) {
-            terminal = AOT::CompiledCallee::name(cursor);
-            break;
+        if (vm.hasCompiledCode()) [[unlikely]] {
+            if (String declaredName = AOT::closureDeclaredName(cursor); !declaredName.isNull()) {
+                terminal = declaredName;
+                break;
+            }
         }
 #endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the name.
@@ -376,7 +373,7 @@ String JSBoundFunction::nameStringWithoutGCSlow(VM& vm)
     builder.append(WTF::move(terminal));
     if (builder.hasOverflowed())
         return emptyString();
-    return builder.toString();
+    return WTF::move(builder).toString();
 }
 
 double JSBoundFunction::lengthSlow(VM& vm)

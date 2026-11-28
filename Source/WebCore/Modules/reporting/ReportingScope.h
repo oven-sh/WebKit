@@ -47,7 +47,7 @@ class ScriptExecutionContext;
 class ReportingScope final : public RefCounted<ReportingScope>, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ReportingScope, WEBCORE_EXPORT);
 public:
-    static Ref<ReportingScope> LEGACY_NODELETE create(ScriptExecutionContext&);
+    NODELETE static Ref<ReportingScope> create(ScriptExecutionContext&);
     WEBCORE_EXPORT virtual ~ReportingScope();
 
     // ContextDestructionObserver.
@@ -76,7 +76,7 @@ private:
 
     Vector<Ref<ReportingObserver>> m_reportingObservers;
     Deque<Ref<Report>> m_queuedReports;
-    HashCountedSet<ViolationReportType, IntHash<ViolationReportType>, WTF::StrongEnumHashTraits<ViolationReportType>> m_queuedReportTypeCounts;
+    HashCountedSet<ViolationReportType, IntHash<ViolationReportType>> m_queuedReportTypeCounts;
 
     MemoryCompactRobinHoodHashMap<String, String> m_reportingEndpoints;
 };

@@ -103,6 +103,8 @@ public:
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
     void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
+    // loadPromise() is of a load that JSModuleLoader::loadModuleSync() ran.
+    bool wasLoadStartedSynchronously() const { return m_wasLoadStartedSynchronously; }
 #endif
 
 private:
@@ -124,6 +126,7 @@ private:
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
+    bool m_wasLoadStartedSynchronously { false };
 #endif
 };
 

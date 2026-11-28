@@ -96,6 +96,9 @@ void Device::createComputePipeline(const WebGPU::ComputePipelineDescriptor& desc
 
     if (!shaderModule->isValid() || &shaderModule->device() != this || !pipelineLayout)
         return callback(returnInvalidComputePipeline(*this, isAsync));
+    auto ast = shaderModule->ast();
+    if (!ast)
+        return callback(returnInvalidComputePipeline(*this, isAsync));
 
     if (!isValidToUseWithDevice(*pipelineLayout, *this))
         return callback(returnInvalidComputePipeline(*this, isAsync, @"GPUDevice.createComputePipeline: Pipeline layout is invalid"));
@@ -119,7 +122,7 @@ void Device::createComputePipeline(const WebGPU::ComputePipelineDescriptor& desc
     if (entryPointInformation.specializationConstants.size() != wgslConstantValues.size())
         return callback(returnInvalidComputePipeline(*this, isAsync));
 
-    auto evaluatedSize = metalSize(*shaderModule->ast(), computeInformation.workgroupSize, wgslConstantValues);
+    auto evaluatedSize = metalSize(*ast, computeInformation.workgroupSize, wgslConstantValues);
     if (!evaluatedSize)
         return callback(returnInvalidComputePipeline(*this, isAsync, @"Failed to evaluate overrides"));
     auto size = *evaluatedSize;
@@ -191,7 +194,7 @@ static CompletionHandler<void(std::pair<Ref<ComputePipeline>, NSString*>&&)> asy
         };
 
         // Resolve on a later turn of the WebGPU thread, never re-entrantly from the caller.
-        if (RefPtr protectedInstance = protectedDevice->instance()) {
+        if (RefPtr protectedInstance = protectedDevice->weakInstance()) {
             protectedInstance->scheduleWork(WTF::move(reportResult));
             return;
         }
@@ -267,27 +270,3 @@ const BufferBindingSizesForBindGroup* ComputePipeline::minimumBufferSizes(uint32
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuComputePipelineAddRef(WGPUComputePipeline computePipeline)
-{
-    WebGPU::Metal::fromAPI(computePipeline).ref();
-}
-
-void wgpuComputePipelineRelease(WGPUComputePipeline computePipeline)
-{
-    WebGPU::Metal::fromAPI(computePipeline).deref();
-}
-
-WGPUBindGroupLayout wgpuComputePipelineGetBindGroupLayout(WGPUComputePipeline computePipeline, uint32_t groupIndex)
-{
-    // Every WebGPU::BindGroupLayout that a WebGPU::Metal::ComputePipeline returns is a WebGPU::Metal::BindGroupLayout.
-    Ref bindGroupLayout = downcast<WebGPU::Metal::BindGroupLayout>(protect(WebGPU::Metal::fromAPI(computePipeline))->getBindGroupLayout(groupIndex).get());
-    return WebGPU::Metal::releaseToAPI(WTF::move(bindGroupLayout));
-}
-
-void wgpuComputePipelineSetLabel(WGPUComputePipeline computePipeline, WGPUStringView label)
-{
-    WebGPU::Metal::fromAPI(computePipeline).setLabel(WebGPU::Metal::fromAPI(label));
-}

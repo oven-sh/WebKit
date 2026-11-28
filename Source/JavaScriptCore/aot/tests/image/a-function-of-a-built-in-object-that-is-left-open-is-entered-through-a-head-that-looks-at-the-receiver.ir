@@ -1,0 +1,67 @@
+# if (never()) JSON.stringify = 0; say(); say(); replace(); say(); restore(); say()   with   say = () => { asked("a"); }   function asked(value: any) { const text = JSON.stringify(value); print(text); return text; }
+# The program stores to JSON.stringify where the build sees it, so the member is open and no constant of the build: the call goes by name. It cost 35 instructions more than the call of a locked member:
+# the answer of the site, the call of a value, the look at the cell, the look for the door of the host function. An application made that call 100,000 times a session.
+# The call names the function that the built-in object gives under that key as it is written. That is a hint alone. The head holds `this` against a word of the instance: the object, while its member is as built.
+# The run time fills the word at the first call, where the holder tells of writes and nobody has written the member. Whoever writes it is announced first, and the word goes for good:
+# replace() lays another function: the site finds it; put back, the word stays empty and the lookup answers.
+# RUN: run-in-shell mechanisms=all const holder = JSON, real = holder.stringify; globalThis.never = () => false; globalThis.replace = () => { holder.stringify = value => "laid " + value; }; globalThis.restore = () => { holder.stringify = real; };
+# CHECK: "a"
+# CHECK-NEXT: "a"
+# CHECK-NEXT: laid a
+# CHECK-NEXT: "a"
+# CHECK-NEXT: exited with 0
+# RUN(DELETED): run-in-shell mechanisms=all const holder = JSON, real = holder.stringify; globalThis.never = () => false; globalThis.replace = () => { delete holder.stringify; Object.defineProperty(holder, "stringify", { get() { return value => "got " + value; }, configurable: true }); }; globalThis.restore = () => { Object.defineProperty(holder, "stringify", { value: real, configurable: true, writable: true }); };
+# DELETED: "a"
+# DELETED-NEXT: "a"
+# DELETED-NEXT: got a
+# DELETED-NEXT: "a"
+# RUN(LOCKS): locks open
+# LOCKS: open JSONStringify written-under-its-name
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = Call {{*}}calleeKey="stringify"{{*}}methodOfReceiverAsMade=JSONStringify
+# RUN(HEAD): bytes f1:Body mechanisms=all
+# HEAD: Stub CallFunctionOfBuiltinAtSite.JSONStringify
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="never" [isFreeName]
+    v4 = Call v3, -
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Builtin builtin=JSON
+    v6 = Integer integer=0
+    PropSet v5, v6 key="stringify"
+    Jump -> next b2()
+  b2():
+    v8 = Call v2, -, v1 [isNeverInlined]
+    v9 = Call v2, -, v1 [isNeverInlined]
+    v10 = PropGet v0 key="replace" [isFreeName]
+    v11 = Call v10, -
+    v12 = Call v2, -, v1 [isNeverInlined]
+    v13 = PropGet v0 key="restore" [isFreeName]
+    v14 = Call v13, -
+    v15 = Call v2, -, v1 [isNeverInlined]
+    Return v15
+}
+function f1 name="asked" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="stringify" @40
+    v3 = Call v2, v1, v0 calleeKey="stringify" @45
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="print" [isFreeName]
+    v6 = Call v5, -, v3
+    Return v3
+}
+function f2 name="say" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = Call v0, -, v1 [isNeverInlined]
+    Return v1
+}

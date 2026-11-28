@@ -38,7 +38,7 @@ class RenderTextFragment;
 class RenderTreeUpdater::GeneratedContent {
     WTF_MAKE_TZONE_ALLOCATED(GeneratedContent);
 public:
-    GeneratedContent(RenderTreeUpdater&);
+    NODELETE GeneratedContent(RenderTreeUpdater&);
 
     void updateBackdropRenderer(RenderElement&, Style::DifferenceResult minimalStyleDifference);
     void updateBeforeOrAfterPseudoElement(Element&, const Style::ElementUpdate&, PseudoElementType);
@@ -55,7 +55,7 @@ public:
 
 private:
     void updateQuotesUpTo(RenderTextFragment*);
-    RenderElement* popExitedQuoteScopes(const RenderTextFragment&);
+    CheckedPtr<RenderElement> popExitedQuoteScopes(const RenderTextFragment&);
 
     bool needsPseudoElement(const Style::ComputedStyle*);
 

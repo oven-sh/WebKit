@@ -126,7 +126,7 @@ void QuerySet::setOverrideLocation(QuerySet&, uint32_t, uint32_t)
 
 void QuerySet::setCommandEncoder(CommandEncoder& commandEncoder) const
 {
-    CommandEncoder::trackEncoder(commandEncoder, m_commandEncoders);
+    commandEncoder.trackEncoderForQuerySet(*this, m_commandEncoders);
     commandEncoder.addBuffer(m_visibilityBuffer);
     commandEncoder.addBuffer(m_timestampBufferWithOffset.buffer);
     if (isDestroyed())
@@ -217,36 +217,3 @@ void QuerySet::createContainersIfNeeded()
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuQuerySetAddRef(WGPUQuerySet querySet)
-{
-    WebGPU::Metal::fromAPI(querySet).ref();
-}
-
-void wgpuQuerySetRelease(WGPUQuerySet querySet)
-{
-    WebGPU::Metal::fromAPI(querySet).deref();
-}
-
-void wgpuQuerySetDestroy(WGPUQuerySet querySet)
-{
-    protect(WebGPU::Metal::fromAPI(querySet))->destroy();
-}
-
-void wgpuQuerySetSetLabel(WGPUQuerySet querySet, WGPUStringView label)
-{
-    protect(WebGPU::Metal::fromAPI(querySet))->setLabel(WebGPU::Metal::fromAPI(label));
-}
-
-uint32_t wgpuQuerySetGetCount(WGPUQuerySet querySet)
-{
-    return WebGPU::Metal::fromAPI(querySet).count();
-}
-
-WGPUQueryType wgpuQuerySetGetType(WGPUQuerySet querySet)
-{
-    auto type = WebGPU::Metal::fromAPI(querySet).type();
-    return type ? WebGPU::Metal::toAPI(*type) : WGPUQueryType_Force32;
-}

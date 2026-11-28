@@ -1033,6 +1033,175 @@ void main(void)
     EXPECT_LT(numLongWaits, kMinLongWaitsToFail);
 }
 
+// Test that racing eglDestroySync() on one thread with eglTerminate() on another thread does not
+// leak sync objects if eglTerminate() sets kTerminatingBit right after RemoveSyncIfValid().
+TEST_P(EGLSyncTest, DestroySyncAndTerminateRace)
+{
+    ANGLE_SKIP_TEST_IF(!hasFenceSyncExtension() || !hasGLSyncExtension());
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+
+    EGLWindow *window  = getEGLWindow();
+    EGLDisplay display = window->getDisplay();
+    const EGLint major = window->getClientMajorVersion();
+    const EGLint minor = window->getClientMinorVersion();
+
+    // Tear down the fixture's context/surface/display so this test controls display termination.
+    window->destroyGL();
+
+    constexpr size_t kIterations = 5;
+    constexpr size_t kSyncCount  = 32;
+
+    const EGLint configAttribs[]  = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE,
+                                     (major >= 3) ? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT,
+                                     EGL_NONE};
+    const EGLint pbufferAttribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+    const EGLint contextAttribs[] = {EGL_CONTEXT_CLIENT_VERSION, major, EGL_CONTEXT_MINOR_VERSION,
+                                     minor, EGL_NONE};
+
+    for (size_t iter = 0; iter < kIterations; ++iter)
+    {
+        ASSERT_EGL_TRUE(eglInitialize(display, nullptr, nullptr));
+
+        EGLConfig config  = EGL_NO_CONFIG_KHR;
+        EGLint numConfigs = 0;
+        ASSERT_EGL_TRUE(eglChooseConfig(display, configAttribs, &config, 1, &numConfigs));
+        ASSERT_GT(numConfigs, 0);
+
+        EGLSurface surface = eglCreatePbufferSurface(display, config, pbufferAttribs);
+        ASSERT_NE(surface, EGL_NO_SURFACE);
+
+        EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
+        ASSERT_NE(context, EGL_NO_CONTEXT);
+
+        ASSERT_EGL_TRUE(eglMakeCurrent(display, surface, surface, context));
+
+        std::array<EGLSync, kSyncCount> syncs;
+        for (size_t i = 0; i < kSyncCount; ++i)
+        {
+            syncs[i] = eglCreateSync(display, EGL_SYNC_FENCE, nullptr);
+            ASSERT_NE(syncs[i], EGL_NO_SYNC);
+        }
+
+        // Release and destroy context/surface so eglTerminate() immediately performs full teardown.
+        ASSERT_EGL_TRUE(eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+        ASSERT_EGL_TRUE(eglDestroySurface(display, surface));
+        ASSERT_EGL_TRUE(eglDestroyContext(display, context));
+
+        std::atomic<uint32_t> readyCount{0};
+        std::atomic<bool> destroyingStarted{false};
+
+        // Thread 1 repeatedly calls eglDestroySync() while Thread 2 calls eglTerminate().
+        std::thread thread1([&]() {
+            readyCount.fetch_add(1, std::memory_order_acq_rel);
+            while (readyCount.load(std::memory_order_acquire) < 2)
+            {
+            }
+
+            for (size_t i = 0; i < kSyncCount; ++i)
+            {
+                if (i == 8)
+                {
+                    destroyingStarted.store(true, std::memory_order_release);
+                }
+                if (eglDestroySync(display, syncs[i]) == EGL_FALSE)
+                {
+                    break;
+                }
+            }
+        });
+
+        std::thread thread2([&]() {
+            readyCount.fetch_add(1, std::memory_order_acq_rel);
+            while (!destroyingStarted.load(std::memory_order_acquire))
+            {
+            }
+
+            EXPECT_EGL_TRUE(eglTerminate(display));
+        });
+
+        thread1.join();
+        thread2.join();
+    }
+}
+
+// Test that racing eglWaitSync[KHR]() on one thread with eglDestroySync[KHR]() of the same sync on
+// another thread never waits on a destroyed sync.  eglWaitSync[KHR]() must either fail with
+// EGL_BAD_PARAMETER because the sync was destroyed before it looked the sync up, or succeed.  On
+// the GL backend on top of native EGL, the native wait runs in an unlocked tail call, after the
+// entry point has released its reference to the sync.  If the tail call doesn't keep the sync
+// alive, the native sync may be destroyed before the wait, and eglWaitSync[KHR]() fails while
+// reporting EGL_SUCCESS (or crashes in the driver).
+TEST_P(EGLSyncTest, WaitSyncAndDestroySyncRace)
+{
+    ANGLE_SKIP_TEST_IF(!hasWaitSyncExtension() || !hasGLSyncExtension());
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+
+    EGLDisplay display = getEGLWindow()->getDisplay();
+
+    constexpr size_t kIterations = 256;
+
+    for (const bool useKHR : {true, false})
+    {
+        std::array<EGLSync, kIterations> syncs;
+        for (EGLSync &sync : syncs)
+        {
+            sync = useKHR ? eglCreateSyncKHR(display, EGL_SYNC_FENCE_KHR, nullptr)
+                          : eglCreateSync(display, EGL_SYNC_FENCE, nullptr);
+            ASSERT_NE(sync, EGL_NO_SYNC);
+        }
+
+        // Both threads arrive at the barrier before each iteration, so that they call
+        // eglWaitSync[KHR]() and eglDestroySync[KHR]() at the same time.
+        std::atomic<size_t> barrier{0};
+        auto arriveAndWait = [&barrier](size_t iteration) {
+            barrier.fetch_add(1, std::memory_order_acq_rel);
+            while (barrier.load(std::memory_order_acquire) < 2 * (iteration + 1))
+            {
+            }
+        };
+
+        std::thread destroyThread([&]() {
+            for (size_t iteration = 0; iteration < kIterations; ++iteration)
+            {
+                arriveAndWait(iteration);
+                EXPECT_EGL_TRUE(useKHR ? eglDestroySyncKHR(display, syncs[iteration])
+                                       : eglDestroySync(display, syncs[iteration]));
+            }
+        });
+
+        size_t unexpectedResultCount = 0;
+        EGLint firstUnexpectedResult = EGL_TRUE;
+        EGLint firstUnexpectedError  = EGL_SUCCESS;
+
+        for (size_t iteration = 0; iteration < kIterations; ++iteration)
+        {
+            arriveAndWait(iteration);
+            const EGLint result =
+                useKHR ? eglWaitSyncKHR(display, syncs[iteration], 0)
+                       : static_cast<EGLint>(eglWaitSync(display, syncs[iteration], 0));
+            const EGLint error = eglGetError();
+
+            const EGLint expectedError = result == EGL_TRUE ? EGL_SUCCESS : EGL_BAD_PARAMETER;
+            if (error != expectedError)
+            {
+                if (unexpectedResultCount == 0)
+                {
+                    firstUnexpectedResult = result;
+                    firstUnexpectedError  = error;
+                }
+                ++unexpectedResultCount;
+            }
+        }
+
+        destroyThread.join();
+
+        EXPECT_EQ(unexpectedResultCount, 0u)
+            << (useKHR ? "eglWaitSyncKHR" : "eglWaitSync") << "() returned "
+            << firstUnexpectedResult << " with error 0x" << std::hex << firstUnexpectedError
+            << " while the sync was being destroyed on another thread";
+    }
+}
+
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(EGLSyncTest,
                                        ES2_VULKAN().enable(Feature::EnableExtraSubmitFence),
                                        ES3_VULKAN().enable(Feature::EnableExtraSubmitFence));

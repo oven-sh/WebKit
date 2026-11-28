@@ -34,8 +34,7 @@
 #include <wtf/Markable.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineContentAligner;
 class InlineFormattingContext;
@@ -54,7 +53,6 @@ struct LineRun {
         SoftLineBreak,
         WordBreakOpportunity,
         AtomicInlineBox,
-        ListMarker,
         InlineBoxStart,
         InlineBoxEnd,
         LineSpanningInlineBoxStart,
@@ -66,8 +64,7 @@ struct LineRun {
     bool isNonBreakingSpace() const { return m_type == Type::NonBreakingSpace; }
     bool isWordSeparator() const { return m_type == Type::WordSeparator; }
     bool isAtomicInlineBox() const { return m_type == Type::AtomicInlineBox; }
-    bool isListMarker() const { return m_type == Type::ListMarker; }
-    bool LEGACY_NODELETE isListMarkerOrItsContent() const;
+    NODELETE bool isListMarkerOrItsContent() const;
     bool isLineBreak() const { return isHardLineBreak() || isSoftLineBreak(); }
     bool isSoftLineBreak() const  { return m_type == Type::SoftLineBreak; }
     bool isHardLineBreak() const { return m_type == Type::HardLineBreak; }
@@ -79,7 +76,7 @@ struct LineRun {
     bool isOutOfFlow() const { return m_type == Type::OutOfFlow; }
     bool isBlock() const { return m_type == Type::Block; }
 
-    bool isContentful() const { return (isText() && textContent().length) || isAtomicInlineBox() || isLineBreak() || isListMarker() || isBlock(); }
+    bool isContentful() const { return (isText() && textContent().length) || isAtomicInlineBox() || isLineBreak() || isBlock(); }
     static bool isContentfulOrHasDecoration(const LineRun&, const InlineFormattingContext&);
 
     const Box& layoutBox() const { return *m_layoutBox; }
@@ -109,8 +106,8 @@ struct LineRun {
     GlyphOverflow glyphOverflow() const { return m_glyphOverflow; }
 
     inline TextDirection inlineDirection() const;
-    InlineLayoutUnit LEGACY_NODELETE letterSpacing() const;
-    bool LEGACY_NODELETE hasTextCombine() const;
+    NODELETE InlineLayoutUnit letterSpacing() const;
+    NODELETE bool hasTextCombine() const;
     InlineLayoutUnit textSpacingAdjustment() const { return m_textSpacingAdjustment; }
 
     UBiDiLevel bidiLevel() const { return m_bidiLevel; }
@@ -134,7 +131,7 @@ private:
     LineRun(const InlineItem&, const Style::ComputedStyle&, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, InlineLayoutUnit textSpacingAdjustment = 0.f);
 
     const Style::ComputedStyle& style() const LIFETIME_BOUND { return m_style; }
-    void LEGACY_NODELETE expand(const InlineTextItem&, InlineLayoutUnit logicalWidth);
+    NODELETE void expand(const InlineTextItem&, InlineLayoutUnit logicalWidth);
     void moveHorizontally(InlineLayoutUnit offset) { m_logicalLeft += offset; }
     void shrinkHorizontally(InlineLayoutUnit width) { m_logicalWidth -= width; }
     void setExpansion(InlineDisplay::Box::Expansion expansion) { m_expansion = expansion; }
@@ -154,21 +151,21 @@ private:
     };
     bool hasCollapsibleTrailingWhitespace() const { return hasTrailingWhitespace() && (m_trailingWhitespace.type == TrailingWhitespace::Type::Collapsible || hasCollapsedTrailingWhitespace()); }
     bool hasCollapsedTrailingWhitespace() const { return hasTrailingWhitespace() && m_trailingWhitespace.type == TrailingWhitespace::Type::Collapsed; }
-    static std::optional<TrailingWhitespace::Type> LEGACY_NODELETE trailingWhitespaceType(const InlineTextItem&);
+    NODELETE static std::optional<TrailingWhitespace::Type> trailingWhitespaceType(const InlineTextItem&);
     InlineLayoutUnit removeTrailingWhitespace();
 
-    std::optional<LineRun> LEGACY_NODELETE detachTrailingWhitespace();
+    NODELETE std::optional<LineRun> detachTrailingWhitespace();
 
-    bool LEGACY_NODELETE hasTrailingLetterSpacing() const;
-    InlineLayoutUnit LEGACY_NODELETE trailingLetterSpacing() const;
-    InlineLayoutUnit LEGACY_NODELETE removeTrailingLetterSpacing();
+    NODELETE bool hasTrailingLetterSpacing() const;
+    NODELETE InlineLayoutUnit trailingLetterSpacing() const;
+    NODELETE InlineLayoutUnit removeTrailingLetterSpacing();
 
     // Members are ordered by descending alignment to minimize padding.
     // 8-byte aligned:
     TrailingWhitespace m_trailingWhitespace { };
     Markable<size_t> m_lastNonWhitespaceContentStart { };
-    const Box* m_layoutBox { nullptr };
-    const Style::ComputedStyle& m_style;
+    const CheckedPtr<const Box> m_layoutBox;
+    const CheckedRef<const Style::ComputedStyle> m_style;
     Text m_textContent;
     // 4-byte aligned:
     InlineLayoutUnit m_logicalLeft { 0 };
@@ -205,8 +202,7 @@ inline void LineRun::setNeedsHyphen(InlineLayoutUnit hyphenLogicalWidth)
 
 inline TextDirection LineRun::inlineDirection() const
 {
-    return m_style.writingMode().bidiDirection();
+    return m_style->writingMode().bidiDirection();
 }
 
-}
 }

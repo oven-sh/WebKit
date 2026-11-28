@@ -1,5 +1,4 @@
 # what the host reads from an entry: an export, passed on as an argument that a call of the built-in declares
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidEntry 3
 

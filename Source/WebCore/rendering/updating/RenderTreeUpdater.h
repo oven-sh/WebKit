@@ -56,6 +56,7 @@ public:
     static void tearDownRenderers(Element&);
     static void tearDownRenderersForShadowRootInsertion(Element&);
     static void tearDownRenderersAfterSlotChange(Element& host);
+    static void tearDownRenderersAfterSlotReassignment(Element&);
     static void tearDownRenderer(Text&);
 
 private:
@@ -66,22 +67,23 @@ private:
     void createTextRenderer(Text&, const Style::TextUpdate*);
     void updateElementRenderer(Element&, const Style::ElementUpdate&);
     void updateSVGRenderer(Element&);
-    void updateRendererStyle(RenderElement&, Style::ComputedStyle&&, Style::DifferenceResult);
+    void updateRendererStyle(RenderElement&, UniqueRef<Style::ComputedStyle>&&, Style::DifferenceResult);
+    UniqueRef<Style::ComputedStyle> cloneIncludingPseudoElements(const Style::ComputedStyle&);
     void updateRenderViewStyle();
-    void createRenderer(Element&, Style::ComputedStyle&&);
+    void createRenderer(Element&, UniqueRef<Style::ComputedStyle>&&);
     void updateBeforeDescendants(Element&, const Style::ElementUpdate*);
     void updateAfterDescendants(Element&, const Style::ElementUpdate*);
     bool textRendererIsNeeded(const Text& textNode);
-    void LEGACY_NODELETE storePreviousRenderer(Node&);
+    NODELETE void storePreviousRenderer(Node&);
 
     void destroyAndCancelAnimationsForSubtree(RenderElement&);
 
     struct Parent {
-        Element* element { nullptr };
+        CheckedPtr<Element> element;
         const Style::ElementUpdate* update { nullptr };
         std::optional<RenderTreePosition> renderTreePosition;
 
-        RenderObject* previousChildRenderer { nullptr };
+        SingleThreadWeakPtr<RenderObject> previousChildRenderer;
         bool didCreateOrDestroyChildRenderer { false };
         bool hasPrecedingInFlowChild { false };
 
@@ -89,8 +91,8 @@ private:
         Parent(Element&, const Style::ElementUpdate*);
     };
     Parent& parent() LIFETIME_BOUND { return m_parentStack.last(); }
-    Parent& LEGACY_NODELETE renderingParent();
-    RenderTreePosition& LEGACY_NODELETE renderTreePosition();
+    NODELETE Parent& renderingParent();
+    NODELETE RenderTreePosition& renderTreePosition();
 
     GeneratedContent& generatedContent() LIFETIME_BOUND { return m_generatedContent; }
     ViewTransition& viewTransition() LIFETIME_BOUND { return m_viewTransition; }
@@ -113,7 +115,7 @@ private:
 
     void updateRebuildRoots();
 
-    RenderView& LEGACY_NODELETE renderView();
+    NODELETE RenderView& renderView();
 
     const Ref<Document> m_document;
     std::unique_ptr<Style::Update> m_styleUpdate;
@@ -124,6 +126,9 @@ private:
     const UniqueRef<ViewTransition> m_viewTransition;
 
     RenderTreeBuilder m_builder;
+
+    // Recycled old renderer style, to avoid a heap allocation per style update.
+    std::unique_ptr<Style::ComputedStyle> m_spareStyle;
 };
 
 } // namespace WebCore

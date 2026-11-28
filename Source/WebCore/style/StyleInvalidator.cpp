@@ -44,10 +44,9 @@
 #include <ranges>
 #include <wtf/SetForScope.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
-static bool LEGACY_NODELETE shouldDirtyAllStyle(const Vector<Ref<StyleRuleBase>>& rules)
+NODELETE static bool shouldDirtyAllStyle(const Vector<Ref<StyleRuleBase>>& rules)
 {
     for (auto& rule : rules) {
         if (auto* styleRuleMedia = dynamicDowncast<StyleRuleMedia>(rule.get())) {
@@ -67,7 +66,7 @@ static bool LEGACY_NODELETE shouldDirtyAllStyle(const Vector<Ref<StyleRuleBase>>
     return false;
 }
 
-static bool LEGACY_NODELETE shouldDirtyAllStyle(const StyleSheetContents& sheet)
+NODELETE static bool shouldDirtyAllStyle(const StyleSheetContents& sheet)
 {
     for (auto& import : sheet.importRules()) {
         if (!import->styleSheet())
@@ -80,7 +79,7 @@ static bool LEGACY_NODELETE shouldDirtyAllStyle(const StyleSheetContents& sheet)
     return false;
 }
 
-static bool LEGACY_NODELETE shouldDirtyAllStyle(const Vector<Ref<StyleSheetContents>>& sheets)
+NODELETE static bool shouldDirtyAllStyle(const Vector<Ref<StyleSheetContents>>& sheets)
 {
     for (auto& sheet : sheets) {
         if (shouldDirtyAllStyle(sheet))
@@ -453,7 +452,7 @@ void Invalidator::invalidateStyleWithMatchElement(Element& element, MatchElement
         }();
         if (someRuleSetIsScopeBreaking) {
             SelectorMatchingState selectorMatchingState;
-            invalidateStyleForDescendants(*element.document().documentElement(), &selectorMatchingState);
+            invalidateStyleForDescendants(protect(*element.document().documentElement()), &selectorMatchingState);
             return;
         }
 
@@ -646,7 +645,7 @@ void Invalidator::invalidateWithMatchElementRuleSets(Element& element, const Mat
 
     for (auto& matchElementAndRuleSet : matchElementRuleSets) {
         Invalidator invalidator(matchElementAndRuleSet.value);
-        invalidator.invalidateStyleWithMatchElement(element, matchElementAndRuleSet.key.key());
+        invalidator.invalidateStyleWithMatchElement(element, matchElementAndRuleSet.key);
         element.document().incrementStyleInvalidationTraversalCountForTesting(invalidator.m_elementTraversalCount);
     }
 }
@@ -677,5 +676,4 @@ void Invalidator::invalidateHostAndSlottedStyleIfNeeded(ShadowRoot& shadowRoot)
     }
 }
 
-}
 }

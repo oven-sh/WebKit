@@ -104,6 +104,8 @@ FloatBoxExtent PrintContext::computedPageMargin(FloatBoxExtent printMargin)
     RefPtr document = frame() ? frame()->document() : nullptr;
     if (!document)
         return printMargin;
+    // The root element's style may be out of date.
+    document->updateStyleIfNeeded();
     // FIXME Currently no pseudo class is supported.
     auto style = protect(protect(document->styleScope())->resolver())->styleForPage(0);
 
@@ -121,17 +123,6 @@ FloatBoxExtent PrintContext::computedPageMargin(FloatBoxExtent printMargin)
         marginBottom ? marginBottom->resolveZoom(zoomFactor) * pixelToPointScaleFactor : printMargin.bottom(),
         marginLeft ? marginLeft->resolveZoom(zoomFactor) * pixelToPointScaleFactor : printMargin.left(),
     };
-}
-
-FloatSize PrintContext::computedPageSize(FloatSize pageSize, FloatBoxExtent printMargin)
-{
-    auto computedMargin = computedPageMargin(printMargin);
-    if (computedMargin == printMargin)
-        return pageSize;
-
-    auto horizontalMarginDelta = (printMargin.left() - computedMargin.left()) + (printMargin.right() - computedMargin.right()); 
-    auto verticalMarginDelta = (printMargin.top() - computedMargin.top()) + (printMargin.bottom() - computedMargin.bottom());
-    return { pageSize.width() + horizontalMarginDelta, pageSize.height() + verticalMarginDelta };
 }
 
 void PrintContext::computePageRectsWithPageSize(const FloatSize& pageSizeInPixels, bool allowHorizontalTiling)
@@ -307,10 +298,11 @@ void PrintContext::end()
     ASSERT(m_isPrinting);
     m_isPrinting = false;
     frame->setPrinting(false, FloatSize(), FloatSize(), 0, AdjustViewSize::Yes);
+    m_cssPrintBox = std::nullopt;
     m_linkedDestinations = nullptr;
 }
 
-static inline RenderBoxModelObject* LEGACY_NODELETE enclosingBoxModelObject(RenderElement* renderer)
+NODELETE static inline RenderBoxModelObject* enclosingBoxModelObject(RenderElement* renderer)
 {
     while (renderer && !is<RenderBoxModelObject>(*renderer))
         renderer = renderer->parent();
@@ -461,9 +453,8 @@ bool PrintContext::beginAndComputePageRectsWithPageSize(LocalFrame& frame, const
     protect(frame.document())->updateLayout();
 
     begin(pageSizeInPixels.width(), pageSizeInPixels.height());
-    // Account for shrink-to-fit.
-    FloatSize scaledPageSize = pageSizeInPixels;
-    scaledPageSize.scale(protect(frame.view())->contentsSize().width() / pageSizeInPixels.width());
+    // Account for shrink-to-fit, rounding like begin() does.
+    FloatSize scaledPageSize = frame.resizePageRectsKeepingRatio(pageSizeInPixels, FloatSize(protect(frame.view())->contentsSize()));
     computePageRectsWithPageSize(scaledPageSize, false);
 
     return true;
@@ -523,6 +514,102 @@ void PrintContext::spoolAllPagesWithBoundaries(LocalFrame& frame, GraphicsContex
     }
 
     graphicsContext.restore();
+}
+
+static IntSize marginSize(const IntBoxExtent& margin)
+{
+    return { margin.left() + margin.right(), margin.top() + margin.bottom() };
+}
+
+IntSize PrintContext::PrintBox::pageSize() const
+{
+    return pageAreaSize + marginSize(margin);
+}
+
+// Page boxes are stacked vertically with a 1px line between them, like spoolAllPagesWithBoundaries().
+static constexpr int pageBoxSeparatorHeight = 1;
+
+IntSize PrintContext::PrintBox::totalSize() const
+{
+    auto pageSize = this->pageSize();
+    return { pageSize.width(), static_cast<int>(pageCount) * (pageSize.height() + pageBoxSeparatorHeight) - pageBoxSeparatorHeight };
+}
+
+IntRect PrintContext::PrintBox::pageRect(unsigned pageIndex) const
+{
+    auto pageSize = this->pageSize();
+    return { { 0, static_cast<int>(pageIndex) * (pageSize.height() + pageBoxSeparatorHeight) }, pageSize };
+}
+
+auto PrintContext::beginWithPrintBox(const PrintBox& defaultPrintBox) -> std::optional<PrintBox>
+{
+    RefPtr frame = this->frame();
+    if (!frame)
+        return std::nullopt;
+
+    RefPtr document = frame->document();
+    if (!document || !frame->view() || !document->renderView())
+        return std::nullopt;
+
+    auto defaultPageAreaSize = defaultPrintBox.pageAreaSize;
+    // The test runner passes the default page box, and its page area is never empty.
+    ASSERT(!defaultPageAreaSize.isEmpty());
+
+    m_isPrinting = true;
+    frame->setPrinting(true, defaultPageAreaSize, defaultPageAreaSize, 1, AdjustViewSize::Yes);
+
+    // FIXME: Lay out each page with its own @page size and margins (rdar://191464090). Every page uses the
+    // first page's, so :left, :right and named pages can't change them.
+    // FIXME: Size the page area with @page width and height, as css-page-3 does (rdar://191464115).
+    // FIXME: Resolve top and bottom margin percentages against the page height, and margin: auto as for a
+    // block in normal flow, as css-page-3 does (rdar://191464164). They resolve against the width, and auto keeps the default
+    // margin. Real printing (computedPageMargin()) ignores percentage margins.
+    auto pageSize = defaultPrintBox.pageSize();
+    auto margin = defaultPrintBox.margin;
+    document->pageSizeAndMarginsInPixels(0, pageSize, margin.top(), margin.right(), margin.bottom(), margin.left());
+    PrintBox printBox { pageSize - marginSize(margin), margin };
+    // css/printing/zero-size-*-print.tentative.html expect a default page box as an empty page area can't be paginated.
+    if (printBox.pageAreaSize.isEmpty())
+        printBox = defaultPrintBox;
+
+    // FIXME: Fixed-position boxes and boxes positioned against the view still size against the view, not the page area.
+    if (printBox.pageAreaSize != defaultPageAreaSize)
+        frame->setPrinting(true, printBox.pageAreaSize, printBox.pageAreaSize, 1, AdjustViewSize::Yes);
+
+    computePageRectsWithPageSize(printBox.pageAreaSize, false);
+
+    if (m_pageRects.isEmpty())
+        m_pageRects.append({ { }, printBox.pageAreaSize });
+
+    printBox.pageCount = pageCount();
+    return printBox;
+}
+
+IntSize PrintContext::beginCSSPageBoxes(const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin)
+{
+    m_cssPrintBox = beginWithPrintBox({ defaultPageBoxSize - marginSize(defaultPageMargin), defaultPageMargin });
+    if (!m_cssPrintBox)
+        return { };
+
+    return m_cssPrintBox->totalSize();
+}
+
+void PrintContext::spoolCSSPageBoxes(GraphicsContext& graphicsContext)
+{
+    ASSERT(m_cssPrintBox);
+    if (!m_cssPrintBox)
+        return;
+
+    graphicsContext.fillRect({ { }, m_cssPrintBox->totalSize() }, Color::blue);
+
+    for (unsigned pageIndex = 0; pageIndex < m_cssPrintBox->pageCount; ++pageIndex) {
+        auto pageBoxRect = m_cssPrintBox->pageRect(pageIndex);
+        graphicsContext.fillRect(pageBoxRect, Color::white);
+
+        GraphicsContextStateSaver stateSaver(graphicsContext);
+        graphicsContext.translate(pageBoxRect.x() + m_cssPrintBox->margin.left(), pageBoxRect.y() + m_cssPrintBox->margin.top());
+        spoolPage(graphicsContext, pageIndex, pageRect(pageIndex).width());
+    }
 }
 
 }

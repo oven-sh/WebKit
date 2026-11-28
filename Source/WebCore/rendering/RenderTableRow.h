@@ -37,8 +37,8 @@ class RenderTableRow final : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderTableRow);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTableRow);
 public:
-    RenderTableRow(Element&, Style::ComputedStyle&&);
-    RenderTableRow(Document&, Style::ComputedStyle&&);
+    RenderTableRow(Element&, UniqueRef<Style::ComputedStyle>&&);
+    RenderTableRow(Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderTableRow();
 
     RenderTableRow* nextRow() const;
@@ -58,8 +58,8 @@ public:
 
     inline const BorderValue& borderAdjoiningTableStart() const LIFETIME_BOUND;
     inline const BorderValue& borderAdjoiningTableEnd() const LIFETIME_BOUND;
-    const BorderValue& LEGACY_NODELETE borderAdjoiningStartCell(const RenderTableCell&) const LIFETIME_BOUND;
-    const BorderValue& LEGACY_NODELETE borderAdjoiningEndCell(const RenderTableCell&) const LIFETIME_BOUND;
+    NODELETE const BorderValue& borderAdjoiningStartCell(const RenderTableCell&) const LIFETIME_BOUND;
+    NODELETE const BorderValue& borderAdjoiningEndCell(const RenderTableCell&) const LIFETIME_BOUND;
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 

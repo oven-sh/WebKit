@@ -1,0 +1,9 @@
+# the same functions with folding withheld: the walk builds the test and the branch, though both sides come to one place, and the sweep finds that the branch decides nothing
+# RUN: walk f1 f2 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: Branch
+# CHECK: Return
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: Branch
+# CHECK: Return
+# PROGRAM-OF: branch-whose-sides-come-to-one-place-is-a-jump.ir

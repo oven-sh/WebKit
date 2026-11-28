@@ -42,13 +42,17 @@
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
+class AbstractSlotVisitor;
 class JSFFICallback;
 class VM;
 } // namespace JSC
 
 namespace JSC { namespace FFI {
+
+class Signature;
 
 class ThreadsafeInvocation final : public ThreadSafeRefCounted<ThreadsafeInvocation> {
     WTF_MAKE_TZONE_ALLOCATED(ThreadsafeInvocation);
@@ -56,6 +60,19 @@ public:
     static Ref<ThreadsafeInvocation> create(JSFFICallback* callback, void* embedderContext, std::span<const uint64_t> slots)
     {
         return adoptRef(*new ThreadsafeInvocation(callback, embedderContext, slots));
+    }
+
+    JS_EXPORT_PRIVATE ~ThreadsafeInvocation();
+
+    // In the C caller's call, which is as long as a `cstring` argument is valid. The slot of one that is not null becomes
+    // a reference to a StringImpl.
+    void decodeCStrings(const Signature&);
+    bool hasString(unsigned argumentIndex) const { return m_stringSlots & (1u << argumentIndex); }
+    String takeString(unsigned argumentIndex)
+    {
+        ASSERT(hasString(argumentIndex));
+        m_stringSlots &= ~(1u << argumentIndex);
+        return String { adoptRef(*reinterpret_cast<StringImpl*>(static_cast<uintptr_t>(m_slots[argumentIndex]))) };
     }
 
     JSFFICallback* callback() const { return m_callback; }
@@ -71,6 +88,7 @@ private:
     {
     }
 
+    uint32_t m_stringSlots { 0 };
     JSFFICallback* m_callback;
     void* m_embedderContext;
     Vector<uint64_t, 8> m_slots;
@@ -105,11 +123,14 @@ public:
     StringArena() = default;
     ~StringArena() = default;
 
-    JS_EXPORT_PRIVATE void enter();
+    // Scopes nest: exit() frees what was allocated since the matching enter().
+    void enter() { ++m_depth; }
     void exit()
     {
         ASSERT(m_depth);
-        if (!--m_depth)
+        if (m_depth == m_depthOfLastMark) [[unlikely]]
+            goBackToLastMark();
+        if (!--m_depth && m_position.usedChunks)
             reset();
     }
     unsigned depth() const { return m_depth; }
@@ -119,30 +140,45 @@ public:
     {
         if (m_depth)
             return;
-        m_offsetInLastChunk = 0;
+        ASSERT(!m_position.usedChunks);
         m_chunks.clear();
     }
 
 private:
-    void reset();
+    struct Position {
+        unsigned usedChunks { 0 };
+        size_t offsetInLastUsedChunk { 0 };
+    };
+    struct Mark {
+        unsigned depth;
+        Position position;
+    };
+
+    JS_EXPORT_PRIVATE void goBackToLastMark();
+    JS_EXPORT_PRIVATE void reset();
+    void releaseUnusedChunks();
 
     static constexpr size_t defaultChunkBytes = 4096;
     static constexpr size_t maximumRetainedChunkBytes = 64 * 1024;
 
-    Vector<MallocSpan<char>, 4> m_chunks;
-    size_t m_offsetInLastChunk { 0 };
+    Vector<MallocSpan<char>, 4> m_chunks; // At most one past m_position.usedChunks: a spare.
+    Position m_position;
     unsigned m_depth { 0 };
+    unsigned m_depthOfLastMark { 0 };
+    Vector<Mark> m_marks; // Where the inner scopes began that have allocated.
 };
 
 class FFIContext final : public HeapObserver {
     WTF_MAKE_TZONE_ALLOCATED(FFIContext);
     WTF_MAKE_NONCOPYABLE(FFIContext);
 public:
-    JS_EXPORT_PRIVATE explicit FFIContext(VM&);
+    JS_EXPORT_PRIVATE FFIContext(VM&, JSGlobalObject& owner);
     JS_EXPORT_PRIVATE ~FFIContext();
 
     void willGarbageCollect() final { }
-    void didGarbageCollect(CollectionScope) final { m_arena.shrinkWhenIdle(); }
+    void didGarbageCollect(CollectionScope) final;
+    void visitRoots(AbstractSlotVisitor&) final;
+    void clearCachesInEpilogue() final;
 
     StringArena& stringArena() { return m_arena; }
     StringArena& arena() { return m_arena; }
@@ -170,9 +206,11 @@ private:
     };
 
     VM& m_vm;
+    JSGlobalObject& m_owner;
     StringArena m_arena;
     Vector<UTF8CacheEntry, utf8CacheCapacity> m_utf8Cache;
     uint64_t m_utf8CacheClock { 0 };
+    uint64_t m_utf8CacheClockAtLastCollection { 0 };
 };
 
 inline StringArena::Scope::Scope(FFIContext& context)

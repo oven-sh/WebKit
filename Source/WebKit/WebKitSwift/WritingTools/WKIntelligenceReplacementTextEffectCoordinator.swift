@@ -50,7 +50,7 @@ extension WKIntelligenceReplacementTextEffectCoordinator {
         let processedRange: Range<Int>
         let finished: Bool
         let characterDelta: Int
-        let operation: (() async -> Void)
+        let operation: (@concurrent () async -> Void)
     }
 
     @nonobjc
@@ -75,7 +75,7 @@ extension WKIntelligenceReplacementTextEffectCoordinator {
     // suggestions, they first need to all be flushed out and invoked so that the state is not incomplete, and then
     // the acceptance/rejection can properly occur.
     @nonobjc
-    final private var onFlushCompletion: (() async -> Void)? = nil
+    final private var onFlushCompletion: (@concurrent () async -> Void)? = nil
 
     var hasActiveEffects: Bool {
         viewManager.hasActiveEffects
@@ -464,7 +464,9 @@ extension WKIntelligenceReplacementTextEffectCoordinator: PlatformIntelligenceTe
 // MARK: Misc. helper functions
 
 /// Converts a block with a completion handler into an async block.
-private func async(_ block: @MainActor @Sendable @escaping (@MainActor @Sendable @escaping () -> Void) -> Void) -> (() async -> Void) {
+private func async(
+    _ block: @MainActor @Sendable @escaping (@MainActor @Sendable @escaping () -> Void) -> Void
+) -> (@concurrent () async -> Void) {
     { @MainActor in
         await withCheckedContinuation { continuation in
             block(continuation.resume)
@@ -478,17 +480,22 @@ func platformTextPreview(from source: UITargetedPreview, suggestionRects: [NSVal
 }
 #else
 func platformTextPreview(from source: [_WKTextPreview], suggestionRects: [NSValue] = []) -> PlatformTextPreview {
-    source.map {
-        // Misannotated WritingToolsUI symbol which never actually returns `nil`.
-        // swift-format-ignore: NeverForceUnwrap
-        _WTTextPreview(
-            snapshotImage: $0.previewImage,
-            presentationFrame: $0.presentationFrame,
-            backgroundColor: nil,
-            clippingPath: nil,
-            scale: 1,
-            candidateRects: suggestionRects
-        )!
+    source.compactMap { preview -> _WTTextPreview? in
+        // `_WTTextPreview`'s initializer is failable, but never actually returns `nil`.
+        guard
+            let platformPreview = _WTTextPreview(
+                snapshotImage: preview.previewImage,
+                presentationFrame: preview.presentationFrame,
+                backgroundColor: nil,
+                clippingPath: nil,
+                scale: 1,
+                candidateRects: suggestionRects
+            )
+        else {
+            assertionFailure("Failed to create a platform text preview: initializer unexpectedly returned nil.")
+            return nil
+        }
+        return platformPreview
     }
 }
 #endif

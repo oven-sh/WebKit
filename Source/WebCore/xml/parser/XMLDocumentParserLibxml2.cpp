@@ -257,7 +257,7 @@ public:
         callback->call(parser);
     }
 
-    bool LEGACY_NODELETE isEmpty() const { return m_callbacks.isEmpty(); }
+    NODELETE bool isEmpty() const { return m_callbacks.isEmpty(); }
 
 private:
     struct PendingCallback {
@@ -407,7 +407,7 @@ public:
     {
     }
 
-    int LEGACY_NODELETE readOutBytes(std::span<char> outputBuffer)
+    NODELETE int readOutBytes(std::span<char> outputBuffer)
     {
         size_t bytesLeft = m_buffer.size() - m_currentOffset;
         size_t lengthToCopy = std::min(outputBuffer.size(), bytesLeft);
@@ -501,7 +501,7 @@ static bool shouldAllowExternalLoad(const URL& url)
 static void* openFunc(const char* uri)
 {
     ASSERT(XMLDocumentParserScope::currentCachedResourceLoader());
-    ASSERT(libxmlLoaderThread == &Thread::currentSingleton());
+    RELEASE_ASSERT(libxmlLoaderThread == &Thread::currentSingleton());
 
     RefPtr cachedResourceLoader = XMLDocumentParserScope::currentCachedResourceLoader().get();
     if (!cachedResourceLoader)
@@ -548,7 +548,7 @@ static void* openFunc(const char* uri)
     return new OffsetBuffer(Vector(data->span()));
 }
 
-static int LEGACY_NODELETE readFunc(void* context, char* buffer, int len)
+NODELETE static int readFunc(void* context, char* buffer, int len)
 {
     // Do 0-byte reads in case of a null descriptor
     if (context == &globalDescriptor)
@@ -558,7 +558,7 @@ static int LEGACY_NODELETE readFunc(void* context, char* buffer, int len)
     return data->readOutBytes(unsafeMakeSpan(buffer, len));
 }
 
-static int LEGACY_NODELETE writeFunc(void*, const char*, int)
+NODELETE static int writeFunc(void*, const char*, int)
 {
     // Always just do 0-byte writes
     return 0;
@@ -574,7 +574,7 @@ static int closeFunc(void* context)
 }
 
 #if ENABLE(XSLT)
-static void LEGACY_NODELETE errorFunc(void*, const char*, ...)
+NODELETE static void errorFunc(void*, const char*, ...)
 {
     // FIXME: It would be nice to display error messages somewhere.
 }
@@ -879,11 +879,16 @@ void XMLDocumentParser::startElementNs(const xmlChar* xmlLocalName, const xmlCha
 
     bool willConstructCustomElement = false;
     if (!m_parsingFragment) {
-        if (RefPtr window = document->window()) {
-            if (RefPtr registry = window->customElementRegistry(); registry) [[unlikely]]
-                willConstructCustomElement = registry->findInterface(qName);
-        }
+        if (RefPtr window = document->window())
+            willConstructCustomElement = protect(window->customElementRegistry())->findInterface(qName);
     }
+
+    // Copy every span libxml2 owns into WebKit-owned storage here, before any code that can
+    // run script such as performMicrotaskCheckpoint().
+    Vector<Attribute> prefixedAttributes;
+    bool shouldUseNullCustomElementRegistry = false;
+    bool handledAttributes = handleNamespaceAttributes(prefixedAttributes, namespaces, shouldUseNullCustomElementRegistry);
+    bool success = handledAttributes ? handleElementAttributes(prefixedAttributes, libxmlAttributes, numAttributes, shouldUseNullCustomElementRegistry) : false;
 
     std::optional<ThrowOnDynamicMarkupInsertionCountIncrementer> markupInsertionCountIncrementer;
     std::optional<CustomElementReactionStack> customElementReactionStack;
@@ -891,16 +896,17 @@ void XMLDocumentParser::startElementNs(const xmlChar* xmlLocalName, const xmlCha
     if (willConstructCustomElement) [[unlikely]] {
         markupInsertionCountIncrementer.emplace(*document);
         protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
+        // Draining the microtask queue may have stopped or detached this parser, in which case we
+        // must not keep building the tree.
+        if (isStopped())
+            return;
         customElementReactionStack.emplace(document->globalObject());
     }
 
-    Vector<Attribute> prefixedAttributes;
-    bool shouldUseNullCustomElementRegistry = false;
-    bool handledAttributes = handleNamespaceAttributes(prefixedAttributes, namespaces, shouldUseNullCustomElementRegistry);
-    bool success = handledAttributes ? handleElementAttributes(prefixedAttributes, libxmlAttributes, numAttributes, shouldUseNullCustomElementRegistry) : false;
-
-    RefPtr registry = shouldUseNullCustomElementRegistry ? nullptr : CustomElementRegistry::registryForNodeOrTreeScope(*currentNode, protect(currentNode->treeScope()));
+    RefPtr registry = shouldUseNullCustomElementRegistry && uri == HTMLNames::xhtmlNamespaceURI ? nullptr : CustomElementRegistry::registryForNodeOrTreeScope(*currentNode, protect(currentNode->treeScope()));
     auto newElement = document->createElement(qName, true, registry.get());
+    if (!registry && document->customElementRegistry() && currentNode->usesNullCustomElementRegistry()) [[unlikely]]
+        newElement->setUsesNullCustomElementRegistry();
 
     if (!handledAttributes) {
         setAttributes(newElement.ptr(), prefixedAttributes, parserContentPolicy());
@@ -1187,7 +1193,7 @@ void XMLDocumentParser::internalSubset(const xmlChar* name, const xmlChar* exter
         document->parserAppendChild(DocumentType::create(*document, toString(name), toString(externalID), toString(systemID)));
 }
 
-static inline XMLDocumentParser* LEGACY_NODELETE getParser(void* closure)
+NODELETE static inline XMLDocumentParser* getParser(void* closure)
 {
     xmlParserCtxtPtr ctxt = static_cast<xmlParserCtxtPtr>(closure);
     return static_cast<XMLDocumentParser*>(ctxt->_private);
@@ -1261,7 +1267,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 // if libxml implementation details were to change
 static std::array<xmlChar, 9> sharedXHTMLEntityResult = { };
 
-static xmlEntityPtr LEGACY_NODELETE sharedXHTMLEntity()
+NODELETE static xmlEntityPtr sharedXHTMLEntity()
 {
     static xmlEntity entity;
     if (!entity.type) {
@@ -1403,12 +1409,12 @@ void XMLDocumentParser::flushDeferredEntityDeclarations()
             return;
         }
 
-        auto nameUTF8 = decl.name.utf8();
+        auto nameUTF8 = makeUTF8CString(decl.name);
         if (xmlGetDocEntity(context()->myDoc, byteCast<xmlChar>(nameUTF8.data())))
             continue;
-        auto publicIdUTF8 = decl.publicId.utf8();
-        auto systemIdUTF8 = decl.systemId.utf8();
-        auto contentUTF8 = decl.content.utf8();
+        auto publicIdUTF8 = makeUTF8CString(decl.publicId);
+        auto systemIdUTF8 = makeUTF8CString(decl.systemId);
+        auto contentUTF8 = makeUTF8CString(decl.content);
         xmlSAX2EntityDecl(context(),
             byteCast<xmlChar>(nameUTF8.data()),
             decl.type,
@@ -1508,7 +1514,7 @@ static void externalSubsetHandler(void* closure, const xmlChar*, const xmlChar* 
         getParser(closure)->setIsXHTMLDocument(true); // controls if we replace entities or not.
 }
 
-static void LEGACY_NODELETE ignorableWhitespaceHandler(void*, const xmlChar*, int)
+NODELETE static void ignorableWhitespaceHandler(void*, const xmlChar*, int)
 {
     // nothing to do, but we need this to work around a crasher
     // http://bugzilla.gnome.org/show_bug.cgi?id=172255
@@ -1593,7 +1599,7 @@ void XMLDocumentParser::doEnd()
 }
 
 #if ENABLE(XSLT)
-static inline const char* LEGACY_NODELETE nativeEndianUTF16Encoding()
+NODELETE static inline const char* nativeEndianUTF16Encoding()
 {
     const unsigned char BOMHighByte = *reinterpret_cast<const unsigned char*>(&byteOrderMark);
     return BOMHighByte == 0xFF ? "UTF-16LE" : "UTF-16BE";
@@ -1617,7 +1623,7 @@ xmlDocPtr xmlDocPtrForString(CachedResourceLoader& cachedResourceLoader, const S
         return nullptr;
 
     XMLDocumentParserScope scope(&cachedResourceLoader, errorFunc);
-    return xmlReadMemory(characters.data(), static_cast<int>(sizeInBytes), url.utf8().legacyCStringPointer(), encoding, XSLT_PARSE_OPTIONS);
+    return xmlReadMemory(characters.data(), static_cast<int>(sizeInBytes), makeUTF8CString(url).legacyCStringPointer(), encoding, XSLT_PARSE_OPTIONS);
 }
 #endif
 
@@ -1679,7 +1685,7 @@ bool XMLDocumentParser::appendFragmentSource(const String& chunk)
     ASSERT(!m_context);
     ASSERT(m_parsingFragment);
 
-    auto chunkAsUTF8 = chunk.utf8();
+    auto chunkAsUTF8 = makeUTF8CString(chunk);
     
     // libxml2 takes an int for a length, and therefore can't handle XML chunks larger than 2 GiB.
     if (chunkAsUTF8.length() > INT_MAX)

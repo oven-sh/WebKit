@@ -1,0 +1,41 @@
+# behind the rejoin the proof is gone, because the closed arm never had it. A call ends the first stretch, and the stretch behind it tests the same value again
+# function both(n: number, f) { const a = n * n * n * n * n * n * n; f(); return a + n * n * n * n * n * n * n; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=number
+# CHECK: = Call
+# CHECK: = TypeTest {{*}}testedType=number
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = Convert v0 declared={type=number}
+    v3 = Mul v2, v2
+    v4 = Mul v3, v2
+    v5 = Mul v4, v2
+    v6 = Mul v5, v2
+    v7 = Mul v6, v2
+    v8 = Mul v7, v2
+    Jump -> next b1()
+  b1():
+    v9 = Call v1, -
+    Jump -> next b2()
+  b2():
+    v10 = Mul v2, v2
+    v11 = Mul v10, v2
+    v12 = Mul v11, v2
+    v13 = Mul v12, v2
+    v14 = Mul v13, v2
+    v15 = Mul v14, v2
+    v16 = Add v8, v15
+    Return v16
+}

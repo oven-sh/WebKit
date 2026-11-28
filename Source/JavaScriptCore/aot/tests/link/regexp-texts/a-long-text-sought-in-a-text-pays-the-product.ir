@@ -1,0 +1,99 @@
+# The list follows from the program alone. The search for a text in a text knows the last 250 characters of what is sought; for a longer one it may take as many steps as the product of the two lengths, and that is what it pays.
+# export function long() { return new RegExp("x".toUpperCase() + doubled("a", 15).indexOf("b" + doubled("a", 9))); }   (doubled(text, k): text = text + text, k times)
+# export function short() { return new RegExp("y".toUpperCase() + doubled("a", 15).indexOf("b" + doubled("a", 7))); }
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /X-1/
+# CHECK: text /Y-1/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="long" variable=g0}, {name="short" variable=g1}]
+entry module=m0
+variable g0 name="long" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="short" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    Return v4
+}
+function f1 name="long" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = String string="a"
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    v19 = Add v18, v18
+    v20 = Add v19, v19
+    v21 = Add v20, v20
+    v22 = Add v21, v21
+    v23 = Add v22, v22
+    v24 = Add v23, v23
+    v25 = Add v24, v24
+    v26 = String string="b"
+    v27 = Add v26, v25
+    v28 = PropGet v15 key="indexOf"
+    v29 = Call v28, v15, v27 calleeKey="indexOf"
+    v30 = String string="x"
+    v31 = PropGet v30 key="toUpperCase"
+    v32 = Call v31, v30 calleeKey="toUpperCase"
+    v33 = Add v32, v29
+    v34 = Builtin builtin=RegExp
+    v35 = Construct v34, -, v33
+    Return v35
+}
+function f2 name="short" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = String string="a"
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    v19 = Add v18, v18
+    v20 = Add v19, v19
+    v21 = Add v20, v20
+    v22 = Add v21, v21
+    v23 = Add v22, v22
+    v24 = String string="b"
+    v25 = Add v24, v23
+    v26 = PropGet v15 key="indexOf"
+    v27 = Call v26, v15, v25 calleeKey="indexOf"
+    v28 = String string="y"
+    v29 = PropGet v28 key="toUpperCase"
+    v30 = Call v29, v28 calleeKey="toUpperCase"
+    v31 = Add v30, v27
+    v32 = Builtin builtin=RegExp
+    v33 = Construct v32, -, v31
+    Return v33
+}

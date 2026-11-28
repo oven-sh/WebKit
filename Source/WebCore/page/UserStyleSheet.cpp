@@ -55,7 +55,7 @@ NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void crashDueToApplicationCreatingUse
 }
 #endif
 
-static HashCountedSet<String>& LEGACY_NODELETE styleStrings()
+NODELETE static HashCountedSet<String>& styleStrings()
 {
     static NeverDestroyed<HashCountedSet<String>> set;
     return set;
@@ -89,7 +89,7 @@ static void removeStyleString(const String& string)
     styleStrings().remove(string);
 }
 
-UserStyleSheet::UserStyleSheet(const String& source, const URL& url, Vector<String>&& allowlist, Vector<String>&& blocklist, UserContentInjectedFrames injectedFrames, UserContentMatchParentFrame matchParentFrame, UserStyleLevel level, std::optional<PageIdentifier> pageID)
+UserStyleSheet::UserStyleSheet(const String& source, const URL& url, Vector<String>&& allowlist, Vector<String>&& blocklist, UserContentInjectedFrames injectedFrames, UserContentMatchParentFrame matchParentFrame, UserStyleLevel level, std::optional<PageIdentifier> pageID, bool persistsAcrossDocuments)
     : m_source(internedStyleString(source))
     , m_url(url.isEmpty() ? generateUserStyleUniqueURL() : url)
     , m_allowlist(WTF::move(allowlist))
@@ -98,6 +98,7 @@ UserStyleSheet::UserStyleSheet(const String& source, const URL& url, Vector<Stri
     , m_matchParentFrame(matchParentFrame)
     , m_level(level)
     , m_pageID(pageID)
+    , m_persistsAcrossDocuments(persistsAcrossDocuments)
 {
 }
 

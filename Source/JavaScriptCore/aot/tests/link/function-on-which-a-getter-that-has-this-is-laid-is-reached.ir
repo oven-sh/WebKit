@@ -1,0 +1,44 @@
+# function first() {} Object.defineProperties(first, { limit: { get() { return this; }, set: (value) => {}, enumerable: true }, mark: { value: 2 } })
+# A control of function-on-which-a-map-written-in-place-lays-accessors-and-values-is-not-reached.ir: the getter is handed `first`, and whatever stands below `first`, as `this`: the function goes out as before.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+layout L0 fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="value" declared={type=anything}}]
+layout L1 fields=[{key="limit" declared={type=anything}}, {key="mark" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperties
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v3, v4, v5 layout=L0 fields=[0, 1, 2]
+    v7 = FinishObject v6
+    v8 = Integer integer=2
+    v9 = NewObject -, v8 layout=L0 fields=[3]
+    v10 = FinishObject v9
+    v11 = NewObject -, v7, v10 layout=L1 fields=[0, 1]
+    v12 = FinishObject v11
+    v13 = Call v2, v1, v0, v12 calleeName="Object.defineProperties"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

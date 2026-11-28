@@ -82,7 +82,7 @@ private:
     void hoistConstants(NOESCAPE const Filter& filter)
     {
         Dominators& dominators = m_proc.dominators();
-        UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
+        HashMap<ValueKey, Value*> valueForConstant;
         ConstantPlacement placement(m_proc);
         const bool placesByFrequency = m_proc.policy().optimization.placesConstantsByFrequency;
 
@@ -310,7 +310,7 @@ private:
     {
         unsigned doubleSize = 0;
         unsigned v128Size = 0;
-        UncheckedKeyHashMap<ValueKey, unsigned> constTable;
+        HashMap<ValueKey, unsigned> constTable;
         for (Value* value : m_proc.values()) {
             if (!goesInTable(value))
                 continue;
@@ -411,7 +411,7 @@ private:
         }
     }
 
-    static bool LEGACY_NODELETE goesInTable(const Value* value)
+    NODELETE static bool goesInTable(const Value* value)
     {
         switch (value->opcode()) {
         case ConstDouble: {

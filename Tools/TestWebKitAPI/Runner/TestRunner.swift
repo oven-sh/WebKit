@@ -27,6 +27,7 @@ import struct Swift.String
 protocol TestRunner {
     typealias Configuration = TestRunnerConfiguration
 
+    @concurrent
     func run(with configuration: Configuration) async throws -> (status: Bool, didRunAnyTest: Bool)
 }
 
@@ -86,7 +87,7 @@ extension TestRunner.Configuration {
     var usage: String {
         let invocation = programName.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "TestWebKitAPI"
 
-        let base = """
+        return """
             OVERVIEW: Runs the TestWebKitAPI test suites (GoogleTest and Swift Testing).
 
             USAGE: \(invocation) [options]
@@ -113,21 +114,5 @@ extension TestRunner.Configuration {
             GENERAL:
               --help, -h             Print this help and exit.
             """
-
-        #if WTF_PLATFORM_MAC
-        // These are consulted only in the UI process and are not parsed into this
-        // configuration; they are handled separately while setting up defaults.
-        let sectionSeparator = "\n\n"
-        let macOptions = """
-            macOS OPTIONS:
-              --remote-layer-tree    Use the remote layer tree drawing model.
-              --no-remote-layer-tree Disable the remote layer tree drawing model.
-              --use-gpu-process      Enable GPU process DOM rendering.
-              --no-use-gpu-process   Disable GPU process DOM rendering.
-            """
-        return base + sectionSeparator + macOptions
-        #else
-        return base
-        #endif
     }
 }

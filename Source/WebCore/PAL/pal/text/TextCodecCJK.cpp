@@ -279,8 +279,7 @@ String TextCodecCJK::eucJPDecode(std::span<const uint8_t> bytes, bool flush, boo
 // https://encoding.spec.whatwg.org/#euc-jp-encoder
 static Vector<uint8_t> eucJPEncode(StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler)
 {
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
 
     auto characters = string.upconvertedCharacters();
     for (WTF::CodePointIterator<char16_t> iterator(characters); !iterator.atEnd(); ++iterator) {
@@ -525,8 +524,7 @@ static Vector<uint8_t> iso2022JPEncode(StringView string, NOESCAPE const Functio
     enum class State : uint8_t { ASCII, Roman, Jis0208 };
     State state { State::ASCII };
 
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
 
     auto changeStateToASCII = [&] {
         state = State::ASCII;
@@ -661,8 +659,7 @@ String TextCodecCJK::shiftJISDecode(std::span<const uint8_t> bytes, bool flush, 
 // https://encoding.spec.whatwg.org/#shift_jis-encoder
 static Vector<uint8_t> shiftJISEncode(StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler)
 {
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
 
     auto characters = string.upconvertedCharacters();
     for (WTF::CodePointIterator<char16_t> iterator(characters); !iterator.atEnd(); ++iterator) {
@@ -728,8 +725,7 @@ static const EUCKREncodingIndex& eucKREncodingIndex()
 // https://encoding.spec.whatwg.org/#euc-kr-encoder
 static Vector<uint8_t> eucKREncode(StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler)
 {
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
 
     auto characters = string.upconvertedCharacters();
     for (WTF::CodePointIterator<char16_t> iterator(characters); !iterator.atEnd(); ++iterator) {
@@ -798,8 +794,7 @@ static const Big5EncodeIndex& big5EncodeIndex()
 // https://encoding.spec.whatwg.org/#big5-encoder
 static Vector<uint8_t> big5Encode(StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler)
 {
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
 
     auto characters = string.upconvertedCharacters();
     for (WTF::CodePointIterator<char16_t> iterator(characters); !iterator.atEnd(); ++iterator) {
@@ -836,7 +831,7 @@ static Vector<uint8_t> big5Encode(StringView string, NOESCAPE const Function<voi
 }
 
 // https://encoding.spec.whatwg.org/index-gb18030-ranges.txt
-static const std::array<std::pair<uint32_t, char32_t>, 207>& LEGACY_NODELETE gb18030Ranges()
+NODELETE static const std::array<std::pair<uint32_t, char32_t>, 207>& gb18030Ranges()
 {
     static std::array<std::pair<uint32_t, char32_t>, 207> ranges { {
         { 0, 0x0080 }, { 36, 0x00A5 }, { 38, 0x00A9 }, { 45, 0x00B2 }, { 50, 0x00B8 }, { 81, 0x00D8 }, { 89, 0x00E2 }, { 95, 0x00EB },
@@ -913,7 +908,7 @@ static const GB18030EncodeIndex& gb18030EncodeIndex()
 // https://unicode-org.atlassian.net/browse/ICU-22357
 // The 2-byte values are handled correctly by values from gb18030()
 // but these need to be exceptions from gb18030Ranges().
-static std::optional<uint16_t> LEGACY_NODELETE gb18030AsymmetricEncode(char16_t codePoint)
+NODELETE static std::optional<uint16_t> gb18030AsymmetricEncode(char16_t codePoint)
 {
     switch (codePoint) {
     case 0xE81E: return 0xFE59;
@@ -1031,8 +1026,7 @@ String TextCodecCJK::gb18030Decode(std::span<const uint8_t> bytes, bool flush, b
 enum class IsGBK : bool { No, Yes };
 static Vector<uint8_t> gbEncodeShared(StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler, IsGBK isGBK)
 {
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
 
     auto characters = string.upconvertedCharacters();
     for (WTF::CodePointIterator<char16_t> iterator(characters); !iterator.atEnd(); ++iterator) {

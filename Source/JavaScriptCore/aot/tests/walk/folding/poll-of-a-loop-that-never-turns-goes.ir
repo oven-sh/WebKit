@@ -1,0 +1,51 @@
+# what is written as a loop and never comes round goes straight on, so nobody waits for its poll
+# function once(v) { let x; do { x = v.x; } while (false); return x; }
+# function turns(v) { let x; do { x = v.x; } while (x); return x; }       an edge comes round
+# both are handed to sink
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK: mechanisms Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: key="x"
+# CHECK: Return
+# RUN(NEVER): walk f1 mechanisms=none+Folding
+# NEVER-NOT: LoopHint
+# RUN(KEPT): walk f2 mechanisms=none+Folding
+# KEPT-LABEL: code f2:Body
+# KEPT: = LoopHint
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-NOT: LoopHint
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="x"
+    v3 = Boolean
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return v2
+}
+function f2 name="turns" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="x"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return v2
+}

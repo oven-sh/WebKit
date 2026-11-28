@@ -9,6 +9,10 @@
 // these functionalities
 42260109 : dEQP-GLES3.functional.flush_finish.* = SKIP
 
+// The following tests take too many iterations and frequently time out
+575489396 : dEQP-GLES3.functional.pbo.upload.split_upload_last_line = SKIP
+575489396 : dEQP-GLES3.functional.pbo.upload.split_upload_last_pixel = SKIP
+
 // TODO(jmadill): Figure out why these fail on the bots, but not locally.
 42260115 WIN D3D11 : dEQP-GLES3.functional.shaders.struct.local.dynamic_loop_struct_array_fragment = FAIL
 42260100 WIN D3D11 : dEQP-GLES3.functional.shaders.invariance.highp.loop_2 = FAIL
@@ -627,6 +631,7 @@
 523128541 PIXEL10 GLES : dEQP-GLES3.functional.ubo.random.all_shared_buffer.21 = FAIL
 523128541 PIXEL10 GLES : dEQP-GLES3.functional.ubo.random.all_shared_buffer.40 = FAIL
 523128541 PIXEL10 GLES : dEQP-GLES3.functional.ubo.random.nested_structs_arrays.9 = FAIL
+575549255 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.complex_constructor_array_member_* = FAIL
 
 // Memory corruption
 565311403 PIXEL10 GLES : dEQP-GLES3.functional.texture.specification.texstorage2d.base_level.rgba8_*_level_3 = SKIP
@@ -816,3 +821,82 @@
 8021882 GALAXYS22 VULKAN : dEQP-GLES3.functional.transform_feedback.*.lines.* = SKIP
 8021882 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.transform_feedback.*.lines.* = SKIP
 
+// Fail on the iOS simulator.
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.0 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.1 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.10 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.11 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.12 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.13 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.14 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.15 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.16 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.17 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.18 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.19 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.2 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.3 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.4 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.5 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.6 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.7 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.9 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.0 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.10 = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.fbo.invalidate.sub.unbind_read_depth = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.fbo.invalidate.sub.unbind_read_depth_stencil = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.fbo.invalidate.sub.unbind_read_stencil = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.fbo.invalidate.whole.unbind_read_color = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.fbo.invalidate.whole.unbind_read_color_stencil = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.fbo.invalidate.whole.unbind_read_stencil = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.sampler2darrayshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.sampler2dshadow_bias_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.samplercubeshadow_bias_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.samplercubeshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texture.samplercubeshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.sampler2darrayshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.sampler2darrayshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegradoffset.sampler2darrayshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegradoffset.sampler2darrayshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegradoffset.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturegradoffset.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturelod.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturelod.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturelodoffset.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.texturelodoffset.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureoffset.*sampler2dshadow* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureproj.*sampler2dshadow* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojgrad.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojgrad.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojgradoffset.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojgradoffset.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojlod.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojlod.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojlodoffset.sampler2dshadow_fragment = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojlodoffset.sampler2dshadow_vertex = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.shaders.texture_functions.textureprojoffset.*sampler2dshadow* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.compressed.*modes* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.compressed.*random* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.format.*depth* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.format.*stencil8* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.shadow.*always* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.shadow.*greater* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.shadow.*less* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.shadow.*not_equal* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.specification.*depth* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*abgr* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*all_alpha* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*all_one* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*all_red* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*blue* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*green* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.*zero* = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.multi_channel.red_bgra = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.multi_channel.rg_bgra = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.multi_channel.rgb_bgra = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.multi_channel.rgba_bgra = SKIP
+0 IOSSIMULATOR : dEQP-GLES3.functional.texture.swizzle.single_channel.* = SKIP

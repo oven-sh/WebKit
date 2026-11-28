@@ -32,6 +32,7 @@
 #import "Download.h"
 #import "DownloadProxyMessages.h"
 #import "Logging.h"
+#import "NetworkCache.h"
 #import "NetworkIssueReporter.h"
 #import "NetworkProcess.h"
 #import "NetworkSessionCocoa.h"
@@ -44,9 +45,11 @@
 #import <WebCore/NotImplemented.h>
 #import <WebCore/OriginAccessPatterns.h>
 #import <WebCore/PendingStreamState.h>
+#import <WebCore/RFC8941.h>
 #import <WebCore/RegistrableDomain.h>
 #import <WebCore/ResourceError.h>
 #import <WebCore/ResourceRequest.h>
+#import <WebCore/SecurityOrigin.h>
 #import <WebCore/TimingAllowOrigin.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
@@ -118,7 +121,18 @@ static void applyBasicAuthorizationHeader(WebCore::ResourceRequest& request, con
     request.setHTTPHeaderField(WebCore::HTTPHeaderName::Authorization, credential.serializationForBasicAuthorizationHeader());
 }
 
-static float LEGACY_NODELETE toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
+// https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch steps 10-11.
+// To be added with https://github.com/whatwg/fetch/pull/1854
+static void setCompressionDictionaryHeaders(WebCore::ResourceRequest& request, const CompressionDictionaryParameters::Match& match)
+{
+    request.setHTTPHeaderField(WebCore::HTTPHeaderName::AvailableDictionary, makeString(':', base64EncodeToString(std::span { match.hash }), ':'));
+    if (auto dictionaryID = match.id.isEmpty() ? std::nullopt : RFC8941::escapeString(match.id))
+        request.setHTTPHeaderField(WebCore::HTTPHeaderName::DictionaryID, makeString('"', *dictionaryID, '"'));
+    else
+        request.removeHTTPHeaderField(WebCore::HTTPHeaderName::DictionaryID);
+}
+
+NODELETE static float toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
 {
     switch (priority) {
     case WebCore::ResourceLoadPriority::VeryLow:
@@ -210,8 +224,11 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     , m_webPageProxyID(parameters.webPageProxyID)
     , m_isForMainResourceNavigationForAnyFrame(!!parameters.mainResourceNavigationDataForAnyFrame)
     , m_navigationLosesFrameSpecificStorageAccess(parameters.navigationLosesFrameSpecificStorageAccess)
+    , m_siteIsolationEnabled(parameters.siteIsolationEnabled)
     , m_sourceOrigin(parameters.sourceOrigin)
     , m_requiredCookiesVersion(parameters.requiredCookiesVersion)
+    , m_advancedPrivacyProtections(parameters.advancedPrivacyProtections)
+    , m_compressionDictionary(parameters.compressionDictionary)
 {
     auto request = parameters.request;
     auto url = request.url();
@@ -239,8 +256,14 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
         applyBasicAuthorizationHeader(request, m_initialCredential);
     }
 
+    if (WebCore::RegistrableDomain(request.firstPartyForCookies()).isEmpty() && !NetworkSessionCocoa::allowsLegacyCookieAccessFromFileURL(request))
+        request.setAllowCookies(false);
+
     auto thirdPartyCookieBlockingDecision = requestThirdPartyCookieBlockingDecision(request);
     restrictRequestReferrerToOriginIfNeeded(request);
+
+    if (m_compressionDictionary && m_compressionDictionary->match)
+        setCompressionDictionaryHeaders(request, *m_compressionDictionary->match);
 
     if (RefPtr body = request.httpBody()) {
         if (RefPtr state = body->pendingStreamState())
@@ -320,7 +343,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 #if HAVE(CFNETWORK_HOSTOVERRIDE)
     // Avoid setting host override for WPT, since we are using a local DNS resolver then.
     StringView host = url.host();
-    if (session.networkProcess().localhostAliasesForTesting().contains<StringViewHashTranslator>(host) && !host.endsWith("web-platform.test"_s))
+    if (protect(NetworkProcess::singleton())->localhostAliasesForTesting().contains<StringViewHashTranslator>(host) && !host.endsWith("web-platform.test"_s))
         m_task.get()._hostOverride = adoptNS(nw_endpoint_create_host_with_numeric_port("localhost", url.port().value_or(0))).get();
 #endif
 
@@ -328,7 +351,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     updateTaskWithStoragePartitionIdentifier(request);
 #endif
 
-    WTFBeginSignpost(m_task.get(), DataTask, "%" PUBLIC_LOG_STRING " %" PRIVATE_LOG_STRING " pri: %.2f preconnect: %d", request.httpMethod().utf8(), url.string().utf8(), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
+    WTFBeginSignpost(m_task.get(), DataTask, "%" PUBLIC_LOG_STRING " %" PRIVATE_LOG_STRING " pri: %.2f preconnect: %d", makeUTF8CString(request.httpMethod()), makeUTF8CString(url.string()), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
 
     switch (parameters.storedCredentialsPolicy) {
     case WebCore::StoredCredentialsPolicy::Use:
@@ -338,9 +361,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
         ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
         break;
     case WebCore::StoredCredentialsPolicy::DoNotUse:
-        RetainPtr<NSURLSessionConfiguration> effectiveConfiguration = m_sessionWrapper->session.get().configuration;
-        effectiveConfiguration.get().URLCredentialStorage = nil;
-        [m_task _adoptEffectiveConfiguration:effectiveConfiguration.get()];
+        ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
         break;
     };
 
@@ -506,6 +527,11 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
     // Should not set Referer after a redirect from a secure resource to non-secure one.
     if (m_shouldClearReferrerOnHTTPSToHTTPRedirect && !request.url().protocolIs("https"_s) && WTF::protocolIs(request.httpReferrer(), "https"_s))
         request.clearHTTPReferrer();
+
+    if (m_compressionDictionary && std::exchange(m_compressionDictionary->match, std::nullopt)) {
+        request.removeHTTPHeaderField(WebCore::HTTPHeaderName::AvailableDictionary);
+        request.removeHTTPHeaderField(WebCore::HTTPHeaderName::DictionaryID);
+    }
     
     const auto& url = request.url();
     m_user = url.user();
@@ -520,7 +546,13 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
         request.clearHTTPAuthorization();
         request.clearHTTPOrigin();
 
-    } else {
+        // https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch
+        // To be added with https://github.com/whatwg/fetch/pull/1854
+        // 3. If request's mode is "no-cors", then return the result of running fallback.
+        // Only same-origin no-cors loads get here, and one that has left its origin stays opaque.
+        if (m_compressionDictionary && m_compressionDictionary->isNoCors)
+            m_compressionDictionary = std::nullopt;
+    } else if (m_storedCredentialsPolicy == WebCore::StoredCredentialsPolicy::Use) {
         // Only consider applying authentication credentials if this is actually a redirect and the redirect
         // URL didn't include credentials of its own.
         if (m_user.isEmpty() && m_password.isEmpty() && !redirectResponse.isNull()) {
@@ -536,7 +568,7 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
 
     if (isTopLevelNavigation())
         request.setFirstPartyForCookies(request.url());
-    else {
+    else if (!m_siteIsolationEnabled) {
         WebCore::RegistrableDomain firstPartyDomain { request.firstPartyForCookies() };
         if (CheckedPtr storageSession = session->networkStorageSession()) {
             bool didPreviousRequestHaveStorageAccess = storageSession->hasStorageAccess(WebCore::RegistrableDomain { redirectResponse.url() }, firstPartyDomain, m_frameID, m_webPageProxyID);
@@ -560,11 +592,61 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
             if (!request.isNull()) {
                 protectedThis->restrictRequestReferrerToOriginIfNeeded(request);
                 updateTaskWithFirstPartyForSameSiteCookies(protectedThis->m_task.get(), request);
+                protectedThis->updateCompressionDictionaryForRedirect(request);
+                if (WebCore::RegistrableDomain(request.firstPartyForCookies()).isEmpty() && !NetworkSessionCocoa::allowsLegacyCookieAccessFromFileURL(request))
+                    request.setAllowCookies(false);
             }
             protectedThis->m_previousRequest = request;
             completionHandler(WTF::move(request));
         });
     });
+}
+
+void NetworkDataTaskCocoa::updateCompressionDictionaryForRedirect(WebCore::ResourceRequest& request)
+{
+    if (!m_compressionDictionary || !request.url().protocolIs("https"_s))
+        return;
+
+    if (hasBeenSetToUseStatelessCookieStorage())
+        return;
+
+    CheckedPtr session = networkSession();
+    RefPtr cache = session ? session->cache() : nullptr;
+    if (!cache)
+        return;
+
+    auto match = cache->bestCompressionDictionaryMatch(request, m_compressionDictionary->destination);
+    if (!match)
+        return;
+
+    m_compressionDictionary->match = CompressionDictionaryParameters::Match { WTF::move(match->key), match->hash, WTF::move(match->id) };
+    setCompressionDictionaryHeaders(request, *m_compressionDictionary->match);
+}
+
+void NetworkDataTaskCocoa::needsCompressionDictionary(std::span<const uint8_t> sha256, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
+{
+    CheckedPtr session = networkSession();
+    RefPtr cache = session ? session->cache() : nullptr;
+    if (!cache || !m_compressionDictionary || !m_compressionDictionary->match || !equalSpans(sha256, std::span { m_compressionDictionary->match->hash })) {
+        failForUnavailableCompressionDictionary();
+        return completionHandler(nullptr);
+    }
+
+    auto& match = *m_compressionDictionary->match;
+    cache->retrieveCompressionDictionary(match.key, match.hash, [weakThis = ThreadSafeWeakPtr { *this }, completionHandler = WTF::move(completionHandler)](RefPtr<WebCore::SharedBuffer>&& buffer) mutable {
+        if (!buffer) {
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->failForUnavailableCompressionDictionary();
+        }
+        completionHandler(WTF::move(buffer));
+    });
+}
+
+void NetworkDataTaskCocoa::failForUnavailableCompressionDictionary()
+{
+    cancel();
+    if (RefPtr client = m_client)
+        client->didCompleteWithError(WebCore::ResourceError { WebCore::errorDomainWebKitInternal, 0, URL { [m_task currentRequest].URL }, "The compression dictionary for the response is not available"_s }, { });
 }
 
 void NetworkDataTaskCocoa::setPendingDownloadLocation(const WTF::String& filename, SandboxExtension::Handle&& sandboxExtensionHandle, bool allowOverwrite)

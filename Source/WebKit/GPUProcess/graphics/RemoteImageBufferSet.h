@@ -28,7 +28,6 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "IPCEvent.h"
-#include "ImageBufferSet.h"
 #include "ImageBufferSetIdentifier.h"
 #include "PrepareBackingStoreBuffersData.h"
 #include "RemoteGraphicsContextIdentifier.h"
@@ -38,7 +37,12 @@
 #include "StreamConnectionWorkQueue.h"
 #include "StreamMessageReceiver.h"
 #include <WebCore/ImageBuffer.h>
+#include <wtf/RetainPtr.h>
 
+#if HAVE(IOSURFACE)
+#include <IOSurface/IOSurfaceRef.h>
+#include <wtf/MachSendRight.h>
+#endif
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
 #include <WebCore/DynamicContentScalingDisplayList.h>
 #endif
@@ -48,7 +52,7 @@ namespace WebKit {
 class RemoteImageBufferGraphicsContext;
 class RemoteRenderingBackend;
 
-class RemoteImageBufferSet : public IPC::StreamMessageReceiver, public ImageBufferSet {
+class RemoteImageBufferSet : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteImageBufferSet> create(ImageBufferSetIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
     ~RemoteImageBufferSet();
@@ -67,11 +71,33 @@ public:
 
     bool isPreparingForDisplay() const { return m_context.get(); }
 
+#if HAVE(IOSURFACE)
+    struct ExternalReadResult {
+        RetainPtr<IOSurfaceRef> surface;
+        uint64_t bufferIdentifier { 0 };
+        bool isBusy { false };
+    };
+    ExternalReadResult frontBufferSurfaceForExternalRead(const Vector<uint64_t>& alreadyMappedBuffers);
+#endif
+
 private:
     RemoteImageBufferSet(ImageBufferSetIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
 
     void startListeningForIPC();
-    IPC::StreamConnectionWorkQueue& LEGACY_NODELETE workQueue() const;
+    NODELETE IPC::StreamConnectionWorkQueue& workQueue() const;
+
+#if HAVE(IOSURFACE)
+    struct ExternalReadSendRight {
+        std::optional<MachSendRight> sendRight;
+        uint64_t bufferIdentifier { 0 };
+        bool isBusy { false };
+    };
+    ExternalReadSendRight frontBufferSendRightForExternalRead(const Vector<uint64_t>& alreadyMappedBuffers);
+#endif
+
+    // Tries to swap one of the existing back buffers to the new front buffer, if any are
+    // not currently in-use.
+    SwapBuffersDisplayRequirement swapBuffersForDisplay(bool hasEmptyDirtyRegion, bool supportsPartialRepaint);
 
     // IPC::StreamMessageReceiver
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
@@ -86,13 +112,23 @@ private:
     WebCore::DynamicContentScalingResourceCache ensureDynamicContentScalingResourceCache();
 #endif
 
+#if ENABLE(MODEL_PROCESS) && ENABLE(SPATIAL_PORTAL)
+    void frontBufferForExternalRead(CompletionHandler<void(std::optional<MachSendRight>&&)>&&);
+#endif
+
     bool isOpaque() const
     {
         return pixelFormatIsOpaque(m_configuration.bufferFormat.pixelFormat);
     }
 
+    const ImageBufferSetIdentifier m_identifier;
     const RemoteGraphicsContextIdentifier m_contextIdentifier;
     const Ref<RemoteRenderingBackend> m_renderingBackend;
+    RefPtr<WebCore::ImageBuffer> m_frontBuffer;
+    RefPtr<WebCore::ImageBuffer> m_backBuffer;
+    RefPtr<WebCore::ImageBuffer> m_secondaryBackBuffer;
+    std::optional<WebCore::IntRect> m_previouslyPaintedRect;
+    bool m_frontBufferIsCleared { false };
     RemoteImageBufferSetConfiguration m_configuration;
     IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferGraphicsContext> m_context;
 

@@ -27,7 +27,7 @@
 #include "config.h"
 #include "SkiaCompositingLayer3DRenderingContext.h"
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "Polygon4D.h"
 #include "SkiaCompositingLayer.h"
 #include <limits>
@@ -43,8 +43,7 @@ using PolygonZY = Vector<FloatPoint, 5>;
 
 static inline PolygonZY projectPolygonToZYPlane(const Polygon4D& polygon)
 {
-    PolygonZY projected;
-    projected.reserveInitialCapacity(polygon.numberOfVertices());
+    PolygonZY projected(ReserveCapacityTag { }, polygon.numberOfVertices());
     for (unsigned i = 0; i < polygon.numberOfVertices(); ++i) {
         const auto& vertex = polygon.vertexAt(i);
         projected.append({ static_cast<float>(vertex.z), static_cast<float>(vertex.y) });
@@ -340,4 +339,4 @@ SkiaCompositingLayer3DRenderingContext::LayerPosition SkiaCompositingLayer3DRend
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

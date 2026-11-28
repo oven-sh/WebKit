@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 2004-2005 Allan Sandfeld Jensen (kde@carewolf.com)
  * Copyright (C) 2006, 2007 Nicholas Shanks (webkit@nickshanks.com)
- * Copyright (C) 2005-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2007 Alexey Proskuryakov <ap@webkit.org>
  * Copyright (C) 2007, 2008 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
@@ -50,8 +50,7 @@
 #include "StyleSheetContents.h"
 #include "UserAgentParts.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 using namespace HTMLNames;
 
@@ -64,7 +63,7 @@ struct SameSizeAsRuleData {
 
 static_assert(sizeof(RuleData) == sizeof(SameSizeAsRuleData), "RuleData should stay small");
 
-static inline MatchBasedOnRuleHash LEGACY_NODELETE computeMatchBasedOnRuleHash(const CSSSelector& selector)
+NODELETE static inline MatchBasedOnRuleHash computeMatchBasedOnRuleHash(const CSSSelector& selector)
 {
     if (selector.precedingInComplexSelector())
         return MatchBasedOnRuleHash::None;
@@ -103,6 +102,10 @@ static inline PropertyAllowlist determinePropertyAllowlist(const CSSSelector& se
                 return PropertyAllowlist::Highlight;
             case CSSSelector::PseudoElement::Marker:
                 return PropertyAllowlist::Marker;
+            case CSSSelector::PseudoElement::FirstLetter:
+                return PropertyAllowlist::FirstLetter;
+            case CSSSelector::PseudoElement::FirstLine:
+                return PropertyAllowlist::FirstLine;
 #if ENABLE(VIDEO)
             case CSSSelector::PseudoElement::UserAgentPart:
                 if (component->value() == UserAgentParts::cue())
@@ -130,7 +133,7 @@ static inline PropertyAllowlist determinePropertyAllowlist(const CSSSelector& se
     return PropertyAllowlist::None;
 }
 
-static bool LEGACY_NODELETE isKeywordOrKeywordList(const CSSValue& value, CSSValueID keyword)
+NODELETE static bool isKeywordOrKeywordList(const CSSValue& value, CSSValueID keyword)
 {
     if (auto* list = dynamicDowncast<CSSValueList>(value)) {
         for (auto& item : *list) {
@@ -142,21 +145,30 @@ static bool LEGACY_NODELETE isKeywordOrKeywordList(const CSSValue& value, CSSVal
     return isValueID(value, keyword);
 }
 
-// ::before/::after may follow another pseudo-element, like ::part(foo)::before or ::slotted(span)::after.
-static bool LEGACY_NODELETE selectorHasBeforeOrAfterPseudoElement(const CSSSelector& selector)
+// These may follow another pseudo-element, like ::part(foo)::before or ::slotted(span)::marker.
+NODELETE static bool selectorHasBeforeAfterOrMarkerPseudoElement(const CSSSelector& selector)
 {
     for (auto* component = &selector; component; component = component->precedingInComplexSelector()) {
-        if (component->matchesPseudoElement() && (component->pseudoElement() == CSSSelector::PseudoElement::Before || component->pseudoElement() == CSSSelector::PseudoElement::After))
+        if (!component->matchesPseudoElement())
+            continue;
+        switch (component->pseudoElement()) {
+        case CSSSelector::PseudoElement::Before:
+        case CSSSelector::PseudoElement::After:
+        case CSSSelector::PseudoElement::Marker:
             return true;
+        default:
+            break;
+        }
     }
     return false;
 }
 
-// ::before/::after only generate a box with non-'none' content, which animations and transitions can also supply.
-static PseudoElementBoxGeneration LEGACY_NODELETE computePseudoElementBoxGeneration(const CSSSelector& selector, const StyleProperties& properties)
+// ::before/::after only generate a box with non-'none' content, and ::marker of a list item without a list style only
+// with non-'normal' content. Animations and transitions can also supply it.
+NODELETE static PseudoElementBoxGeneration computePseudoElementBoxGeneration(const CSSSelector& selector, const StyleProperties& properties)
 {
-    if (!selectorHasBeforeOrAfterPseudoElement(selector))
-        return PseudoElementBoxGeneration::NotForBeforeOrAfter;
+    if (!selectorHasBeforeAfterOrMarkerPseudoElement(selector))
+        return PseudoElementBoxGeneration::NoGeneratedContent;
 
     for (auto property : properties) {
         auto& value = *property.value();
@@ -180,7 +192,7 @@ static PseudoElementBoxGeneration LEGACY_NODELETE computePseudoElementBoxGenerat
             break;
         }
     }
-    return PseudoElementBoxGeneration::NotForBeforeOrAfter;
+    return PseudoElementBoxGeneration::NoGeneratedContent;
 }
 
 RuleData::RuleData(const StyleRule& styleRule, unsigned selectorIndex, unsigned selectorListIndex, unsigned position, IsStartingStyle isStartingStyle)
@@ -199,5 +211,4 @@ RuleData::RuleData(const StyleRule& styleRule, unsigned selectorIndex, unsigned 
     ASSERT(this->selectorIndex() == selectorIndex);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

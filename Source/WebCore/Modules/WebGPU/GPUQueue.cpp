@@ -30,6 +30,7 @@
 #include "CachedImage.h"
 #include "CanvasRenderingContext.h"
 #include "ElementAncestorIteratorInlines.h"
+#include "EventLoop.h"
 #include "GPUBuffer.h"
 #include "GPUDevice.h"
 #include "GPUDrawElementImageDestination.h"
@@ -56,6 +57,7 @@
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <array>
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MallocSpan.h>
 
@@ -113,10 +115,16 @@ void GPUQueue::submit(Vector<Ref<GPUCommandBuffer>>&& commandBuffers)
     }
 }
 
-void GPUQueue::onSubmittedWorkDone(OnSubmittedWorkDonePromise&& promise)
+void GPUQueue::onSubmittedWorkDone(ScriptExecutionContext& scriptExecutionContext, OnSubmittedWorkDonePromise&& promise)
 {
-    m_backing->onSubmittedWorkDone([promise = WTF::move(promise)]() mutable {
-        promise.resolve();
+    // The promise resolves also when the work cannot complete because the device is lost.
+    m_backing->onSubmittedWorkDone([weakContext = WeakPtr { scriptExecutionContext }, promise = WTF::move(promise)](bool) mutable {
+        RefPtr context = weakContext;
+        if (!context)
+            return;
+        protect(context->eventLoop())->queueTask(TaskSource::WebGPU, [promise = WTF::move(promise)] mutable {
+            promise.resolve();
+        });
     });
 }
 
@@ -275,7 +283,7 @@ void GPUQueue::writeTexture(
 }
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
-static PixelFormat LEGACY_NODELETE toPixelFormat(GPUTextureFormat textureFormat)
+NODELETE static PixelFormat toPixelFormat(GPUTextureFormat textureFormat)
 {
     switch (textureFormat) {
     case GPUTextureFormat::R8unorm:
@@ -409,7 +417,7 @@ static void getImageBytesFromImageBuffer(const RefPtr<ImageBuffer>& imageBuffer,
 }
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
-static void LEGACY_NODELETE clampDimension(WebGPU::Extent3D& extent3D, size_t dimension, uint32_t minValue)
+NODELETE static void clampDimension(WebGPU::Extent3D& extent3D, size_t dimension, uint32_t minValue)
 {
     switch (dimension) {
     case 0:
@@ -538,7 +546,7 @@ static void imageBytesForSource(WebGPUIntegration& gpu, WebGPU::Queue& backing, 
             else if (RefPtr svgImage = dynamicDowncast<SVGImage>(cachedImage->image())) {
                 // An <img> can also hold a PDFDocumentImage, which is neither a BitmapImage nor an
                 // SVGImage; there is nothing to read pixels from in that case.
-                nativeImage = svgImage->nativeImage(FloatSize(destination.texture->width(), destination.texture->height()));
+                nativeImage = svgImage->nativeImage(ImageDrawDescriptor { ConcreteObjectSize::fixed(FloatSize(destination.texture->width(), destination.texture->height())) });
                 isSVG = true;
             }
 
@@ -704,7 +712,7 @@ static void imageBytesForSource(WebGPUIntegration& gpu, WebGPU::Queue& backing, 
                     }
                 }
             }
-            callback(tempBuffer.span(), orientedWidth, orientedHeight);
+            callback(borrow(tempBuffer)->span(), orientedWidth, orientedHeight);
 #else
             return callback({ }, 0, 0);
 #endif
@@ -739,7 +747,7 @@ static void imageBytesForSource(WebGPUIntegration& gpu, WebGPU::Queue& backing, 
 // Whether the backing queue can wrap an accelerated ImageBuffer of this pixel format in a texture.
 // Kept in sync with GPUImpl::copyExternalImageToTexture, which does the wrapping: a format it
 // cannot express has to be rejected here, while there is still a CPU path to fall back to.
-static bool LEGACY_NODELETE isSupportedGPUSourcePixelFormat(PixelFormat pixelFormat)
+NODELETE static bool isSupportedGPUSourcePixelFormat(PixelFormat pixelFormat)
 {
     switch (pixelFormat) {
     case PixelFormat::RGBX8:
@@ -793,8 +801,9 @@ struct GPUResidentSource {
     // Set instead of imageBuffer when the source is a video: a decoded frame is not an ImageBuffer,
     // it is a CVPixelBuffer the GPU process already holds.
     std::optional<WebGPUVideoSourceIdentifier> videoSource { };
+    IntSize videoSourceSize { };
 
-    bool LEGACY_NODELETE isGPUResident() const { return imageBuffer || videoSource; }
+    NODELETE bool isGPUResident() const { return imageBuffer || videoSource; }
 };
 
 #if HAVE(IOSURFACE) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
@@ -815,8 +824,10 @@ static GPUResidentSource gpuResidentSourceForVideo(const GPUVideoSource& source)
         return { };
 
     // A decoded frame is opaque, so premultiplied and unpremultiplied alpha describe the same
-    // pixels and the backing queue does not have to undo anything.
-    return { nullptr, true, WTF::move(videoSource) };
+    // pixels and the backing queue does not have to undo anything. The presented size is empty
+    // until a video element has metadata, and the backing queue then falls back to the frame's
+    // clean aperture.
+    return { nullptr, true, WTF::move(videoSource), GPUExternalTextureDescriptor::visibleSizeForSource(source) };
 }
 
 // An ImageData is a plain byte array, so it has to be moved into an accelerated buffer before Metal
@@ -872,7 +883,7 @@ static GPUResidentSource gpuResidentSourceForImageElement(ScriptExecutionContext
     // CoreGraphics decodes to premultiplied alpha, so compositing over the buffer's transparent
     // black leaves the decoded channels untouched; the copy is lossless for as long as the
     // destination wants premultiplied alpha too.
-    image->draw(imageBuffer->context(), destinationRect, sourceRect, { CompositeOperator::Copy, ImageOrientation::Orientation::FromImage });
+    image->draw(imageBuffer->context(), ImageDrawDescriptor { ConcreteObjectSize::fixed(image->size()), CompositeOperator::Copy }, destinationRect, sourceRect);
     return { WTF::move(imageBuffer) };
 }
 #endif // HAVE(IOSURFACE) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
@@ -1118,7 +1129,7 @@ static bool isStateValid(const auto& source, const std::optional<GPUOrigin2D>& o
 // FIXME: https://bugs.webkit.org/show_bug.cgi?id=263692 - this code should be removed, it is to unblock
 // compiler <-> pipeline dependencies
 #if PLATFORM(COCOA)
-static uint32_t LEGACY_NODELETE convertRGBA8888ToRGB10A2(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+NODELETE static uint32_t convertRGBA8888ToRGB10A2(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
     uint32_t r0 = (static_cast<uint32_t>(r) << 2) | (static_cast<uint32_t>(r) >> 6);
     uint32_t g0 = (static_cast<uint32_t>(g) << 2) | (static_cast<uint32_t>(g) >> 6);
@@ -1463,7 +1474,7 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
         // call is what covers the in-process backing, which has no proxy to do it.
         if (RefPtr sourceImageBuffer = gpuResidentSource.imageBuffer)
             sourceImageBuffer->flushDrawingContext();
-        m_gpu->copyExternalImageToTexture(m_backing, source.convertToBacking(WTF::move(gpuResidentSource.imageBuffer), gpuResidentSource.premultipliedAlpha, WTF::move(gpuResidentSource.videoSource)), destination.convertToBacking(), backingCopySize);
+        m_gpu->copyExternalImageToTexture(m_backing, source.convertToBacking(WTF::move(gpuResidentSource.imageBuffer), gpuResidentSource.premultipliedAlpha, WTF::move(gpuResidentSource.videoSource), gpuResidentSource.videoSourceSize), destination.convertToBacking(), backingCopySize);
         return { };
     }
 

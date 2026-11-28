@@ -149,6 +149,7 @@ public struct Future: Sendable, ~Copyable {
     }
 
     /// Waits for the promise of this Future to be resolved, or for the current task to be cancelled.
+    @concurrent
     public func wait() async {
         let storage = self.storage
 
@@ -209,7 +210,7 @@ public struct ConditionTimedOut: Error, CustomStringConvertible {
 public func waitForCondition(
     _ description: String,
     timeout: Duration = .seconds(5),
-    _ condition: () async throws -> Bool
+    _ condition: @concurrent () async throws -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout
 
@@ -252,7 +253,7 @@ public nonisolated(nonsending) func withSwizzledObjectiveCInstanceMethod<Result,
     replacing class: AnyClass,
     name: Selector,
     with implementation: Any,
-    perform body: () async throws(Failure) -> sending Result
+    perform body: @concurrent () async throws(Failure) -> sending Result
 ) async throws(Failure) -> sending Result where Result: ~Copyable, Failure: Error {
     guard let targetMethod = unsafe class_getInstanceMethod(`class`, name) else {
         fatalError("\(`class`) does not respond to \(name)")
@@ -348,4 +349,32 @@ public func createTuple<S, each T>(of type: (repeat each T).Type, from sequence:
     }
 
     return (repeat extract((each T).self, iterator: &iterator))
+}
+
+/// Runs `body` with the process's preferred languages overridden.
+///
+/// Replaces `AppleLanguages` in the volatile argument domain and restores the previous domain when `body`
+/// returns or throws. The argument domain is process-wide, so a suite using this must be `.serialized`.
+/// `.serialized` only orders the tests within that suite, so if the runner ran suites in parallel,
+/// locale-sensitive tests in other suites could observe the override.
+///
+/// - Parameters:
+///   - languages: The language identifiers to prefer, most preferred first.
+///   - body: The work to perform while the override is in effect.
+/// - Returns: Whatever `body` returns.
+/// - Throws: Whatever `body` throws.
+@MainActor
+public func withAppleLanguages<T, E: Error>(
+    _ languages: [String],
+    _ body: @MainActor () async throws(E) -> T
+) async throws(E) -> T {
+    let defaults = UserDefaults.standard
+    let savedArgumentDomain = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+
+    var argumentDomain = savedArgumentDomain
+    argumentDomain["AppleLanguages"] = languages
+    defaults.setVolatileDomain(argumentDomain, forName: UserDefaults.argumentDomain)
+    defer { defaults.setVolatileDomain(savedArgumentDomain, forName: UserDefaults.argumentDomain) }
+
+    return try await body()
 }

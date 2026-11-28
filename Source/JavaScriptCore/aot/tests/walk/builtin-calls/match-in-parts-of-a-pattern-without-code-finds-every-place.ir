@@ -1,0 +1,96 @@
+# const m = /(a)(b) .. forty groups .. (N)|_{2147483648}/.exec(s); if (m) return [m[15], m[16], m[26], m[39], m[40]];
+# The pattern gets no code in the image (an alternative whose least length is over INT_MAX: a warning, no error), so the match goes out of line and leaves its offsets in the VM's match output, where the parts are read.
+# That output is sized by every literal that has a record, and what does not fit stops the program.
+# No pattern of this file may have code and as many groups: it alone would make the output large enough.
+# DIAGNOSTIC: RegExpWithoutCode
+# RUN(COUNTED): compile RegExpMatchAllocationsElided mechanisms=all
+# COUNTED: statistic RegExpMatchAllocationsElided 2
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: o,p,z,M,N o,p,z,M,N
+# SHELL: exited with 0
+# A name given to two groups takes a word more: fifteen groups, one name twice, are 33 words. The array is kept, so it comes in parts only where the question of cost is drawn so; it is made out of the same output, which tells it which of the two groups took part.
+# function named(s: string) { const m = /(?<n>a)(b) .. (n)|(?<n>z)|_{2147483648}/.exec(s); if (m) return [m, m.groups.n, m[14]]; return s; }
+# RUN(NAMED): run-in-shell mechanisms=all testing=ShuffleChoices:2 globalThis.sink = (...all) => { print(all[2][1] + " " + all[2][2] + " " + all[2][0].length); };
+# NAMED: a n 16
+# NAMED: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = String string="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
+    v4 = Call v0, -, v3
+    v5 = Call v1, -, v3
+    v6 = String string="abcdefghijklmn"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v2, -, v6
+    v10 = Call v8, -, v4, v5, v9
+    Return v10
+}
+function f1 name="withoutCode" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)(p)(q)(r)(s)(t)(u)(v)(w)(x)(y)(z)(A)(B)(C)(D)(E)(F)(G)(H)(I)(J)(K)(L)(M)(N)|_{2147483648}" @11
+    v2 = PropGet v1 key="exec" @12
+    v3 = Call v2, v1, v0 calleeKey="exec" calleeName="exec" @13
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=15
+    v6 = ElemGet v3, v5 @14
+    v7 = Integer integer=16
+    v8 = ElemGet v3, v7 @14
+    v9 = Integer integer=26
+    v10 = ElemGet v3, v9 @14
+    v11 = Integer integer=39
+    v12 = ElemGet v3, v11 @14
+    v13 = Integer integer=40
+    v14 = ElemGet v3, v13 @14
+    v15 = NewArray v6, v8, v10, v12, v14 contents=anything
+    Return v15
+  b2():
+    Return v0
+}
+function f2 name="everyGroupIsThere" module=m0 position=30 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="(?:_{2147483648}|)(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)(p)(q)(r)(s)(t)(u)(v)(w)(x)(y)(z)(A)(B)(C)(D)(E)(F)(G)(H)(I)(J)(K)(L)(M)(N)" @31
+    v2 = PropGet v1 key="exec" @32
+    v3 = Call v2, v1, v0 calleeKey="exec" calleeName="exec" @33
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=15
+    v6 = ElemGet v3, v5 @34
+    v7 = Integer integer=16
+    v8 = ElemGet v3, v7 @34
+    v9 = Integer integer=26
+    v10 = ElemGet v3, v9 @34
+    v11 = Integer integer=39
+    v12 = ElemGet v3, v11 @34
+    v13 = Integer integer=40
+    v14 = ElemGet v3, v13 @34
+    v15 = NewArray v6, v8, v10, v12, v14 contents=anything
+    Return v15
+  b2():
+    Return v0
+}
+function f3 name="named" module=m0 position=50 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="(?<n>a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)|(?<n>z)|_{2147483648}" @51
+    v2 = PropGet v1 key="exec" @52
+    v3 = Call v2, v1, v0 calleeKey="exec" calleeName="exec" @53
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = PropGet v3 key="groups" @54
+    v6 = PropGet v5 key="n" @55
+    v7 = Integer integer=14
+    v8 = ElemGet v3, v7 @56
+    v9 = NewArray v3, v6, v8 contents=anything
+    Return v9
+  b2():
+    Return v0
+}

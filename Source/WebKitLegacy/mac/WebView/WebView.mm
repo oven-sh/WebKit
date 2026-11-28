@@ -143,6 +143,7 @@
 #import <WebCore/CSSStyleProperties.h>
 #import <WebCore/CacheStorageProvider.h>
 #import <WebCore/Chrome.h>
+#import <WebCore/ColorAppearance.h>
 #import <WebCore/ColorMac.h>
 #import <WebCore/ColorSerialization.h>
 #import <WebCore/CookieJar.h>
@@ -277,6 +278,7 @@
 #import <wtf/Assertions.h>
 #import <wtf/Atomics.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/FileSystem.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Language.h>
@@ -618,7 +620,7 @@ static Class s_pdfViewClass;
 @end
 
 #if ENABLE(DRAG_SUPPORT)
-static OptionSet<WebCore::DragDestinationAction> LEGACY_NODELETE coreDragDestinationActionMask(WebDragDestinationAction actionMask)
+NODELETE static OptionSet<WebCore::DragDestinationAction> coreDragDestinationActionMask(WebDragDestinationAction actionMask)
 {
     OptionSet<WebCore::DragDestinationAction> result;
     if (actionMask & WebDragDestinationActionDHTML)
@@ -639,7 +641,7 @@ typedef NS_OPTIONS(NSUInteger, _UIDragOperation) {
 };
 #endif
 
-OptionSet<WebCore::DragOperation> LEGACY_NODELETE coreDragOperationMask(CocoaDragOperation operation)
+NODELETE OptionSet<WebCore::DragOperation> coreDragOperationMask(CocoaDragOperation operation)
 {
     OptionSet<WebCore::DragOperation> result;
 
@@ -667,7 +669,7 @@ OptionSet<WebCore::DragOperation> LEGACY_NODELETE coreDragOperationMask(CocoaDra
 }
 
 #if USE(APPKIT)
-static NSDragOperation LEGACY_NODELETE kit(std::optional<WebCore::DragOperation> dragOperation)
+NODELETE static NSDragOperation kit(std::optional<WebCore::DragOperation> dragOperation)
 {
     if (!dragOperation)
         return NSDragOperationNone;
@@ -716,7 +718,7 @@ static _UIDragOperation kit(std::optional<WebCore::DragOperation> dragOperation)
 }
 #endif // USE(APPKIT)
 
-WebDragSourceAction LEGACY_NODELETE kit(std::optional<WebCore::DragSourceAction> action)
+NODELETE WebDragSourceAction kit(std::optional<WebCore::DragSourceAction> action)
 {
     if (!action)
         return WebDragSourceActionNone;
@@ -747,7 +749,7 @@ WebDragSourceAction LEGACY_NODELETE kit(std::optional<WebCore::DragSourceAction>
 }
 #endif // ENABLE(DRAG_SUPPORT)
 
-WebCore::FindOptions LEGACY_NODELETE coreOptions(WebFindOptions options)
+NODELETE WebCore::FindOptions coreOptions(WebFindOptions options)
 {
     WebCore::FindOptions findOptions;
     if (options & WebFindOptionsCaseInsensitive)
@@ -765,7 +767,7 @@ WebCore::FindOptions LEGACY_NODELETE coreOptions(WebFindOptions options)
     return findOptions;
 }
 
-OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE coreLayoutMilestones(WebLayoutMilestones milestones)
+NODELETE OptionSet<WebCore::LayoutMilestone> coreLayoutMilestones(WebLayoutMilestones milestones)
 {
     OptionSet<WebCore::LayoutMilestone> layoutMilestone;
     if (milestones & WebDidFirstLayout)
@@ -777,14 +779,14 @@ OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE coreLayoutMilestones(WebLayo
     return layoutMilestone;
 }
 
-WebLayoutMilestones LEGACY_NODELETE kitLayoutMilestones(OptionSet<WebCore::LayoutMilestone> milestones)
+NODELETE WebLayoutMilestones kitLayoutMilestones(OptionSet<WebCore::LayoutMilestone> milestones)
 {
     return (milestones & WebCore::LayoutMilestone::DidFirstLayout ? WebDidFirstLayout : 0)
         | (milestones & WebCore::LayoutMilestone::DidFirstVisuallyNonEmptyLayout ? WebDidFirstVisuallyNonEmptyLayout : 0)
         | (milestones & WebCore::LayoutMilestone::DidHitRelevantRepaintedObjectsAreaThreshold ? WebDidHitRelevantRepaintedObjectsAreaThreshold : 0);
 }
 
-static WebPageVisibilityState LEGACY_NODELETE kit(WebCore::VisibilityState visibilityState)
+NODELETE static WebPageVisibilityState kit(WebCore::VisibilityState visibilityState)
 {
     switch (visibilityState) {
     case WebCore::VisibilityState::Visible:
@@ -797,7 +799,7 @@ static WebPageVisibilityState LEGACY_NODELETE kit(WebCore::VisibilityState visib
     return WebPageVisibilityStateVisible;
 }
 
-static WebCore::StorageBlockingPolicy LEGACY_NODELETE core(WebStorageBlockingPolicy storageBlockingPolicy)
+NODELETE static WebCore::StorageBlockingPolicy core(WebStorageBlockingPolicy storageBlockingPolicy)
 {
     switch (storageBlockingPolicy) {
     case WebAllowAllStorage:
@@ -988,7 +990,7 @@ enum { WebViewVersion = 4 };
 
 #define timedLayoutSize 4096
 
-static RetainPtr<NSMutableSet>& LEGACY_NODELETE schemesWithRepresentationsSet()
+NODELETE static RetainPtr<NSMutableSet>& schemesWithRepresentationsSet()
 {
     static NeverDestroyed<RetainPtr<NSMutableSet>> schemesWithRepresentationsSet;
     return schemesWithRepresentationsSet;
@@ -1329,7 +1331,7 @@ static CFSetCallBacks NonRetainingSetCallbacks = {
     CFHash
 };
 
-static RetainPtr<CFMutableSetRef>& LEGACY_NODELETE allWebViewsSet()
+NODELETE static RetainPtr<CFMutableSetRef>& allWebViewsSet()
 {
     static NeverDestroyed<RetainPtr<CFMutableSetRef>> allWebViewsSet;
     return allWebViewsSet;
@@ -1676,7 +1678,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     // do this on the current thread on iOS, since the web thread could be blocked on the main thread,
     // and prefs need to be changed synchronously <rdar://problem/5841558>
     [self _preferencesChanged:prefs];
-    _private->page->settings().setFontFallbackPrefersPictographs(true);
+    protect(_private->page->settings())->setFontFallbackPrefersPictographs(true);
 #endif
 
     WebInstallMemoryPressureHandler();
@@ -1695,7 +1697,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
         WebCore::ResourceHandle::forceContentSniffing();
 
     page->setDeviceScaleFactor([self _deviceScaleFactor]);
-    page->setUseColorAppearance(self._effectiveAppearanceIsDark, self._effectiveUserInterfaceLevelIsElevated);
+    page->setUseColorAppearance(self._effectiveAppearanceIsDark ? WebCore::UseDarkAppearance::Yes : WebCore::UseDarkAppearance::No, self._effectiveUserInterfaceLevelIsElevated ? WebCore::UseElevatedUserInterfaceLevel::Yes : WebCore::UseElevatedUserInterfaceLevel::No);
 
     [WebViewVisualIdentificationOverlay installForWebViewIfNeeded:self kind:@"WebView" deprecated:YES];
 
@@ -1741,7 +1743,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     NSArray *MIMETypes = [self _supportedMIMETypes];
     NSEnumerator *enumerator = [MIMETypes objectEnumerator];
     RetainPtr<NSString> MIMEType;
-    while ((MIMEType = [enumerator nextObject])) {
+    while ((MIMEType = checked_objc_cast<NSString>([enumerator nextObject]))) {
         NSArray *extensionsForType = [[NSURLFileTypeMappings sharedMappings] extensionsForMIMEType:MIMEType];
         if (extensionsForType) {
             [extensions addObjectsFromArray:extensionsForType];
@@ -1854,22 +1856,23 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     // We are ignoring the preferences object on fast path and just using Settings defaults (everything fancy off).
     // This matches how UIKit sets up the preferences. We need to set  default values for fonts though, <rdar://problem/6850611>.
     // This should be revisited later. There is some risk involved, _preferencesChanged used to show up badly in Shark.
-    _private->page->settings().setMinimumLogicalFontSize(9);
-    _private->page->settings().setDefaultFontSize([_private->preferences defaultFontSize]);
-    _private->page->settings().setDefaultFixedFontSize(13);
+    Ref settings = _private->page->settings();
+    settings->setMinimumLogicalFontSize(9);
+    settings->setDefaultFontSize([_private->preferences defaultFontSize]);
+    settings->setDefaultFixedFontSize(13);
     _private->page->settings().setAcceleratedDrawingEnabled([preferences acceleratedDrawingEnabled]);
 
-    _private->page->settings().setFontFallbackPrefersPictographs(true);
-    _private->page->settings().setPictographFontFamily("AppleColorEmoji"_s);
+    settings->setFontFallbackPrefersPictographs(true);
+    settings->setPictographFontFamily("AppleColorEmoji"_s);
 
     _private->page->settings().setScriptMarkupEnabled(false);
-    _private->page->settings().setScriptEnabled(true);
+    settings->setScriptEnabled(true);
 
     // FIXME: this is a workaround for <rdar://problem/11518688> REGRESSION: Quoted text font changes when replying to certain email
-    _private->page->settings().setStandardFontFamily([_private->preferences standardFontFamily]);
+    settings->setStandardFontFamily([_private->preferences standardFontFamily]);
 
     // FIXME: this is a workaround for <rdar://problem/11820090> Quoted text changes in size when replying to certain email
-    _private->page->settings().setMinimumFontSize([_private->preferences minimumFontSize]);
+    settings->setMinimumFontSize([_private->preferences minimumFontSize]);
 
     // This is a workaround for <rdar://problem/21309911>.
     _private->page->settings().setHttpEquivEnabled([_private->preferences httpEquivEnabled]);
@@ -1978,7 +1981,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
         _private->textIndicatorData = adoptNS([[WebUITextIndicatorData alloc] initWithImage:image scale:_private->page->deviceScaleFactor()]);
     _private->draggedLinkURL = dragItem.url.isEmpty() ? RetainPtr<NSURL>() : dragItem.url.createNSURL();
     _private->draggedLinkTitle = dragItem.title.isEmpty() ? nil : dragItem.title.createNSString().get();
-    _private->dragPreviewFrameInRootViewCoordinates = dragItem.dragPreviewFrameInRootViewCoordinates;
+    _private->dragPreviewFrameInMainFrameViewCoordinates = dragItem.dragPreviewFrameInMainFrameViewCoordinates;
     _private->dragSourceAction = kit(dragItem.sourceAction);
 }
 
@@ -2013,7 +2016,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
 
 - (CGRect)_draggedElementBounds
 {
-    return _private->dragPreviewFrameInRootViewCoordinates;
+    return _private->dragPreviewFrameInMainFrameViewCoordinates;
 }
 
 - (WebUITextIndicatorData *)_getDataInteractionData
@@ -2092,7 +2095,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     WebThreadLock();
     _private->page->dragController().dragEnded();
     _private->dataOperationTextIndicator = nullptr;
-    _private->dragPreviewFrameInRootViewCoordinates = CGRectNull;
+    _private->dragPreviewFrameInMainFrameViewCoordinates = CGRectNull;
     _private->dragSourceAction = WebDragSourceActionNone;
     _private->draggedLinkTitle = nil;
     _private->draggedLinkURL = nil;
@@ -2301,8 +2304,7 @@ static NSMutableSet *knownPluginMIMETypes()
     WebCore::LocalDOMWindow::dispatchAllPendingUnloadEvents();
 
     // This will close the WebViews in a random order. Change this if close order is important.
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WebView *webView in [(__bridge NSSet *)allWebViewsSet().get() allObjects])
+    for (WebView *webView in [(__bridge NSSet *)allWebViewsSet().get() allObjects])
         [webView close];
 }
 
@@ -2679,7 +2681,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 {
     if (!_private || !_private->page)
         return;
-    protect(_private->page)->setUseColorAppearance(useDarkAppearance, useElevatedUserInterfaceLevel);
+    protect(_private->page)->setUseColorAppearance(useDarkAppearance ? WebCore::UseDarkAppearance::Yes : WebCore::UseDarkAppearance::No, useElevatedUserInterfaceLevel ? WebCore::UseElevatedUserInterfaceLevel::Yes : WebCore::UseElevatedUserInterfaceLevel::No);
 }
 
 + (void)_setIconLoadingEnabled:(BOOL)enabled
@@ -2779,7 +2781,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     // to distinguish between using defaultMenuItems or the delegate really returning nil to say "no context menu".
     SEL selector = @selector(webView:contextMenuItemsForElement:defaultMenuItems:);
     if (_private->UIDelegate && [protect(_private->UIDelegate) respondsToSelector:selector]) {
-        menuItems = CallUIDelegate(self, selector, element, defaultMenuItems);
+        menuItems = dynamic_objc_cast<NSArray>(CallUIDelegate(self, selector, element, defaultMenuItems));
         if (!menuItems)
             return nil;
     }
@@ -3737,11 +3739,8 @@ IGNORE_WARNINGS_END
     }
 
     // Ask plug-ins in child frames
-    NSArray *childFrames = [frame childFrames];
-    unsigned childCount = [childFrames count];
-    unsigned childIndex;
-    for (childIndex = 0; childIndex < childCount; childIndex++) {
-        if ([self _locked_plugInsAreRunningInFrame:[childFrames objectAtIndex:childIndex]])
+    for (RetainPtr childFrame : makeVector<RetainPtr<WebFrame>>([frame childFrames])) {
+        if ([self _locked_plugInsAreRunningInFrame:childFrame])
             return YES;
     }
 
@@ -3762,12 +3761,8 @@ IGNORE_WARNINGS_END
         [[(WebHTMLView *)documentView _pluginController] performSelector:selector];
 
     // Send the message to plug-ins in child frames
-    NSArray *childFrames = [frame childFrames];
-    unsigned childCount = [childFrames count];
-    unsigned childIndex;
-    for (childIndex = 0; childIndex < childCount; childIndex++) {
-        [self _locked_recursivelyPerformPlugInSelector:selector inFrame:[childFrames objectAtIndex:childIndex]];
-    }
+    for (RetainPtr childFrame : makeVector<RetainPtr<WebFrame>>([frame childFrames]))
+        [self _locked_recursivelyPerformPlugInSelector:selector inFrame:childFrame];
 }
 
 - (void)_destroyAllPlugIns
@@ -4331,7 +4326,7 @@ IGNORE_WARNINGS_END
 {
     if (_private && _private->page)
 #if PLATFORM(IOS_FAMILY)
-        _private->page->focusController().setActive([[self window] isKeyWindow]);
+        protect(_private->page->focusController())->setActive([[self window] isKeyWindow]);
 #else
         protect(_private->page->focusController())->setActive([[self window] _hasKeyAppearance]);
 #endif
@@ -4901,7 +4896,7 @@ IGNORE_WARNINGS_END
     if (!_private || !_private->page)
         return;
 
-    protect(_private->page)->setUseColorAppearance(self._effectiveAppearanceIsDark, self._effectiveUserInterfaceLevelIsElevated);
+    protect(_private->page)->setUseColorAppearance(self._effectiveAppearanceIsDark ? WebCore::UseDarkAppearance::Yes : WebCore::UseDarkAppearance::No, self._effectiveUserInterfaceLevelIsElevated ? WebCore::UseElevatedUserInterfaceLevel::Yes : WebCore::UseElevatedUserInterfaceLevel::No);
 }
 #endif
 
@@ -5422,18 +5417,18 @@ static bool needsWebViewInitThreadWorkaround()
         [[result subviews] makeObjectsPerformSelector:@selector(removeFromSuperview)];
 
         if ([decoder allowsKeyedCoding]) {
-            frameName = [decoder decodeObjectForKey:@"FrameName"];
-            groupName = [decoder decodeObjectForKey:@"GroupName"];
-            preferences = [decoder decodeObjectForKey:@"Preferences"];
+            frameName = dynamic_objc_cast<NSString>([decoder decodeObjectForKey:@"FrameName"]);
+            groupName = dynamic_objc_cast<NSString>([decoder decodeObjectForKey:@"GroupName"]);
+            preferences = dynamic_objc_cast<WebPreferences>([decoder decodeObjectForKey:@"Preferences"]);
             useBackForwardList = [decoder decodeBoolForKey:@"UseBackForwardList"];
             if ([decoder containsValueForKey:@"AllowsUndo"])
                 allowsUndo = [decoder decodeBoolForKey:@"AllowsUndo"];
         } else {
             int version;
             [decoder decodeValueOfObjCType:@encode(int) at:&version size:sizeof(int)];
-            frameName = [decoder decodeObject];
-            groupName = [decoder decodeObject];
-            preferences = [decoder decodeObject];
+            frameName = dynamic_objc_cast<NSString>([decoder decodeObject]);
+            groupName = dynamic_objc_cast<NSString>([decoder decodeObject]);
+            preferences = dynamic_objc_cast<WebPreferences>([decoder decodeObject]);
             if (version > 1)
                 [decoder decodeValuesOfObjCTypes:"c", &useBackForwardList];
             // The allowsUndo field is no longer written out in encodeWithCoder, but since there are
@@ -5441,13 +5436,6 @@ static bool needsWebViewInitThreadWorkaround()
             if (version == 3)
                 [decoder decodeValuesOfObjCTypes:"c", &allowsUndo];
         }
-
-        if (![frameName isKindOfClass:[NSString class]])
-            frameName = nil;
-        if (![groupName isKindOfClass:[NSString class]])
-            groupName = nil;
-        if (![preferences isKindOfClass:[WebPreferences class]])
-            preferences = nil;
 
         LOG(Encoding, "FrameName = %@, GroupName = %@, useBackForwardList = %d\n", frameName.get(), groupName.get(), (int)useBackForwardList);
         [result _commonInitializationWithFrameName:frameName groupName:groupName];
@@ -6000,7 +5988,7 @@ static bool needsWebViewInitThreadWorkaround()
     return protect(_private->page->backForward())->goBack();
 #if PLATFORM(IOS_FAMILY)
     WebThreadRun(^{
-        _private->page->backForward().goBack();
+        protect(_private->page->backForward())->goBack();
     });
     // FIXME: <rdar://problem/9157572> -[WebView goBack] and -goForward always return YES when called from the main thread
     return YES;
@@ -6018,7 +6006,7 @@ static bool needsWebViewInitThreadWorkaround()
     return protect(_private->page->backForward())->goForward();
 #if PLATFORM(IOS_FAMILY)
     WebThreadRun(^{
-        _private->page->backForward().goForward();
+        protect(_private->page->backForward())->goForward();
     });
     // FIXME: <rdar://problem/9157572> -[WebView goBack] and -goForward always return YES when called from the main thread
     return YES;
@@ -6887,7 +6875,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return nil;
 }
 
-constexpr WebCore::TextCheckingType LEGACY_NODELETE coreTextCheckingType(NSTextCheckingType type)
+NODELETE constexpr WebCore::TextCheckingType coreTextCheckingType(NSTextCheckingType type)
 {
     switch (type) {
     case NSTextCheckingTypeCorrection:
@@ -7648,8 +7636,7 @@ static NSAppleEventDescriptor* aeDescFromJSValue(JSC::JSGlobalObject* lexicalGlo
         if ([view conformsToProtocol:@protocol(WebMultipleTextMatches)]) {
             RetainPtr<NSView<WebMultipleTextMatches>> documentView = (NSView <WebMultipleTextMatches> *)view;
             NSRect documentViewVisibleRect = [documentView.get() visibleRect];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSValue *rect in [documentView.get() rectsForTextMatches]) {
+            for (NSValue *rect in [documentView.get() rectsForTextMatches]) {
                 NSRect r = [rect rectValue];
                 // Clip rect to document view's visible rect so rect is confined to subframe
                 r = NSIntersectionRect(r, documentViewVisibleRect);
@@ -7776,15 +7763,14 @@ static NSAppleEventDescriptor* aeDescFromJSValue(JSC::JSGlobalObject* lexicalGlo
 - (void)addVisitedLinks:(NSArray *)visitedLinks
 {
     WebVisitedLinkStore& visitedLinkStore = _private->group->visitedLinkStore();
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *urlString in visitedLinks)
+    for (NSString *urlString in visitedLinks)
         visitedLinkStore.addVisitedLink(urlString);
 }
 
 #if PLATFORM(IOS_FAMILY)
 - (void)removeVisitedLink:(NSURL *)url
 {
-    _private->group->visitedLinkStore().removeVisitedLink(URL(url).string().createNSString().get());
+    protect(_private->group->visitedLinkStore())->removeVisitedLink(URL(url).string().createNSString().get());
 }
 #endif
 
@@ -8451,7 +8437,7 @@ FORWARD(toggleUnderline)
     RefPtr coreFrame = core([self _selectedOrMainFrame]);
     if (!coreFrame)
         return NO;
-    return protect(coreFrame->selection())->isAll(WebCore::CanCrossEditingBoundary);
+    return protect(coreFrame->selection())->isAll(WebCore::EditingBoundaryCrossingRule::CanCross);
 }
 
 - (void)_simplifyMarkup:(DOMNode *)startNode endNode:(DOMNode *)endNode
@@ -9074,7 +9060,7 @@ FORWARD(toggleUnderline)
 
 - (void)_getWebCoreDictationAlternatives:(Vector<WebCore::DictationAlternative>&)alternatives fromTextAlternatives:(const Vector<WebCore::TextAlternativeWithRange>&)alternativesWithRange
 {
-    for (auto& alternativeWithRange : alternativesWithRange) {
+    for (auto& alternativeWithRange : borrow(alternativesWithRange)) {
         if (auto dictationContext = _private->m_alternativeTextUIController->addAlternatives(alternativeWithRange.alternatives.get()))
             alternatives.append({ alternativeWithRange.range, *dictationContext });
     }
@@ -9302,16 +9288,14 @@ FORWARD(toggleUnderline)
 - (void)_dismissTextTouchBarPopoverItemWithIdentifier:(NSString *)identifier
 {
     NSTouchBarItem *foundItem = nil;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSTouchBarItem *item in self.textTouchBar.items) {
+    for (NSTouchBarItem *item in self.textTouchBar.items) {
         if ([item.identifier isEqualToString:identifier]) {
             foundItem = item;
             break;
         }
 
         if ([item.identifier isEqualToString:NSTouchBarItemIdentifierTextFormat]) {
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSTouchBarItem *childItem in [protect(checked_objc_cast<NSGroupTouchBarItem>(item)) groupTouchBar].items) {
+            for (NSTouchBarItem *childItem in [protect(checked_objc_cast<NSGroupTouchBarItem>(item)) groupTouchBar].items) {
                 if ([childItem.identifier isEqualToString:identifier]) {
                     foundItem = childItem;
                     break;
@@ -9419,7 +9403,7 @@ FORWARD(toggleUnderline)
     return self._isRichlyEditable ? _private->_richTextTouchBar.get() : _private->_plainTextTouchBar.get();
 }
 
-static NSTextAlignment LEGACY_NODELETE nsTextAlignmentFromRenderStyle(const WebCore::Style::ComputedStyle* style)
+NODELETE static NSTextAlignment nsTextAlignmentFromRenderStyle(const WebCore::Style::ComputedStyle* style)
 {
     NSTextAlignment textAlignment;
     switch (style->textAlignOutOfLine()) {

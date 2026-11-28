@@ -89,7 +89,15 @@ static_assert(sizeof(ContainerNode) == sizeof(SameSizeAsContainerNode), "Contain
 static void dispatchChildInsertionEvents(Node&);
 static void dispatchChildRemovalEvents(Ref<Node>&);
 
-unsigned ScriptDisallowedScope::s_count = 0;
+#if OS(WINDOWS) || PLATFORM(PLAYSTATION)
+unsigned& ScriptDisallowedScope::count()
+{
+    static thread_local unsigned s_count = 0;
+    return s_count;
+}
+#else
+thread_local unsigned ScriptDisallowedScope::s_count = 0;
+#endif
 #if ASSERT_ENABLED
 ScriptDisallowedScope::EventAllowedScope* ScriptDisallowedScope::EventAllowedScope::s_currentScope = nullptr;
 #endif
@@ -355,7 +363,7 @@ static ContainerNode::ChildChange makeChildChangeForMoveInsertion(ContainerNode&
     };
 }
 
-static ContainerNode::ChildChange LEGACY_NODELETE makeChildChangeForInsertion(ContainerNode& containerNode, NodeVector& children, Node* beforeChild, ContainerNode::ChildChange::Source source, ReplacedAllChildren replacedAllChildren)
+NODELETE static ContainerNode::ChildChange makeChildChangeForInsertion(ContainerNode& containerNode, NodeVector& children, Node* beforeChild, ContainerNode::ChildChange::Source source, ReplacedAllChildren replacedAllChildren)
 {
     using Type = ContainerNode::ChildChange::Type;
     using AffectsElements = ContainerNode::ChildChange::AffectsElements;
@@ -395,7 +403,7 @@ static ContainerNode::ChildChange LEGACY_NODELETE makeChildChangeForInsertion(Co
 }
 
 enum class ClonedChildIncludesElements { No, Yes };
-static ContainerNode::ChildChange LEGACY_NODELETE makeChildChangeForCloneInsertion(ClonedChildIncludesElements clonedChildIncludesElements)
+NODELETE static ContainerNode::ChildChange makeChildChangeForCloneInsertion(ClonedChildIncludesElements clonedChildIncludesElements)
 {
     return { ContainerNode::ChildChange::Type::AllChildrenReplaced, nullptr, nullptr, nullptr, nullptr, ContainerNode::ChildChange::Source::Clone,
         clonedChildIncludesElements == ClonedChildIncludesElements::Yes ? ContainerNode::ChildChange::AffectsElements::Yes : ContainerNode::ChildChange::AffectsElements::No };
@@ -529,7 +537,7 @@ void ContainerNode::removeDetachedChildren()
     removeDetachedChildrenInContainer(*this);
 }
 
-static inline bool LEGACY_NODELETE hasDisplayContents(Element *element)
+NODELETE static inline bool hasDisplayContents(Element *element)
 {
     return element && element->hasDisplayContents();
 }
@@ -573,7 +581,7 @@ ContainerNode::ContainerNode(ClangVTableWorkaroundTag, Document& document)
 {
 }
 
-static inline bool LEGACY_NODELETE isChildTypeAllowed(ContainerNode& newParent, Node& child)
+NODELETE static inline bool isChildTypeAllowed(ContainerNode& newParent, Node& child)
 {
     if (!child.isDocumentFragment())
         return newParent.childTypeAllowed(child.nodeType());
@@ -585,7 +593,7 @@ static inline bool LEGACY_NODELETE isChildTypeAllowed(ContainerNode& newParent, 
     return true;
 }
 
-static inline const ContainerNode* LEGACY_NODELETE hostIncludingParent(const Node& node)
+NODELETE static inline const ContainerNode* hostIncludingParent(const Node& node)
 {
     if (auto* parent = node.parentNode())
         return parent;
@@ -693,7 +701,7 @@ ExceptionOr<void> ContainerNode::insertBefore(Node& newChild, RefPtr<Node>&& ref
 {
     // Check that this node is not "floating".
     // If it is, it can be deleted as a side effect of sending mutation events.
-    ASSERT(refCount() || parentOrShadowHostNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(refCount() || parentOrShadowHostNode());
 
     // Make sure adding the new child is OK.
     auto validityCheckResult = ensurePreInsertionValidity(newChild, refChild.get());
@@ -749,9 +757,9 @@ void ContainerNode::insertBeforeCommon(Node& nextChild, Node& newChild)
 {
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    ASSERT(nextChild.parentNode() == this);
+    ASSERT_WITH_SECURITY_IMPLICATION(nextChild.parentNode() == this);
     ASSERT(&nextChild != &newChild);
-    ASSERT(!newChild.parentNode()); // Use insertBefore if you need to handle reparenting (and want DOM mutation events).
+    ASSERT_WITH_SECURITY_IMPLICATION(!newChild.parentNode()); // Use insertBefore if you need to handle reparenting (and want DOM mutation events).
     ASSERT(!newChild.nextSibling());
     ASSERT(!newChild.previousSibling());
     ASSERT(!newChild.isShadowRoot());
@@ -776,7 +784,7 @@ void ContainerNode::appendChildCommon(Node& child)
 {
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    ASSERT(!child.parentNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(!child.parentNode());
     child.setParentNode(this);
 
     if (auto* lastChild = this->lastChild()) {
@@ -811,7 +819,7 @@ ExceptionOr<void> ContainerNode::replaceChild(Node& newChild, Node& oldChild)
 {
     // Check that this node is not "floating".
     // If it is, it can be deleted as a side effect of sending mutation events.
-    ASSERT(refCount() || parentOrShadowHostNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(refCount() || parentOrShadowHostNode());
 
     Ref protectedThis { *this };
 
@@ -905,7 +913,7 @@ ExceptionOr<void> ContainerNode::removeChild(Node& oldChild)
 {
     // Check that this node is not "floating".
     // If it is, it can be deleted as a side effect of sending mutation events.
-    ASSERT(refCount() || parentOrShadowHostNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(refCount() || parentOrShadowHostNode());
 
     Ref protectedThis { *this };
     Ref protectedOldChild { oldChild };
@@ -929,7 +937,7 @@ void ContainerNode::removeBetween(Node* previousChild, Node* nextChild, Node& ol
 
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    ASSERT(oldChild.parentNode() == this);
+    ASSERT_WITH_SECURITY_IMPLICATION(oldChild.parentNode() == this);
 
     destroyRenderTreeIfNeeded(oldChild);
 
@@ -1031,7 +1039,7 @@ ExceptionOr<void> ContainerNode::appendChild(Node& newChild)
 {
     // Check that this node is not "floating".
     // If it is, it can be deleted as a side effect of sending mutation events.
-    ASSERT(refCount() || parentOrShadowHostNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(refCount() || parentOrShadowHostNode());
 
     // Make sure adding the new child is ok
     auto validityCheckResult = ensurePreInsertionValidity(newChild, nullptr);
@@ -1111,7 +1119,7 @@ ExceptionOr<void> ContainerNode::insertChildrenBeforeWithoutPreInsertionValidity
     InspectorInstrumentation::willInsertDOMNode(protect(document()), *this);
 
     executeNodeInsertionWithScriptAssertion(*this, newChildren, refChild.get(), ChildChange::Source::API, ReplacedAllChildren::No, [&](auto& child) {
-        child->setTreeScopeRecursively(treeScope());
+        child->setTreeScopeRecursively(protect(treeScope()));
         if (refChild)
             insertBeforeCommon(*refChild, child);
         else
@@ -1124,7 +1132,7 @@ ExceptionOr<void> ContainerNode::insertChildrenBeforeWithoutPreInsertionValidity
 
 void ContainerNode::parserAppendChild(Node& newChild)
 {
-    ASSERT(!newChild.parentNode()); // Use appendChild if you need to handle reparenting (and want DOM mutation events).
+    ASSERT_WITH_SECURITY_IMPLICATION(!newChild.parentNode()); // Use appendChild if you need to handle reparenting (and want DOM mutation events).
     ASSERT(!newChild.isDocumentFragment());
     ASSERT(!hasTagName(HTMLNames::templateTag));
 
@@ -1142,7 +1150,7 @@ void ContainerNode::parserAppendChildIntoIsolatedTree(Node& newChild)
 {
     ASSERT(!inRenderedDocument());
     ASSERT(!newChild.traverseToRootNode().wrapper());
-    ASSERT(!newChild.parentNode()); // Use appendChild if you need to handle reparenting (and want DOM mutation events).
+    ASSERT_WITH_SECURITY_IMPLICATION(!newChild.parentNode()); // Use appendChild if you need to handle reparenting (and want DOM mutation events).
     ASSERT(is<Element>(*this) || is<DocumentFragment>(*this)); // Only Element calls parserNotifyChildrenChanged
     ASSERT(is<DocumentFragment>(*this) || !isParsingChildrenFinished());
     ASSERT(!newChild.isDocumentFragment());
@@ -1233,6 +1241,9 @@ void ContainerNode::cloneChildNodes(Document& document, CustomElementRegistry* f
 {
     if (currentDepth >= cloneMaxDepth)
         return;
+
+    if (auto* element = dynamicDowncast<Element>(*this); element && element->keepsCustomElementRegistryNull()) [[unlikely]]
+        fallbackRegistry = nullptr;
 
     NodeVector postInsertionNotificationTargets;
     bool hadElement = false;
@@ -1575,6 +1586,7 @@ ExceptionOr<void> ContainerNode::moveBefore(Node& node, RefPtr<Node>&& refChild)
         WidgetHierarchyUpdatesSuspensionScope suspendWidgetHierarchyUpdates;
         ScriptDisallowedScope::InMainThread scriptDisallowedScope;
         ChildListMutationScope(*oldParent).willRemoveChild(node);
+        node.notifyMutationObserversNodeWillDetach();
         nodeDocument->nodeWillBeMoved(node);
 
         {

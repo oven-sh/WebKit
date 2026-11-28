@@ -26,8 +26,7 @@
 
 #include <WebCore/StylePrimitiveNumeric.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'vertical-align'> = baseline | sub | super | top | text-top | middle | bottom | text-bottom | -webkit-baseline-middle | <length-percentage>
 // https://www.w3.org/TR/CSS22/visudet.html#propdef-vertical-align
@@ -86,12 +85,11 @@ template<> struct CSSValueConversion<VerticalAlign> { auto operator()(BuilderSta
 // MARK: - Blending
 
 template<> struct Blending<VerticalAlign> {
-    bool LEGACY_NODELETE canBlend(const VerticalAlign&, const VerticalAlign&);
+    NODELETE bool canBlend(const VerticalAlign&, const VerticalAlign&);
     auto requiresInterpolationForAccumulativeIteration(const VerticalAlign&, const VerticalAlign&) -> bool;
     auto blend(const VerticalAlign&, const VerticalAlign&, const BlendingContext&) -> VerticalAlign;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::VerticalAlign)

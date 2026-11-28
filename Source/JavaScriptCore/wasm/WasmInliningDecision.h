@@ -60,9 +60,9 @@ public:
     unsigned callProfileIndex() const { return m_callProfileIndex; }
     double relativeCallCount() const { return m_relativeCallCount; }
     size_t wasmSize() const { return m_wasmSize; }
-    double LEGACY_NODELETE score() const;
+    NODELETE double score() const;
 
-    InliningNode* LEGACY_NODELETE callTarget(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex);
+    NODELETE InliningNode* callTarget(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex);
 
 private:
     SUPPRESS_UNCOUNTED_MEMBER const IPIntCallee& m_callee;
@@ -96,7 +96,7 @@ private:
 
     SUPPRESS_UNCOUNTED_MEMBER Module& m_module;
     SegmentedVector<InliningNode, 16> m_arena;
-    UncheckedKeyHashMap<const IPIntCallee*, std::unique_ptr<MergedProfile>> m_profiles;
+    HashMap<const IPIntCallee*, std::unique_ptr<MergedProfile>> m_profiles;
     InliningNode& m_root;
     uint32_t m_inlinedCount { 0 };
     double m_maxGrowthFactor { 0 };

@@ -58,9 +58,10 @@
 #include "WebPageProxy.h"
 #include <WebCore/Filter.h>
 #include <WebCore/FontCustomPlatformData.h>
+#include <WebCore/FreeformGradient.h>
 #include <WebCore/Gradient.h>
 #include <WebCore/HTMLCanvasElement.h>
-#include <WebCore/ImageBufferDisplayListBackend.h>
+#include <WebCore/MeshGradient.h>
 #include <WebCore/NullImageBufferBackend.h>
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/Borrow.h>
@@ -69,10 +70,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
-
-#if USE(CG)
-#include <WebCore/ImageBufferCGPDFDocumentBackend.h>
-#endif
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferRemoteIOSurfaceBackend.h"
@@ -195,6 +192,11 @@ void RemoteRenderingBackend::moveToSerializedBuffer(RenderingResourceIdentifier 
     MESSAGE_CHECK(imageBuffer->hasOneRef(), "ImageBuffer in use");
     // Avoid leaking cross-RemoteRenderingBackend state through context by releasing the context.
     imageBuffer->releaseGraphicsContext();
+    // A backend that cannot release its context still holds that state, which the adopting
+    // RemoteRenderingBackend would then touch from its own work queue thread.
+    // FIXME: DisplayList buffers are exempt because moving them is supported, but their recorded
+    // items and state can still reference ImageBuffers owned by this RemoteRenderingBackend.
+    MESSAGE_CHECK(!imageBuffer->hasGraphicsContext() || imageBuffer->renderingMode() == RenderingMode::DisplayList, "ImageBuffer cannot release its GraphicsContext");
     bool success = m_sharedResourceCache->addSerializedImageBuffer(serializedIdentifier, WTF::move(imageBuffer));
     MESSAGE_CHECK(success, "Duplicate SerializedImageBuffer");
 }
@@ -320,37 +322,28 @@ static RefPtr<ImageBuffer> allocateImageBufferInternal(const FloatSize& logicalS
         break;
 
     case RenderingMode::PDFDocument:
-#if USE(CG)
-        imageBuffer = ImageBuffer::create<ImageBufferCGPDFDocumentBackend, ImageBufferType>(logicalSize, resolutionScale, colorSpace, bufferFormat, purpose, creationContext);
-#endif
-        break;
-
     case RenderingMode::DisplayList:
-        if (auto backend = ImageBufferDisplayListBackend::create(logicalSize, resolutionScale, colorSpace, bufferFormat.pixelFormat, purpose, ControlFactory::create()))
-            imageBuffer = ImageBuffer::create<ImageBufferType>(ImageBuffer::Parameters { logicalSize, resolutionScale, colorSpace, bufferFormat, purpose }, creationContext, WTF::move(backend));
-        break;
+        // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     return imageBuffer;
 }
 
-static void LEGACY_NODELETE adjustImageBufferRenderingMode(const RemoteSharedResourceCache& sharedResourceCache, RenderingPurpose purpose, RenderingMode& renderingMode)
+NODELETE static void adjustImageBufferRenderingMode(const RemoteSharedResourceCache& sharedResourceCache, const SharedPreferencesForWebProcess& preferences, RenderingPurpose purpose, RenderingMode& renderingMode)
 {
-    if (renderingMode == RenderingMode::Accelerated && sharedResourceCache.reachedAcceleratedImageBufferLimit(purpose))
+    if (renderingMode == RenderingMode::Accelerated && sharedResourceCache.reachedAcceleratedImageBufferLimit(purpose, preferences.acceleratedImageBufferLimit))
         renderingMode = RenderingMode::Unaccelerated;
 }
 
 RefPtr<ImageBuffer> RemoteRenderingBackend::allocateImageBuffer(const FloatSize& logicalSize, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat bufferFormat, ImageBufferCreationContext creationContext, std::optional<ImageBufferBackendHandle>&& providedBackingStore)
 {
     assertIsCurrent(workQueue());
+    // PDF documents and display lists are drawn through contexts that are not ImageBuffers. This also covers
+    // the configurations of image buffer sets.
+    MESSAGE_CHECK_WITH_RETURN_VALUE(renderingMode != RenderingMode::PDFDocument && renderingMode != RenderingMode::DisplayList, nullptr);
     if (purpose == RenderingPurpose::Canvas && m_sharedResourceCache->reachedImageBufferForCanvasLimit())
         return nullptr;
-
-    // Verify DisplayList rendering mode is only used when RemoteSnapshotting is enabled
-    if (renderingMode == RenderingMode::DisplayList) {
-        auto prefs = sharedPreferencesForWebProcess();
-        MESSAGE_CHECK_WITH_RETURN_VALUE(prefs && prefs->remoteSnapshottingEnabled, nullptr);
-    }
 
     adjustImageBufferCreationContext(m_sharedResourceCache, creationContext);
 #if HAVE(IOSURFACE) && USE(APPLE_INTERNAL_SDK)
@@ -365,27 +358,24 @@ RefPtr<ImageBuffer> RemoteRenderingBackend::allocateImageBuffer(const FloatSize&
     if (providedBackingStore) {
         ImageBuffer::Parameters parameters { logicalSize, resolutionScale, colorSpace, bufferFormat, purpose };
         switch (renderingMode) {
-        case RenderingMode::Accelerated:
-#if HAVE(IOSURFACE)
-            if (auto backend = ImageBufferShareableMappedIOSurfaceBackend::create(parameters, WTF::move(*providedBackingStore), creationContext.useIOSurfaceWebKitBehavior))
-                return ImageBuffer::create(parameters, creationContext, WTF::move(backend));
-#endif
-            return nullptr;
         case RenderingMode::Unaccelerated:
             if (!std::holds_alternative<ShareableBitmap::Handle>(*providedBackingStore))
                 return nullptr;
             if (auto backend = ImageBufferShareableBitmapBackend::create(parameters, std::get<ShareableBitmap::Handle>(WTF::move(*providedBackingStore))))
                 return ImageBuffer::create(parameters, creationContext, WTF::move(backend));
             return nullptr;
+        case RenderingMode::Accelerated:
+            // This has no backing store the web process can hand over.
+            return nullptr;
         case RenderingMode::PDFDocument:
         case RenderingMode::DisplayList:
-            // These have no backing store to hand over.
-            return nullptr;
+            // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
+            RELEASE_ASSERT_NOT_REACHED();
         }
         return nullptr;
     }
 
-    adjustImageBufferRenderingMode(m_sharedResourceCache, purpose, renderingMode);
+    adjustImageBufferRenderingMode(m_sharedResourceCache, m_sharedPreferencesForWebProcess, purpose, renderingMode);
 
     RefPtr<ImageBuffer> imageBuffer;
 
@@ -434,6 +424,28 @@ void RemoteRenderingBackend::releaseImageBuffer(RenderingResourceIdentifier iden
     assertIsCurrent(workQueue());
     bool success = m_remoteImageBuffers.take(identifier).get();
     MESSAGE_CHECK(success, "Missing ImageBuffer");
+}
+
+void RemoteRenderingBackend::sinkImageBufferIntoNativeImage(RenderingResourceIdentifier identifier, RenderingResourceIdentifier imageIdentifier)
+{
+    assertIsCurrent(workQueue());
+    // Like releaseImageBuffer(), the buffer is gone after this. The web process does not release it again.
+    RefPtr remoteImageBuffer = m_remoteImageBuffers.take(identifier).get(); // NOLINT
+    MESSAGE_CHECK(remoteImageBuffer, "Missing ImageBuffer");
+    Ref imageBuffer = RemoteImageBuffer::sinkIntoImageBuffer(remoteImageBuffer.releaseNonNull());
+    MESSAGE_CHECK(imageBuffer->hasOneRef(), "ImageBuffer in use");
+    RefPtr image = ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
+    // The buffer may have failed to allocate.
+    if (!image)
+        image = createPlaceholderNativeImage();
+    MESSAGE_CHECK(image, "NativeImage could not be created");
+    bool success = m_remoteResourceCache.cacheNativeImage(imageIdentifier, image.releaseNonNull());
+    MESSAGE_CHECK(success, "NativeImage already exists");
+}
+
+RefPtr<NativeImage> RemoteRenderingBackend::createPlaceholderNativeImage()
+{
+    return ImageBuffer::sinkIntoNativeImage(ImageBuffer::create({ 1, 1 }, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8));
 }
 
 void RemoteRenderingBackend::createImageBufferSet(ImageBufferSetIdentifier identifier, RemoteGraphicsContextIdentifier contextIdentifier)
@@ -506,9 +518,14 @@ void RemoteRenderingBackend::cacheNativeImageFromSharedNativeImage(RemoteNativeI
 {
     assertIsCurrent(workQueue());
     auto identifier = reference.identifier();
-    RefPtr image = m_sharedResourceCache->readNativeImage(WTF::move(reference), defaultRemoteSharedResourceCacheTimeout);
-    MESSAGE_CHECK(image, "Shared NativeImage not found.");
-    bool success = m_remoteResourceCache.cacheNativeImage(identifier, image.releaseNonNull());
+    // Another stream connection publishes the image, possibly on this work queue. Wait without blocking the queue.
+    auto image = m_sharedResourceCache->readNativeImage(m_streamConnection, WTF::move(reference));
+    if (!image) {
+        m_streamConnection->markCurrentlyDispatchedMessageAsDeferred();
+        return;
+    }
+    MESSAGE_CHECK(*image, "Shared NativeImage not found.");
+    bool success = m_remoteResourceCache.cacheNativeImage(identifier, image->releaseNonNull());
     MESSAGE_CHECK(success, "NativeImage already cached.");
 }
 
@@ -531,7 +548,7 @@ void RemoteRenderingBackend::cacheFont(const Font::Attributes& fontAttributes, F
 
     FontPlatformData platform = FontPlatformData::create(platformData, customPlatformData.get());
 
-    Ref font = SharedFont::create(platform, fontAttributes.origin, fontAttributes.isInterstitial, fontAttributes.visibility, fontAttributes.isTextOrientationFallback, fontAttributes.renderingResourceIdentifier);
+    Ref font = SharedFont::create(platform, fontAttributes.origin, fontAttributes.isInterstitial, fontAttributes.visibility, fontAttributes.isTextOrientationFallback, fontAttributes.isSmallCapsFace, fontAttributes.renderingResourceIdentifier);
 
     bool success = m_remoteResourceCache.cacheFont(WTF::move(font));
     MESSAGE_CHECK(success, "Font already cached.");
@@ -576,7 +593,7 @@ void RemoteRenderingBackend::releasePathImpl(RemotePathImplIdentifier identifier
     MESSAGE_CHECK(success, "Path released before being cached.");
 }
 
-void RemoteRenderingBackend::cacheGradient(Ref<Gradient>&& gradient, RemoteGradientIdentifier identifier)
+void RemoteRenderingBackend::cacheGradient(Ref<const Gradient>&& gradient, RemoteGradientIdentifier identifier)
 {
     assertIsCurrent(workQueue());
     bool success = m_remoteResourceCache.cacheGradient(identifier, WTF::move(gradient));
@@ -588,6 +605,34 @@ void RemoteRenderingBackend::releaseGradient(RemoteGradientIdentifier identifier
     assertIsCurrent(workQueue());
     bool success = m_remoteResourceCache.releaseGradient(identifier);
     MESSAGE_CHECK(success, "Gradient released before being cached.");
+}
+
+void RemoteRenderingBackend::cacheFreeformGradient(Ref<FreeformGradient>&& gradient, RemoteFreeformGradientIdentifier identifier)
+{
+    assertIsCurrent(workQueue());
+    bool success = m_remoteResourceCache.cacheFreeformGradient(identifier, WTF::move(gradient));
+    MESSAGE_CHECK(success, "Freeform gradient already cached.");
+}
+
+void RemoteRenderingBackend::releaseFreeformGradient(RemoteFreeformGradientIdentifier identifier)
+{
+    assertIsCurrent(workQueue());
+    bool success = m_remoteResourceCache.releaseFreeformGradient(identifier);
+    MESSAGE_CHECK(success, "Freeform gradient released before being cached.");
+}
+
+void RemoteRenderingBackend::cacheMeshGradient(Ref<MeshGradient>&& gradient, RemoteMeshGradientIdentifier identifier)
+{
+    assertIsCurrent(workQueue());
+    bool success = m_remoteResourceCache.cacheMeshGradient(identifier, WTF::move(gradient));
+    MESSAGE_CHECK(success, "Mesh gradient already cached.");
+}
+
+void RemoteRenderingBackend::releaseMeshGradient(RemoteMeshGradientIdentifier identifier)
+{
+    assertIsCurrent(workQueue());
+    bool success = m_remoteResourceCache.releaseMeshGradient(identifier);
+    MESSAGE_CHECK(success, "Mesh gradient released before being cached.");
 }
 
 
@@ -796,6 +841,12 @@ void RemoteRenderingBackend::releaseTextDetector(ShapeDetectionIdentifier identi
 #endif
 }
 
+RefPtr<RemoteImageBufferSet> RemoteRenderingBackend::imageBufferSet(ImageBufferSetIdentifier identifier)
+{
+    assertIsCurrent(workQueue());
+    return m_remoteImageBufferSets.get(identifier);
+}
+
 RefPtr<ImageBuffer> RemoteRenderingBackend::imageBuffer(RenderingResourceIdentifier renderingResourceIdentifier)
 {
     assertIsCurrent(workQueue());
@@ -823,7 +874,7 @@ bool RemoteRenderingBackend::shouldUseLockdownFontParser() const
 
 void RemoteRenderingBackend::getImageBufferResourceLimitsForTesting(CompletionHandler<void(WebCore::ImageBufferResourceLimits)>&& callback)
 {
-    callback(m_sharedResourceCache->getResourceLimitsForTesting());
+    callback(m_sharedResourceCache->getResourceLimitsForTesting(m_sharedPreferencesForWebProcess.acceleratedImageBufferLimit));
 }
 
 } // namespace WebKit

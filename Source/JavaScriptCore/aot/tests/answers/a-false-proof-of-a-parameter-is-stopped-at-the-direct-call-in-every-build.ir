@@ -1,0 +1,21 @@
+# function takesIt(taken) { return typeof taken; }
+# if (which === 3) print(takesIt(id(7)));
+# print("went on");
+# false-proofs-are-stopped-where-the-value-comes-in.ir, its program and its lie (testing=AssumeUnknownCallsReturnUndefined: Link takes what the shell's `id` gives for undefined, so it proves `taken` undefined), WITH NO WORD THAT CHECKS PROOFS: AS A USER BUILDS.
+# THE CALLER IS THE DOOR OF A DIRECT CALL: it holds each operand that is not shown to what the body believes of the parameter, and the number is stopped there, by name. BELIEVED, the body printed "undefined" for a number and went on.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(DIRECT): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
+# DIRECT: bun: internal AOT error: type check failed
+# DIRECT-NEXT: found int32 in an argument
+# DIRECT-NOT: went on
+# DIRECT: crashed with
+# A body copied in line tests Link's word of its parameter; the failing side of that test was a bare trap.
+# RUN(COPIED): run-in-shell mechanisms=all globalThis.which = 3;
+# COPIED: bun: internal AOT error: type check failed
+# COPIED-NEXT: found int32 in an argument
+# COPIED-NOT: went on
+# COPIED: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: went on
+# NONE-NEXT: exited with 0
+# PROGRAM-OF: false-proofs-are-stopped-where-the-value-comes-in.ir

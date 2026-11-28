@@ -30,11 +30,14 @@
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FloatRoundedRect.h"
+#include "FreeformGradientRendererCPU.h"
 #include "Gradient.h"
 #include "ImageBuffer.h"
 #include "ImageOrientation.h"
 #include "IntRect.h"
 #include "LayoutRoundedRect.h"
+#include "MeshGradientRendererCPU.h"
+#include "SourceImage.h"
 #include "SystemImage.h"
 #include "TextRun.h"
 #include "VideoFrame.h"
@@ -68,28 +71,48 @@ GraphicsContext::~GraphicsContext()
 
 void GraphicsContext::save(GraphicsContextState::Purpose purpose)
 {
-    ASSERT(purpose == GraphicsContextState::Purpose::SaveRestore || purpose == GraphicsContextState::Purpose::TransparencyLayer);
+    ASSERT(purpose == GraphicsContextState::Purpose::SaveRestore || purpose == GraphicsContextState::Purpose::TransparencyLayer || purpose == GraphicsContextState::Purpose::Transform);
     m_stack.append(m_state);
+    // For the contexts that do not keep the CTM in m_state.
+    if (purpose == GraphicsContextState::Purpose::Transform)
+        m_stack.last().setCTM(getCTM());
     m_state.repurpose(purpose);
 }
 
-void GraphicsContext::restore(GraphicsContextState::Purpose purpose)
+bool GraphicsContext::restore(GraphicsContextState::Purpose purpose)
 {
-    if (m_stack.isEmpty()) {
-        LOG_ERROR("ERROR void GraphicsContext::restore() stack is empty");
-        return;
+    if (!canRestore(purpose)) {
+        LOG_ERROR("ERROR bool GraphicsContext::restore() no matching save()");
+        return false;
     }
 
-    ASSERT_UNUSED(purpose, purpose == m_state.purpose());
-    ASSERT_UNUSED(purpose, purpose == GraphicsContextState::Purpose::SaveRestore || purpose == GraphicsContextState::Purpose::TransparencyLayer);
-
-    m_state = m_stack.last();
-    m_stack.removeLast();
+    if (purpose == GraphicsContextState::Purpose::Transform)
+        m_state.restoreTransform(m_stack.takeLast());
+    else
+        m_state = m_stack.takeLast();
 
     // Make sure we deallocate the state stack buffer when it goes empty.
     // Canvas elements will immediately save() again, but that goes into inline capacity.
     if (m_stack.isEmpty())
         m_stack.clear();
+    return true;
+}
+
+void GraphicsContext::saveTransform()
+{
+    GraphicsContext::save(GraphicsContextState::Purpose::Transform);
+}
+
+bool GraphicsContext::restoreTransform()
+{
+    if (!canRestore(GraphicsContextState::Purpose::Transform)) {
+        LOG_ERROR("ERROR bool GraphicsContext::restoreTransform() no matching saveTransform()");
+        return false;
+    }
+    GraphicsContext::restore(GraphicsContextState::Purpose::Transform);
+    // Apply the restored CTM to the contexts that do not keep the CTM in m_state.
+    setCTM(m_state.ctm());
+    return true;
 }
 
 void GraphicsContext::unwindStateStack(unsigned count)
@@ -102,6 +125,9 @@ void GraphicsContext::unwindStateStack(unsigned count)
             break;
         case GraphicsContextState::Purpose::TransparencyLayer:
             endTransparencyLayer();
+            break;
+        case GraphicsContextState::Purpose::Transform:
+            restoreTransform();
             break;
         default:
             ASSERT_NOT_REACHED();
@@ -220,8 +246,7 @@ Vector<TextRun> GraphicsContext::visuallyOrderedSubruns(const TextRun& run)
         return { };
     }
 
-    Vector<TextRun> subruns;
-    subruns.reserveInitialCapacity(runCount);
+    Vector<TextRun> subruns(ReserveCapacityTag { }, runCount);
     for (int32_t visualIndex = 0; visualIndex < runCount; ++visualIndex) {
         int32_t start = 0;
         int32_t length = 0;
@@ -237,7 +262,7 @@ Vector<TextRun> GraphicsContext::visuallyOrderedSubruns(const TextRun& run)
 void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
 {
     auto currentPoint = point;
-    for (CheckedRef subrun : visuallyOrderedSubruns(run)) {
+    for (auto& subrun : visuallyOrderedSubruns(run)) {
         auto advance = font.drawText(*this, subrun, currentPoint, 0, std::nullopt, customFontNotReadyAction);
         currentPoint.move(advance);
     }
@@ -274,9 +299,10 @@ RenderingMode GraphicsContext::renderingModeForCompatibleBuffer() const
     switch (renderingMode()) {
     case RenderingMode::Accelerated:
     case RenderingMode::Unaccelerated:
-    case RenderingMode::DisplayList:
         return renderingMode();
     case RenderingMode::PDFDocument:
+    case RenderingMode::DisplayList:
+        // Compatible buffers are drawn into and then read back, masked or filtered, which needs pixels.
         return RenderingMode::Unaccelerated;
     }
 
@@ -346,12 +372,12 @@ RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& r
     return createScaledImageBuffer(rect, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
 
-void GraphicsContext::drawNativeImage(const NativeImage& image, FloatPoint destination, ImageDrawingOptions options)
+void GraphicsContext::drawNativeImage(const NativeImage& image, FloatPoint destination, RasterDrawingOptions options)
 {
     drawNativeImage(image, FloatRect(destination, image.size()), FloatRect({ }, image.size()), options);
 }
 
-void GraphicsContext::drawNativeImage(const NativeImage& image, const FloatRect& destination, ImageDrawingOptions options)
+void GraphicsContext::drawNativeImage(const NativeImage& image, const FloatRect& destination, RasterDrawingOptions options)
 {
     drawNativeImage(image, destination, FloatRect({ }, image.size()), options);
 }
@@ -368,17 +394,17 @@ RefPtr<NativeImage> GraphicsContext::nativeImageForDrawing(ImageBuffer& imageBuf
     return imageBuffer.createNativeImageReference();
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, RasterDrawingOptions imageDrawingOptions)
 {
     drawImageBuffer(image, FloatRect(destination, image.logicalSize()), FloatRect({ }, image.logicalSize()), imageDrawingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, RasterDrawingOptions imageDrawingOptions)
 {
     drawImageBuffer(image, destination, FloatRect({ }, image.logicalSize()), imageDrawingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions options)
 {
     FloatRect sourceScaled = source;
     sourceScaled.scale(image.resolutionScale());
@@ -386,7 +412,7 @@ void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& desti
         drawNativeImage(*nativeImage, destination, sourceScaled, options);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatPoint& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatPoint& destination, RasterDrawingOptions imageDrawingOptions)
 {
     if (!image)
         return;
@@ -394,7 +420,7 @@ void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const 
     drawConsumingImageBuffer(WTF::move(image), FloatRect(destination, imageLogicalSize), FloatRect({ }, imageLogicalSize), imageDrawingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, RasterDrawingOptions imageDrawingOptions)
 {
     if (!image)
         return;
@@ -402,7 +428,7 @@ void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const 
     drawConsumingImageBuffer(WTF::move(image), destination, FloatRect({ }, imageLogicalSize), imageDrawingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions options)
 {
     if (!image)
         return;
@@ -428,7 +454,15 @@ void GraphicsContext::drawFilteredImageBuffer(ImageBuffer* sourceImage, const Fl
     scale(filter.filterScale());
 }
 
-void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect, const FloatRect& source, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void GraphicsContext::drawPattern(const SourceImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
+{
+    if (RefPtr nativeImage = image.nativeImageIfExists())
+        drawPattern(*nativeImage, destRect, tileRect, patternTransform, phase, spacing, options);
+    else if (RefPtr imageBuffer = image.imageBufferIfExists())
+        drawPattern(*imageBuffer, destRect, tileRect, patternTransform, phase, spacing, options);
+}
+
+void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect, const FloatRect& source, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     FloatRect scaledSource = source;
     scaledSource.scale(image.resolutionScale());
@@ -441,8 +475,18 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
     part.draw(*this, borderRect, deviceScaleFactor, style);
 }
 
+void GraphicsContext::drawFreeformGradient(FreeformGradient& gradient, const FloatRect& destination)
+{
+    FreeformGradientRendererCPU { }.draw(*this, gradient, destination);
+}
+
+void GraphicsContext::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+{
+    MeshGradientRendererCPU { }.draw(*this, gradient, destination);
+}
+
 #if ENABLE(VIDEO)
-void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
+void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     RefPtr image = frame.copyNativeImage();
     if (!image)
@@ -451,9 +495,9 @@ void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& d
     if (options.orientation().usesWidthAsHeight())
         size = size.transposedSize();
     // Copy is equivalent to SourceOver when the frame's alpha is not used, and cheaper.
-    // FIXME: This overrides whatever composite operator the caller asked for, so drawing a video
-    // frame into a canvas ignores its globalCompositeOperation.
-    auto compositeOperator = ((shouldDiscardAlpha == ShouldDiscardAlpha::No) && image->hasAlpha()) ? CompositeOperator::SourceOver : CompositeOperator::Copy;
+    auto compositeOperator = options.compositeOperator();
+    if (compositeOperator == CompositeOperator::SourceOver && (shouldDiscardAlpha == ShouldDiscardAlpha::Yes || !image->hasAlpha()))
+        compositeOperator = CompositeOperator::Copy;
     drawNativeImage(*image, destination, { { }, size }, { options, compositeOperator });
 }
 #endif
@@ -463,6 +507,13 @@ void GraphicsContext::clipRoundedRect(const FloatRoundedRect& rect)
     Path path;
     path.addRoundedRect(rect);
     clipPath(path);
+}
+
+void GraphicsContext::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule windRule)
+{
+    auto transformedPath = path;
+    transformedPath.transform(pathTransform);
+    clipPath(transformedPath, windRule);
 }
 
 void GraphicsContext::clipOutRoundedRect(const FloatRoundedRect& rect)
@@ -483,7 +534,7 @@ IntRect GraphicsContext::clipBounds() const
     return IntRect();
 }
 
-void GraphicsContext::fillRect(const FloatRect& rect, Gradient& gradient)
+void GraphicsContext::fillRect(const FloatRect& rect, const Gradient& gradient)
 {
     gradient.fill(*this, rect);
 }
@@ -537,6 +588,8 @@ FloatSize GraphicsContext::scaleFactor() const
 
 FloatSize GraphicsContext::scaleFactorForDrawing(const FloatRect& destRect, const FloatRect& srcRect) const
 {
+    if (srcRect.isEmpty())
+        return scaleFactor();
     AffineTransform transform = getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
     auto transformedDestRect = transform.mapRect(destRect);
     return transformedDestRect.size() / srcRect.size();

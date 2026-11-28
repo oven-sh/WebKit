@@ -29,15 +29,14 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BorderImageData);
 class BorderImageData : public RefCounted<BorderImageData> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(BorderImageData, BorderImageData);
 public:
     static Ref<BorderImageData> create() { return adoptRef(*new BorderImageData); }
-    Ref<BorderImageData> LEGACY_NODELETE copy() const;
+    NODELETE Ref<BorderImageData> copy() const;
 
     bool operator==(const BorderImageData&) const;
 
@@ -55,5 +54,4 @@ private:
 
 WTF::TextStream& operator<<(WTF::TextStream&, const BorderImageData&);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

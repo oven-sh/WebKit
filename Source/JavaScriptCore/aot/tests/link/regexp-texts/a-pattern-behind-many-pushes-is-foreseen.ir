@@ -1,0 +1,29 @@
+# A push touches one place of its list and pays for one, however many the list holds. It paid for all of them: 6,000 pushes cost eighteen million operations, and the run ended in front of the pattern.
+# const list = []; for (let n = 0; n < 6000; n++) list.push(n);   new RegExp("a" + list.length)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /a6000/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Undefined
+    v2 = NewArray
+    v3 = String string="a"
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: anything):
+    LoopHint
+    v7 = PropGet v2 key="push"
+    v8 = Call v7, v2, v5 calleeKey="push"
+    v9 = Increment v5
+    v10 = Integer integer=6000
+    v11 = Less v9, v10
+    Branch v11 -> taken b1(v9), notTaken b2()
+  b2():
+    v12 = PropGet v2 key="length"
+    v13 = Add v3, v12
+    v14 = Construct v0, -, v13
+    Return v4
+}

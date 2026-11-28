@@ -76,6 +76,11 @@ public:
 
     virtual bool lockFullscreenOrientation(WebCore::ScreenOrientationType) { return false; }
     virtual void unlockFullscreenOrientation() { }
+
+#if PLATFORM(IOS_FAMILY)
+    virtual void beginRequestFullscreen() { }
+    virtual void endRequestFullscreen() { }
+#endif
 };
 
 class WebFullScreenManagerProxy : public IPC::MessageReceiver, public CanMakeCheckedPtr<WebFullScreenManagerProxy>, public RefCounted<WebFullScreenManagerProxy> {
@@ -93,10 +98,11 @@ public:
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const;
 
     bool isFullScreen();
-    bool LEGACY_NODELETE blocksReturnToFullscreenFromPictureInPicture() const;
+    NODELETE bool blocksReturnToFullscreenFromPictureInPicture() const;
 #if ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)
     bool isVideoElement() const { return m_isVideoElement; }
 #endif
+    bool isProjectedVideo() const { return m_isProjectedVideo; }
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     bool isImageElement() const { return m_mediaDetails && m_mediaDetails->type == FullScreenMediaDetails::Type::Image; }
     void prepareQuickLookImageURL(CompletionHandler<void(URL&&)>&&) const;
@@ -104,7 +110,7 @@ public:
 #endif // QUICKLOOK_FULLSCREEN
     void close();
     void detachFromClient();
-    void LEGACY_NODELETE attachToNewClient(WebFullScreenManagerProxyClient&);
+    NODELETE void attachToNewClient(WebFullScreenManagerProxyClient&);
 
     enum class NeedsPresentationUpdate : bool { No, Yes };
     void enterFullScreenForOwnerElementsInOtherProcesses(WebCore::FrameIdentifier, CompletionHandler<void(NeedsPresentationUpdate)>&&);
@@ -141,6 +147,10 @@ private:
     Awaitable<bool> beganEnterFullScreen(IPC::Connection&, WebCore::FrameIdentifier, WebCore::IntRect initialFrameInMainFrameCoordinates, WebCore::IntRect finalFrameInMainFrameCoordinates);
     Awaitable<void> beganExitFullScreen(WebCore::IntRect initialFrameInMainFrameCoordinates, WebCore::IntRect finalFrameInMainFrameCoordinates);
     void closeFullScreen(IPC::Connection&);
+#if PLATFORM(IOS_FAMILY)
+    void beginRequestFullscreen();
+    void endRequestFullscreen();
+#endif
     void callCloseCompletionHandlers();
     template<typename M> void sendToWebProcess(M&&);
 
@@ -153,7 +163,7 @@ private:
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "WebFullScreenManagerProxy"_s; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     WeakPtr<WebPageProxy> m_page;
@@ -163,6 +173,7 @@ private:
 #if ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)
     bool m_isVideoElement { false };
 #endif
+    bool m_isProjectedVideo { false };
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     std::optional<FullScreenMediaDetails> m_mediaDetails;
     bool m_launchInImmersive { false };

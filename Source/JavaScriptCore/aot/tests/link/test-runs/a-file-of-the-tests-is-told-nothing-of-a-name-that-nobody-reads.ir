@@ -1,0 +1,51 @@
+# a test run locks Object.prototype by its names, and the files of the tests have opened two on it. A store under a key that nobody can read may name one of them, and then nothing throws
+# so the build says nothing of it to a file of the tests: where the store is refused the run says so, at the test and at its end
+# a file that an executable holds too is told that the name cannot be read: what the tests have opened is open for it too, so not that the store throws if it runs
+# a.test.js: import "./src/polyfill.js"; function lay(name) { Object.prototype[name] = () => 7; delete Object.prototype[name]; }   src/polyfill.js, of the product: the same function
+# locked-writes/a-name-that-nobody-reads-on-an-object-that-is-locked-whole.ir is the control: the same store in an executable
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 2
+# RUN: locks
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0]}
+module m1 path="/src/polyfill.js" displayPath="src/polyfill.js" flags=[HasReadOnlyBuiltins] body=f3 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = Builtin builtin=GlobalThis @2
+    v2 = PropGet v1 key="sink" [isFreeName] @2
+    v3 = Call v2, -, v0 @3
+    Return v3 @4
+}
+function f1 name="lay" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectPrototype @5
+    v2 = NewClosure function=f2 @6
+    ElemSet v1, v0, v2 @7
+    v4 = ElemDelete v1, v0 @8
+    Return v4 @9
+}
+function f2 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4 @1
+    v1 = Builtin builtin=GlobalThis @2
+    v2 = PropGet v1 key="sink" [isFreeName] @2
+    v3 = Call v2, -, v0 @3
+    Return v3 @4
+}
+function f4 name="patch" module=m1 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectPrototype @5
+    v2 = Integer integer=7 @6
+    ElemSet v1, v0, v2 @7
+    v4 = ElemDelete v1, v0 @8
+    Return v4 @9
+}
+openedname holder=ObjectPrototype name="defineProperty"
+openedname holder=ObjectPrototype name="getOwnPropertyDescriptor"

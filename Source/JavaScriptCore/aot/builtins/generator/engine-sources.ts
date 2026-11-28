@@ -64,10 +64,10 @@ function isStrict(body: string): boolean {
   }
 }
 
-function findBodyStart(functionText: string, name: string): number {
+function findBodyStart(functionSource: string, name: string): number {
   let depth = 0;
   let hasParameterList = false;
-  for (const { 0: token, index } of functionText.matchAll(headPunctuationPattern)) {
+  for (const { 0: token, index } of functionSource.matchAll(headPunctuationPattern)) {
     if (token === "(") {
       depth++;
       hasParameterList = true;
@@ -80,10 +80,10 @@ function findBodyStart(functionText: string, name: string): number {
   throw new GeneratorError(`the function ${name} has no body`);
 }
 
-function rewriteDeleteInSloppyFunction(functionText: string, name: string): string {
-  const bodyStart = findBodyStart(functionText, name);
-  const body = functionText.slice(bodyStart);
-  if (isStrict(body)) return functionText;
+function rewriteDeleteInSloppyFunction(functionSource: string, name: string): string {
+  const bodyStart = findBodyStart(functionSource, name);
+  const body = functionSource.slice(bodyStart);
+  if (isStrict(body)) return functionSource;
   const rewritten = replaceTokens(body, deletePattern, (token, { base, key, other }) => {
     if (other !== undefined) {
       throw new GeneratorError(
@@ -93,7 +93,7 @@ function rewriteDeleteInSloppyFunction(functionText: string, name: string): stri
     if (base === undefined) return token;
     return `${privateNamePrefix}deleteByValSloppy(${base}, ${key}, ${privateNamePrefix}ecmaModeSloppy)`;
   });
-  return functionText.slice(0, bodyStart) + rewritten;
+  return functionSource.slice(0, bodyStart) + rewritten;
 }
 
 function directiveOf(annotation: string, value: string | undefined): string {
@@ -113,9 +113,7 @@ function respellToken(token: string, groups: TokenGroups): string {
   if (skipped !== undefined) return token;
   if (annotation !== undefined) return directiveOf(annotation, value);
   if (head !== undefined && declared !== undefined) return exportedHeadOf(head, declared);
-  // The checker knows an object with such a member as iterable only where the key is written as TypeScript writes it.
   if (literalKey !== undefined) return `[Symbol.${literalKey}]`;
-  // The text has no types. What begins empty would be a list of nothing, or an object without a member, for good.
   if (emptyDeclaration !== undefined) return `${emptyDeclaration}: ${emptyLiteral === "[]" ? "any[]" : "any"}`;
   if (symbol !== undefined) return `${symbolKeyPrefix}${symbol}`;
   return `${privateNamePrefix}${name}`;

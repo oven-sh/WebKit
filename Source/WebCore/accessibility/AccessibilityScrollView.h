@@ -50,6 +50,8 @@ public:
     void setNeedsToUpdateChildren() final { m_childrenDirty = true; }
 
     RefPtr<AXRemoteFrame> remoteFrame() const { return m_remoteFrame; }
+    // Binds the remote frame child to the process now hosting the frame, after the frame moved to another process.
+    void rebindRemoteFrame();
 
     String ownerDebugDescription() const;
     String extraDebugInfo() const final;
@@ -69,7 +71,7 @@ public:
     AXFrameGeometry frameGeometry() const;
     IntPoint frameScreenPosition() const final { return frameGeometry().screenPosition; }
     AffineTransform frameScreenTransform() const final { return frameGeometry().screenTransform; }
-    IntPoint LEGACY_NODELETE frameViewOriginScrollPosition() const;
+    NODELETE IntPoint frameViewOriginScrollPosition() const;
 
     bool isFrameGeometryInitialized() const final;
 
@@ -118,6 +120,9 @@ private:
     bool canSetFocusAttribute() const final;
     bool isFocused() const final;
     void addLocalFrameChild();
+#if PLATFORM(COCOA)
+    void bindRemoteFrame(AXRemoteFrame&);
+#endif
     void addRemoteFrameChild();
     const AccessibilityScrollView* frameRootScrollView() const;
 
@@ -130,7 +135,7 @@ private:
     HTMLFrameOwnerElement* frameOwnerElement() const { return m_frameOwnerElement; }
 
     AccessibilityObject* firstChild() const final { return webAreaObject(); }
-    AccessibilityScrollbar* addChildScrollbar(Scrollbar*);
+    RefPtr<AccessibilityScrollbar> addChildScrollbar(Scrollbar*);
     void removeChildScrollbar(AccessibilityObject*);
 
     bool m_childrenDirty;

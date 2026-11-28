@@ -28,13 +28,13 @@
 #include <utility>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
 #include <wtf/Seconds.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
 
-class Stopwatch final : public RefCounted<Stopwatch> {
+class Stopwatch final : public ThreadSafeRefCounted<Stopwatch> {
 public:
     static Ref<Stopwatch> create()
     {
@@ -44,6 +44,10 @@ public:
     void reset();
     void start();
     void stop();
+
+    // Starts the stopwatch as if it had been running since the MonotonicTime epoch, so that its
+    // times are raw MonotonicTime seconds and line up with those of stopwatches in other processes.
+    void startAtMonotonicEpoch();
 
     Seconds elapsedTime() const;
     Seconds elapsedTimeSince(MonotonicTime) const;
@@ -72,6 +76,12 @@ inline void Stopwatch::start()
     ASSERT_WITH_MESSAGE(m_lastStartTime.isNaN(), "Tried to start the stopwatch, but it is already running.");
 
     m_lastStartTime = MonotonicTime::now();
+}
+
+inline void Stopwatch::startAtMonotonicEpoch()
+{
+    reset();
+    m_lastStartTime = MonotonicTime::fromRawSeconds(0);
 }
 
 inline void Stopwatch::stop()

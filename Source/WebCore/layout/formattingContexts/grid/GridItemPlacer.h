@@ -30,8 +30,7 @@
 #include "GridTypeAliases.h"
 #include "UnplacedGridItem.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct GridItemPlacementResult {
     GridAreas gridAreas;
@@ -41,7 +40,7 @@ struct GridItemPlacementResult {
 
 class GridItemPlacer {
 public:
-    GridItemPlacer(GridAutoFlowOptions);
+    NODELETE GridItemPlacer(GridAutoFlowOptions);
 
     // Runs the grid item placement algorithm over the grid's in-flow children.
     GridItemPlacementResult placeItems(const LogicalGridItems&, LeadingImplicitTracks, size_t explicitColumnsCount, size_t explicitRowsCount) const;
@@ -50,5 +49,4 @@ private:
     const GridAutoFlowOptions m_autoFlowOptions;
 };
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

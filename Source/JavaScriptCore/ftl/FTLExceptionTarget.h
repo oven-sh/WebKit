@@ -43,7 +43,7 @@ public:
     ~ExceptionTarget();
 
     // It's OK to call this during linking, but not any sooner.
-    CodeLocationLabel<ExceptionHandlerPtrTag> LEGACY_NODELETE label(LinkBuffer&);
+    NODELETE CodeLocationLabel<ExceptionHandlerPtrTag> label(LinkBuffer&);
 
     // Or, you can get a JumpList at any time. Anything you add to this JumpList will be linked to
     // the target's label.
@@ -56,7 +56,7 @@ private:
     
     bool m_isDefaultHandler;
     Box<CCallHelpers::Label> m_defaultHandler;
-    RefPtr<OSRExitHandle> m_handle;
+    const RefPtr<OSRExitHandle> m_handle;
 };
 
 } } // namespace JSC::FTL

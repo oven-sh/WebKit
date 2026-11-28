@@ -50,7 +50,7 @@ public:
     virtual ~SubresourceLoader();
 
     void cancelIfNotFinishing();
-    bool LEGACY_NODELETE isSubresourceLoader() const final;
+    NODELETE bool isSubresourceLoader() const final;
     CachedResource* cachedResource() const final { return m_resource.get(); };
 
     WEBCORE_EXPORT const HTTPHeaderMap* originalHeaders() const;
@@ -77,6 +77,9 @@ public:
     void didReceiveResponse(ResourceResponse&&, CompletionHandler<void()>&& policyCompletionHandler) final;
     void didReceiveBuffer(const FragmentedSharedBuffer&, long long encodedDataLength, DataPayloadType) final;
     void didFinishLoading(const NetworkLoadMetrics&) final;
+#if USE(QUICK_LOOK)
+    void didFinishQuickLookLoading(URL&& temporaryQuickLookFileURL) final;
+#endif
     void didFail(const ResourceError&) final;
     void willCancel(const ResourceError&) final;
     void didCancel(LoadWillContinueInAnotherProcess) final;
@@ -123,7 +126,7 @@ private:
     public:
         RequestCountTracker(CachedResourceLoader&, const CachedResource&);
         RequestCountTracker(RequestCountTracker&&);
-        RequestCountTracker& LEGACY_NODELETE operator=(RequestCountTracker&&);
+        NODELETE RequestCountTracker& operator=(RequestCountTracker&&);
         ~RequestCountTracker();
     private:
         WeakPtr<CachedResourceLoader> m_cachedResourceLoader;

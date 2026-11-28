@@ -47,7 +47,7 @@ UserContentProvider::UserContentProvider() = default;
 
 UserContentProvider::~UserContentProvider()
 {
-    ASSERT(m_pages.isEmptyIgnoringNullReferences());
+    ASSERT(m_pages.computeIsEmpty());
 }
 
 void UserContentProvider::addPage(Page& page)
@@ -92,7 +92,7 @@ void UserContentProvider::invalidateInjectedStyleSheetCacheInAllFramesInAllPages
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-static DocumentLoader* LEGACY_NODELETE mainDocumentLoader(DocumentLoader& loader)
+NODELETE static DocumentLoader* mainDocumentLoader(DocumentLoader& loader)
 {
     if (auto frame = loader.frame()) {
         if (frame->isMainFrame())

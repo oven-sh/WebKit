@@ -27,7 +27,6 @@
 #include "JSObjectInlines.h"
 #include <wtf/Assertions.h>
 
-#include "AOTMembersLeftOut.h"
 
 namespace JSC {
 
@@ -58,16 +57,7 @@ JSValue GetterSetter::callGetter(JSGlobalObject* globalObject, JSValue thisValue
     JSObject* getter = this->getter();
 
     auto callData = JSC::getCallDataInline(getter);
-#if ENABLE(AOT)
-    JSValue result = call(globalObject, getter, callData, thisValue, ArgList());
-    if (scope.exception() && vm.hasCompiledCode()) [[unlikely]] {
-        if (JSValue standIn = AOT::takeStandInForGetterLeftOut(globalObject, getter))
-            return standIn;
-    }
-    return result;
-#else
     RELEASE_AND_RETURN(scope, call(globalObject, getter, callData, thisValue, ArgList()));
-#endif
 }
 
 bool GetterSetter::callSetter(JSGlobalObject* globalObject, JSValue thisValue, JSValue value, bool shouldThrow)

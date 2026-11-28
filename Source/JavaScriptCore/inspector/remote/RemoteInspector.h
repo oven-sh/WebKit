@@ -125,13 +125,13 @@ public:
     };
 
 #if PLATFORM(COCOA)
-    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setNeedMachSandboxExtension(bool needExtension);
+    NODELETE JS_EXPORT_PRIVATE static void setNeedMachSandboxExtension(bool needExtension);
 #endif
 #if USE(GLIB)
     JS_EXPORT_PRIVATE static void setInspectorServerAddress(UTF8CString&&);
     JS_EXPORT_PRIVATE static const UTF8CString& inspectorServerAddress();
 #endif
-    JS_EXPORT_PRIVATE static void LEGACY_NODELETE startDisabled();
+    NODELETE JS_EXPORT_PRIVATE static void startDisabled();
     JS_EXPORT_PRIVATE static RemoteInspector& singleton();
     friend class LazyNeverDestroyed<RemoteInspector>;
 
@@ -225,7 +225,7 @@ private:
 
     void updateTargetListing(const RemoteControllableTarget&);
 
-    void LEGACY_NODELETE updateHasActiveDebugSession();
+    NODELETE void updateHasActiveDebugSession();
     void updateClientCapabilities();
 
     void sendAutomaticInspectionCandidateMessage(TargetID) WTF_REQUIRES_LOCK(m_mutex);
@@ -246,7 +246,7 @@ private:
     void receivedAutomaticInspectionConfigurationMessage(NSDictionary *userInfo) WTF_REQUIRES_LOCK(m_mutex);
     void receivedAutomaticInspectionRejectMessage(NSDictionary *userInfo) WTF_REQUIRES_LOCK(m_mutex);
     void receivedAutomationSessionRequestMessage(NSDictionary *userInfo) WTF_REQUIRES_LOCK(m_mutex);
-    void LEGACY_NODELETE receivedPingSuccessMessage() WTF_REQUIRES_LOCK(m_mutex);
+    NODELETE void receivedPingSuccessMessage() WTF_REQUIRES_LOCK(m_mutex);
 #endif
 #if USE(INSPECTOR_SOCKET_SERVER)
     HashMap<String, CallHandler>& dispatchMap() final;
@@ -278,9 +278,9 @@ private:
     // from any thread.
     Lock m_mutex;
 
-    UncheckedKeyHashMap<TargetID, RemoteControllableTarget*> m_targetMap;
-    UncheckedKeyHashMap<TargetID, RefPtr<RemoteConnectionToTarget>> m_targetConnectionMap;
-    UncheckedKeyHashMap<TargetID, TargetListing> m_targetListingMap;
+    HashMap<TargetID, RemoteControllableTarget*> m_targetMap;
+    HashMap<TargetID, RefPtr<RemoteConnectionToTarget>> m_targetConnectionMap;
+    HashMap<TargetID, TargetListing> m_targetListingMap;
 
 #if PLATFORM(COCOA)
     RefPtr<RemoteInspectorXPCConnection> m_relayConnection;
@@ -321,7 +321,7 @@ private:
 #endif
     bool m_shouldSendParentProcessInformation { false };
     bool m_automaticInspectionEnabled WTF_GUARDED_BY_LOCK(m_mutex) { false };
-    UncheckedKeyHashSet<TargetID, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_automaticInspectionCandidates WTF_GUARDED_BY_LOCK(m_mutex);
+    HashSet<TargetID> m_automaticInspectionCandidates WTF_GUARDED_BY_LOCK(m_mutex);
 };
 
 } // namespace Inspector

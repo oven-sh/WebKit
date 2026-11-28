@@ -1,0 +1,45 @@
+# print(size(view)); add(); print(size(view)); drop(); print(size(view))   with   function size(view: Int32Array) { return view.length; }
+# The test run may lay `length` on Int32Array.prototype, below the getter of all views, so the climb from an Int32Array to that getter is not sure. It is believed behind the test of being as made: the prototype
+# tells the run time of a name that comes to lie on it, the byte of the class is set, the test fails from then on, and the read by name finds what was laid.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell globalThis.add = () => { Object.defineProperty(Int32Array.prototype, "length", { configurable: true, get() { return 7; } }); }; globalThis.drop = () => { delete Int32Array.prototype.length; };
+# CHECK: 3
+# CHECK-NEXT: 7
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0
+# RUN(ADDS): test-run
+# ADDS: adds Int32ArrayPrototype "length"
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = IsPristine {{*}}builtinClass=Int32Array
+# WALK: = GetTypedArrayLength
+# WALK: = PropGet {{*}}key="length"
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+openedname holder=Int32ArrayPrototype name="length"
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = Builtin builtin=Int32Array
+    v3 = Integer integer=3
+    v4 = Construct v2, -, v3 calleeName="Int32Array"
+    v5 = PropGet v0 key="print" [isFreeName]
+    v6 = Call v1, -, v4
+    v7 = Call v5, -, v6
+    v8 = PropGet v0 key="add" [isFreeName]
+    v9 = Call v8, -
+    v10 = Call v1, -, v4
+    v11 = Call v5, -, v10
+    v12 = PropGet v0 key="drop" [isFreeName]
+    v13 = Call v12, -
+    v14 = Call v1, -, v4
+    v15 = Call v5, -, v14
+    Return v15
+}
+function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Int32Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

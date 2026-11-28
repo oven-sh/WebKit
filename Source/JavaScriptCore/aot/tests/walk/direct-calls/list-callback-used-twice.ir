@@ -1,0 +1,57 @@
+# function user(k, n) { const list = [k]; let found; do { const test = x => sink(x); found = list.some(test, test); } while (n); return found; }   sink(user);
+# The arrow calls another function and is used twice: the method is called directly, in a loop too, and not copied.
+# The library here is a stand-in.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewClosure
+# CHECK: = CallDirect {{*}}function=f3
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: calleeKey="some"
+# NEVER-NOT: callee=f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeSome function=f3
+runtimefunction id=ArrayPrototypeSomeOfList function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="user" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v2 key="some"
+    v5 = NewClosure v0 function=f4
+    v6 = Call v4, v2, v5, v5 calleeKey="some" calleeName="list.some"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+function f2 name="someOfList" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSomeOfList thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f3 name="some" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3
+    Return v4
+}
+function f4 module=m0 kind=Arrow length=1 captures=[{type=anything variableName="k"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v1
+    Return v4
+}

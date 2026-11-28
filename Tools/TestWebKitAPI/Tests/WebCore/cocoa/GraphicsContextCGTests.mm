@@ -333,6 +333,72 @@ TEST(GraphicsContextTests, OutOfGamutSRGBNotDrawn)
         EXPECT_EQ(firstPixel[i], primaryData[i]);
 }
 
+TEST(GraphicsContextTests, ScaleFactorForDrawingHandlesDegenerateSourceRect)
+{
+    auto colorSpace = ColorSpace::SRGB();
+    RetainPtr cgContext = adoptCF(CGBitmapContextCreate(nullptr, contextWidth, contextHeight, 8, 4 * contextWidth, colorSpace.platformColorSpace(), kCGImageAlphaPremultipliedLast));
+    GraphicsContextCG ctx(cgContext.get());
+
+    FloatRect destRect(0, 0, 100, 100);
+
+    // A non-empty source rect yields the dest/src ratio.
+    auto normal = ctx.scaleFactorForDrawing(destRect, FloatRect(0, 0, 50, 25));
+    EXPECT_FLOAT_EQ(normal.width(), 2);
+    EXPECT_FLOAT_EQ(normal.height(), 4);
+
+    // A degenerate source rect must not produce a non-finite scale factor. BitmapImage::drawImage()
+    // already bails out on an empty source rect, so this is defensive hardening for other callers.
+    // It falls back to the device scale factor, which is 1x for this untransformed bitmap context.
+    for (auto srcRect : { FloatRect(0, 0, 0, 25), FloatRect(0, 0, 50, 0), FloatRect(0, 0, 0, 0) }) {
+        auto scale = ctx.scaleFactorForDrawing(destRect, srcRect);
+        EXPECT_TRUE(std::isfinite(scale.width()));
+        EXPECT_TRUE(std::isfinite(scale.height()));
+        EXPECT_FLOAT_EQ(scale.width(), 1);
+        EXPECT_FLOAT_EQ(scale.height(), 1);
+    }
+}
+
+TEST(GraphicsContextTests, RestoreTransformRestoresCTMAndKeepsClip)
+{
+    auto colorSpace = ColorSpace::SRGB();
+    constexpr size_t width = 20;
+    constexpr size_t height = 20;
+    RetainPtr cgContext = adoptCF(CGBitmapContextCreate(nullptr, width, height, 8, 4 * width, protect(colorSpace.platformColorSpace()).get(), kCGImageAlphaPremultipliedLast));
+    GraphicsContextCG ctx(cgContext.get());
+    ctx.translate(1, 2);
+    auto ctm = ctx.getCTM();
+
+    ctx.saveTransform();
+    ctx.translate(3, 4);
+    ctx.clip({ 0, 0, 5, 6 });
+    ctx.restoreTransform(); // This is being tested. The CTM should be restored, the clip should be kept.
+
+    EXPECT_EQ(ctm, ctx.getCTM());
+    EXPECT_EQ(ctm, AffineTransform { CGContextGetCTM(protect(ctx.platformContext()).get()) });
+    EXPECT_EQ(IntRect(3, 4, 5, 6), ctx.clipBounds());
+    EXPECT_EQ(0u, ctx.stackSize());
+}
+
+TEST(GraphicsContextTests, RestoreDoesNotRestoreSaveTransform)
+{
+    auto colorSpace = ColorSpace::SRGB();
+    constexpr size_t width = 20;
+    constexpr size_t height = 20;
+    RetainPtr cgContext = adoptCF(CGBitmapContextCreate(nullptr, width, height, 8, 4 * width, protect(colorSpace.platformColorSpace()).get(), kCGImageAlphaPremultipliedLast));
+    GraphicsContextCG ctx(cgContext.get());
+    ctx.save();
+    ctx.clip({ 0, 0, 10, 10 });
+    ctx.saveTransform();
+    EXPECT_FALSE(ctx.restore()); // This is being tested. A restore() that does not match the saveTransform() is ignored.
+    EXPECT_EQ(2u, ctx.stackSize());
+    EXPECT_EQ(IntRect(0, 0, 10, 10), ctx.clipBounds());
+
+    EXPECT_TRUE(ctx.restoreTransform());
+    EXPECT_TRUE(ctx.restore());
+    EXPECT_EQ(0u, ctx.stackSize());
+    EXPECT_EQ(IntRect(0, 0, 20, 20), ctx.clipBounds());
+}
+
 } // namespace TestWebKitAPI
 
 #endif // USE(CG)

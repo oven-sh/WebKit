@@ -11,7 +11,6 @@ import type {
   ModelFeatureUse,
   ModelFunction,
   ModelHostCall,
-  ModelHostMethodCall,
   ModelHostObject,
   ModelHostRead,
   ModelHostUse,
@@ -20,7 +19,6 @@ import type {
   ModelModule,
   ModelModuleLoad,
   ModelName,
-  ModelNamedMemberCall,
   ModelNativeFunction,
   ModelOperand,
   ModelOverload,
@@ -28,7 +26,7 @@ import type {
   ModelType,
   TableFeature,
 } from "./model.ts";
-import { compareBytes, isHiddenRootComponent, joinPath, pathOfNativeBinding, tokenOf } from "./paths.ts";
+import { compareBytes, isHiddenRootComponent, pathOfNativeBinding } from "./paths.ts";
 import {
   hostReadContexts,
   type BoxedStubName,
@@ -47,16 +45,13 @@ import {
   type OperandName,
 } from "./vocabulary.ts";
 
-const textFormRoot = "%JSONText%";
 const objectColumns = [
   "usesFeature",
   "runsUnseenCode",
+  "instancesAnswerEveryName",
   "loads",
   "callsFunctions",
-  "appendForm",
-  "jsonTextForm",
   "literalPartsForm",
-  "bodyBytesForm",
   "boxedCallStub",
 ] as const satisfies readonly (keyof EntryColumns)[];
 
@@ -65,7 +60,6 @@ interface Written<T> {
   source: Source;
 }
 
-// A site in native code says that it reads an export and nothing more: the row for the same export says what becomes of it.
 type WrittenHostUses = ModelHostUses | "Unsaid";
 
 interface WrittenExportRead {
@@ -82,12 +76,6 @@ interface NativeLoads {
   atStartup: readonly WrittenModuleLoad[];
 }
 
-interface TextForm {
-  builtin: MutableBuiltin;
-  nativeFunction: ModelNativeFunction;
-}
-
-// BuiltinForms::literalPartNames has room for as many.
 const maxLiteralPartNames = 4;
 
 type NativeCalls = ReadonlyMap<ModelBuiltin, readonly Written<readonly CalledFunctionSpec[]>[]>;
@@ -98,7 +86,6 @@ interface AttachmentContext {
   featureNames: ReadonlySet<FeatureName>;
   nativeLoads: NativeLoads;
   nativeCalls: NativeCalls;
-  textForms: Map<ModelBuiltin, TextForm>;
 }
 
 interface SeenCode {
@@ -108,11 +95,9 @@ interface SeenCode {
 }
 
 type DeclarationOf<K extends Declaration["declares"]> = Extract<Declaration, { declares: K }>;
-type TextFormSpec = NonNullable<EntryColumns["jsonTextForm"]>;
 
 const compareIds = (left: { id: number }, right: { id: number }) => left.id - right.id;
 const compareNames = (left: ModelName, right: ModelName) => compareBytes(left.text, right.text);
-const textFormPathOf = (builtin: ModelBuiltin): BuiltinPath => joinPath([textFormRoot, tokenOf(builtin.path)]);
 
 function declarationsOf<K extends Declaration["declares"]>(
   builder: ModelBuilder,
@@ -185,7 +170,7 @@ function resolveOperand(
   return isConsistent ? operand : null;
 }
 
-const conditionOnNoOperand: ModelCondition = {
+export const conditionOnNoOperand: ModelCondition = {
   operand: null,
   isOneOf: [],
   startsWith: [],
@@ -196,6 +181,9 @@ const conditionOnNoOperand: ModelCondition = {
   objectNobodyKnowsIsWritten: false,
   testsReplaceBuiltins: false,
   programStores: null,
+  isAskedForOtherNames: null,
+  valuesServed: [],
+  methodsServed: [],
 };
 
 function resolveConditionOnOverload(
@@ -229,7 +217,7 @@ export function resolveCondition(
     );
     return null;
   }
-  if ("testsReplaceBuiltins" in condition || "programStores" in condition) {
+  if ("testsReplaceBuiltins" in condition || "programStores" in condition || "isAskedForOtherNames" in condition) {
     builder.problems.add(
       source,
       `${builtin.text}: only loads and callsFunctions can depend on what the program replaces`,
@@ -239,7 +227,12 @@ export function resolveCondition(
   const operand = resolveOperand(builder, builtin, condition.operand, source);
   if (operand === null) return null;
   if ("hasProperty" in condition) {
-    return { ...conditionOnNoOperand, operand, hasProperty: builder.internComponent(condition.hasProperty) };
+    return {
+      ...conditionOnNoOperand,
+      operand,
+      hasProperty: builder.internComponent(condition.hasProperty),
+      startsWith: internTexts(builder, condition.startsWith ?? []),
+    };
   }
   const calledOn = condition.calledOn === undefined ? null : resolveObject(builder, condition.calledOn, source);
   if (condition.calledOn !== undefined && calledOn === null) return null;
@@ -264,6 +257,16 @@ function resolveDependencyCondition(
   if ("programStores" in condition) {
     const programStores = resolveObject(builder, condition.programStores, source);
     return programStores === null ? null : { ...conditionOnNoOperand, programStores };
+  }
+  if ("isAskedForOtherNames" in condition) {
+    const isAskedForOtherNames = resolveObject(builder, condition.isAskedForOtherNames, source);
+    if (isAskedForOtherNames === null) return null;
+    return {
+      ...conditionOnNoOperand,
+      isAskedForOtherNames,
+      valuesServed: internTexts(builder, condition.valuesServed),
+      methodsServed: internTexts(builder, condition.methodsServed),
+    };
   }
   return resolveCondition(builder, builtin, condition, source);
 }
@@ -294,7 +297,6 @@ function resolveFeatureUse(
   return condition === null ? null : { feature, overload, isGuard: false, condition };
 }
 
-// A program comes to it by names alone, and reading a name gives what it gives in an executable that has every feature: no feature guards it.
 const isAccessorReadByName = ({ kind, holder, path }: ModelBuiltin): boolean =>
   kind === "Accessor" && holder !== null && holder.kind !== "Prototype" && !isHiddenRootComponent(path[0]);
 
@@ -313,7 +315,6 @@ function buildFeatureUses(context: AttachmentContext, builtin: ModelBuiltin): Mo
   for (const { overload, spec, source } of written) {
     const use = resolveFeatureUse(context, builtin, overload, spec, source);
     if (use === null) continue;
-    // Lines with different conditions are alternatives: the feature is used where one of them holds.
     const repeats = (other: ModelFeatureUse) =>
       other.feature === use.feature &&
       other.overload === overload &&
@@ -360,7 +361,6 @@ function holdsOnlyPrimitives({ kind, flags, overloads }: ModelBuiltin): boolean 
   return overloads.every(({ mode, result }) => mode === "Get" && isPrimitive(result.type));
 }
 
-// `typeof AbortController.AbortSignal`: what the read hands out has an entry of its own, which names the features for whoever calls it.
 function holdsOnlyBuiltinsThatName(uses: readonly ModelFeatureUse[], { kind, flags, overloads }: ModelBuiltin): boolean {
   if (kind !== "DataProperty" || flags.includes("IsLazilyCreated") || overloads.length === 0) return false;
   const namesThem = (held: ModelBuiltin): boolean =>
@@ -373,7 +373,6 @@ function holdsOnlyBuiltinsThatName(uses: readonly ModelFeatureUse[], { kind, fla
   );
 }
 
-// The object is there as soon as its constructor is. The flow analysis lets the constructor escape where the property is read.
 const holdsPrototypeObjectOfConstructor = ({ kind, holder, name }: ModelBuiltin): boolean =>
   kind === "DataProperty" && holder?.kind === "Constructor" && name.kind === "Text" && name.text === "prototype";
 
@@ -428,7 +427,6 @@ function describeHostUse(use: ModelHostUse): string {
   }
 }
 
-// Rows add up, and one that does not say what native code does leaves it open.
 function mergeHostUses(left: ModelHostUses, right: ModelHostUses): ModelHostUses {
   if (left === null || right === null) return null;
   const seen = new Set(left.map(describeHostUse));
@@ -466,9 +464,9 @@ const noHostValue: ModelHostValue = { place: "None" };
 function resolveHostValue({ builder, types }: AttachmentContext, spec: HostValueSpec, source: Source): ModelHostValue {
   switch (spec.place) {
     case "NewValue":
-      return { place: "NewValue", type: types.intern(spec.value, null, source) };
+      return { place: "NewValue", type: types.intern(spec.value, null, source), holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false };
     case "NativeCell":
-      return { place: "NativeCell", cell: builder.internName(spec.cell, "Text") };
+      return { place: "NativeCell", cell: builder.internName(spec.cell, "Text"), holdsOnlyWhatIsStored: false };
     case "NativeMemory":
       return { place: "NativeMemory" };
   }
@@ -527,7 +525,6 @@ function resolveHostUsesAt(
   return resolved.includes(null) ? null : resolved.flatMap(uses => uses ?? []);
 }
 
-// null: a reference did not resolve, and the problem is reported.
 function resolveHostUses(
   context: AttachmentContext,
   specs: readonly HostUseSpec[],
@@ -638,19 +635,25 @@ const describeCondition = ({
   calledOn,
   hasProperty,
   programStores,
+  isAskedForOtherNames,
+  valuesServed,
+  methodsServed,
   ...flags
 }: ModelCondition): string =>
   JSON.stringify([
     operand,
     isOneOf.map(name => name.text),
     startsWith.map(name => name.text),
-    calledOn === null ? null : calledOn.id,
+    calledOn === null ? null : calledOn.token,
     hasProperty === null ? null : [hasProperty.kind, hasProperty.text],
-    programStores === null ? null : programStores.id,
+    programStores === null ? null : programStores.token,
+    isAskedForOtherNames === null ? null : isAskedForOtherNames.token,
+    valuesServed.map(name => name.text),
+    methodsServed.map(name => name.text),
     flags,
   ]);
 
-function addCalledFunction(records: Map<string, ModelCalledFunction>, called: ModelCalledFunction): void {
+export function addCalledFunction(records: Map<string, ModelCalledFunction>, called: ModelCalledFunction): void {
   const key = `${called.function.id} ${called.condition === null ? "" : describeCondition(called.condition)}`;
   const previous = records.get(key);
   records.set(key, previous === undefined ? called : { ...called, uses: mergeHostUses(previous.uses, called.uses) });
@@ -676,7 +679,6 @@ function buildCalledFunctions(context: AttachmentContext, builtin: ModelBuiltin)
   for (const record of records.values()) {
     if (record.condition === null) unconditional.set(record.function, record);
   }
-  // What holds without a condition holds with one, so the record without one takes in what the others say.
   for (const record of records.values()) {
     const general = unconditional.get(record.function);
     if (general === undefined || general === record) continue;
@@ -686,76 +688,6 @@ function buildCalledFunctions(context: AttachmentContext, builtin: ModelBuiltin)
     ...unconditional.values(),
     ...[...records.values()].filter(called => !unconditional.has(called.function)),
   ].sort((left, right) => compareIds(left.function, right.function));
-}
-
-export function createTextForms(builder: ModelBuilder): void {
-  for (const builtin of [...builder.builtins]) {
-    if (builtin.sameObjectAs !== null) continue;
-    for (const { value: form, source } of writtenColumn(builder, builtin, "jsonTextForm")) {
-      if (form.nativeSymbol === undefined || form.path !== undefined) continue;
-      builder.createHiddenFunction(textFormPathOf(builtin), builtin, source);
-    }
-  }
-}
-
-function resolveCreatedTextForm(
-  context: AttachmentContext,
-  builtin: ModelBuiltin,
-  symbol: string,
-  source: Source,
-): ModelBuiltin | null {
-  const { builder, textForms } = context;
-  const textForm = builder.resolve(textFormPathOf(builtin), source);
-  if (textForm === null) return null;
-  const nativeFunction = { symbol, length: builder.lengthOf(builtin) ?? 0, header: null, name: null };
-  textForms.set(builtin, { builtin: textForm, nativeFunction });
-  return textForm;
-}
-
-function findTextForm(
-  context: AttachmentContext,
-  builtin: ModelBuiltin,
-  { value: form, source }: Written<TextFormSpec>,
-): ModelBuiltin | null {
-  const { nativeSymbol, path } = form;
-  if (nativeSymbol !== undefined && path === undefined) {
-    return resolveCreatedTextForm(context, builtin, nativeSymbol, source);
-  }
-  if (path !== undefined && nativeSymbol === undefined) return resolveObject(context.builder, path, source);
-  context.builder.problems.add(source, `${builtin.text}: jsonTextForm takes either a native symbol or a path`);
-  return null;
-}
-
-function finishTextForms(context: AttachmentContext): void {
-  for (const [builtin, { builtin: textForm, nativeFunction }] of context.textForms) {
-    textForm.attachments = {
-      ...textForm.attachments,
-      featureUses: builtin.attachments.featureUses.filter(use => use.overload === null),
-      nativeFunction,
-      nativeSymbols: [nativeFunction.symbol],
-    };
-  }
-}
-
-function resolveTextArgument(
-  builder: ModelBuilder,
-  builtin: ModelBuiltin,
-  { value: form, source }: Written<TextFormSpec>,
-): ModelOperand | null {
-  const { argument } = form;
-  if (typeof argument !== "number") return resolveOperand(builder, builtin, argument, source);
-  if (Number.isInteger(argument) && argument >= 0) return { operand: "Argument", index: argument };
-  builder.problems.add(source, `${builtin.text}: the argument of jsonTextForm is a parameter's name or its index`);
-  return null;
-}
-
-function buildTextForm(context: AttachmentContext, builtin: ModelBuiltin): ModelAttachments["jsonTextForm"] {
-  const [written] = writtenColumn(context.builder, builtin, "jsonTextForm");
-  if (written === undefined) return null;
-  const argument = resolveTextArgument(context.builder, builtin, written);
-  if (argument === null) return null;
-  const textForm = findTextForm(context, builtin, written);
-  return textForm === null ? null : { argument, builtin: textForm };
 }
 
 function buildLiteralPartsForm(
@@ -782,7 +714,6 @@ function buildLiteralPartsForm(
   };
 }
 
-// The form is linked into an executable exactly when the entry that it stands in for is.
 function finishLiteralPartsForms({ builder }: AttachmentContext): void {
   for (const builtin of builder.builtins) {
     const { literalPartsForm, featureUses } = builtin.attachments;
@@ -821,7 +752,6 @@ function findFunctionObjectCode(
   builtin: ModelBuiltin,
   { value: { symbol, header, name }, source }: Written<NativeCodeRef>,
 ): ModelNativeFunction | null {
-  // What is written for a native binding describes the function that it makes, which has an entry of its own.
   if (builtin.kind === "NativeBinding") return null;
   const length = builder.lengthOf(builtin);
   if (length !== null) return { symbol, length, header: header ?? null, name: name ?? null };
@@ -846,21 +776,16 @@ function findNativeFunction(
 function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin): ModelAttachments {
   const { builder } = context;
   const nativeSymbols = writtenColumn(builder, builtin, "nativeSymbols").flatMap(({ value }) => value);
-  const [appendForm] = writtenColumn(builder, builtin, "appendForm");
-  const [bodyBytesForm] = writtenColumn(builder, builtin, "bodyBytesForm");
   const [boxedCallStub] = writtenColumn(builder, builtin, "boxedCallStub");
   const [creationSymbol] = writtenColumn(builder, builtin, "creationSymbol");
   const [linkTimeConstant] = writtenColumn(builder, builtin, "linkTimeConstant");
   return {
     featureUses: buildFeatureUses(context, builtin),
     unseenCodeCondition: null,
+    conditionOnInstancesThatAnswerEveryName: buildConditionOnInstancesThatAnswerEveryName(builder, builtin),
     moduleLoads: buildModuleLoads(context, builtin),
     calledFunctions: buildCalledFunctions(context, builtin),
-    appendForm: appendForm?.value ?? null,
-    jsonTextForm: buildTextForm(context, builtin),
     literalPartsForm: buildLiteralPartsForm(context, builtin),
-    bodyBytesForm:
-      bodyBytesForm === undefined ? null : resolveObject(builder, bodyBytesForm.value, bodyBytesForm.source),
     boxedCallStub: boxedCallStub?.value ?? null,
     nativeFunction: findNativeFunction(builder, builtin, nativeSymbols),
     nativeSymbols,
@@ -902,7 +827,12 @@ function buildHostReads(builder: ModelBuilder): ModelHostRead[] {
   for (const { value: read, source } of declarationsOf(builder, "HostRead")) {
     const use = resolveHostReadUse(builder, read.use, source);
     if (use === null) continue;
-    reads.push({ context: read.context, exportName: builder.internName(read.exportName, "Text"), use });
+    reads.push({
+      context: read.context,
+      exportName: builder.internName(read.exportName, "Text"),
+      use,
+      namesLookedFor: read.namesLookedFor.map(name => builder.internName(name, "Text")),
+    });
   }
   const rankOf = (read: ModelHostRead) => hostReadContexts.indexOf(read.context);
   return reads.sort((left, right) => rankOf(left) - rankOf(right) || compareNames(left.exportName, right.exportName));
@@ -915,10 +845,15 @@ function buildStartup(context: AttachmentContext): ModelStartup {
   const loads = [...nativeLoads];
   const functionsCalledWithLoads = new Map<ModelFunction, ModelCalledFunction>();
   const namesOfMethodsCallingLoads = new Set<ModelName>();
+  const functionsLayingSuchMethods = new Set<ModelFunction>();
   const moduleLoaderFunctions = new Set<ModelFunction>();
   for (const { value: startup, source } of declarationsOf(builder, "Startup")) {
     for (const name of startup.namesOfMethodsCallingLoads)
       namesOfMethodsCallingLoads.add(builder.internComponent(name));
+    for (const reference of startup.functionsLayingSuchMethods) {
+      const resolved = builder.resolveFunction(reference, source);
+      if (resolved !== null) functionsLayingSuchMethods.add(resolved);
+    }
     for (const specifier of startup.modules) {
       const module = builder.resolveModule(specifier, source);
       if (module === null) continue;
@@ -962,6 +897,7 @@ function buildStartup(context: AttachmentContext): ModelStartup {
       compareIds(left.function, right.function),
     ),
     namesOfMethodsCallingLoads: [...namesOfMethodsCallingLoads].sort(compareNames),
+    functionsLayingSuchMethods: [...functionsLayingSuchMethods].sort(compareIds),
     moduleLoaderFunctions: [...moduleLoaderFunctions].sort(compareIds),
   };
 }
@@ -976,8 +912,10 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
     }));
     const described = declared.function === null ? null : builder.resolve(declared.function, source);
     const prototype = declared.prototype === null ? null : resolveObject(builder, declared.prototype, source);
+    const holder = declared.holder === null ? null : builder.resolve(declared.holder, source);
     if ((declared.function !== null && described === null) || (declared.prototype !== null && prototype === null))
       continue;
+    if (declared.holder !== null && holder === null) continue;
     objects.push({
       cell: builder.internName(declared.cell, "Text"),
       function: described,
@@ -991,35 +929,13 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
       internalFields: internalFields.flatMap(({ index, uses }) => (uses === null ? [] : [{ index, uses }])),
       keepsStringsOfStoredValues: declared.keepsStringsOfStoredValues,
       nativeAccessors: declared.nativeAccessors.map(name => builder.internComponent(name)),
+      lockedNames: declared.lockedNames.map(name => builder.internComponent(name)),
+      holder,
       platforms: declared.platforms,
       source,
     });
   }
   return objects.sort((left, right) => compareNames(left.cell, right.cell));
-}
-
-function buildNamedMemberCalls(context: AttachmentContext): ModelNamedMemberCall[] {
-  const { builder } = context;
-  return declarationsOf(builder, "NamedMemberCall")
-    .map(({ value: declared, source }) => ({
-      name: builder.internComponent(declared.name),
-      arguments: declared.arguments.map(value => resolveHostValue(context, value, source)),
-      source,
-    }))
-    .sort((left, right) => compareNames(left.name, right.name));
-}
-
-function buildHostMethodCalls(context: AttachmentContext): ModelHostMethodCall[] {
-  const { builder } = context;
-  return declarationsOf(builder, "HostMethodCall")
-    .flatMap(({ value: declared, source }) => {
-      const call = resolveHostCall(context, declared.call, source);
-      if (call === null) return [];
-      return [
-        { name: builder.internComponent(declared.name), cell: builder.internName(declared.cell, "Text"), call, source },
-      ];
-    })
-    .sort((left, right) => compareNames(left.name, right.name) || compareNames(left.cell, right.cell));
 }
 
 export function buildAttachments(builder: ModelBuilder, features: readonly TableFeature[], types: TypeInterner): void {
@@ -1029,21 +945,17 @@ export function buildAttachments(builder: ModelBuilder, features: readonly Table
     featureNames: new Set(features.map(feature => feature.name)),
     nativeLoads: collectNativeLoads(builder),
     nativeCalls: collectNativeCalls(builder),
-    textForms: new Map(),
   };
   for (const builtin of builder.builtins) {
     if (builtin.sameObjectAs === null) builtin.attachments = buildEntryAttachments(context, builtin);
     else checkAliasColumns(builder, builtin, builtin.sameObjectAs);
   }
   inheritFeatureUses(context);
-  finishTextForms(context);
   finishLiteralPartsForms(context);
   builder.features = [...context.featureNames];
   builder.boxedStubs = collectBoxedStubs(builder);
   builder.hostReads = buildHostReads(builder);
   builder.hostObjects = buildHostObjects(context);
-  builder.namedMemberCalls = buildNamedMemberCalls(context);
-  builder.hostMethodCalls = buildHostMethodCalls(context);
   builder.startup = buildStartup(context);
   classifyUnseenCode(builder);
 }
@@ -1100,6 +1012,19 @@ function runsOnlySeenCode(builder: ModelBuilder, seen: SeenCode, builtin: ModelB
   return writtenColumn(builder, builtin, "nativeSymbols").some(({ source }) => seen.nativeFiles.has(source.file));
 }
 
+function buildConditionOnInstancesThatAnswerEveryName(builder: ModelBuilder, builtin: ModelBuiltin): ModelCondition | null {
+  const [written] = writtenColumn(builder, builtin, "instancesAnswerEveryName");
+  if (written === undefined) return null;
+  const condition = resolveCondition(builder, builtin, written.value, written.source);
+  if (condition !== null && (condition.hasProperty === null || builtin.instanceClass === null)) {
+    builder.problems.add(
+      written.source,
+      `${builtin.text}: instancesAnswerEveryName names a member of an operand of the constructor of a class: b.whenOperandHasProperty(..)`,
+    );
+  }
+  return condition;
+}
+
 function markUnseenCode(builtin: MutableBuiltin, condition: ModelCondition | null): void {
   if (condition === null || condition.hasProperty === null) addFlag(builtin, "RunsUnseenCode");
   builtin.attachments = { ...builtin.attachments, unseenCodeCondition: condition };
@@ -1115,21 +1040,10 @@ function applyUnseenCodeColumn(
   if (value === true || condition !== null) markUnseenCode(builtin, condition);
 }
 
-function classifyTextForms(builder: ModelBuilder): void {
-  for (const builtin of builder.builtins) {
-    const form = builtin.attachments.jsonTextForm;
-    if (form === null || !builtin.flags.includes("RunsUnseenCode")) continue;
-    const created = builder.find(textFormPathOf(builtin));
-    if (created !== undefined && created === form.builtin) markUnseenCode(created, null);
-  }
-}
-
 export function classifyUnseenCode(builder: ModelBuilder): void {
   const seen = collectSeenCode(builder);
-  const textFormHolder = builder.find(textFormRoot);
   for (const builtin of builder.builtins) {
-    const isTextForm = textFormHolder !== undefined && builtin.holder === textFormHolder;
-    if (builtin.sameObjectAs !== null || isTextForm) continue;
+    if (builtin.sameObjectAs !== null) continue;
     const [written] = writtenColumn(builder, builtin, "runsUnseenCode");
     if (written !== undefined) {
       applyUnseenCodeColumn(builder, builtin, written);
@@ -1140,5 +1054,4 @@ export function classifyUnseenCode(builder: ModelBuilder): void {
       );
     }
   }
-  classifyTextForms(builder);
 }

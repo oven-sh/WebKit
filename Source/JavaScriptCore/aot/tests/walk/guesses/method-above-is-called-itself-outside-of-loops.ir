@@ -1,0 +1,65 @@
+# `o.own(1)` on an expected receiver, in a function without a loop: the method is declared above the objects of the layout, so the call gets two arms: behind the looks the function is called itself, beside them stands the closed call.
+# The walk once built that in loops alone ("no field: a method above, outside of loops"): the heat of an application is calls, not loops: 23 M of its main thread's 2,369.
+# class Meter { own(x) { return [sink, x]; } }  function once(o: Meter) { return o.own(1); }
+# RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="own"}]
+# CHECK: [[read]]: {{*}} = PropGet {{*}}key="own"
+# CHECK-NEXT: [[test]]: {{*}} = IsClosureOf [[read]] function=f2
+# CHECK: = CallDirect {{*}}function=f2
+# RUN(VERIFIED): same-bytes-alone f3:Body
+# VERIFIED: f3:Body same:
+# async function later(o: Meter) { return await o.own(1); }: in the body of a coroutine, outside of loops, the call stays as it is written.
+# RUN(COROUTINE): walk f4:CoroutineBody mechanisms=none+TypedOperations+Guesses+DirectCalls
+# COROUTINE-LABEL: code f4:CoroutineBody
+# COROUTINE-NOT: AreMembersUnchanged
+# COROUTINE-NOT: CallDirect
+# COROUTINE: = AwaitBySavingFrame
+
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure v1 function=f2
+    DefineMethod v3, v4 layout=L0 key="own"
+    v6 = FinishClass v3 layout=L0
+    v7 = NewClosure function=f3
+    v8 = Construct v6
+    v9 = Call v1, -, v7, v8
+    v10 = NewClosure function=f4
+    v11 = Call v1, -, v10, v8
+    Return v9
+}
+function f1 name="Meter" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="own" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewArray v0, v2
+    Return v3
+}
+function f3 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="own"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="own"
+    Return v4
+}
+function f4 name="later" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="own"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="own"
+    v5 = Await v4
+    Return v5
+}

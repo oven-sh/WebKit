@@ -224,6 +224,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ArithDiv:
     case ArithMod:
     case ArithAbs:
+    case ArithSign:
     case ArithMin:
     case ArithMax:
     case ArithPow:
@@ -291,7 +292,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ToString:
     case FunctionToString:
     case NumberToStringWithValidRadixConstant:
-    case StrCat:
     case CallStringConstructor:
     case MakeRope:
     case MakeAtomString:
@@ -313,7 +313,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case Int52Rep:
     case BooleanToNumber:
     case FiatInt52:
-    case HasIndexedProperty:
     case CheckStructureImmediate:
     case GetMyArgumentByVal:
     case GetMyArgumentByValOutOfBounds:
@@ -366,6 +365,15 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GlobalIsFinite:
     case GlobalIsNaN:
         return false;
+
+    case StrCat: {
+        // StrCat throws for a symbol, which a separate Check excludes.
+        bool maySeeSymbol = false;
+        graph.doToChildren(node, [&](Edge edge) {
+            maySeeSymbol |= !!(state.forNode(edge).m_type & SpecSymbol);
+        });
+        return !maySeeSymbol;
+    }
 
     case GetButterfly:
         return state.forNode(node->child1()).isType(SpecObject);
@@ -430,6 +438,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetVectorLength:
     case ArrayPop:
     case ArrayShift:
+    case HasIndexedProperty:
     case StringAt:
     case StringCharAt:
     case StringCharCodeAt:
@@ -456,6 +465,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
 
     case GetTypedArrayByteOffset:
     case GetTypedArrayByteOffsetAsInt52:
+    case GetTypedArrayBuffer:
         return !(state.forNode(node->child1()).m_type & ~(SpecTypedArrayView));
 
     case TypedArraySet: {
@@ -672,6 +682,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case Construct:
     case DirectConstruct:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallDirectEval:
     case TailCallVarargsInlinedCaller:
     case TailCallForwardVarargsInlinedCaller:
@@ -683,6 +694,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case CallCustomAccessorSetter:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case CallForwardVarargs:
     case ConstructForwardVarargs:
     case NewObject:
@@ -706,6 +719,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case NewSymbol:
     case ProfileType:
     case ProfileControlFlow:

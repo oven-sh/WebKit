@@ -52,12 +52,13 @@
 #include "markup.h"
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <JavaScriptCore/JSCJSValueStructure.h>
+#include <wtf/Borrow.h>
 #include <wtf/Function.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-static Document* LEGACY_NODELETE documentFromClipboard(const Clipboard* clipboard)
+NODELETE static Document* documentFromClipboard(const Clipboard* clipboard)
 {
     if (!clipboard)
         return nullptr;
@@ -69,7 +70,7 @@ static Document* LEGACY_NODELETE documentFromClipboard(const Clipboard* clipboar
 static FileReaderLoader::ReadType readTypeForMIMEType(const String& type)
 {
     if (type == "text/uri-list"_s || type == textPlainContentTypeAtom() || type == textHTMLContentTypeAtom())
-        return FileReaderLoader::ReadAsText;
+        return FileReaderLoader::ReadAsUTF8Text;
     return FileReaderLoader::ReadAsArrayBuffer;
 }
 
@@ -135,7 +136,7 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
 void ClipboardItemBindingsDataSource::clearItemTypeLoaders()
 {
     auto itemTypeLoaders = std::exchange(m_itemTypeLoaders, { });
-    for (auto& itemTypeLoader : itemTypeLoaders)
+    for (auto& itemTypeLoader : borrow(itemTypeLoaders))
         itemTypeLoader->invokeCompletionHandler();
 }
 
@@ -224,7 +225,7 @@ void ClipboardItemBindingsDataSource::invokeCompletionHandler()
     }
 
     PasteboardCustomData customData;
-    for (auto& itemTypeLoader : itemTypeLoaders) {
+    for (auto& itemTypeLoader : borrow(itemTypeLoaders)) {
         auto type = itemTypeLoader->type();
         bool didWrite = WTF::switchOn(itemTypeLoader->data(),
             [&](const String& string) {
@@ -267,7 +268,7 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::didFinishLoading(
     ASSERT(m_blobLoader);
 
     Ref blobLoader = *m_blobLoader;
-    auto stringResult = readTypeForMIMEType(m_type) == FileReaderLoader::ReadAsText ? blobLoader->stringResult() : nullString();
+    auto stringResult = readTypeForMIMEType(m_type) == FileReaderLoader::ReadAsUTF8Text ? blobLoader->stringResult() : nullString();
     if (!stringResult.isNull())
         m_data = { stringResult };
     else if (auto arrayBuffer = blobLoader->arrayBufferResult())

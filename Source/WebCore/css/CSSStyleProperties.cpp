@@ -60,7 +60,7 @@ namespace {
 
 enum class PropertyNamePrefix { None, Epub, WebKit };
 
-static inline bool LEGACY_NODELETE matchesCSSPropertyNamePrefix(const StringImpl& propertyName, ASCIILiteral prefix)
+NODELETE static inline bool matchesCSSPropertyNamePrefix(const StringImpl& propertyName, ASCIILiteral prefix)
 {
     ASSERT(toASCIILower(propertyName[0]) == prefix[0zu]);
     const size_t offset = 1;
@@ -108,12 +108,12 @@ static PropertyNamePrefix propertyNamePrefix(const StringImpl& propertyName)
     return PropertyNamePrefix::None;
 }
 
-static inline void LEGACY_NODELETE writeWebKitPrefix(std::span<char>& buffer)
+NODELETE static inline void writeWebKitPrefix(std::span<char>& buffer)
 {
     memcpySpan(consumeSpan(buffer, 8), "-webkit-"_span);
 }
 
-static inline void LEGACY_NODELETE writeEpubPrefix(std::span<char>& buffer)
+NODELETE static inline void writeEpubPrefix(std::span<char>& buffer)
 {
     memcpySpan(consumeSpan(buffer, 6), "-epub-"_span);
 }
@@ -221,7 +221,7 @@ template<CSSPropertyLookupMode mode> static CSSPropertyID lookupCSSPropertyFromI
         readCharactersForParsing(attribute, [&](auto buffer) {
             while (buffer.hasCharactersRemaining()) {
                 auto c = *buffer++;
-                ASSERT_WITH_MESSAGE(isASCII(c), "Invalid property name: %s", attribute.string().utf8());
+                ASSERT_WITH_MESSAGE(isASCII(c), "Invalid property name: %s", makeUTF8CString(attribute.string()));
                 if (isASCIIUpper(c)) {
                     outputBuffer[outputIndex++] = '-';
                     outputBuffer[outputIndex++] = toASCIILowerUnchecked(c);
@@ -233,14 +233,14 @@ template<CSSPropertyLookupMode mode> static CSSPropertyID lookupCSSPropertyFromI
         readCharactersForParsing(attribute, [&](auto buffer) {
             while (buffer.hasCharactersRemaining()) {
                 auto c = *buffer++;
-                ASSERT_WITH_MESSAGE(c == '-' || isASCIILower(c), "Invalid property name: %s", attribute.string().utf8());
+                ASSERT_WITH_MESSAGE(c == '-' || isASCIILower(c), "Invalid property name: %s", makeUTF8CString(attribute.string()));
                 outputBuffer[outputIndex++] = c;
             }
         });
     }
 
     auto id = findCSSProperty(outputBuffer.data(), outputIndex);
-    ASSERT_WITH_MESSAGE(id != CSSPropertyID::Invalid, "Invalid property name: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(id != CSSPropertyID::Invalid, "Invalid property name: %s", makeUTF8CString(attribute.string()));
     cache.get().add(attribute, id);
     return id;
 }
@@ -248,56 +248,56 @@ template<CSSPropertyLookupMode mode> static CSSPropertyID lookupCSSPropertyFromI
 String CSSStyleProperties::propertyValueForCamelCasedIDLAttribute(const AtomString& attribute)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::ConvertUsingNoDashPrefix>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return getPropertyValueInternal(propertyID);
 }
 
 ExceptionOr<void> CSSStyleProperties::setPropertyValueForCamelCasedIDLAttribute(const AtomString& attribute, const String& value)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::ConvertUsingNoDashPrefix>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return setPropertyInternal(propertyID, value, IsImportant::No);
 }
 
 String CSSStyleProperties::propertyValueForWebKitCasedIDLAttribute(const AtomString& attribute)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::ConvertUsingDashPrefix>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return getPropertyValueInternal(propertyID);
 }
 
 ExceptionOr<void> CSSStyleProperties::setPropertyValueForWebKitCasedIDLAttribute(const AtomString& attribute, const String& value)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::ConvertUsingDashPrefix>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return setPropertyInternal(propertyID, value, IsImportant::No);
 }
 
 String CSSStyleProperties::propertyValueForDashedIDLAttribute(const AtomString& attribute)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::NoConversion>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return getPropertyValueInternal(propertyID);
 }
 
 ExceptionOr<void> CSSStyleProperties::setPropertyValueForDashedIDLAttribute(const AtomString& attribute, const String& value)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::NoConversion>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return setPropertyInternal(propertyID, value, IsImportant::No);
 }
 
 String CSSStyleProperties::propertyValueForEpubCasedIDLAttribute(const AtomString& attribute)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::ConvertUsingDashPrefix>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return getPropertyValueInternal(propertyID);
 }
 
 ExceptionOr<void> CSSStyleProperties::setPropertyValueForEpubCasedIDLAttribute(const AtomString& attribute, const String& value)
 {
     auto propertyID = lookupCSSPropertyFromIDLAttribute<CSSPropertyLookupMode::ConvertUsingDashPrefix>(attribute);
-    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", attribute.string().utf8());
+    ASSERT_WITH_MESSAGE(propertyID != CSSPropertyID::Invalid, "Invalid attribute: %s", makeUTF8CString(attribute.string()));
     return setPropertyInternal(propertyID, value, IsImportant::No);
 }
 

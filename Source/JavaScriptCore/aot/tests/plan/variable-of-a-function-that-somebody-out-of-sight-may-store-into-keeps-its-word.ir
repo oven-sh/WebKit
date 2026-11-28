@@ -1,0 +1,30 @@
+# no body stores into either variable. The second may be replaced by a test run, which no body shows: somebody out of sight stores into it, and its word stays
+# RUN: plan variables mechanisms=all
+# CHECK: variable g0 ClosureTable JSValue FunctionAsZero function=f1
+# CHECK-NEXT: variable g1 Statics JSValue FunctionAsZero function=f2
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="two" module=m0 declared={type=anything} initialization=Function function=f2 flags=[IsReplaceable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x"
+    PropDefine v2, v1 key="y"
+    v5 = FinishObject v2
+    Return v5
+}
+function f1 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="two" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

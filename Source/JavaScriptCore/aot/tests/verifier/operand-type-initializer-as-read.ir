@@ -1,8 +1,9 @@
 # On the wire an initializer runs on the object that its caller constructs or on a class object, and it is never made a closure
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: OperandTypeMismatch 6
 # DIAGNOSTIC: PayloadOutOfRange 1
+# new.target may select another class, so no class is laid down for what a constructor has made: an initializer tests it, or takes any object
+# DIAGNOSTIC: StoredTypeMismatch 1
 
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
@@ -71,6 +72,30 @@ function f11 name="badInitializerAsClosure" results=[{type=undefined}] {
     v0 = NewClosure function=f13
     Return
 }
-function f12 name="plain" results=[{type=undefined}]
-function f13 name="initializer" kind=Initializer flags=[HasThis] thisType={type=object} results=[{type=anything}]
-function f14 name="initializerWithoutThis" kind=Initializer results=[{type=anything}]
+function f12 name="plain" results=[{type=undefined}] {
+    Return
+}
+function f13 name="initializer" kind=Initializer flags=[HasThis] thisType={type=object} results=[{type=anything}] {
+    Return
+}
+function f14 name="initializerWithoutThis" kind=Initializer results=[{type=anything}] {
+    Return
+}
+function f15 name="badClassIsLaidDownForWhatIsConstructed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = CallDirect v2 function=f17
+    Return v2
+}
+function f16 name="goodClassIsTested" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = CallDirect v2 function=f18
+    Return v2
+}
+function f17 name="initializerWithClassLaidDown" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    Return
+}
+function f18 name="initializerThatTestsClass" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    Return
+}

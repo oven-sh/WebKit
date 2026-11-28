@@ -31,8 +31,7 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 #include <WebCore/StyleShadow.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct BoxShadow {
     Color color;
@@ -86,7 +85,7 @@ template<> struct Blending<BoxShadow> {
 };
 
 template<> struct Blending<BoxShadows> {
-    bool LEGACY_NODELETE canBlend(const BoxShadows&, const BoxShadows&, CompositeOperation);
+    NODELETE bool canBlend(const BoxShadows&, const BoxShadows&, CompositeOperation);
     constexpr auto requiresInterpolationForAccumulativeIteration(const BoxShadows&, const BoxShadows&) -> bool { return true; }
     auto blend(const BoxShadows&, const BoxShadows&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> BoxShadows;
 };
@@ -108,8 +107,7 @@ inline LayoutUnit paintingSpread(const BoxShadow& shadow, const Style::ZoomFacto
     return LayoutUnit { shadow.spread.resolveZoom(zoomFactor) };
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::Style::BoxShadow, 5)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::BoxShadows)

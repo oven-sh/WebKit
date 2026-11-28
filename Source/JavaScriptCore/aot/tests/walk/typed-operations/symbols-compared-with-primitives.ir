@@ -1,0 +1,51 @@
+# let current; const A = Symbol("A"), B = Symbol("B");  globalThis.change = b => { current = b ? A : "B"; };  globalThis.isA = () => current == A;
+# A string, a number or a boolean is never converted to a symbol.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: code f2:Body
+# CHECK: = Eq {{*}}form=Bits
+
+variable g0 name="A" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="B" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="current" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="A"
+    v2 = Call v0, -, v1 calleeName="Symbol"
+    PutModuleVariable v2 variable=g0
+    v4 = String string="B"
+    v5 = Call v0, -, v4 calleeName="Symbol"
+    PutModuleVariable v5 variable=g1
+    v7 = Builtin builtin=GlobalThis
+    v8 = NewClosure function=f1
+    PropSet v7, v8 key="change"
+    v10 = NewClosure function=f2
+    PropSet v7, v10 key="isA"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="change" module=m0 kind=Arrow flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    PutModuleVariable v2 variable=g2
+    Jump -> next b3()
+  b2():
+    v4 = String string="B"
+    PutModuleVariable v4 variable=g2
+    Jump -> next b3()
+  b3():
+    v6 = Undefined
+    Return v6
+}
+function f2 name="isA" module=m0 kind=Arrow flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = GetModuleVariable variable=g0
+    v2 = Eq v0, v1
+    Return v2
+}

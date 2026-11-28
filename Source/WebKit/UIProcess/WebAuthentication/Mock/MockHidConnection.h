@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 
 #include "HidConnection.h"
 #include <WebCore/FidoHidMessage.h>
@@ -63,7 +63,7 @@ private:
     void assembleRequest(Vector<uint8_t>&&);
     void parseRequest();
     void feedReports();
-    bool LEGACY_NODELETE stagesMatch() const;
+    NODELETE bool stagesMatch() const;
     void shouldContinueFeedReports();
     void continueFeedReports();
     void validateExpectedCommand(const Vector<uint8_t>& actualCommand);
@@ -83,4 +83,4 @@ private:
 
 } // namespace WebKit
 
-#endif // ENABLE(WEB_AUTHN)
+#endif // ENABLE(WEB_AUTHN) && PLATFORM(COCOA)

@@ -124,7 +124,7 @@ String animatedPropertyIDAsString(AnimatedProperty property)
 }
 
 using RepaintMap = HashMap<const GraphicsLayer*, Vector<FloatRect>>;
-static RepaintMap& LEGACY_NODELETE repaintRectMap()
+NODELETE static RepaintMap& repaintRectMap()
 {
     static NeverDestroyed<RepaintMap> map;
     return map;
@@ -166,7 +166,7 @@ public:
     static EmptyGraphicsLayerClient& singleton();
 };
 
-EmptyGraphicsLayerClient& LEGACY_NODELETE EmptyGraphicsLayerClient::singleton()
+NODELETE EmptyGraphicsLayerClient& EmptyGraphicsLayerClient::singleton()
 {
     static NeverDestroyed<EmptyGraphicsLayerClient> client;
     return client;
@@ -193,6 +193,7 @@ GraphicsLayer::GraphicsLayer(Type type, GraphicsLayerClient& layerClient)
     , m_showFrameProcessBorders(false)
     , m_isMaskLayer(false)
     , m_isBackdropRoot(false)
+    , m_hidesFromScreenCapture(false)
     , m_isTrackingDisplayListReplay(false)
     , m_userInteractionEnabled(true)
     , m_canDetachBackingStore(true)
@@ -799,7 +800,7 @@ void GraphicsLayer::setZPosition(float position)
     m_zPosition = position;
 }
 
-static inline const FilterOperations& LEGACY_NODELETE filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
+NODELETE static inline const FilterOperations& filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
 {
     return downcast<GraphicsLayerFilterAnimationValue>(valueList.at(index)).value();
 }
@@ -991,6 +992,14 @@ void GraphicsLayer::dumpProperties(TextStream& ts, OptionSet<LayerTreeAsTextOpti
     if (m_isBackdropRoot)
         ts << indent << "(backdropRoot "_s << m_isBackdropRoot << ")\n"_s;
 
+    if (m_hidesFromScreenCapture)
+        ts << indent << "(hidesFromScreenCapture "_s << m_hidesFromScreenCapture << ")\n"_s;
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_isHostedInSpatialPortalScene)
+        ts << indent << "(hostedInSpatialPortalScene "_s << m_isHostedInSpatialPortalScene << ")\n"_s;
+#endif
+
     if (options & LayerTreeAsTextOptions::Debug)
         ts << indent << "(primary-layer-id "_s << primaryLayerID() << ")\n"_s;
 
@@ -1166,14 +1175,14 @@ void showGraphicsLayerTree(const WebCore::GraphicsLayer* layer)
         return;
 
     String output = layer->layerTreeAsText(WebCore::AllLayerTreeAsTextOptions);
-    SAFE_WTFLOGALWAYS("%s\n", output.utf8());
+    SAFE_WTFLOGALWAYS("%s\n", makeUTF8CString(output));
 
     // The tree is too large to print to the os log so save the tree output
     // to a file in case we don't have easy access to stderr.
     auto [tempFilePath, fileHandle] = FileSystem::openTemporaryFile("GraphicsLayerTree"_s);
     if (fileHandle) {
-        fileHandle.write(byteCast<uint8_t>(output.utf8().span()));
-        SAFE_WTFLOGALWAYS("Saved GraphicsLayer Tree to %s", tempFilePath.utf8());
+        fileHandle.write(byteCast<uint8_t>(makeUTF8CString(output).span()));
+        SAFE_WTFLOGALWAYS("Saved GraphicsLayer Tree to %s", makeUTF8CString(tempFilePath));
     } else
         WTFLogAlways("Failed to open temporary file for saving the GraphicsLayer Tree.");
 }

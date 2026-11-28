@@ -94,10 +94,10 @@ public:
 
     static AtomString typeFromMouseEventType(const AtomString&);
 
-    static RefPtr<PointerEvent> create(MouseButton, const MouseEvent&, PointerID, const String& pointerType);
-    static Ref<PointerEvent> create(const AtomString& type, MouseButton, const MouseEvent&, PointerID, const String& pointerType);
-    static Ref<PointerEvent> create(const AtomString& type, MouseButton, const MouseEvent&, PointerID, const String& pointerType, CanBubble, IsCancelable);
-    static Ref<PointerEvent> LEGACY_NODELETE create(const AtomString& type, PointerID, const String& pointerType, IsPrimary = IsPrimary::No);
+    static RefPtr<PointerEvent> create(std::expected<MouseButton, MouseButtonState>, const MouseEvent&, PointerID, const String& pointerType);
+    static Ref<PointerEvent> create(const AtomString& type, std::expected<MouseButton, MouseButtonState>, const MouseEvent&, PointerID, const String& pointerType);
+    static Ref<PointerEvent> create(const AtomString& type, std::expected<MouseButton, MouseButtonState>, const MouseEvent&, PointerID, const String& pointerType, CanBubble, IsCancelable);
+    NODELETE static Ref<PointerEvent> create(const AtomString& type, PointerID, const String& pointerType, IsPrimary = IsPrimary::No);
 
 #if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE) || PLATFORM(GTK))
     static Ref<PointerEvent> create(const PlatformTouchEvent&, const Vector<Ref<PointerEvent>>& coalescedEvents, const Vector<Ref<PointerEvent>>& predictedEvents, unsigned touchIndex, bool isPrimary, Ref<WindowProxy>&&, const DoublePoint& touchDelta = { });
@@ -150,14 +150,19 @@ public:
     RefPtr<Node> fromElement() const final { return nullptr; }
 
     static bool typeRequiresResolvedButton(const AtomString& type);
-    static MouseButton buttonForType(const AtomString& type) { return !typeRequiresResolvedButton(type) ? MouseButton::PointerHasNotChanged : MouseButton::Left; }
+    static std::expected<MouseButton, MouseButtonState> buttonForType(const AtomString& type)
+    {
+        if (!typeRequiresResolvedButton(type))
+            return std::unexpected { MouseButtonState::PointerHasNotChanged };
+        return MouseButton::Left;
+    }
 
 protected:
     static CanBubble typeCanBubble(const AtomString& type) { return typeIsEnterOrLeave(type) ? CanBubble::No : CanBubble::Yes; }
     static IsCancelable typeIsCancelable(const AtomString& type) { return typeIsEnterOrLeave(type) ? IsCancelable::No : IsCancelable::Yes; }
     static IsComposed typeIsComposed(const AtomString& type) { return typeIsEnterOrLeave(type) ? IsComposed::No : IsComposed::Yes; }
 
-    PointerEvent(const AtomString& type, MouseButton, const MouseEvent&, PointerID, const String& pointerType, CanBubble, IsCancelable, IsComposed);
+    PointerEvent(const AtomString& type, std::expected<MouseButton, MouseButtonState>, const MouseEvent&, PointerID, const String& pointerType, CanBubble, IsCancelable, IsComposed);
 
 private:
     static bool typeIsEnterOrLeave(const AtomString& type);

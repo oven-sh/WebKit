@@ -14,7 +14,6 @@ namespace JSC {
 class JSGlobalObject;
 }
 
-// The members of %CompilerHelpers% that are native code of the engine.
 extern "C" {
 
 JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__ownEntriesFlat(JSC::JSGlobalObject*, JSC::EncodedJSValue object);

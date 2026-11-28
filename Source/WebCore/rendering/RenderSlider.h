@@ -25,7 +25,6 @@
 namespace WebCore {
 
 class HTMLInputElement;
-class MouseEvent;
 
 class RenderSlider final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderSlider);
@@ -33,14 +32,12 @@ class RenderSlider final : public RenderFlexibleBox {
 public:
     static const int defaultTrackLength;
 
-    RenderSlider(HTMLInputElement&, Style::ComputedStyle&&);
+    RenderSlider(HTMLInputElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSlider();
 
-    HTMLInputElement& LEGACY_NODELETE element() const;
+    NODELETE HTMLInputElement& element() const;
 
     bool canHaveGeneratedChildren() const override { return false; }
-
-    bool inDragMode() const;
 
     double valueRatio() const;
 
@@ -48,7 +45,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderSlider"_s; }
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
 
     bool isFlexibleBoxImpl() const override { return true; }
 };

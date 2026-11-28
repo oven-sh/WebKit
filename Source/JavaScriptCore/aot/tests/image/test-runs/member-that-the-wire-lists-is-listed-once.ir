@@ -1,0 +1,43 @@
+# a member that the wire lists and that Link finds written too is open by the wire's word. The facts do not list it again, and the image makes its list out of a set: the store goes through as it did
+# Math.imul = () => 7; put(Math, () => 8); print(Math.imul(2, 2))   with   put = (o, v) => { o.imul = v }
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all
+# CHECK: 8
+# CHECK-NEXT: exited with 0
+# RUN(NEVER): test-run
+# NEVER-NOT: replaces MathImul
+
+replaceablebuiltin member=MathImul
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="imul"
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f3
+    v6 = Call v4, -, v1, v5
+    v7 = PropGet v1 key="imul"
+    v8 = Integer integer=2
+    v9 = Call v7, v1, v8, v8 calleeKey="imul"
+    v10 = PropGet v0 key="print" [isFreeName]
+    v11 = Call v10, -, v9
+    Return v11
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="imul"
+    Return v1
+}
+function f2 name="seven" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="eight" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=8
+    Return v0
+}

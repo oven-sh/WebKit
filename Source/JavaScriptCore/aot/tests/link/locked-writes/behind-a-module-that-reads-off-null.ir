@@ -1,0 +1,33 @@
+# the module that is evaluated in front of the one that stores reads off null: its body throws and the store is never come to: a warning
+# main.js: import "./fails.js"; import "./stores.js";   fails.js: null.length;   stores.js: Array.prototype.push = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}] positions={lineStarts=[0]}
+module m1 path="/fails.js" displayPath="fails.js" body=f1 positions={lineStarts=[0]}
+module m2 path="/stores.js" displayPath="stores.js" body=f2 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Null @103
+    v1 = PropGet v0 key="length" @104
+    Return v1 @105
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype @2
+    v1 = NewClosure function=f3 @2
+    PropSet v0, v1 key="push" @3
+    v3 = Undefined @4
+    Return v3 @4
+}
+function f3 module=m2 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @108
+    Return v0 @109
+}

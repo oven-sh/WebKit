@@ -1,0 +1,35 @@
+# let x = a; for (;;) { r = b(x); if (r === undefined) return a; x = r === null ? a : a; }
+# As its twin, but both ways bring the head the same value: the branch decides nothing, and the jump goes back to the head itself, never past it.
+# RUN: sweep-code
+# CHECK: b2() isInLoop=true
+# CHECK-NOT: Branch v5
+# CHECK: Jump -> next b1(v0)
+# CHECK: Return v0
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     Jump -> next b1(v0)
+#   b1(v2: anything @JSValue) isInLoop=true isLoopHead=true:
+#     v3: anything @JSValue = Call v1, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: boolean @Boolean = TypeTest v3 testedType=undefined
+#     Branch v4 -> taken b5(), notTaken b2()
+#   b2() isInLoop=true:
+#     v5: boolean @Boolean = TypeTest v3 testedType=null
+#     Branch v5 -> taken b3(), notTaken b4()
+#   b3() isInLoop=true:
+#     Jump -> next b1(v0)
+#   b4() isInLoop=true:
+#     Jump -> next b1(v0)
+#   b5():
+#     Return v0
+# }
+# -- end of code

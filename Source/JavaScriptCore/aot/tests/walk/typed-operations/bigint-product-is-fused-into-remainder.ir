@@ -1,0 +1,49 @@
+# In a unit that speaks of BigInts anywhere, here of `n > 0n`, a product is left to the remainder behind it. In a unit that does not it is made at once.
+# function power(x, m, n) { const difference = x - m, rest = difference * difference % m; return n > 0n ? rest : undefined; }
+# function numbers(x, m, n) { const difference = x - m, rest = difference * difference % m; return n > 0 ? rest : undefined; }
+# RUN: emit f1 mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Branch({{*}}, origin = 6) -> {{*}}rare
+# RUN(NUMBERS): emit f2 mechanisms=all
+# NUMBERS-LABEL: unit f2:Body
+# NUMBERS-NOT: origin = 6) -> 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="drive" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="power" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Sub v0, v1
+    v4 = Mul v3, v3
+    v5 = Mod v4, v1
+    v6 = BigInt digits="0"
+    v7 = Greater v2, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    v8 = Undefined
+    Return v8
+}
+function f2 name="numbers" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Sub v0, v1
+    v4 = Mul v3, v3
+    v5 = Mod v4, v1
+    v6 = Integer
+    v7 = Greater v2, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    v8 = Undefined
+    Return v8
+}

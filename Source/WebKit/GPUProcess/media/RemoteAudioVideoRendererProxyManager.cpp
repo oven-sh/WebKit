@@ -155,6 +155,11 @@ void RemoteAudioVideoRendererProxyManager::createManager(RemoteAudioVideoRendere
         .playerIdentifier = playerIdentifier,
     };
 
+    if (isVideoSoftwareDecodingInContentProcessEnabled()) {
+        context.preferences.add(VideoRendererPreference::RequiresHardwareDecoder);
+        context.renderer->setPreferences(context.preferences);
+    }
+
     context.renderer->notifyWhenErrorOccurs([weakThis = ThreadSafeWeakPtr { *this }, identifier](PlatformMediaError error) {
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->publishAndSend(identifier, Messages::AudioVideoRendererRemoteMessageReceiver::ErrorOccurred(error));
@@ -244,16 +249,22 @@ RefPtr<WebCore::AudioVideoRenderer> RemoteAudioVideoRendererProxyManager::render
 RemoteAudioVideoRendererProxyManager::RendererContext& RemoteAudioVideoRendererProxyManager::contextFor(RemoteAudioVideoRendererIdentifier identifier)
 {
     auto iterator = m_renderers.find(identifier);
-    ASSERT(iterator != m_renderers.end());
+    RELEASE_ASSERT(iterator != m_renderers.end());
     return iterator->value;
 }
 
 void RemoteAudioVideoRendererProxyManager::setPreferences(RemoteAudioVideoRendererIdentifier identifier, WebCore::VideoRendererPreferences preferences)
 {
+    preferences.set(VideoRendererPreference::RequiresHardwareDecoder, isVideoSoftwareDecodingInContentProcessEnabled());
     if (RefPtr renderer = rendererFor(identifier)) {
         renderer->setPreferences(preferences);
         contextFor(identifier).preferences = preferences;
     }
+}
+
+bool RemoteAudioVideoRendererProxyManager::isVideoSoftwareDecodingInContentProcessEnabled() const
+{
+    return m_gpuConnectionToWebProcess.get()->sharedPreferencesForWebProcessValue().videoSoftwareDecodingInContentProcessEnabled;
 }
 
 void RemoteAudioVideoRendererProxyManager::setHasProtectedVideoContent(RemoteAudioVideoRendererIdentifier identifier, bool hasProtected)
@@ -651,7 +662,7 @@ void RemoteAudioVideoRendererProxyManager::flushAndRemoveImage(RemoteAudioVideoR
         renderer->flushAndRemoveImage();
 }
 
-void RemoteAudioVideoRendererProxyManager::currentVideoFrame(RemoteAudioVideoRendererIdentifier identifier, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>)>&& completionHandler) const
+void RemoteAudioVideoRendererProxyManager::currentVideoFrame(RemoteAudioVideoRendererIdentifier identifier, RemoteVideoFrameReference reference, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>)>&& completionHandler) const
 {
     RefPtr renderer = rendererFor(identifier);
     if (!renderer) {
@@ -659,8 +670,10 @@ void RemoteAudioVideoRendererProxyManager::currentVideoFrame(RemoteAudioVideoRen
         return;
     }
     std::optional<RemoteVideoFrameProxy::Properties> result;
-    if (RefPtr videoFrame = renderer->currentVideoFrame())
-        result = m_videoFrameObjectHeap->add(videoFrame.releaseNonNull());
+    if (RefPtr videoFrame = renderer->currentVideoFrame()) {
+        result = RemoteVideoFrameProxy::properties(*videoFrame);
+        m_videoFrameObjectHeap->add(reference, videoFrame.releaseNonNull());
+    }
     completionHandler(WTF::move(result));
 }
 
@@ -716,6 +729,19 @@ RemoteAudioVideoRendererState RemoteAudioVideoRendererProxyManager::stateFor(Rem
         .paused = iterator->value.renderer->paused(),
     };
 }
+
+#if PLATFORM(COCOA)
+std::optional<FloatRect> RemoteAudioVideoRendererProxyManager::hostedVideoLayerBoundsForTesting(HTMLMediaElementIdentifier mediaElementIdentifier) const
+{
+    for (auto& context : m_renderers.values()) {
+        if (!context.mediaElementIdentifier || *context.mediaElementIdentifier != mediaElementIdentifier)
+            continue;
+        if (auto bounds = context.layerHostingContextManager.rootLayerBoundsForTesting())
+            return bounds;
+    }
+    return std::nullopt;
+}
+#endif
 
 void RemoteAudioVideoRendererProxyManager::rendereringModeChanged(RemoteAudioVideoRendererIdentifier identifier)
 {

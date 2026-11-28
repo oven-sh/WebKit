@@ -1,0 +1,43 @@
+# behind the first listed call stands a call of code that nobody has seen. If it threw, nobody would ever take what a body without a promise has handed back, so that call keeps its ramp and its promise
+# function both(x, f) { return Promise.all([a(x), f(x), b(x)]); }
+# the last listed call has nothing but the list behind it, so it enters its body: bit 2. The operation still takes the elements
+# RUN: walk f3 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: = PromiseAllOfElements {{*}}directCalls=4
+# RUN(ONCE): walk f3 mechanisms=none+DirectCalls+BuiltinCalls
+# ONCE: role=CoroutineBody
+# ONCE-NOT: role=CoroutineBody
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="a" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="b" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f3 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = Builtin builtin=PromiseAll
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v0 calleeName="a"
+    v6 = Call v1, -, v0 calleeName="f"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v0 calleeName="b"
+    v9 = NewArray v5, v6, v8 contents=anything
+    v10 = Call v3, v2, v9 calleeKey="all" calleeName="Promise.all"
+    Return v10
+}

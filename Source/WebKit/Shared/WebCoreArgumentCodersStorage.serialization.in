@@ -21,6 +21,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+header: <WebCore/DOMCacheEngine.h>
 [CustomHeader] struct WebCore::DOMCacheEngine::CacheInfo {
     WebCore::DOMCacheIdentifier identifier
     String name
@@ -281,6 +282,18 @@ using WebCore::DOMCacheEngine::CacheIdentifierOrError = std::expected<WebCore::D
 using WebCore::DOMCacheEngine::RecordIdentifiersOrError = std::expected<Vector<uint64_t>, WebCore::DOMCacheEngine::Error>
 
 using WebCore::DOMCacheEngine::CrossThreadRecordsOrError = std::expected<Vector<WebCore::DOMCacheEngine::CrossThreadRecord>, WebCore::DOMCacheEngine::Error>
+
+[CustomHeader] struct WebCore::DOMCacheEngine::CORPViolation {
+    URL blockedURL;
+    URL responseURL;
+    String crossOriginResourcePolicy;
+    WebCore::IncludesCredentials requestIncludesCredentials;
+};
+
+[CustomHeader] struct WebCore::DOMCacheEngine::RetrieveRecordsResult {
+    WebCore::DOMCacheEngine::CrossThreadRecordsOrError records;
+    Vector<WebCore::DOMCacheEngine::CORPViolation> corpViolations;
+};
 
 using WebCore::DOMCacheEngine::RemoveCacheIdentifierOrError = std::expected<bool, WebCore::DOMCacheEngine::Error>
 

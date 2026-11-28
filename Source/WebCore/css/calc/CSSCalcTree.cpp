@@ -32,8 +32,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace CSSCalc {
+namespace WebCore::CSSCalc {
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Abs);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Acos);
@@ -428,12 +427,12 @@ template<typename Op> static std::optional<Type> getValidatedTypeFor(const Op&, 
     return std::nullopt;
 }
 
-template<typename Op> static std::optional<Type> LEGACY_NODELETE mergeTypesFor(const Op&, std::optional<Type> a, std::optional<Type> b)
+template<typename Op> NODELETE static std::optional<Type> mergeTypesFor(const Op&, std::optional<Type> a, std::optional<Type> b)
 {
     return mergeTypes<Op::merge>(a, b);
 }
 
-template<typename Op, typename... Args> static std::optional<Type> LEGACY_NODELETE transformTypeFor(const Op&, std::optional<Type> a)
+template<typename Op, typename... Args> NODELETE static std::optional<Type> transformTypeFor(const Op&, std::optional<Type> a)
 {
     return transformType<Op::output>(a);
 }
@@ -620,5 +619,4 @@ TextStream& operator<<(TextStream& ts, Tree tree)
     return ts << "CSSCalc::Tree [ "_s << serializationForCSS(tree, { .range = CSS::All, .serializationContext = CSS::defaultSerializationContext() }) << " ]"_s;
 }
 
-} // namespace CSSCalc
-} // namespace WebCore
+} // namespace WebCore::CSSCalc

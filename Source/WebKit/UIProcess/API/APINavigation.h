@@ -36,13 +36,16 @@
 #include "WebContentMode.h"
 #include <WebCore/AdvancedPrivacyProtections.h>
 #include <WebCore/AgentClusterAssignment.h>
+#include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceRequest.h>
+#include <WebCore/SandboxFlags.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/SubstituteData.h>
+#include <wtf/HashMap.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
@@ -115,6 +118,10 @@ public:
 
     WebCore::NavigationIdentifier navigationID() const { return m_navigationID; }
 
+    // Orders the navigations by when the UI process learned of them. Their identifiers cannot be compared
+    // for that: a web process mints the identifiers of the navigations it starts.
+    uint64_t sequenceNumber() const { return m_sequenceNumber; }
+
     const WebCore::ResourceRequest& originalRequest() const LIFETIME_BOUND { return m_originalRequest; }
     void setCurrentRequest(WebCore::ResourceRequest&&);
     void upgradeCurrentInsecureRequest();
@@ -136,8 +143,8 @@ public:
     size_t redirectChainIndex(const WTF::URL&);
 
     bool wasUserInitiated() const { return m_lastNavigationAction && !!m_lastNavigationAction->userGestureTokenIdentifier; }
-    bool LEGACY_NODELETE isRequestFromClientOrUserInput() const;
-    void LEGACY_NODELETE markRequestAsFromClientInput();
+    NODELETE bool isRequestFromClientOrUserInput() const;
+    NODELETE void markRequestAsFromClientInput();
     void markAsFromLoadData() { m_isFromLoadData = true; }
     bool isFromLoadData() const { return m_isFromLoadData; }
 
@@ -147,6 +154,7 @@ public:
     bool openedByDOMWithOpener() const { return m_lastNavigationAction && m_lastNavigationAction->openedByDOMWithOpener; }
     bool isInitialFrameSrcLoad() const { return m_lastNavigationAction && m_lastNavigationAction->isInitialFrameSrcLoad; }
     WebCore::SecurityOriginData requesterOrigin() const;
+    WebCore::SecurityOriginData originatingFrameSecurityOrigin() const;
     WebCore::ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy() const { return m_lastNavigationAction ? m_lastNavigationAction->shouldOpenExternalURLsPolicy : WebCore::ShouldOpenExternalURLsPolicy::ShouldNotAllow; }
 
     void setUserContentExtensionsEnabled(bool enabled) { m_userContentExtensionsEnabled = enabled; }
@@ -170,8 +178,6 @@ public:
     void setOriginatingFrameInfo(const WebKit::FrameInfoData& frameInfo) { m_originatingFrameInfo = frameInfo; }
     const std::optional<WebKit::FrameInfoData>& originatingFrameInfo() const LIFETIME_BOUND { return m_originatingFrameInfo; }
 
-    void setDestinationFrameSecurityOrigin(const WebCore::SecurityOriginData& origin) { m_destinationFrameSecurityOrigin = origin; }
-    const WebCore::SecurityOriginData& destinationFrameSecurityOrigin() const LIFETIME_BOUND { return m_destinationFrameSecurityOrigin; }
 
     void setEffectiveContentMode(WebKit::WebContentMode mode) { m_effectiveContentMode = mode; }
     WebKit::WebContentMode effectiveContentMode() const { return m_effectiveContentMode; }
@@ -192,6 +198,11 @@ public:
     void setBackForwardTraversalWasDispatched(bool value) { m_backForwardTraversalWasDispatched = value; }
     bool backForwardTraversalWasDispatched() const { return m_backForwardTraversalWasDispatched; }
 
+    // True once the process a main frame traversal was dispatched to has moved the back/forward cursor to its
+    // target item, which it does once, as the traversal starts.
+    void setBackForwardCursorMoveDidArrive() { m_backForwardCursorMoveDidArrive = true; }
+    bool backForwardCursorMoveDidArrive() const { return m_backForwardCursorMoveDidArrive; }
+
     void setBackForwardTraversalDidCommitInAnyFrame() { m_backForwardTraversalDidCommitInAnyFrame = true; }
     bool backForwardTraversalDidCommitInAnyFrame() const { return m_backForwardTraversalDidCommitInAnyFrame; }
 
@@ -204,16 +215,23 @@ public:
     void setUnpartitionedStorageSite(std::optional<WebCore::RegistrableDomain>&& site) { m_unpartitionedStorageSite = WTF::move(site); }
     const std::optional<WebCore::RegistrableDomain>& unpartitionedStorageSite() const LIFETIME_BOUND { return m_unpartitionedStorageSite; }
 
+    void setBrowsingContextGroupSwitchDecisionForEmptyDocument(WebCore::BrowsingContextGroupSwitchDecision decision) { m_browsingContextGroupSwitchDecisionForEmptyDocument = decision; }
+    WebCore::BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecisionForEmptyDocument() const { return m_browsingContextGroupSwitchDecisionForEmptyDocument; }
+
     // The most recent assignment handed out for this navigation, and the origin it was computed for.
     void setAgentClusterAssignment(const WebCore::SecurityOriginData&, const WebCore::AgentClusterAssignment&, RefPtr<WebKit::AgentClusterKeyingReservation>&& = nullptr);
     void clearAgentClusterKeyingReservation();
     const WebCore::SecurityOriginData& agentClusterOrigin() const LIFETIME_BOUND { return m_agentClusterOrigin; }
     const std::optional<WebCore::AgentClusterAssignment>& agentClusterAssignment() const LIFETIME_BOUND { return m_agentClusterAssignment; }
+
+    void setResponseSandboxFlags(WebCore::FrameIdentifier frameID, WebCore::SandboxFlags sandboxFlags) { m_responseSandboxFlags.set(frameID, sandboxFlags); }
+    WebCore::SandboxFlags responseSandboxFlags(WebCore::FrameIdentifier frameID) const { return m_responseSandboxFlags.getOptional(frameID).value_or(WebCore::SandboxFlags { }); }
+
     void setSafeBrowsingCheckOngoing(size_t, bool);
-    bool LEGACY_NODELETE safeBrowsingCheckOngoing(size_t);
-    bool LEGACY_NODELETE safeBrowsingCheckOngoing();
+    NODELETE bool safeBrowsingCheckOngoing(size_t);
+    NODELETE bool safeBrowsingCheckOngoing();
     void setSafeBrowsingWarning(RefPtr<WebKit::BrowsingWarning>&&);
-    RefPtr<WebKit::BrowsingWarning> LEGACY_NODELETE safeBrowsingWarning();
+    NODELETE RefPtr<WebKit::BrowsingWarning> safeBrowsingWarning();
     void whenSafeBrowsingCheckCompletes(Function<void()>&&);
     void fireSafeBrowsingCheckCompletionCallbacks();
     bool hadSafeBrowsingWarning() const { return m_hadSafeBrowsingWarning; }
@@ -223,7 +241,7 @@ public:
     WebCore::ProcessIdentifier processID() const { return m_processID; }
     void setProcessID(WebCore::ProcessIdentifier processID) { m_processID = processID; }
 
-    void LEGACY_NODELETE setHasStorageForCurrentSite(bool);
+    NODELETE void setHasStorageForCurrentSite(bool);
     bool hasStorageForCurrentSite() const { return m_hasStorageForCurrentSite; }
 
     void setIsEnhancedSecurityLinkForCurrentSite(bool isEnhancedSecurityLink) { m_isEnhancedSecurityLinkForCurrentSite = isEnhancedSecurityLink; }
@@ -247,7 +265,10 @@ private:
     Navigation(WebCore::ProcessIdentifier, std::unique_ptr<SubstituteData>&&);
     Navigation(WebCore::ProcessIdentifier, WebCore::ResourceRequest&&, std::unique_ptr<SubstituteData>&&, RefPtr<WebKit::WebBackForwardListItem>&& fromItem);
 
+    static uint64_t generateSequenceNumber();
+
     WebCore::NavigationIdentifier m_navigationID;
+    const uint64_t m_sequenceNumber { generateSequenceNumber() };
     WebCore::ProcessIdentifier m_processID;
     WebCore::ResourceRequest m_originalRequest;
     WebCore::ResourceRequest m_currentRequest;
@@ -261,12 +282,12 @@ private:
     std::optional<WebKit::NavigationActionData> m_lastNavigationAction;
     RefPtr<JSHandle> m_lastNavigationActionHitTestJSHandle;
     std::optional<WebKit::FrameInfoData> m_originatingFrameInfo;
-    WebCore::SecurityOriginData m_destinationFrameSecurityOrigin;
     WebKit::WebContentMode m_effectiveContentMode { WebKit::WebContentMode::Recommended };
     Variant<std::monostate, Ref<WebKit::ProcessThrottler::TimedActivity>, Ref<WebKit::ProcessActivityGroup>> m_clientNavigationActivity;
     bool m_userContentExtensionsEnabled : 1 { true };
     bool m_isLoadedWithNavigationShared : 1 { false };
     bool m_backForwardTraversalWasDispatched : 1 { false };
+    bool m_backForwardCursorMoveDidArrive : 1 { false };
     bool m_backForwardTraversalDidCommitInAnyFrame : 1 { false };
     bool m_requestIsFromClientInput : 1 { false };
     bool m_isFromLoadData : 1 { false };
@@ -277,10 +298,12 @@ private:
     RefPtr<API::WebsitePolicies> m_websitePolicies;
     std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> m_originatorAdvancedPrivacyProtections;
     std::optional<WebCore::RegistrableDomain> m_unpartitionedStorageSite;
+    WebCore::BrowsingContextGroupSwitchDecision m_browsingContextGroupSwitchDecisionForEmptyDocument { WebCore::BrowsingContextGroupSwitchDecision::StayInGroup };
     WebCore::SecurityOriginData m_agentClusterOrigin;
     std::optional<WebCore::AgentClusterAssignment> m_agentClusterAssignment;
     RefPtr<WebKit::AgentClusterKeyingReservation> m_agentClusterKeyingReservation;
     bool m_canHoldAgentClusterKeyingReservation { true };
+    HashMap<WebCore::FrameIdentifier, WebCore::SandboxFlags> m_responseSandboxFlags;
     MonotonicTime m_requestStart { MonotonicTime::now() };
     RefPtr<WebKit::BrowsingWarning> m_safeBrowsingWarning;
     ListHashSet<size_t> m_ongoingSafeBrowsingChecks;

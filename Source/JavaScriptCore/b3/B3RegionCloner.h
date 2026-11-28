@@ -23,8 +23,8 @@ class Procedure;
 class RegionCloner {
     WTF_MAKE_NONCOPYABLE(RegionCloner);
 public:
-    using BlockMap = UncheckedKeyHashMap<BasicBlock*, BasicBlock*>;
-    using ValueMap = UncheckedKeyHashMap<Value*, Value*>;
+    using BlockMap = HashMap<BasicBlock*, BasicBlock*>;
+    using ValueMap = HashMap<Value*, Value*>;
     enum class PhiTreatment : uint8_t { Demote, KeepIfJumpFed };
     enum class ValueOwners : uint8_t { MayBeStale, AreCurrent };
 
@@ -49,6 +49,7 @@ public:
     }
     JS_EXPORT_PRIVATE Value* appendClone(Value* original, BasicBlock* destination, ValueMap&);
     JS_EXPORT_PRIVATE void substitute(ValueMap&, Value* original, Value* replacement);
+    JS_EXPORT_PRIVATE void substituteOnOnePath(ValueMap&, Value* original, Value* replacement);
     JS_EXPORT_PRIVATE void substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* block, ValueMap&);
     JS_EXPORT_PRIVATE BlockMap cloneBlocks(std::span<BasicBlock* const>);
 
@@ -65,6 +66,7 @@ private:
     bool m_didChange { false };
     IndexSet<BasicBlock*> m_sources;
     IndexSet<BasicBlock*> m_declaredBlocks;
+    IndexSet<Value*> m_valuesOfOnePath;
     std::optional<MovedLoadLog::OriginalsKeepTheirMeaning> m_originalsKeepTheirMeaning;
 };
 

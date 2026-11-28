@@ -1,0 +1,9 @@
+# If a `for of` let what it goes over flow into unseen code, as in the first version, Link could never tell a list that is only read from one that has left
+# The loop leaves a call by name for each key of the protocol, at the site of the operation that looks the key up: the iterator is opened on what is gone over, and each step is called on what that call gives. Nothing escapes in the summary.
+# RUN: summary f1
+# CHECK: call c0 v2 Name @@iterator this=Parameter 0 ()
+# CHECK: call c1 v5 Name "next" this=c0.0 () in-loop
+# CHECK: access [[value]] v5 Read c1.0 "value" -> [[value]]
+# RUN(KEPT): summary f1
+# KEPT-NOT: -> Unknown
+# PROGRAM-OF: for-of-over-a-list.ir

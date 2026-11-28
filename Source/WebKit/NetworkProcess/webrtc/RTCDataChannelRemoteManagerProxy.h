@@ -40,13 +40,13 @@ class NetworkConnectionToWebProcess;
 
 class RTCDataChannelRemoteManagerProxy final : public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any> {
 public:
-    static Ref<RTCDataChannelRemoteManagerProxy> create(NetworkProcess& networkProcess) { return adoptRef(*new RTCDataChannelRemoteManagerProxy(networkProcess)); }
+    static Ref<RTCDataChannelRemoteManagerProxy> create() { return adoptRef(*new RTCDataChannelRemoteManagerProxy); }
 
     void registerConnectionToWebProcess(NetworkConnectionToWebProcess&);
     void unregisterConnectionToWebProcess(NetworkConnectionToWebProcess&);
 
 private:
-    RTCDataChannelRemoteManagerProxy(NetworkProcess&);
+    RTCDataChannelRemoteManagerProxy();
 
     // IPC::WorkQueueMessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
@@ -61,12 +61,11 @@ private:
     void detectError(WebCore::RTCDataChannelIdentifier, WebCore::RTCErrorDetailType, const String&);
     void bufferedAmountIsDecreasing(WebCore::RTCDataChannelIdentifier, uint64_t amount);
 
-    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess(const IPC::Connection&);
+    NODELETE std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&);
 
     const Ref<WorkQueue> m_queue;
     HashMap<WebCore::ProcessIdentifier, IPC::Connection::UniqueID> m_webProcessConnections;
     HashMap<IPC::Connection::UniqueID, SharedPreferencesForWebProcess> m_sharedPreferencesForConnections;
-    const Ref<NetworkProcess> m_networkProcess;
 };
 
 } // namespace WebKit

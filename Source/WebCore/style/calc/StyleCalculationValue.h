@@ -36,8 +36,7 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct ZoomFactor;
 
@@ -48,7 +47,7 @@ struct EvaluationOptions;
 class Value : public RefCounted<Value> {
     WTF_DEPRECATED_MAKE_FAST_COMPACT_ALLOCATED(Value);
 public:
-    WEBCORE_EXPORT static Ref<Value> LEGACY_NODELETE create(Tree&&);
+    NODELETE WEBCORE_EXPORT static Ref<Value> create(Tree&&);
     WEBCORE_EXPORT ~Value();
 
     double evaluate(CSS::Range, double percentResolutionLength, ZoomFactor) const;
@@ -69,5 +68,4 @@ private:
 TextStream& operator<<(TextStream&, const Value&);
 
 } // namespace Calculation
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

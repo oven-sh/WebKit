@@ -84,7 +84,7 @@ gboolean WebViewTest::webProcessTerminated(WebKitWebView*, WebKitWebProcessTermi
 
 void WebViewTest::loadURI(const char* uri)
 {
-    m_activeURI = URL { String::fromUTF8(uri) }.string().utf8();
+    m_activeURI = makeUTF8CString(URL { String::fromUTF8(uri) }.string());
     webkit_web_view_load_uri(m_webView.get(), uri);
     g_assert_true(webkit_web_view_is_loading(m_webView.get()));
     ASSERT_CMP_CSTRING(webkit_web_view_get_uri(m_webView.get()), ==, m_activeURI);
@@ -95,7 +95,7 @@ void WebViewTest::loadHtml(const char* html, const char* baseURI, WebKitWebView*
     if (!baseURI)
         m_activeURI = "about:blank"_s;
     else
-        m_activeURI = URL { String::fromUTF8(baseURI) }.string().utf8();
+        m_activeURI = makeUTF8CString(URL { String::fromUTF8(baseURI) }.string());
 
     if (!webView)
         webView = m_webView.get();
@@ -118,7 +118,7 @@ void WebViewTest::loadBytes(GBytes* bytes, const char* mimeType, const char* enc
     if (!baseURI)
         m_activeURI = "about:blank"_s;
     else
-        m_activeURI = URL { String::fromUTF8(baseURI) }.string().utf8();
+        m_activeURI = makeUTF8CString(URL { String::fromUTF8(baseURI) }.string());
     webkit_web_view_load_bytes(m_webView.get(), bytes, mimeType, encoding, baseURI);
     g_assert_true(webkit_web_view_is_loading(m_webView.get()));
     ASSERT_CMP_CSTRING(webkit_web_view_get_uri(m_webView.get()), ==, m_activeURI);
@@ -126,7 +126,7 @@ void WebViewTest::loadBytes(GBytes* bytes, const char* mimeType, const char* enc
 
 void WebViewTest::loadRequest(WebKitURIRequest* request)
 {
-    m_activeURI = URL { String::fromUTF8(webkit_uri_request_get_uri(request)) }.string().utf8();
+    m_activeURI = makeUTF8CString(URL { String::fromUTF8(webkit_uri_request_get_uri(request)) }.string());
     webkit_web_view_load_request(m_webView.get(), request);
     g_assert_true(webkit_web_view_is_loading(m_webView.get()));
     ASSERT_CMP_CSTRING(webkit_web_view_get_uri(m_webView.get()), ==, m_activeURI);
@@ -134,7 +134,7 @@ void WebViewTest::loadRequest(WebKitURIRequest* request)
 
 void WebViewTest::loadAlternateHTML(const char* html, const char* contentURI, const char* baseURI)
 {
-    m_activeURI = URL { String::fromUTF8(contentURI) }.string().utf8();
+    m_activeURI = makeUTF8CString(URL { String::fromUTF8(contentURI) }.string());
     webkit_web_view_load_alternate_html(m_webView.get(), html, contentURI, baseURI);
     g_assert_true(webkit_web_view_is_loading(m_webView.get()));
     ASSERT_CMP_CSTRING(webkit_web_view_get_uri(m_webView.get()), ==, m_activeURI);
@@ -557,7 +557,21 @@ void WebViewTest::NetworkPolicyGuard::setErrorPolicy(WebKitTLSErrorsPolicy polic
 {
 #if ENABLE(2022_GLIB_API)
     webkit_network_session_set_tls_errors_policy(m_test->m_networkSession.get(), policy);
+    auto* manager = webkit_network_session_get_website_data_manager(m_test->m_networkSession.get());
 #else
     webkit_website_data_manager_set_tls_errors_policy(m_manager, policy);
+    auto* manager = m_manager;
 #endif
+
+    // The policy is sent to the network process without waiting for a reply. Fetching
+    // website data is a round trip on the same connection, so once it completes the
+    // network process has applied the policy and later requests from the web process use it.
+    bool didFetch = false;
+    webkit_website_data_manager_fetch(manager, WEBKIT_WEBSITE_DATA_COOKIES, nullptr, [](GObject* manager, GAsyncResult* result, gpointer userData) {
+        GList* dataList = webkit_website_data_manager_fetch_finish(WEBKIT_WEBSITE_DATA_MANAGER(manager), result, nullptr);
+        g_list_free_full(dataList, reinterpret_cast<GDestroyNotify>(webkit_website_data_unref));
+        *static_cast<bool*>(userData) = true;
+    }, &didFetch);
+    while (!didFetch)
+        g_main_context_iteration(nullptr, TRUE);
 }

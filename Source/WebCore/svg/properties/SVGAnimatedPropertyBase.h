@@ -47,7 +47,7 @@ public:
     // Manage the relationship with the owner.
     bool isAttached() const { return !!m_contextElement; }
     void detach() { m_contextElement = nullptr; }
-    SVGElement* LEGACY_NODELETE contextElement() const;
+    NODELETE SVGElement* contextElement() const;
 
     virtual String baseValAsString() const { return emptyString(); }
     virtual String animValAsString() const { return emptyString(); }
@@ -58,17 +58,17 @@ public:
     virtual std::optional<String> synchronize() { return std::nullopt; }
 
     // Control the animation life cycle.
-    bool isAnimating() const { return !m_animators.isEmptyIgnoringNullReferences(); }
+    bool isAnimating() const { return !m_animators.computeIsEmpty(); }
     virtual void startAnimation(SVGAttributeAnimator& animator) { m_animators.add(animator); }
     virtual void stopAnimation(SVGAttributeAnimator& animator) { m_animators.remove(animator); }
 
 protected:
     explicit SVGAnimatedPropertyBase(SVGElement*);
-    SVGPropertyOwner* LEGACY_NODELETE owner() const override;
+    NODELETE SVGPropertyOwner* owner() const override;
     void commitPropertyChange(SVGProperty*) override;
 
-    // Out of line because it reaches the owner's property registry, and SVGElement is incomplete
-    // here. Same reason as commitPropertyChange() above.
+    // Defined in the .cpp file because it calls into SVGElement, which this header only
+    // forward-declares. Same for commitPropertyChange() above.
     void resetBaseValToInitialValue();
 
     WeakPtr<SVGElement, WeakPtrImplWithEventTargetData> m_contextElement;

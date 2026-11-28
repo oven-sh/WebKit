@@ -178,8 +178,9 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
             } else if (selectedTreeElement instanceof WI.ResourceTreeElement || selectedTreeElement instanceof WI.ScriptTreeElement) {
                 let breakpoints = this._breakpointsBeneathTreeElement(selectedTreeElement);
                 this._removeAllBreakpoints(breakpoints);
-            } else if (selectedTreeElement.representedObject === SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject) {
-                let eventBreakpointsOnWindow = WI.domManager.eventListenerBreakpoints.filter((eventBreakpoint) => eventBreakpoint.eventListener.onWindow);
+            } else if (SourcesNavigationSidebarPanel._isWindowEventTargetRepresentedObject(selectedTreeElement.representedObject)) {
+                let windowTarget = selectedTreeElement.representedObject.target;
+                let eventBreakpointsOnWindow = WI.domManager.eventListenerBreakpoints.filter((eventBreakpoint) => eventBreakpoint.eventListener.onWindow && eventBreakpoint.eventListener.owningTarget === windowTarget);
                 for (let eventBreakpoint of eventBreakpointsOnWindow)
                     WI.domManager.removeBreakpointForEventListener(eventBreakpoint.eventListener);
             }
@@ -476,6 +477,27 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         return WI.sharedApp.debuggableType === WI.DebuggableType.ITML
             || WI.sharedApp.debuggableType === WI.DebuggableType.JavaScript
             || WI.sharedApp.debuggableType === WI.DebuggableType.ServiceWorker;
+    }
+
+    static _windowEventTargetRepresentedObject(target)
+    {
+        if (!target) {
+            SourcesNavigationSidebarPanel.__pageWindowEventTargetRepresentedObject ??= {__window: true, target: null};
+            return SourcesNavigationSidebarPanel.__pageWindowEventTargetRepresentedObject;
+        }
+
+        SourcesNavigationSidebarPanel.__frameWindowEventTargetRepresentedObjects ??= new WeakMap;
+        let representedObject = SourcesNavigationSidebarPanel.__frameWindowEventTargetRepresentedObjects.get(target);
+        if (!representedObject) {
+            representedObject = {__window: true, target};
+            SourcesNavigationSidebarPanel.__frameWindowEventTargetRepresentedObjects.set(target, representedObject);
+        }
+        return representedObject;
+    }
+
+    static _isWindowEventTargetRepresentedObject(representedObject)
+    {
+        return !!representedObject?.__window;
     }
 
     // Public
@@ -1140,6 +1162,19 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
 
     _addTarget(target)
     {
+        if (!WI.targetManager.isDebuggerThreadTarget(target))
+            return;
+
+        // The page target's row is added before the first frame target reveals site isolation.
+        if (target instanceof WI.FrameTarget && WI.pageTarget) {
+            let pageTargetTreeElement = this._findCallStackTargetTreeElement(WI.pageTarget);
+            if (pageTargetTreeElement) {
+                this._callStackTreeOutline.removeChild(pageTargetTreeElement);
+                if (this._mainTargetTreeElement === pageTargetTreeElement)
+                    this._mainTargetTreeElement = null;
+            }
+        }
+
         let treeElement = new WI.ThreadTreeElement(target);
         this._callStackTreeOutline.appendChild(treeElement);
 
@@ -1379,6 +1414,36 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         }
     }
 
+    _removeScriptsOfTarget(target)
+    {
+        const suppressOnDeselect = true;
+        const suppressSelectSibling = true;
+        let belongsToTarget = (treeElement) => treeElement instanceof WI.ScriptTreeElement && treeElement.representedObject.target === target;
+
+        for (let i = this._breakpointsTreeOutline.children.length - 1; i >= 0; --i) {
+            let treeElement = this._breakpointsTreeOutline.children[i];
+            if (belongsToTarget(treeElement))
+                this._breakpointsTreeOutline.removeChild(treeElement, suppressOnDeselect, suppressSelectSibling);
+        }
+
+        for (let folderTreeElement of [this._extensionScriptsFolderTreeElement, this._extraScriptsFolderTreeElement, this._anonymousScriptsFolderTreeElement]) {
+            if (!folderTreeElement)
+                continue;
+
+            for (let i = folderTreeElement.children.length - 1; i >= 0; --i) {
+                let treeElement = folderTreeElement.children[i];
+                if (!belongsToTarget(treeElement))
+                    continue;
+
+                folderTreeElement.representedObject.remove(treeElement.representedObject);
+                folderTreeElement.removeChild(treeElement, suppressOnDeselect, suppressSelectSibling);
+            }
+
+            if (!folderTreeElement.children.length && folderTreeElement.parent)
+                folderTreeElement.parent.removeChild(folderTreeElement, suppressOnDeselect, suppressSelectSibling);
+        }
+    }
+
     _addWorkerTargetWithMainResource(target)
     {
         console.assert(target.type === WI.TargetType.Worker);
@@ -1437,7 +1502,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
                 (treeElement) => treeElement.representedObject === WI.domDebuggerManager.allListenersBreakpoint,
                 (treeElement) => treeElement instanceof WI.EventBreakpointTreeElement,
                 (treeElement) => treeElement instanceof WI.DOMNodeTreeElement,
-                (treeElement) => treeElement.representedObject === SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject,
+                (treeElement) => SourcesNavigationSidebarPanel._isWindowEventTargetRepresentedObject(treeElement.representedObject),
                 (treeElement) => treeElement instanceof WI.DOMBreakpointTreeElement,
                 (treeElement) => treeElement.representedObject === WI.domDebuggerManager.allRequestsBreakpoint,
                 (treeElement) => treeElement instanceof WI.URLBreakpointTreeElement,
@@ -1515,13 +1580,13 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
             if (breakpoint.eventListener) {
                 let eventTargetTreeElement = null;
                 if (breakpoint.eventListener.onWindow) {
-                    if (!SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject)
-                        SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject = {__window: true};
+                    let windowTarget = breakpoint.eventListener.owningTarget;
+                    let windowRepresentedObject = SourcesNavigationSidebarPanel._windowEventTargetRepresentedObject(windowTarget);
 
-                    eventTargetTreeElement = this._breakpointsTreeOutline.findTreeElement(SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject);
+                    eventTargetTreeElement = this._breakpointsTreeOutline.findTreeElement(windowRepresentedObject);
                     if (!eventTargetTreeElement) {
-                        const subtitle = null;
-                        eventTargetTreeElement = new WI.GeneralTreeElement(["event-target-window"], WI.unlocalizedString("window"), subtitle, SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject);
+                        let subtitle = windowTarget?.displayName || null;
+                        eventTargetTreeElement = new WI.GeneralTreeElement(["event-target-window"], WI.unlocalizedString("window"), subtitle, windowRepresentedObject);
                         this._insertDebuggerTreeElement(eventTargetTreeElement, this._breakpointsTreeOutline);
                     }
                 } else if (breakpoint.eventListener.node)
@@ -1878,19 +1943,12 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
             if (!pauseData || !pauseData.nodeId)
                 break;
 
-            let domNode = WI.domManager.nodeForId(pauseData.nodeId);
-            let domBreakpoints = WI.domDebuggerManager.domBreakpointsForNode(domNode);
-            let domBreakpoint;
-            for (let breakpoint of domBreakpoints) {
-                if (breakpoint.type === pauseData.type) {
-                    domBreakpoint = breakpoint;
-                    break;
-                }
-            }
-
-            console.assert(domBreakpoint, "Missing DOM breakpoint of type for node", pauseData.type, domNode);
+            let domBreakpoint = WI.domDebuggerManager.domBreakpointForPauseData(pauseData, target);
+            console.assert(domBreakpoint, "Missing DOM breakpoint of type for node", pauseData.type, pauseData.nodeId);
             if (!domBreakpoint)
                 break;
+
+            let domNode = domBreakpoint.domNode;
 
             if (!this._updatePauseReasonForBreakpoint(domBreakpoint, WI.DOMBreakpoint.displayNameForType(domBreakpoint.type))) {
                 console.assert(false, "not reached");
@@ -1904,7 +1962,8 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
                 if (!nodeId)
                     return;
 
-                let node = WI.domManager.nodeForId(nodeId);
+                // The target node id is in the same id space as the breakpoint node's.
+                let node = domNode.owningTarget ? WI.domManager.nodeForIdInFrameTarget(nodeId, domNode.owningTarget) : WI.domManager.nodeForId(nodeId);
                 console.assert(node, "Missing node for id.", nodeId);
                 if (!node)
                     return;
@@ -1931,7 +1990,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
 
             if (pauseData.targetNodeId) {
                 console.assert(domBreakpoint.type === WI.DOMBreakpoint.Type.SubtreeModified || domBreakpoint.type === WI.DOMBreakpoint.Type.NodeRemoved);
-                console.assert(pauseData.targetNodeId !== domBreakpoint.domNode.id, pauseData.targetNodeId, domBreakpoint);
+                console.assert(pauseData.targetNodeId !== domNode.backendNodeId, pauseData.targetNodeId, domBreakpoint);
                 updateTargetDescription(pauseData.targetNodeId);
             } else if (pauseData.targetNode) { // COMPATIBILITY (iOS 13): `targetNode` was renamed to `targetNodeId` and was changed from a `Runtime.RemoteObject` to a `DOM.NodeId`.
                 console.assert(domBreakpoint.type === WI.DOMBreakpoint.Type.SubtreeModified);
@@ -1950,7 +2009,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
 
             let eventBreakpoint = null;
             if (pauseData.eventListenerId)
-                eventBreakpoint = WI.domManager.breakpointForEventListenerId(pauseData.eventListenerId);
+                eventBreakpoint = WI.domManager.breakpointForEventListenerId(pauseData.eventListenerId, pauseData.frameTarget ? target : null);
             if (!eventBreakpoint)
                 eventBreakpoint = WI.domDebuggerManager.listenerBreakpointsForEventName(pauseData.eventName)[0];
 
@@ -2163,7 +2222,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
             || treeElement instanceof WI.SymbolicBreakpointTreeElement)
             return;
 
-        if (treeElement.representedObject === SourcesNavigationSidebarPanel.__windowEventTargetRepresentedObject)
+        if (SourcesNavigationSidebarPanel._isWindowEventTargetRepresentedObject(treeElement.representedObject))
             return;
 
         if (treeElement instanceof WI.LocalResourceOverrideTreeElement) {
@@ -2519,6 +2578,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
 
     _handleFrameWasRemoved(event)
     {
+        // FIXME: <https://webkit.org/b/328686> Web Inspector: Sources tab in Path grouping mode rebuilds its whole tree for every removed frame
         if (WI.settings.resourceGroupingMode.value === WI.Resource.GroupingMode.Path)
             this._handleResourceGroupingModeChanged();
     }
@@ -2574,6 +2634,15 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
     {
         const suppressOnDeselect = true;
         const suppressSelectSibling = true;
+
+        // With Site Isolation, each frame target clears only its own scripts, so keep the rows of the other targets. Skipping
+        // the rest of the reset is fine: each worker's own TargetRemoved removes its row, and MainResourceDidChange adds the
+        // main frame's resources back.
+        let {target} = event.data;
+        if (target instanceof WI.FrameTarget && WI.settings.resourceGroupingMode.value !== WI.Resource.GroupingMode.Path) {
+            this._removeScriptsOfTarget(target);
+            return;
+        }
 
         for (let i = this._breakpointsTreeOutline.children.length - 1; i >= 0; --i) {
             let treeElement = this._breakpointsTreeOutline.children[i];
@@ -2909,8 +2978,13 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         if (workerTreeElement)
             workerTreeElement.parent.removeChild(workerTreeElement);
 
-        if (target instanceof WI.FrameTarget)
-            this._handleResourceGroupingModeChanged();
+        if (target instanceof WI.FrameTarget) {
+            // FIXME: <https://webkit.org/b/328686> Web Inspector: Sources tab in Path grouping mode rebuilds its whole tree for every removed frame
+            if (WI.settings.resourceGroupingMode.value === WI.Resource.GroupingMode.Path)
+                this._handleResourceGroupingModeChanged();
+            else
+                this._removeScriptsOfTarget(target);
+        }
 
         let callStackTreeElement = this._findCallStackTargetTreeElement(target);
         console.assert(callStackTreeElement);

@@ -1,0 +1,45 @@
+# If the walk of JSON.stringify asked only its operand, the `toJSON` of a class whose object lies two levels down, which no call names, would be left out of the executable, and what it does to `this` would be seen by nobody
+# class P { constructor(v) { this.x = v; }  toJSON() { this.x = 1; return 0; } }  JSON.stringify([{ inner: new P("a") }]);
+# The object that answers to `toJSON` is handed to code of the program by native code: it escapes, and the method is reached. What holds it is only read and keeps all that is known.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f2
+# CHECK-NOT: unreached
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L1 changes=[]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]
+layout L1 module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="toJSON"
+    v4 = FinishClass v1 layout=L0
+    v5 = String string="a"
+    v6 = Construct v4, -, v5
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewArray v8 contents=anything
+    v10 = Builtin builtin=JSON [isNotReadFromHolder]
+    v11 = Builtin builtin=JSONStringify [isNotReadFromHolder]
+    v12 = Call v11, v10, v9 calleeName="JSON.stringify"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f2 name="toJSON" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Integer integer=0
+    Return v3
+}

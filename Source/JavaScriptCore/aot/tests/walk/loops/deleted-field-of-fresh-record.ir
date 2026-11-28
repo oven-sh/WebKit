@@ -1,0 +1,51 @@
+# function cleared(n) { let sum = 0; for (let i = 0; i < n; i++) { const point = { x: i, y: 2, z: 3 }; delete point.y; sum += ("y" in point ? 1 : 0) + point.z; } return sum; }
+# Behind the delete the slot is known to be empty, so nothing needs the record.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: PropDelete
+# CHECK-NOT: NewObject
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="cleared"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="cleared" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = Integer integer=2
+    v8 = Integer integer=3
+    v9 = NewObject -, v4, v7, v8 layout=L0 fields=[0, 1, 2]
+    v10 = FinishObject v9
+    v11 = PropDelete v10 key="y"
+    v12 = PropHas v10 key="y"
+    v13 = ToBoolean v12
+    Branch v13 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v14):
+    v15 = Integer integer=1
+    Jump -> next b5(v15)
+  b4(v16):
+    v17 = Integer
+    Jump -> next b5(v17)
+  b5(v18):
+    v19 = PropGet v10 key="z"
+    v20 = Add v18, v19
+    v21 = Add v3, v20
+    v22 = Increment v4
+    Jump -> next b1(v21, v22)
+  b6():
+    Return v3
+}

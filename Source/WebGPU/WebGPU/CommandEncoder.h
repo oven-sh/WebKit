@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import "CommandBuffer.h"
 #import "CommandsMixin.h"
@@ -98,6 +102,8 @@ public:
     // std::nullopt is the rest of the buffer after the offset.
     void clearBuffer(Buffer&, uint64_t offset, std::optional<uint64_t> size);
     RefPtr<WebGPU::CommandBuffer> finish(const WebGPU::CommandBufferDescriptor&) final;
+    RefPtr<WebGPU::RenderPassEncoder> beginInvalidRenderPass(String&& error) final;
+    RefPtr<WebGPU::ComputePassEncoder> beginInvalidComputePass(String&& error) final;
     void insertDebugMarker(String&& markerLabel) final;
     void popDebugGroup() final;
     void pushDebugGroup(String&& groupLabel) final;
@@ -128,10 +134,11 @@ public:
 
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
     void finalizeBlitCommandEncoder();
-    static void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
-    static void clearTextureIfNeeded(Texture&, NSUInteger, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
+    static void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger, const Device&, id<MTLBlitCommandEncoder>, const CommandEncoder* _Nullable owningCommandEncoder = nullptr);
+    static void clearTextureIfNeeded(Texture&, NSUInteger, NSUInteger, const Device&, id<MTLBlitCommandEncoder>, const CommandEncoder* _Nullable owningCommandEncoder = nullptr);
     void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger);
     void makeInvalid(NSString*);
+    void makeInvalid(String&& error) final;
     void makeSubmitInvalid(NSString* = nil);
     void incrementBufferMapCount();
     void decrementBufferMapCount();
@@ -146,8 +153,9 @@ public:
     void addICB(id<MTLIndirectCommandBuffer>);
     void addTexture(id<MTLTexture>);
     void addTexture(const Texture&);
+    void addResidentResource(id<MTLResource>);
     void addSampler(const Sampler&);
-    id<MTLCommandBuffer> _Nullable LEGACY_NODELETE commandBuffer() const;
+    NODELETE id<MTLCommandBuffer> _Nullable commandBuffer() const;
     void setExistingEncoder(id<MTLCommandEncoder>);
 
     // IOGPU can only fit on the order of 37000 MTLRenderCommandEncoders in a single MTLCommandBuffer
@@ -165,14 +173,14 @@ public:
     void encodeDeferredRenderPassTimestamps(MTLRenderPassDescriptor*);
     Ref<RenderPassEncoder> createRenderPassEncoder(const WebGPU::RenderPassDescriptor&, NSUInteger visibilityResultBufferSize, bool depthReadOnly, bool stencilReadOnly, id<MTLBuffer> _Nullable visibilityResultBuffer, uint64_t maxDrawCount, MTLRenderPassDescriptor*);
     void generateInvalidEncoderStateError();
-    bool LEGACY_NODELETE validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
+    NODELETE bool validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
     void clearTracking();
     bool trackEncoderForBuffer(const Buffer&, TrackedResourceContainer&);
     void trackEncoderForTexture(const Texture&, TrackedResourceContainer&);
     void trackEncoderForTextureView(const TextureView&, TrackedResourceContainer&);
     void trackEncoderForExternalTexture(const ExternalTexture&, TrackedResourceContainer&);
     void trackEncoderForQuerySet(const QuerySet&, TrackedResourceContainer&);
-    static void trackEncoder(CommandEncoder&, HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>&);
+    static void trackEncoder(CommandEncoder&, HashSet<uint64_t>&);
     static size_t computeSize(TrackedResourceContainer&, const Device&);
     uint64_t uniqueId() const { return m_uniqueId; }
     NSMutableSet<id<MTLCounterSampleBuffer>> * _Nullable timestampBuffers() const { return m_retainedTimestampBuffers; };
@@ -181,13 +189,14 @@ public:
     bool useResidencySet(id<MTLResidencySet>);
 #endif
     void skippedDrawIndexedValidation(uint64_t bufferIdentifier, DrawIndexCacheContainerIterator);
+    void skippedBundleIndirectDrawValidation(uint64_t bufferIdentifier, ReusedIndirectIndexedDraw&&);
     void rebindSamplersPreCommit(const BindGroup&);
 
 private:
     CommandEncoder(id<MTLCommandBuffer>, Device&, uint64_t uniqueId);
     CommandEncoder(Device&);
 
-    bool LEGACY_NODELETE validatePopDebugGroup() const;
+    NODELETE bool validatePopDebugGroup() const;
 
     NSString * _Nullable validateFinishError() const;
     NSString * _Nullable errorValidatingCopyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, const Buffer& destination, uint64_t destinationOffset, uint64_t size);
@@ -221,7 +230,8 @@ private:
     HashSet<RefPtr<const Sampler>> m_retainedSamplers;
     NSMutableSet<id<MTLCounterSampleBuffer>> * _Nullable m_retainedTimestampBuffers { nil };
     Vector<Function<bool(CommandBuffer&, CommandEncoder&)>> m_onCommitHandlers;
-    HashMap<uint64_t, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_skippedDrawIndexedValidationKeys;
+    HashMap<uint64_t, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>>> m_skippedDrawIndexedValidationKeys;
+    HashMap<uint64_t, Vector<ReusedIndirectIndexedDraw>> m_reusedIndirectIndexedDraws;
     Vector<Ref<const BindGroup>> m_bindGroups;
     Vector<Ref<const Buffer>> m_trackedBuffers;
     Vector<Ref<const Texture>> m_trackedTextures;
@@ -234,7 +244,9 @@ private:
     id<MTLSharedEvent> _Nullable m_sharedEvent { nil };
     uint64_t m_sharedEventSignalValue { 0 };
     const Ref<Device> m_device;
-    uint64_t m_uniqueId;
+    // const so that a constructor which forgets to initialize this is a compile error rather than
+    // an uninitialized read in ~CommandEncoder(). rdar://178679545
+    const uint64_t m_uniqueId;
 #if ENABLE(WEBGPU_BY_DEFAULT)
     uint32_t m_currentResidencySetCount { 0 };
 #endif

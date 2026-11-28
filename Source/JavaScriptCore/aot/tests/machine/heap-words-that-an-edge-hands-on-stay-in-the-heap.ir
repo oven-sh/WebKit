@@ -1,0 +1,28 @@
+# No walk runs: the Code is written out. The heap words are handed along an edge and read under the name of a parameter: a slot of the frame has no value that could be handed on, so they stay a cell.
+# RUN: emit-code
+# CHECK: unit f1:Body
+# CHECK-NOT: SlotBase
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=3 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v2 @Void = PutHeapFrameWord v1, v0 [remembersFrame] traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b1(v1)
+#   b1(v3: anything?UndescribedNativeResult @JSValue):
+#     v4: anything @JSValue = GetHeapFrameWord v3 valueType=anything traits=[mayTouchMemory]
+#     Return v4
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="kept" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

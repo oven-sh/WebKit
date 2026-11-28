@@ -48,7 +48,7 @@ typedef std::unique_ptr<typename std::remove_pointer<gcry_sexp_t>::type, PAL::GC
 #endif
 
 #if USE(OPENSSL)
-#include "crypto/openssl/OpenSSLCryptoUniquePtr.h"
+#include <WebCore/OpenSSLCryptoUniquePtr.h>
 typedef EVP_PKEY* PlatformRSAKey;
 typedef WebCore::EvpPKeyPtr PlatformRSAKeyContainer;
 #endif
@@ -73,7 +73,7 @@ public:
     static RefPtr<CryptoKeyRSA> create(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, const CryptoKeyRSAComponents&, bool extractable, CryptoKeyUsageBitmap);
     virtual ~CryptoKeyRSA() = default;
 
-    bool LEGACY_NODELETE isRestrictedToHash(CryptoAlgorithmIdentifier&) const;
+    NODELETE bool isRestrictedToHash(CryptoAlgorithmIdentifier&) const;
 
     size_t keySizeInBits() const;
 

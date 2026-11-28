@@ -7,26 +7,33 @@
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
-#include "AOTIRTestSupport.h"
-#include "AOTIdentifierNumbering.h"
+#include "AOTIRProgram.h"
 #include "AOTImageTestSupport.h"
+#include "AOTImageText.h"
+#include "AOTLimits.h"
+#include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRegExpSummary.h"
-#include "AOTStringUses.h"
+#include "AOTStubCatalog.h"
+#include "AOTTestHarness.h"
 #include "AOTTextEncoder.h"
 #include "AOTVector.h"
 #include "JSLock.h"
+#include "RegExp.h"
+#include "RegExpInlines.h"
 #include "VM.h"
 #include "YarrPattern.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <initializer_list>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
@@ -44,7 +51,6 @@ struct Pattern {
     String text;
     RegExpFlags flags { };
     bool fitsCodeLimits { true };
-    // For a pattern that is no literal: the build put the text together from constants.
     bool isEvaluated { false };
 };
 
@@ -53,24 +59,33 @@ struct RequestWithForm {
     Form form;
 };
 
+struct TextOfRegExpImage {
+    Vector<ImageStringWord> strings;
+    Vector<uint32_t> listedStrings;
+    Vector<uint8_t> characters;
+};
+
+enum class CodeOfRegExpImage : bool { Sketched, Compiled };
+
 class RegExpImage {
     WTF_MAKE_NONCOPYABLE(RegExpImage);
 public:
-    RegExpImage(std::span<const Pattern> literals, std::span<const Pattern> candidates = { }, const TestOptions& = { });
-    RegExpImage(std::initializer_list<Pattern> literals, std::initializer_list<Pattern> candidates = { }, const TestOptions& = { });
+    RegExpImage(std::span<const Pattern> literals, const TestOptions& = { }, std::span<const Pattern> predictedTexts = { }, CodeOfRegExpImage = CodeOfRegExpImage::Sketched);
+    RegExpImage(std::initializer_list<Pattern> literals, const TestOptions& = { }, std::initializer_list<Pattern> predictedTexts = { }, CodeOfRegExpImage = CodeOfRegExpImage::Sketched);
     ~RegExpImage();
 
     VM& vm() { return *m_vm; }
     RegExpRecords records() const { return RegExpRecords(*image); }
     std::span<ImageRegExpHash> hashes();
-    size_t indexOfRequest(const String& text, RegExpFlags, RegExpRequestOrigin) const;
+    size_t indexOfRequest(const String& text, RegExpFlags) const;
     const RegExpSummary& summaryOf(size_t request);
 
-    Typed::TestProgram program;
     BuildContext context;
+    std::unique_ptr<Typed::Program> program;
     RegExpRequests requests;
     CompiledRegExps compiled;
     RegExpSection section;
+    StringNumbers strings;
     RegExpSections sections;
     AlignedBytes bytes;
     std::unique_ptr<Image> image;
@@ -78,10 +93,12 @@ public:
 private:
     RequestWithForm makeRequest(const Pattern&, RegExpRequestOrigin);
     Vector<RegExpRequest> makeRequests(std::span<const Pattern>, RegExpRequestOrigin originUnlessEvaluated);
-    EncodedText encodeNamedText();
+    void compileAndLayOut();
+    TextOfRegExpImage encodeNamedText();
 
     RefPtr<VM> m_vm;
     std::optional<JSLockHolder> m_lock;
+    std::optional<ExecutableCopy> m_executableCode;
 };
 
 } // anonymous namespace
@@ -95,6 +112,8 @@ static AlignedBytes imageWithSections(std::initializer_list<std::pair<ImageSecti
         auto content = std::ranges::find(contents, static_cast<ImageSection>(index), [](auto& entry) { return entry.first; });
         size_t size = content == contents.end() ? 0 : content->second.size();
         header.sections[index] = { static_cast<uint32_t>(offset), static_cast<uint32_t>(size) };
+        if (static_cast<ImageSection>(index) == ImageSection::Strings)
+            header.numbers.numberOfStringWords = static_cast<uint32_t>(size / sizeof(ImageStringWord));
         offset = roundUpToMultipleOf<imageSectionAlignment>(offset + size);
     }
     header.codeOffset = roundUpToMultipleOf<imagePageSize>(offset);
@@ -122,12 +141,11 @@ static Form formFor(const RegExpSummary& summary, bool fitsCodeLimits)
 
 RequestWithForm RegExpImage::makeRequest(const Pattern& pattern, RegExpRequestOrigin origin)
 {
-    Typed::StringTable& strings = program.program.strings;
+    Typed::StringTable& strings = program->strings;
     RegExpRequest request {
         .pattern = strings.intern(StringView(pattern.text)),
         .flags = pattern.flags,
         .origin = origin,
-        .sites = { RegExpSite { FunctionID(0u), ValueID(0u) } },
     };
     const RegExpSummary& summary = context.regExpSummaries().summaryOf(request.pattern, request.flags, pattern.text);
     AOT_TEST_CHECK(summary.isValid());
@@ -163,55 +181,70 @@ Vector<RegExpRequest> RegExpImage::makeRequests(std::span<const Pattern> pattern
     return result;
 }
 
-EncodedText RegExpImage::encodeNamedText()
+TextOfRegExpImage RegExpImage::encodeNamedText()
 {
-    // Only the image writer makes headers of strings, and this image is put together by hand. So its strings are of the kind that has none.
-    StringUses uses;
-    BitVector stringsOnlyShown;
+    BitVector namedStrings;
     requests.forEachString([&](StringID string) {
-        stringsOnlyShown.set(string.index());
+        namedStrings.set(string.index());
     });
-    IdentifierNumbering identifiers;
-    StringConstantNumbering constants;
-    return encodeText({ program.program, uses, identifiers, constants, stringsOnlyShown, &stringsOnlyShown }, context);
+
+    TextOfRegExpImage text;
+    text.strings = Vector<ImageStringWord>(FillWith { }, program->strings.size(), ImageStringWord { 0 });
+    for (size_t index : namedStrings) {
+        DecodedString string = decodeForImage(program->strings[StringID(index)]);
+        if (string.is16Bit() && text.characters.size() % sizeof(char16_t))
+            text.characters.append(0);
+        ImageLongString range { static_cast<uint32_t>(text.characters.size()), string.length() };
+        text.characters.append(string.bytes());
+
+        uint32_t firstWord = static_cast<uint32_t>(text.listedStrings.size());
+        AOT_TEST_CHECK(firstWord <= ImageString::hashMask);
+        text.listedStrings.grow(firstWord + ImageListedString::numberOfWords(range));
+        ImageListedString::write(text.listedStrings.mutableSpan().subspan(firstWord), range);
+        text.strings[index] = { ImageString::hasTextFlag | ImageString::hasNoHeaderFlag | (string.is16Bit() ? ImageString::is16BitFlag : 0) | firstWord };
+    }
+    return text;
 }
 
-RegExpImage::RegExpImage(std::span<const Pattern> literals, std::span<const Pattern> candidates, const TestOptions& options)
-    : context(wireOptions(options))
+void RegExpImage::compileAndLayOut()
 {
+    compiled = compileRegExps(*program, requests, context);
+    auto templates = CodeTemplates::create(context.assemblerPolicy(), &context);
+    AOT_TEST_CHECK(templates.has_value());
+    std::optional<RegExpSection> laidOut = layOutRegExpSection(compiled.results.span(), context.assemblerPolicy(), *templates, &context);
+    AOT_TEST_CHECK(laidOut.has_value());
+    section = WTF::move(*laidOut);
+    if (ExecutableAllocator::singleton().isValid())
+        m_executableCode.emplace(section.bytes.span());
+}
+
+RegExpImage::RegExpImage(std::span<const Pattern> literals, const TestOptions& options, std::span<const Pattern> predictedTexts, CodeOfRegExpImage code)
+    : context(wireOptions(options))
+    , program(Typed::createEmptyProgram(context))
+{
+    AOT_TEST_CHECK(program);
     Vector<RegExpRequest> literalRequests = makeRequests(literals, RegExpRequestOrigin::Literal);
-    requests = RegExpRequests(WTF::move(literalRequests), makeRequests(candidates, RegExpRequestOrigin::Candidate));
-    sections = encodeRegExpRecords({ requests, compiled, section }, context);
-    EncodedText text = encodeNamedText();
+    requests = RegExpRequests(WTF::move(literalRequests), makeRequests(predictedTexts, RegExpRequestOrigin::Candidate));
+    if (code == CodeOfRegExpImage::Compiled)
+        compileAndLayOut();
+    BitVector everyString(program->strings.size());
+    for (size_t index = 0; index < program->strings.size(); ++index)
+        everyString.quickSet(index);
+    strings = StringNumbers(everyString, { }, program->strings.size());
+    sections = encodeRegExpRecords({ requests, compiled, section, strings }, context);
+    TextOfRegExpImage text = encodeNamedText();
     AOT_TEST_CHECK(!context.diagnostics().hasErrors());
 
-    std::span encodedStrings = spanReinterpretCast<const ImageString>(text.strings.span());
-    Vector<uint32_t> listedStrings;
-    Vector<ImageStringWord> stringsInImage(encodedStrings.size(), [&](size_t index) {
-        const ImageString& string = encodedStrings[index];
-        if (!string.hasText())
-            return string.inImage(0);
-        ImageLongString range = string.range(spanReinterpretCast<const ImageLongString>(text.longStrings.span()));
-        uint32_t firstWord = static_cast<uint32_t>(listedStrings.size());
-        listedStrings.grow(firstWord + ImageListedString::numberOfWords(range));
-        ImageListedString::write(listedStrings.mutableSpan().subspan(firstWord), range);
-        return string.inImage(firstWord);
-    });
-    std::span encodedIdentifiers = spanReinterpretCast<const ImageIdentifier>(text.identifiers.span());
-    Vector<ImageIdentifierWord> identifiersInImage(encodedIdentifiers.size(), [&](size_t number) {
-        return encodedIdentifiers[number].inImage();
-    });
     bytes = imageWithSections({
-        { ImageSection::Strings, asByteSpan(stringsInImage.span()) },
-        { ImageSection::LongStrings, asByteSpan(listedStrings.span()) },
-        { ImageSection::Text, text.text.span() },
-        { ImageSection::Identifiers, asByteSpan(identifiersInImage.span()) },
+        { ImageSection::Strings, asByteSpan(text.strings.span()) },
+        { ImageSection::LongStrings, asByteSpan(text.listedStrings.span()) },
+        { ImageSection::Text, text.characters.span() },
         { ImageSection::RegExps, sections.records.span() },
         { ImageSection::RegExpHashes, sections.hashes.span() },
         { ImageSection::RegExpDetails, sections.details.span() },
-    }, 64 * (compiled.results.size() + 2));
+    }, code == CodeOfRegExpImage::Compiled ? section.bytes.size() : 64 * (compiled.results.size() + 2));
     std::span<const uint8_t> imageBytes = bytes.span();
-    image = Image::create(imageBytes, imageBytes.data() + reinterpret_cast<const ImageHeader*>(imageBytes.data())->codeOffset);
+    image = Image::create(imageBytes, m_executableCode ? m_executableCode->start() : imageBytes.data() + reinterpret_cast<const ImageHeader*>(imageBytes.data())->codeOffset);
 
     m_vm = VM::create();
     m_lock.emplace(*m_vm);
@@ -219,8 +252,8 @@ RegExpImage::RegExpImage(std::span<const Pattern> literals, std::span<const Patt
     m_vm->aotState().hasCompiledCode = true;
 }
 
-RegExpImage::RegExpImage(std::initializer_list<Pattern> literals, std::initializer_list<Pattern> candidates, const TestOptions& options)
-    : RegExpImage(std::span<const Pattern> { literals }, std::span<const Pattern> { candidates }, options)
+RegExpImage::RegExpImage(std::initializer_list<Pattern> literals, const TestOptions& options, std::initializer_list<Pattern> predictedTexts, CodeOfRegExpImage code)
+    : RegExpImage(std::span<const Pattern> { literals }, options, std::span<const Pattern> { predictedTexts }, code)
 {
 }
 
@@ -238,11 +271,11 @@ std::span<ImageRegExpHash> RegExpImage::hashes()
     return spanReinterpretCast<ImageRegExpHash>(bytes.span().subspan(range.offset, range.size));
 }
 
-size_t RegExpImage::indexOfRequest(const String& text, RegExpFlags flags, RegExpRequestOrigin origin) const
+size_t RegExpImage::indexOfRequest(const String& text, RegExpFlags flags) const
 {
     std::span<const RegExpRequest> all = requests.all();
     auto request = std::ranges::find_if(all, [&](const RegExpRequest& candidate) {
-        return candidate.origin == origin && candidate.flags == flags && program.program.strings.toWTFString(candidate.pattern) == text;
+        return candidate.flags == flags && program->strings.toWTFString(candidate.pattern) == text;
     });
     AOT_TEST_CHECK(request != all.end());
     return static_cast<size_t>(request - all.begin());
@@ -278,7 +311,7 @@ static const ImageRegExp& checkFound(RegExpImage& regExps, const String& lookup,
 
 static const ImageRegExp& checkFoundLiteral(RegExpImage& regExps, const String& pattern, RegExpFlags flags = { })
 {
-    size_t request = regExps.indexOfRequest(pattern, flags, RegExpRequestOrigin::Literal);
+    size_t request = regExps.indexOfRequest(pattern, flags);
     const ImageRegExp& record = checkFound(regExps, pattern, flags, request);
     AOT_TEST_CHECK(regExps.records().idOf(record).index() == request);
     return record;
@@ -295,6 +328,12 @@ static String repeatedPattern(unsigned length, char16_t unit, char16_t last = '+
     Vector<char16_t> units(FillWith { }, length, unit);
     units.last() = last;
     return unit <= 0xff && last <= 0xff ? String::make8Bit(units.span()) : String(units.span());
+}
+
+static String regExpNestedTooDeepForMetadata()
+{
+    unsigned depth = static_cast<unsigned>(Limits::regExpParenthesesDepth) + 1;
+    return makeString(repeatedPattern(depth, '(', '('), "a+"_s, repeatedPattern(depth, ')', ')'));
 }
 
 static String narrowString(std::u16string_view characters)
@@ -324,8 +363,8 @@ static void testFlags()
     RegExpImage regExps({ { "a+b"_s }, { "a+b"_s, Yarr::Flags::IgnoreCase } });
     AOT_TEST_CHECK(regExps.records().size() == 2);
 
-    size_t plain = regExps.indexOfRequest("a+b"_s, { }, RegExpRequestOrigin::Literal);
-    size_t ignoringCase = regExps.indexOfRequest("a+b"_s, Yarr::Flags::IgnoreCase, RegExpRequestOrigin::Literal);
+    size_t plain = regExps.indexOfRequest("a+b"_s, { });
+    size_t ignoringCase = regExps.indexOfRequest("a+b"_s, Yarr::Flags::IgnoreCase);
     AOT_TEST_CHECK(plain != ignoringCase);
     checkFound(regExps, "a+b"_s, { }, plain);
     checkFound(regExps, "a+b"_s, Yarr::Flags::IgnoreCase, ignoringCase);
@@ -345,8 +384,8 @@ static void testWideStringOfNarrowCharacters()
 
 static void testForms()
 {
-    String nested = "((a+))"_s;
-    RegExpImage regExps({ { "c+d"_s }, { "abc"_s }, { "e+f"_s, { }, false }, { nested } }, { }, { .loweredLimit = LimitID::RegExpNestingDepthWithCode, .loweredLimitValue = 1 });
+    String nested = regExpNestedTooDeepForMetadata();
+    RegExpImage regExps({ { "c+d"_s }, { "abc"_s }, { "e+f"_s, { }, false }, { nested } });
     AOT_TEST_CHECK(regExps.records().size() == 4);
     AOT_TEST_CHECK(checkFoundLiteral(regExps, "c+d"_s).form() == Form::Code);
     AOT_TEST_CHECK(checkFoundLiteral(regExps, "abc"_s).form() == Form::Atom);
@@ -356,38 +395,37 @@ static void testForms()
 
     const ImageRegExp* withoutMetadata = findRegExpRecord(regExps.vm(), nested, { });
     AOT_TEST_CHECK(withoutMetadata && withoutMetadata->form() == Form::NoMetadata);
+    AOT_TEST_CHECK(withoutMetadata->isLiteral);
     AOT_TEST_CHECK(!withoutMetadata->numSubpatterns && !withoutMetadata->minimumSize && !withoutMetadata->details);
     AOT_TEST_CHECK(regExps.sections.maxOutputSize == regExpOutputSizeWithoutSubpatterns);
 }
 
 static void testCandidates()
 {
-    String nested = "((n+))"_s;
-    RegExpImage regExps({ { "l+m"_s } }, { { "c+0"_s }, { "c+1"_s, { }, false }, { "c+(2)"_s }, { "abc"_s }, { nested } }, { .loweredLimit = LimitID::RegExpNestingDepthWithCode, .loweredLimitValue = 1 });
+    String nested = regExpNestedTooDeepForMetadata();
+    RegExpImage regExps({ { "l+m"_s } }, { }, { { "c+0"_s }, { "c+1"_s, { }, false }, { "c+(2)"_s }, { "abc"_s }, { nested } });
     AOT_TEST_CHECK(regExps.records().size() == 4);
     checkFoundLiteral(regExps, "l+m"_s);
     for (const String& pattern : { String("c+0"_s), String("c+(2)"_s), String("abc"_s) })
-        checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }, RegExpRequestOrigin::Candidate));
-    // Flow names far more texts than the program creates, so one that gets no code gets no record either.
+        checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }));
     AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
     AOT_TEST_CHECK(regExps.sections.maxOutputSize == 4);
 }
 
 static void testEvaluatedTexts()
 {
-    String nested = "((n+))"_s;
-    RegExpImage regExps({ { "l+m"_s } }, {
+    String nested = regExpNestedTooDeepForMetadata();
+    RegExpImage regExps({ { "l+m"_s } }, { }, {
         { .text = "e+0"_s, .isEvaluated = true },
         { .text = "e+1"_s, .fitsCodeLimits = false, .isEvaluated = true },
         { .text = "c+1"_s, .fitsCodeLimits = false },
         { .text = "abc"_s, .isEvaluated = true },
         { .text = nested, .isEvaluated = true },
-    }, { .loweredLimit = LimitID::RegExpNestingDepthWithCode, .loweredLimitValue = 1 });
+    });
     AOT_TEST_CHECK(regExps.records().size() == 4);
     checkFoundLiteral(regExps, "l+m"_s);
     for (const String& pattern : { String("e+0"_s), String("e+1"_s), String("abc"_s) })
-        checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }, RegExpRequestOrigin::Evaluated));
-    // With the record the run time creates the object without parsing the text. A record without metadata would save it nothing.
+        checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }));
     AOT_TEST_CHECK(findRegExpRecord(regExps.vm(), "e+1"_s, { })->form() == Form::NoCode);
     AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
 }
@@ -400,10 +438,10 @@ static void testOrder()
     RegExpImage regExps(patterns.span());
 
     RegExpRecords records = regExps.records();
-    std::span<const RegExpRequest> literals = regExps.requests.literals();
-    AOT_TEST_CHECK(records.size() == patterns.size() && literals.size() == patterns.size());
+    std::span<const RegExpRequest> requests = regExps.requests.all();
+    AOT_TEST_CHECK(records.size() == patterns.size() && requests.size() == patterns.size());
     for (uint32_t index = 0; index < records.size(); ++index)
-        AOT_TEST_CHECK(records.at(RegExpRecordID(index)).pattern == literals[index].pattern.index());
+        AOT_TEST_CHECK(records.at(RegExpRecordID(index)).pattern == requests[index].pattern.index());
 
     std::span<ImageRegExpHash> hashes = regExps.hashes();
     AOT_TEST_CHECK(hashes.size() == patterns.size());
@@ -518,7 +556,7 @@ static void testNamedGroups()
 static void checkCharacterSetRoundTrip(const String& text, Yarr::SpecificPattern specificPattern, std::initializer_list<std::pair<char16_t, bool>> members)
 {
     RegExpImage regExps({ { "(?<n>a+)"_s }, { text } });
-    size_t request = regExps.indexOfRequest(text, { }, RegExpRequestOrigin::Literal);
+    size_t request = regExps.indexOfRequest(text, { });
     const ImageRegExp& record = checkFoundLiteral(regExps, text);
     AOT_TEST_CHECK(record.specificPattern() == specificPattern && record.hasCharacterSet());
     AOT_TEST_CHECK(regExps.summaryOf(request).characterSet);
@@ -549,18 +587,167 @@ static void testCharacterSets()
 
 static void testEncodingIsDeterministic()
 {
-    std::array<Pattern, 5> literals { Pattern { "ab+c"_s }, Pattern { "abc"_s }, Pattern { "(?<n>a+)|(?<n>b+)"_s }, Pattern { "[a-z\\u0400-\\u04ff]+"_s }, Pattern { "ab+c"_s, Yarr::Flags::IgnoreCase } };
-    std::array<Pattern, 4> candidates { Pattern { "c+0"_s }, Pattern { "c+1"_s, { }, false }, Pattern { .text = "e+1"_s, .fitsCodeLimits = false, .isEvaluated = true }, Pattern { .text = "e+2"_s, .isEvaluated = true } };
-    RegExpImage first(literals, candidates);
-    RegExpImage second(literals, candidates, { .threadCount = 4 });
+    std::array<Pattern, 6> literals { Pattern { "ab+c"_s }, Pattern { "abc"_s }, Pattern { "(?<n>a+)|(?<n>b+)"_s }, Pattern { "[a-z\\u0400-\\u04ff]+"_s }, Pattern { "ab+c"_s, Yarr::Flags::IgnoreCase }, Pattern { "e+f"_s, { }, false } };
+    RegExpImage first(literals);
+    RegExpImage second(literals, { .threadCount = 4 });
     AOT_TEST_CHECK(!first.sections.records.isEmpty() && !first.sections.hashes.isEmpty() && !first.sections.details.isEmpty());
     AOT_TEST_CHECK(first.sections.records == second.sections.records);
     AOT_TEST_CHECK(first.sections.hashes == second.sections.hashes);
     AOT_TEST_CHECK(first.sections.details == second.sections.details);
     AOT_TEST_CHECK(first.sections.maxOutputSize == second.sections.maxOutputSize);
 
-    RegExpSections again = encodeRegExpRecords({ first.requests, first.compiled, first.section }, first.context);
+    RegExpSections again = encodeRegExpRecords({ first.requests, first.compiled, first.section, first.strings }, first.context);
     AOT_TEST_CHECK(again.records == first.sections.records && again.hashes == first.sections.hashes && again.details == first.sections.details);
+}
+
+static void testPatternsForWhole8BitSubjects()
+{
+    auto matchesOnlyWhole8BitSubjects = [](ASCIILiteral pattern, RegExpFlags flags = { }) {
+        RegExpSummary summary = summarizeRegExp(pattern, flags);
+        AOT_TEST_CHECK(summary.canBeCreated());
+        return summary.matchesOnlyWhole8BitSubjects;
+    };
+    for (ASCIILiteral pattern : { "^[a-z]+$"_s, "^\\d{4}-\\d{2}$"_s, "^[a-z\\xe9]+$"_s, "^(?:a+|b+)c$"_s, "^(a+)-\\1$"_s, "^(?=.)\\w+$"_s, "^(?=([a-z]))\\1\\w*$"_s })
+        AOT_TEST_CHECK(matchesOnlyWhole8BitSubjects(pattern));
+    for (Yarr::Flags flag : { Yarr::Flags::Sticky, Yarr::Flags::Unicode, Yarr::Flags::UnicodeSets })
+        AOT_TEST_CHECK(matchesOnlyWhole8BitSubjects("^[a-z]+$"_s, flag));
+    AOT_TEST_CHECK(matchesOnlyWhole8BitSubjects("^\\p{ASCII}+$"_s, Yarr::Flags::Unicode));
+    AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^\\p{L}+$"_s, Yarr::Flags::Unicode));
+    AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[^a-z]+$"_s, Yarr::Flags::UnicodeSets));
+    AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[\\q{ab}c]+$"_s, Yarr::Flags::UnicodeSets));
+
+    for (ASCIILiteral pattern : { "[a-z]+"_s, "^[a-z]+"_s, "[a-z]+$"_s, "^a+$|b+"_s })
+        AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects(pattern));
+    AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[a-z]+$"_s, Yarr::Flags::Multiline));
+    for (ASCIILiteral pattern : { "^[^a-z]+$"_s, "^.+$"_s, "^\\s+$"_s, "^\\S+$"_s, "^\\W+$"_s, "^\\D+$"_s, "^[a-z\\u0100]+$"_s, "^a\\u4e2d+$"_s, "^(?i:k)+$"_s, "^(?=(.*))\\1$"_s })
+        AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects(pattern));
+    AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[a-z]+$"_s, Yarr::Flags::IgnoreCase));
+}
+
+static RegExpSectionItem::Kind kindOfCodeAt(const RegExpSection& section, uint32_t offset)
+{
+    auto item = std::ranges::find_if(section.items, [&](const RegExpSectionItem& candidate) {
+        return candidate.offset == offset && candidate.kind != RegExpSectionItem::Kind::DuplicateBody;
+    });
+    AOT_TEST_CHECK(item != section.items.end());
+    return item->kind;
+}
+
+static void testAnchored8BitLiteralHasOneBody()
+{
+    using Kind = RegExpSectionItem::Kind;
+    struct Literal {
+        ASCIILiteral pattern;
+        RegExpFlags flags;
+        bool hasCodeFor8BitSubjectsAlone;
+    };
+    const Literal literals[] = {
+        { "^[a-z]+$"_s, { }, true },
+        { "^([a-z]+)-(\\d+)$"_s, { }, true },
+        { "^[a-z]+$"_s, Yarr::Flags::Sticky, true },
+        { "^[a-z]+$"_s, Yarr::Flags::Unicode, true },
+        { "^[a-z]+$"_s, Yarr::Flags::IgnoreCase, false },
+        { "^[a-z]+"_s, { }, false },
+        { "^[^a-z]+$"_s, { }, false },
+    };
+    Vector<Pattern> patterns;
+    for (const Literal& literal : literals)
+        patterns.append({ literal.pattern, literal.flags });
+    RegExpImage regExps(patterns.span(), { }, { }, CodeOfRegExpImage::Compiled);
+
+    unsigned numberOfBodies = 0;
+    for (const Literal& literal : literals) {
+        size_t request = regExps.indexOfRequest(literal.pattern, literal.flags);
+        const CompiledRegExp& compiled = regExps.compiled.results[request];
+        AOT_TEST_CHECK(regExps.requests.all()[request].origin == RegExpRequestOrigin::Literal);
+        bool hasCodeFor16BitSubjects = !!compiled.code[1];
+        AOT_TEST_CHECK(compiled.form == Form::Code && compiled.code[0] && hasCodeFor16BitSubjects != literal.hasCodeFor8BitSubjectsAlone);
+        AOT_TEST_CHECK(checkFoundLiteral(regExps, literal.pattern, literal.flags).hasCodeFor8BitSubjectsAlone == literal.hasCodeFor8BitSubjectsAlone);
+
+        auto [entryFor8Bit, entryFor16Bit] = regExps.section.entries[request];
+        AOT_TEST_CHECK(kindOfCodeAt(regExps.section, entryFor8Bit) == Kind::Body);
+        AOT_TEST_CHECK(kindOfCodeAt(regExps.section, entryFor16Bit) == (literal.hasCodeFor8BitSubjectsAlone ? Kind::Routine : Kind::Body));
+        numberOfBodies += literal.hasCodeFor8BitSubjectsAlone ? 1 : 2;
+    }
+    auto placedBodies = std::ranges::count_if(regExps.section.items, [](const RegExpSectionItem& item) {
+        return item.kind == Kind::Body || item.kind == Kind::DuplicateBody;
+    });
+    AOT_TEST_CHECK(static_cast<unsigned>(placedBodies) == numberOfBodies);
+}
+
+static void testBytesOfSectionAreCounted()
+{
+    using Kind = RegExpSectionItem::Kind;
+    RegExpImage regExps({ { "ab+c"_s }, { "^[a-z]+$"_s }, { "[\\u0400-\\u04ff\\u0530-\\u058f\\u05d0-\\u05ea\\u0620-\\u064a\\u0905-\\u0939\\u0e01-\\u0e30\\u3041-\\u3096\\u30a1-\\u30fa]+"_s } }, { }, { }, CodeOfRegExpImage::Compiled);
+    const RegExpSection& section = regExps.section;
+    Vector<uint64_t> statistics = regExps.context.statistics().values();
+    auto statistic = [&](StatisticID id) {
+        return statistics[static_cast<unsigned>(id)];
+    };
+    auto isEntry = [&](uint32_t offset, unsigned charSizeIndex) {
+        return section.entries.containsIf([&](const std::array<uint32_t, 2>& entries) {
+            return entries[charSizeIndex] == offset;
+        });
+    };
+
+    uint64_t endOfCode = 0;
+    uint64_t sizeOf16BitBodies = 0;
+    for (const RegExpSectionItem& item : section.items) {
+        if (item.kind != Kind::Table)
+            endOfCode = std::max<uint64_t>(endOfCode, item.offset + item.size);
+        if (item.kind == Kind::Body && isEntry(item.offset, 1) && !isEntry(item.offset, 0))
+            sizeOf16BitBodies += item.size;
+    }
+    AOT_TEST_CHECK(sizeOf16BitBodies && sizeOf16BitBodies < endOfCode && section.dataOffset < section.bytes.size());
+    AOT_TEST_CHECK(statistic(StatisticID::RegExpCodeBytesEmitted) == endOfCode);
+    AOT_TEST_CHECK(statistic(StatisticID::RegExp16BitCodeBytes) == sizeOf16BitBodies);
+    AOT_TEST_CHECK(statistic(StatisticID::RegExpTableBytesEmitted) == section.bytes.size() - section.dataOffset);
+    AOT_TEST_CHECK(statistic(StatisticID::PaddingBytesBetweenCodeParts) == section.dataOffset - endOfCode);
+}
+
+static Vector<int> matchWithCodeOfImage(RegExpImage& regExps, RegExp* regExp, const String& subject, unsigned start = 0)
+{
+    std::span<int> offsets = regExp->ovectorSpan();
+    int position = regExp->matchInline(nullptr, regExps.vm(), subject, start, offsets);
+    if (position < 0)
+        return { };
+    AOT_TEST_CHECK(position == offsets[0]);
+    return Vector<int>(offsets);
+}
+
+static void testWideSubjectsOfLiteralWith8BitCodeAlone()
+{
+    String groups = "^([a-z]+)-(\\d+)$"_s;
+    String latin1 = "^[a-z\\xe9]+$"_s;
+    String letters = "^[a-z]+$"_s;
+    RegExpImage regExps({ { groups }, { latin1 }, { letters, Yarr::Flags::Unicode } }, { }, { }, CodeOfRegExpImage::Compiled);
+    VM& vm = regExps.vm();
+
+    for (RegExpFlags flags : { RegExpFlags { }, RegExpFlags { Yarr::Flags::Global } }) {
+        const ImageRegExp& record = checkFoundLiteral(regExps, groups);
+        AOT_TEST_CHECK(record.hasCodeFor8BitSubjectsAlone);
+        RegExp* regExp = RegExp::createFromImage(vm, groups, flags, record);
+        const Vector<int> whole { 0, 6, 0, 3, 4, 6 };
+        AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, "abc-12"_s) == whole);
+        AOT_TEST_CHECK(regExp->getRegExpJITCodeBlockConcurrently()->has8BitCode() && !regExp->getRegExpJITCodeBlockConcurrently()->has16BitCode());
+        AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"abc-12")) == whole);
+        for (const String& subject : { wideString(u"abc-12中"), wideString(u"中abc-12"), wideString(u"abc中-12"), wideString(u"abc-"), wideString(u"abc-12 ") })
+            AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, subject).isEmpty());
+        for (const String& subject : { String("abc-12"_s), wideString(u"abc-12"), wideString(u"中bc-12") })
+            AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, subject, 1).isEmpty());
+    }
+
+    RegExp* regExp = RegExp::createFromImage(vm, latin1, { }, checkFoundLiteral(regExps, latin1));
+    AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"café")) == (Vector<int> { 0, 4 }));
+    AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, narrowString(u"café")) == (Vector<int> { 0, 4 }));
+    AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"cafē")).isEmpty());
+
+    const ImageRegExp& recordOfLetters = checkFoundLiteral(regExps, letters, Yarr::Flags::Unicode);
+    AOT_TEST_CHECK(recordOfLetters.hasCodeFor8BitSubjectsAlone);
+    regExp = RegExp::createFromImage(vm, letters, Yarr::Flags::Unicode, recordOfLetters);
+    AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"abc")) == (Vector<int> { 0, 3 }));
+    AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"ab\U0001f600")).isEmpty());
+    AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"\U0001f600ab"), 1).isEmpty());
 }
 
 std::span<const NativeTest> regExpTableTests()
@@ -583,6 +770,10 @@ std::span<const NativeTest> regExpTableTests()
         { "image/regexps/named-groups"_s, testNamedGroups },
         { "image/regexps/character-sets"_s, testCharacterSets },
         { "image/regexps/encoding-is-deterministic"_s, testEncodingIsDeterministic },
+        { "image/regexps/patterns-for-whole-8-bit-subjects"_s, testPatternsForWhole8BitSubjects },
+        { "image/regexps/anchored-8-bit-literal-has-one-body"_s, testAnchored8BitLiteralHasOneBody },
+        { "image/regexps/bytes-of-section-are-counted"_s, testBytesOfSectionAreCounted },
+        { "image/regexps/wide-subjects-of-literal-with-8-bit-code-alone"_s, whenExecutable<testWideSubjectsOfLiteralWith8BitCodeAlone> },
     };
     return tests;
 }

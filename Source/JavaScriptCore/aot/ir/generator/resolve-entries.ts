@@ -89,7 +89,11 @@ const effectFlags: ReadonlyMap<string, EffectFlag> = new Map<string, EffectFlag>
   ["terminates", "terminates"],
 ]);
 const plainColumnKinds = ["Bool", "UInt32", "Operand", "Parameters", "Operations", "RuntimeOperation"] as const;
-const enumSetColumnKinds: ReadonlyMap<string, string> = new Map([["Proofs", "Proof"]]);
+const enumSetColumnKinds: ReadonlyMap<string, string> = new Map([
+  ["Proofs", "Proof"],
+  ["StatesOfKnowledge", "StateOfKnowledge"],
+  ["Places", "Place"],
+]);
 const ownerBarrierFlags = ["ownerCannotBeMarked", "laterBarrierCovers"] as const;
 const maximumUInt32 = 0xffffffffn;
 const noResult: Result = { unproven: { rule: "None" }, proven: null };
@@ -686,7 +690,7 @@ export function resolveInlineBuiltins(scope: Scope, declarations: readonly Decla
         effects,
         family,
         hasOptionalSlowPath: declaration.hasOptionalSlowPath,
-        isFormOnly: declaration.isFormOnly,
+        reckonsInLine: declaration.reckonsInLine,
         location: name.location,
       });
     }

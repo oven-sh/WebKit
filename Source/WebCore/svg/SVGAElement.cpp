@@ -44,6 +44,7 @@
 #include "SVGNames.h"
 #include "SVGSMILElement.h"
 #include "Settings.h"
+#include "TrustedScriptURL.h"
 #include "XLinkNames.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -112,7 +113,7 @@ void SVGAElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGraphicsElement::svgAttributeChanged(attrName);
 }
 
-RenderPtr<RenderElement> SVGAElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGAElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     RefPtr svgParent = dynamicDowncast<SVGElement>(parentNode());
     if (svgParent && svgParent->isTextContent())
@@ -147,13 +148,15 @@ void SVGAElement::defaultEventHandler(Event& event)
             Ref document = this->document();
             URL completedURL = document->encodingParseURL(url);
 
+            auto downloadAttribute = parseDownloadAttribute(*this, completedURL, SVGNames::downloadAttr);
+
             auto target = this->target();
             if (target.isEmpty() && attributeWithoutSynchronization(XLinkNames::showAttr) == "new"_s)
                 target = blankTargetFrameName();
             event.setDefaultHandled();
 
             auto referrerPolicy = effectiveReferrerPolicy(m_linkRelations, this->referrerPolicy());
-            navigateHyperlink(*this, event, completedURL, target, m_linkRelations, referrerPolicy);
+            navigateHyperlink(*this, event, completedURL, target, m_linkRelations, referrerPolicy, downloadAttribute);
             return;
         }
     }
@@ -242,9 +245,15 @@ SharedStringHash SVGAElement::visitedLinkHash() const
     return *m_storedVisitedLinkHash;
 }
 
-URL SVGAElement::hrefURL() const
+// https://w3c.github.io/svgwg/svg2-draft/linking.html#InterfaceSVGAElement
+URL SVGAElement::fullURL() const
 {
-    return protect(document())->encodingParseURL(href());
+    return protect(document())->encodingParseURL(hrefAnimated().baseVal());
+}
+
+void SVGAElement::setFullURL(const URL& fullURL)
+{
+    protect(hrefAnimated())->setBaseVal(fullURL.string());
 }
 
 DOMTokenList& SVGAElement::relList()

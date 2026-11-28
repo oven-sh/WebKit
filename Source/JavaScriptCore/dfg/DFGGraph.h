@@ -43,7 +43,6 @@
 #include "MethodOfGettingAValueProfile.h"
 #include <wtf/BitSet.h>
 #include <wtf/BitVector.h>
-#include <wtf/GenericHashKey.h>
 #include <wtf/HashMap.h>
 #include <wtf/JSONValues.h>
 #include <wtf/StackCheck.h>
@@ -275,7 +274,7 @@ public:
     void packNodeIndices();
     void clearAbstractValues();
 
-    void LEGACY_NODELETE dethread();
+    NODELETE void dethread();
     
     FrozenValue* freeze(JSValue); // We use weak freezing by default.
     FrozenValue* freezeStrong(JSValue); // Shorthand for freeze(value)->strengthenTo(StrongValue).
@@ -315,7 +314,7 @@ public:
 
     void dump(PrintStream&, DumpContext*);
 
-    bool LEGACY_NODELETE terminalsAreValid();
+    NODELETE bool terminalsAreValid();
     
     enum PhiNodeDumpMode { DumpLivePhisOnly, DumpAllPhis };
     void dumpBlockHeader(PrintStream&, const char* prefix, BasicBlock*, PhiNodeDumpMode, DumpContext*);
@@ -611,7 +610,7 @@ public:
             return false;
 
         SpeculatedType prediction = node->child1()->prediction();
-        return prediction && !(prediction & ~(SpecHeapBigInt | SpecOther));
+        return isHeapBigIntSpeculation(prediction & ~SpecOther);
     }
 
     bool variadicArithShouldSpeculateInt32(Node* node, PredictionPass pass)
@@ -641,7 +640,7 @@ public:
         return arithRound->canSpeculateInt32(pass) && !hasExitSite(arithRound->origin.semantic, Overflow) && !hasExitSite(arithRound->origin.semantic, NegativeZero);
     }
     
-    static ASCIILiteral LEGACY_NODELETE opName(NodeType);
+    NODELETE static ASCIILiteral opName(NodeType);
     
     RegisteredStructureSet* addStructureSet(const StructureSet& structureSet)
     {
@@ -846,16 +845,16 @@ public:
     // any GetLocals in the basic block.
     // FIXME: it may be appropriate, in the future, to generalize this to handle GetLocals
     // introduced anywhere in the basic block.
-    void LEGACY_NODELETE substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
+    NODELETE void substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
     
     void invalidateCFG();
     void invalidateNodeLiveness();
     
-    void LEGACY_NODELETE clearFlagsOnAllNodes(NodeFlags);
+    NODELETE void clearFlagsOnAllNodes(NodeFlags);
     
-    void LEGACY_NODELETE clearReplacements();
-    void LEGACY_NODELETE clearEpochs();
-    void LEGACY_NODELETE initializeNodeOwners();
+    NODELETE void clearReplacements();
+    NODELETE void clearEpochs();
+    NODELETE void initializeNodeOwners();
     
     BlockList blocksInPreOrder();
     BlockList blocksInPostOrder();
@@ -1167,6 +1166,41 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::PromiseSpeciesWatchpointSet);
     }
 
+
+    enum class ProtocolWatchResult : uint8_t {
+        // Nothing can be proven about the relevant protocol for this value. We have to assume the
+        // worst and check at runtime.
+        Unwatchable,
+
+        // The relevant protocol has been proven to be the primordial one.
+        //
+        // For nodes that perform the protocol on some operand, the AbstractValue's proven
+        // StructureSet has been watched to prove the protocol is still intact. We have to use the
+        // AbstractValue for this because the runtime value could be from a different realm or have
+        // a structure where the protocol has been mutated.
+        //
+        // For nodes that operate on primitive operands or use the protocol for an allocation strategy
+        // they may not need the AbstractValue.
+        Proven,
+
+        // This only occurs for iteration protocols and only when canSpeculate is true.
+        //
+        // There is not enough AbstractValue information to prove statically that all structures
+        // have the original protocol. The realm of the iterable's semantic origin was watched so
+        // the caller can speculate on that realm's original structures at runtime. This is a true
+        // speculation because the iterable's semantic CodeOrigin might still be different from
+        // the runtime value. The most obvious case is that iterable could be a Phi or GetLocal.
+        RequiresSemanticStructureCheck,
+    };
+
+    std::pair<ProtocolWatchResult, RegisteredStructureSet> tryWatchArrayIteratorProtocol(Node* iterable, const AbstractValue&, bool canSpeculate = false);
+    std::pair<ProtocolWatchResult, RegisteredStructure> tryWatchSetIteratorProtocol(Node* iterable, const AbstractValue&, bool canSpeculate = false);
+
+    // NOTE: It's only safe to use this if:
+    // 1) The node is an allocation so we intrinsically know something about it's structure
+    // 2) It's used in a pass that has some sort of escape analysis to detect mutations (e.g. ArgumentsElimination or ObjectAllocationSinking)
+    bool isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(Node* allocation);
+
     Profiler::Compilation* compilation() { return m_plan.compilation(); }
 
     DesiredIdentifiers& identifiers() LIFETIME_BOUND { return m_plan.identifiers(); }
@@ -1288,6 +1322,7 @@ public:
             auto instruction = codeBlock->instructions().at(bytecodeIndex.offset());
             switch (instruction->opcodeID()) {
             case op_call_varargs:
+            case op_call_varargs_with_spread:
             case op_tail_call_varargs:
             case op_construct_varargs:
             case op_super_construct_varargs:
@@ -1320,7 +1355,7 @@ public:
             functor(virtualRegisterForArgumentIncludingThis(argument));
     }
 
-    static unsigned LEGACY_NODELETE parameterSlotsForArgCount(unsigned);
+    NODELETE static unsigned parameterSlotsForArgCount(unsigned);
     
     unsigned frameRegisterCount();
     unsigned stackPointerOffset();
@@ -1344,8 +1379,6 @@ public:
 
     ObjectPropertyConditionSet tryEnsureAbsence(JSGlobalObject*, const StructureSet&, CacheableIdentifier);
 
-    bool canDoFastSpread(Node*, const AbstractValue&);
-    bool canDoFastSpreadWithStructureCheck(Node*);
     static constexpr IndexingType originalArrayShapesForSpread[] = {
         CopyOnWriteArrayWithContiguous, ArrayWithContiguous,
         ArrayWithInt32, CopyOnWriteArrayWithInt32,
@@ -1438,7 +1471,7 @@ public:
 
     RefPtr<JSON::Array> ionGraphPasses() const { return m_ionGraphPasses; }
 
-    UncheckedKeyHashMap<Node*, uint32_t> collectIRDumpDebugInfo(IRDumpDebugInfo&);
+    HashMap<Node*, uint32_t> collectIRDumpDebugInfo(IRDumpDebugInfo&);
 
     StackCheck m_stackChecker;
     VM& m_vm;
@@ -1463,10 +1496,10 @@ public:
     Vector<SimpleJumpTable> m_switchJumpTables;
     Vector<const UnlinkedStringJumpTable*> m_unlinkedStringSwitchJumpTables;
     Vector<StringJumpTable> m_stringSwitchJumpTables;
-    UncheckedKeyHashMap<String, std::unique_ptr<BoyerMooreHorspoolTable<uint8_t>>> m_stringSearchTable8;
+    HashMap<String, std::unique_ptr<BoyerMooreHorspoolTable<uint8_t>>> m_stringSearchTable8;
     Vector<std::unique_ptr<ConcatKeyAtomStringCache>> m_concatKeyAtomStringCaches;
 
-    UncheckedKeyHashMap<EncodedJSValue, FrozenValue*, EncodedJSValueHash, EncodedJSValueHashTraits> m_frozenValueMap;
+    HashMap<EncodedJSValue, FrozenValue*, EncodedJSValueHash, EncodedJSValueHashTraits> m_frozenValueMap;
     SegmentedVector<FrozenValue, 16> m_frozenValues;
 
     Vector<uint32_t> m_uint32ValuesInUse;
@@ -1476,7 +1509,7 @@ public:
     // In CPS, this is all of the SetArgumentDefinitely nodes for the arguments in the machine code block
     // that survived DCE. All of them except maybe "this" will survive DCE, because of the Flush
     // nodes. In SSA, this has no meaning. It's empty.
-    UncheckedKeyHashMap<BasicBlock*, ArgumentsVector> m_rootToArguments;
+    HashMap<BasicBlock*, ArgumentsVector> m_rootToArguments;
 
     // In SSA, this is the argument speculation that we've locked in for an entrypoint block.
     //
@@ -1525,8 +1558,8 @@ public:
     Bag<GetByIdData> m_getByIdData;
     Bag<BitVector> m_bitVectors;
     Vector<InlineVariableData, 4> m_inlineVariableData;
-    UncheckedKeyHashMap<CodeBlock*, std::unique_ptr<FullBytecodeLiveness>> m_bytecodeLiveness;
-    UncheckedKeyHashSet<std::pair<JSObject*, PropertyOffset>> m_safeToLoad;
+    HashMap<CodeBlock*, std::unique_ptr<FullBytecodeLiveness>> m_bytecodeLiveness;
+    HashSet<std::pair<JSObject*, PropertyOffset>> m_safeToLoad;
     Vector<Ref<Snippet>> m_domJITSnippets;
     std::unique_ptr<CPSDominators> m_cpsDominators;
     std::unique_ptr<SSADominators> m_ssaDominators;
@@ -1550,14 +1583,14 @@ public:
 
     // This maps an entrypoint index to a particular op_catch bytecode offset. By convention,
     // it'll never have zero as a key because we use zero to mean the op_enter entrypoint.
-    UncheckedKeyHashMap<unsigned, BytecodeIndex> m_entrypointIndexToCatchBytecodeIndex;
+    HashMap<unsigned, BytecodeIndex> m_entrypointIndexToCatchBytecodeIndex;
     Vector<CatchEntrypointData> m_catchEntrypoints;
 
-    UncheckedKeyHashSet<String> m_localStrings;
-    UncheckedKeyHashSet<String> m_copiedStrings;
+    HashSet<String> m_localStrings;
+    HashSet<String> m_copiedStrings;
 
     Vector<LinkerIR::Value> m_constantPool;
-    UncheckedKeyHashMap<LinkerIR::Value, LinkerIR::Constant, LinkerIR::ValueHash, LinkerIR::ValueTraits> m_constantPoolMap;
+    HashMap<LinkerIR::Value, LinkerIR::Constant, LinkerIR::ValueHash, LinkerIR::ValueTraits> m_constantPoolMap;
     
     OptimizationFixpointState m_fixpointState;
     StructureRegistrationState m_structureRegistrationState;
@@ -1578,8 +1611,8 @@ public:
     RegisteredStructure stringStructure;
     RegisteredStructure symbolStructure;
 
-    UncheckedKeyHashSet<Node*> m_slowGetByVal;
-    UncheckedKeyHashSet<Node*> m_slowPutByVal;
+    HashSet<Node*> m_slowGetByVal;
+    HashSet<Node*> m_slowPutByVal;
 
 private:
     template<typename Visitor> void visitChildrenImpl(Visitor&);

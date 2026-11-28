@@ -29,16 +29,23 @@
 #include <WebCore/Gradient.h>
 #include <WebCore/Pattern.h>
 #include <WebCore/SourceBrushLogicalGradient.h>
+#include <wtf/ArgumentCoder.h>
 
 namespace WebCore {
 
 class SourceBrush {
 public:
-    using OptionalPatternGradient = Variant<std::monostate, SourceBrushLogicalGradient, Ref<Pattern>>;
+    using OptionalPatternGradient = Variant<std::monostate, SourceBrushLogicalGradient, Ref<const Pattern>>;
 
     SourceBrush() = default;
     SourceBrush(const Color& color)
         : m_color(color)
+    {
+    }
+
+    SourceBrush(const Color& color, OptionalPatternGradient&& patternGradient)
+        : m_color(color)
+        , m_patternGradient(WTF::move(patternGradient))
     {
     }
 
@@ -50,13 +57,13 @@ public:
     // Packed color accessor takes into account the discrimination between color, gradient, pattern.
     std::optional<PackedColor::RGBA> packedColor() const;
 
-    WEBCORE_EXPORT Gradient* LEGACY_NODELETE gradient() const;
-    WEBCORE_EXPORT Pattern* LEGACY_NODELETE pattern() const;
-    WEBCORE_EXPORT const AffineTransform& LEGACY_NODELETE gradientSpaceTransform() const;
+    NODELETE WEBCORE_EXPORT const Gradient* gradient() const;
+    NODELETE WEBCORE_EXPORT const Pattern* pattern() const;
+    NODELETE WEBCORE_EXPORT const AffineTransform& gradientSpaceTransform() const;
     WEBCORE_EXPORT std::optional<RenderingResourceIdentifier> gradientIdentifier() const;
 
-    WEBCORE_EXPORT void setGradient(Ref<Gradient>&&, const AffineTransform& spaceTransform = { });
-    WEBCORE_EXPORT void setPattern(Ref<Pattern>&&);
+    WEBCORE_EXPORT void setGradient(Ref<const Gradient>&&, const AffineTransform& spaceTransform = { });
+    WEBCORE_EXPORT void setPattern(Ref<const Pattern>&&);
 
     bool isVisible() const { return hasPatternOrGradient() || m_color.isVisible(); }
 
@@ -64,6 +71,8 @@ public:
     friend bool operator==(const SourceBrush&, const SourceBrush&);
 
 private:
+    friend struct IPC::ArgumentCoder<SourceBrush>;
+
     Color m_color { Color::black };
     OptionalPatternGradient m_patternGradient;
 };
@@ -83,8 +92,8 @@ inline bool operator==(const SourceBrush& a, const SourceBrush& b)
             return false;
         if (auto* aGradient = std::get_if<SourceBrushLogicalGradient>(&a))
             return *aGradient == std::get<SourceBrushLogicalGradient>(b);
-        if (auto* aPattern = std::get_if<Ref<Pattern>>(&a))
-            return aPattern->ptr() == std::get<Ref<Pattern>>(b).ptr();
+        if (auto* aPattern = std::get_if<Ref<const Pattern>>(&a))
+            return aPattern->ptr() == std::get<Ref<const Pattern>>(b).ptr();
         return true;
     };
     return a.m_color == b.m_color && patternGradientEqual(a.m_patternGradient, b.m_patternGradient);

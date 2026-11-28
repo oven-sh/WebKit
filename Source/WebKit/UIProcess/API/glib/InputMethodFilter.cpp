@@ -92,8 +92,14 @@ void InputMethodFilter::setContext(WebKitInputMethodContext* context)
 void InputMethodFilter::setState(std::optional<InputMethodState>&& state)
 {
     bool focusChanged = state.has_value() != m_state.has_value();
-    if (focusChanged && !state)
-        notifyFocusedOut();
+    if (focusChanged && !state) {
+        // The input method context already got a focus out when the view lost the focus,
+        // or it never got a focus in.
+        if (isViewFocused())
+            notifyFocusedOut();
+        else
+            resetForFocusOut();
+    }
 
     m_state = WTF::move(state);
     notifyContentType();
@@ -172,6 +178,30 @@ static WebKitInputPurpose toWebKitPurpose(InputMethodState::Purpose purpose)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static WebKitInputEnterKeyHint toWebKitEnterKeyHint(WebCore::EnterKeyHint hint)
+{
+    switch (hint) {
+    case WebCore::EnterKeyHint::Unspecified:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_UNSPECIFIED;
+    case WebCore::EnterKeyHint::Enter:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_ENTER;
+    case WebCore::EnterKeyHint::Done:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_DONE;
+    case WebCore::EnterKeyHint::Go:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_GO;
+    case WebCore::EnterKeyHint::Next:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_NEXT;
+    case WebCore::EnterKeyHint::Previous:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_PREVIOUS;
+    case WebCore::EnterKeyHint::Search:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_SEARCH;
+    case WebCore::EnterKeyHint::Send:
+        return WEBKIT_INPUT_ENTER_KEY_HINT_SEND;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static WebKitInputHints toWebKitHints(const OptionSet<InputMethodState::Hint>& hints)
 {
     unsigned wkHints = 0;
@@ -200,6 +230,7 @@ void InputMethodFilter::notifyContentType()
     g_object_freeze_notify(G_OBJECT(m_context.get()));
     webkit_input_method_context_set_input_purpose(m_context.get(), toWebKitPurpose(m_state->purpose));
     webkit_input_method_context_set_input_hints(m_context.get(), toWebKitHints(m_state->hints));
+    webkit_input_method_context_set_enter_key_hint(m_context.get(), toWebKitEnterKeyHint(m_state->enterKeyHint));
     g_object_thaw_notify(G_OBJECT(m_context.get()));
 }
 
@@ -216,10 +247,18 @@ void InputMethodFilter::notifyFocusedOut()
     if (!isEnabled() || !m_context)
         return;
 
+    resetForFocusOut();
+    webkit_input_method_context_notify_focus_out(m_context.get());
+}
+
+void InputMethodFilter::resetForFocusOut()
+{
+    if (!m_context)
+        return;
+
     cancelComposition();
     m_cursorRect = { };
     m_surrounding = { };
-    webkit_input_method_context_notify_focus_out(m_context.get());
 }
 
 void InputMethodFilter::notifyCursorRect(const IntRect& cursorRect)
@@ -251,11 +290,11 @@ void InputMethodFilter::notifySurrounding(const String& text, uint64_t cursorPos
     m_surrounding.cursorPosition = cursorPosition;
     m_surrounding.selectionPosition = selectionPosition;
 
-    auto textUTF8 = m_surrounding.text.utf8();
-    auto cursorPositionUTF8 = cursorPosition != text.length() ? StringView(text).left(cursorPosition).utf8().length() : textUTF8.length();
+    auto textUTF8 = makeUTF8CString(m_surrounding.text);
+    auto cursorPositionUTF8 = cursorPosition != text.length() ? utf8Length(StringView(text).left(cursorPosition)) : textUTF8.length();
     auto selectionPositionUTF8 = cursorPositionUTF8;
     if (cursorPosition != selectionPosition)
-        selectionPositionUTF8 = selectionPosition != text.length() ? StringView(text).left(selectionPosition).utf8().length() : textUTF8.length();
+        selectionPositionUTF8 = selectionPosition != text.length() ? utf8Length(StringView(text).left(selectionPosition)) : textUTF8.length();
     auto textCharacters = byteCast<char>(textUTF8.span());
     webkit_input_method_context_notify_surrounding(m_context.get(), textCharacters.data(), textCharacters.size(), cursorPositionUTF8, selectionPositionUTF8);
 }
@@ -285,7 +324,7 @@ void InputMethodFilter::preeditChanged()
     webkit_input_method_context_get_preedit(m_context.get(), &preeditText.outPtr(), &underlines, &cursorOffset);
 
     auto newPreedit = GMallocString::unsafeAdoptFromUTF8(WTF::move(preeditText));
-    if (newPreedit == m_preedit.text.utf8()) {
+    if (newPreedit == makeUTF8CString(m_preedit.text)) {
         g_list_free_full(underlines, reinterpret_cast<GDestroyNotify>(webkit_input_method_underline_free));
         return;
     }

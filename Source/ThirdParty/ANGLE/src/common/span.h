@@ -47,8 +47,8 @@ template <typename T>
 struct IsSpanImpl : std::false_type
 {};
 
-template <typename T>
-struct IsSpanImpl<Span<T>> : std::true_type
+template <typename T, size_t Extent, typename InternalPtr>
+struct IsSpanImpl<Span<T, Extent, InternalPtr>> : std::true_type
 {};
 
 template <typename T>
@@ -279,6 +279,21 @@ class Span
     void copy_from(const Container &container) const
     {
         copy_from(Span<const T, Extent>(container));
+    }
+
+    // Like `copy_from()`, but allows `other` to be smaller than this span: copies
+    // `other` into the first `other.size()` elements and leaves the rest unwritten.
+    // (Not in `std::`; matches `base::span::copy_prefix_from()`.)
+    template <typename U,
+              size_t M,
+              typename R,
+              typename V = T,
+              typename   = std::enable_if_t<
+                  !std::is_const<V>::value && std::is_convertible<U *, const T *>::value &&
+                  (Extent == dynamic_extent || M == dynamic_extent || M <= Extent)>>
+    void copy_prefix_from(const Span<U, M, R> &other) const
+    {
+        first(other.size()).copy_from(other);
     }
 
     template <size_t N>

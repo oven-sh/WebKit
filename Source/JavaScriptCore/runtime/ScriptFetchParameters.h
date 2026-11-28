@@ -89,7 +89,7 @@ public:
         return adoptRef(*new ScriptFetchParameters(hostDefinedImportType));
     }
 
-    using AttributesMap = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String>;
+    using AttributesMap = HashMap<RefPtr<UniquedStringImpl>, String>;
     const AttributesMap& attributes() const { return m_attributes; }
     void setAttributes(AttributesMap&& attributes) { m_attributes = WTF::move(attributes); }
 #endif

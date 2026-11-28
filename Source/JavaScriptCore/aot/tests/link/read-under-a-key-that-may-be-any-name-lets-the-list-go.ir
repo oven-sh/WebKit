@@ -1,0 +1,54 @@
+# function peek(list, key) { return list[key] }  function first(list) { return list[0] }
+# const spoiled = [1]; peek(spoiled, a text that nobody knows); first(spoiled);      const kept = [2]; peekAt(kept, 0); firstOfKept(kept)
+# Array.prototype takes new names in an executable: `Object.defineProperty(Array.prototype, "extra", { get() { this[0] = "text" } })`. A read under a key that may be any name may find such an accessor,
+# which gets the list as `this`: what the list holds from then on is anybody's. A read under a number finds an element or nothing
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 {{*}}result=i32 returns
+# CHECK-NOT: function f2 {{*}}result=undefined|i32 returns
+# RUN(KEPT): link functions mechanisms=all
+# KEPT: function f4 callers-known {{*}}result=undefined|int[0, 2147483647] returns
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="someText" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v1, v3 calleeName="peek"
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v1 calleeName="first"
+    v8 = Integer integer=2
+    v9 = NewArray v8 contents=anything
+    v10 = Integer integer=0
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v9, v10 calleeName="peekAt"
+    v13 = NewClosure function=f4
+    v14 = Call v13, -, v9 calleeName="firstOfKept"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="peek" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="peekAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f4 name="firstOfKept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}

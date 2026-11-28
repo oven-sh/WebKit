@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// v(Name, Linkage, forms, axes, minCount, maxCount, isas, framelessISAs, operandRegisters, binding, calls, clobbers, ownEffects, Body)
-// AOT_STUB_FRONT_END(Operation, Family)
-// An includer defines the macros it wants. AOTStubDescriptor.h documents the columns by their types.
-
 #if !defined(v)
 #define v(...)
 #define AOT_STUB_FAMILIES_DEFINED_ROW_MACRO

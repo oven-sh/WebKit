@@ -1,0 +1,25 @@
+# what a suspension holds it saves with the frame, which resumes at another address: a cell of the frame is not among what a call that is awaited at once holds
+# RUN: verify-code
+# CHECK: {{*}}a cell of the frame is held across a suspension
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: Array @Cell = CreateRest firstArgument=0 storage=Frame
+#     v3: anything @JSValue = AwaitCallBySavingFrame v1, v0, v0, v2 function=f1 numberOfHeld=1 role=CoroutineBody traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = Await v1
+    Return v2
+}
+function f1 name="inner" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0

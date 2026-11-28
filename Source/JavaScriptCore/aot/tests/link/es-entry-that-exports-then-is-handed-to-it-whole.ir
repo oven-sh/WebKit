@@ -1,0 +1,26 @@
+# main.mjs, the entry: export function turn() {}; export function then(resolve) { this.turn(); }: the host awaits the namespace, so it calls `then` on it, and through `this` that function reaches every export.
+# The controls: es-entry-that-exports-neither-name-hands-the-host-nothing.ir, what-the-host-does-not-read-off-an-entry-stays-in.ir.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions modules lookups mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: lookup entry-hands-host-nothing 0
+
+variable g0 name="turn" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="then" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="then" variable=g1}, {name="turn" variable=g0}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="turn" module=m0 sourceRange={start=7 end=27} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="then" module=m0 sourceRange={start=35 end=75} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+entry module=m0 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["fetch", "app"]}, {exportName="then"}]

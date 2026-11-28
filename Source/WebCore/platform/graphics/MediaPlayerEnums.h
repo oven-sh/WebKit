@@ -171,6 +171,7 @@ enum class VideoRendererPreference : uint8_t {
 #if PLATFORM(IOS_FAMILY)
     CanShowWhileLocked = 1 << 4,
 #endif
+    RequiresHardwareDecoder = 1 << 5,
 };
 using VideoRendererPreferences = OptionSet<VideoRendererPreference>;
 
@@ -185,6 +186,13 @@ enum class MediaPlaybackTargetType : uint8_t {
 enum class MediaPlayerScope : uint8_t {
     Playback,
     Supports,
+};
+
+enum class MediaPlatformType {
+    Mock,
+    AVFObjC,
+    GStreamer,
+    Remote
 };
 
 } // namespace WebCore

@@ -40,8 +40,14 @@
 #include <WebCore/BitmapImage.h>
 #include <WebCore/FEImage.h>
 #include <WebCore/FilterResults.h>
+#include <WebCore/FreeformGradient.h>
+#include <WebCore/MeshGradient.h>
 #include <WebCore/SVGFilterRenderer.h>
 #include <wtf/URL.h>
+
+#if USE(METAL)
+#include <WebCore/MeshGradientRendererMetal.h>
+#endif
 
 #if USE(SYSTEM_PREVIEW)
 #include <WebCore/ARKitBadgeSystemImage.h>
@@ -101,7 +107,11 @@ void RemoteGraphicsContext::save()
 
 void RemoteGraphicsContext::restore()
 {
-    context().restore();
+    // After the GPU process is relaunched, the web process restores the states it saved in the previous
+    // GPU process. They were not saved in this one, so the stack is empty for them.
+    if (!context().stackSize())
+        return;
+    MESSAGE_CHECK(context().restore());
 }
 
 void RemoteGraphicsContext::translate(float x, float y)
@@ -129,6 +139,19 @@ void RemoteGraphicsContext::concatCTM(const AffineTransform& ctm)
     context().concatCTM(ctm);
 }
 
+void RemoteGraphicsContext::saveTransform()
+{
+    context().saveTransform();
+}
+
+void RemoteGraphicsContext::restoreTransform()
+{
+    // See restore().
+    if (!context().stackSize())
+        return;
+    MESSAGE_CHECK(context().restoreTransform());
+}
+
 void RemoteGraphicsContext::setFillPackedColor(PackedColor::RGBA color)
 {
     context().setFillColor(asSRGBA(color));
@@ -146,7 +169,7 @@ void RemoteGraphicsContext::setFillCachedGradient(RemoteGradientIdentifier ident
     context().setFillGradient(gradient.releaseNonNull(), spaceTransform);
 }
 
-void RemoteGraphicsContext::setFillGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform)
+void RemoteGraphicsContext::setFillGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform)
 {
     context().setFillGradient(WTF::move(gradient), spaceTransform);
 }
@@ -187,7 +210,7 @@ void RemoteGraphicsContext::setStrokeCachedGradient(RemoteGradientIdentifier ide
     context().setStrokeGradient(gradient.releaseNonNull(), spaceTransform);
 }
 
-void RemoteGraphicsContext::setStrokeGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform)
+void RemoteGraphicsContext::setStrokeGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform)
 {
     context().setStrokeGradient(WTF::move(gradient), spaceTransform);
 }
@@ -315,16 +338,11 @@ void RemoteGraphicsContext::clipOutRoundedRect(const FloatRoundedRect& rect)
     context().clipOutRoundedRect(rect);
 }
 
-void RemoteGraphicsContext::clipToImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect)
+void RemoteGraphicsContext::clipToNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destinationRect)
 {
-    RefPtr clipImage = imageBuffer(imageBufferIdentifier);
-    if (!clipImage) {
-        ASSERT_NOT_REACHED();
-        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=298384
-        // Switch to MESSAGE_CHECK(clipImage) when root cause is clear.
-        return;
-    }
-    context().clipToImageBuffer(*clipImage, destinationRect);
+    RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
+    MESSAGE_CHECK(image);
+    context().clipToNativeImage(*image, destinationRect);
 }
 
 void RemoteGraphicsContext::clipOutToPath(const Path& path)
@@ -344,6 +362,20 @@ void RemoteGraphicsContext::clipCachedPath(RemotePathImplIdentifier identifier, 
 
     Path path(pathImpl.releaseNonNull());
     context().clipPath(path, rule);
+}
+
+void RemoteGraphicsContext::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule rule)
+{
+    context().clipTransformedPath(pathTransform, path, rule);
+}
+
+void RemoteGraphicsContext::clipTransformedCachedPath(const AffineTransform& pathTransform, RemotePathImplIdentifier identifier, WebCore::WindRule rule)
+{
+    RefPtr pathImpl = resourceCache().cachedPathImpl(identifier);
+    MESSAGE_CHECK(pathImpl);
+
+    Path path(pathImpl.releaseNonNull());
+    context().clipTransformedPath(pathTransform, path, rule);
 }
 
 void RemoteGraphicsContext::resetClip()
@@ -412,7 +444,7 @@ void RemoteGraphicsContext::drawGlyphs(RenderingResourceIdentifier fontIdentifie
     context().drawGlyphsImmediate(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
 }
 
-void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     RefPtr sourceImage = imageBuffer(imageBufferIdentifier);
     MESSAGE_CHECK(sourceImage);
@@ -427,7 +459,7 @@ void RemoteGraphicsContext::drawDisplayList(RemoteDisplayListIdentifier identifi
     context().drawDisplayList(*displayList, controlFactory());
 }
 
-void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
@@ -454,14 +486,14 @@ void RemoteGraphicsContext::drawSystemImage(Ref<SystemImage>&& systemImage, cons
     context().drawSystemImage(systemImage, destinationRect);
 }
 
-void RemoteGraphicsContext::drawPatternNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawPatternNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
     context().drawPattern(*image, destRect, tileRect, transform, phase, spacing, options);
 }
 
-void RemoteGraphicsContext::drawPatternImageBuffer(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawPatternImageBuffer(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     RefPtr image = imageBuffer(imageIdentifier);
     MESSAGE_CHECK(image);
@@ -503,6 +535,27 @@ void RemoteGraphicsContext::drawDotsForDocumentMarker(const FloatRect& rect, con
     context().drawDotsForDocumentMarker(rect, style);
 }
 
+void RemoteGraphicsContext::drawFreeformGradient(RemoteFreeformGradientIdentifier identifier, const FloatRect& destination)
+{
+    RefPtr gradient = resourceCache().cachedFreeformGradient(identifier);
+    MESSAGE_CHECK(gradient);
+
+    context().drawFreeformGradient(*gradient, destination);
+}
+
+void RemoteGraphicsContext::drawMeshGradient(RemoteMeshGradientIdentifier identifier, const FloatRect& destination)
+{
+    RefPtr gradient = resourceCache().cachedMeshGradient(identifier);
+    MESSAGE_CHECK(gradient);
+
+#if USE(METAL)
+    if (auto* metalRenderer = MeshGradientRendererMetal::singleton(); metalRenderer && metalRenderer->draw(context(), *gradient, destination))
+        return;
+#endif
+
+    context().drawMeshGradient(*gradient, destination);
+}
+
 void RemoteGraphicsContext::drawEllipse(const FloatRect& rect)
 {
     context().drawEllipse(rect);
@@ -533,12 +586,12 @@ void RemoteGraphicsContext::fillRectWithColor(const FloatRect& rect, const Color
     context().fillRect(rect, color);
 }
 
-void RemoteGraphicsContext::fillRectWithGradient(const FloatRect& rect, Ref<Gradient>&& gradient)
+void RemoteGraphicsContext::fillRectWithGradient(const FloatRect& rect, Ref<const Gradient>&& gradient)
 {
     context().fillRect(rect, gradient);
 }
 
-void RemoteGraphicsContext::fillRectWithGradientAndSpaceTransform(const FloatRect& rect, Ref<Gradient>&& gradient, const AffineTransform& transform, GraphicsContext::RequiresClipToRect requiresClipToRect)
+void RemoteGraphicsContext::fillRectWithGradientAndSpaceTransform(const FloatRect& rect, Ref<const Gradient>&& gradient, const AffineTransform& transform, GraphicsContext::RequiresClipToRect requiresClipToRect)
 {
     context().fillRect(rect, gradient, transform, requiresClipToRect);
 }
@@ -617,7 +670,7 @@ SharedVideoFrameReader& RemoteGraphicsContext::sharedVideoFrameReader()
     return *m_sharedVideoFrameReader;
 }
 
-void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     if (auto videoFrame = sharedVideoFrameReader().read(WTF::move(frame)))
         context().drawVideoFrame(*videoFrame, destination, shouldDiscardAlpha, options);
@@ -669,6 +722,23 @@ void RemoteGraphicsContext::strokeArc(const PathArc& arc)
     context().strokeArc(arc);
 }
 
+void RemoteGraphicsContext::strokeArcsWithColorAndThickness(std::span<const PathArcColorThickness> arcs)
+{
+    std::optional<PackedColor::RGBA> lastColor;
+    std::optional<float> lastThickness;
+    for (const auto& entry : arcs) {
+        if (lastColor != entry.color) {
+            setStrokePackedColor(entry.color);
+            lastColor = entry.color;
+        }
+        if (lastThickness != entry.thickness) {
+            setStrokeThickness(std::max(entry.thickness, 0.f));
+            lastThickness = entry.thickness;
+        }
+        context().strokeArc(entry.arc());
+    }
+}
+
 void RemoteGraphicsContext::strokeClosedArc(const PathClosedArc& closedArc)
 {
     context().strokePath(Path({ PathSegment { closedArc } }));
@@ -710,20 +780,6 @@ void RemoteGraphicsContext::drawControlPart(Ref<ControlPart>&& part, const Float
     context().drawControlPart(part, borderRect, deviceScaleFactor, style);
     part->setOverrideControlFactory(nullptr);
 }
-
-#if USE(CG)
-
-void RemoteGraphicsContext::applyStrokePattern()
-{
-    context().applyStrokePattern();
-}
-
-void RemoteGraphicsContext::applyFillPattern()
-{
-    context().applyFillPattern();
-}
-
-#endif // USE(CG)
 
 void RemoteGraphicsContext::applyDeviceScaleFactor(float scaleFactor)
 {

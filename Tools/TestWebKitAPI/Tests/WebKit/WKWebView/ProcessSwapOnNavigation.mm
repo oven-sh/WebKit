@@ -29,6 +29,8 @@
 #import "FrameTreeChecks.h"
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
+#import "Helpers/cocoa/ProcessTerminationTestUtilities.h"
+#import "Helpers/cocoa/SiteIsolationTestUtilities.h"
 #import "Helpers/cocoa/SiteIsolationUtilities.h"
 #import "Helpers/Test.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
@@ -1375,6 +1377,19 @@ TEST(ProcessSwap, CrossOriginButSameSiteWindowOpenNoOpener)
     // Same-site navigations without opener still share the same process.
     EXPECT_EQ(pid1, pid2);
 }
+
+#if !TARGET_OS_IPHONE
+static void enableUnloadEventForPSONTest(WKWebViewConfiguration *configuration)
+{
+    auto preferences = [configuration preferences];
+    for (_WKFeature *feature in [WKPreferences _features]) {
+        if ([feature.key isEqualToString:@"UnloadEventEnabled"]) {
+            [preferences _setEnabled:YES forFeature:feature];
+            break;
+        }
+    }
+}
+#endif
 
 static void enableSiteIsolationForPSONTest(WKWebViewConfiguration *configuration)
 {
@@ -4377,6 +4392,7 @@ TEST(ProcessSwap, LoadUnload)
     [webViewConfiguration setProcessPool:processPool.get()];
     RetainPtr handler = adoptNS([[PSONScheme alloc] init]);
     [handler addMappingFromURLString:@"pson://www.webkit.org/main.html" toData:loadUnloadBytes];
+    enableUnloadEventForPSONTest(webViewConfiguration.get());
     [handler addMappingFromURLString:@"pson://www.apple.com/main.html" toData:loadUnloadBytes];
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
 
@@ -4470,6 +4486,7 @@ TEST(ProcessSwap, UnloadEventsOnCrossSiteClientRedirect)
     [webViewConfiguration setProcessPool:processPool.get()];
     RetainPtr handler = adoptNS([[PSONScheme alloc] init]);
     [handler addMappingFromURLString:@"pson://www.webkit.org/main.html" toData:unloadOnClientRedirectBytes];
+    enableUnloadEventForPSONTest(webViewConfiguration.get());
     [handler addMappingFromURLString:@"pson://www.apple.com/main.html" toData:"<body>apple</body>"_s];
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
 
@@ -9393,7 +9410,6 @@ static void checkSettingsControlledByLockdownMode(WKWebView *webView, ShouldBeEn
 
     EXPECT_EQ(runJSCheck("CSS.supports('text-justify: auto')"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
     EXPECT_EQ(runJSCheck("!!navigator.contacts"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes);
-    EXPECT_EQ(runJSCheck("!!window.DeprecationReportBody"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
 
     // Confirm unstable settings are always off in Lockdown Mode.
     EXPECT_EQ(runJSCheck("!!document.undoManager"_s), false);
@@ -9414,6 +9430,7 @@ static void checkSettingsControlledByLockdownMode(WKWebView *webView, ShouldBeEn
 
 static void configureLockdownWKWebViewConfiguration(WKWebViewConfiguration *config)
 {
+    TestWebKitAPI::setFeatureEnabled(config, @"EnhancedSecurityEnabledByDefault", false);
     [config.preferences _setMediaDevicesEnabled:YES];
     config.preferences._mediaCaptureRequiresSecureConnection = NO;
     [config.preferences _setNotificationsEnabled:YES];
@@ -9499,6 +9516,7 @@ TEST(ProcessSwap, LockdownModeSystemSettingChange)
     RetainPtr kvo = adoptNS([LockdownModeKVO new]);
 
     RetainPtr webViewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    TestWebKitAPI::setFeatureEnabled(webViewConfiguration.get(), @"EnhancedSecurityEnabledByDefault", false);
     EXPECT_FALSE(webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled);
     [webViewConfiguration.get().defaultWebpagePreferences addObserver:kvo.get() forKeyPath:@"lockdownModeEnabled" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:nil];
 
@@ -9768,6 +9786,7 @@ TEST(ProcessSwap, LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSet
     // Captive portal mode is disabled globally and explicitly opted out via defaultWebpagePreferences.
 
     RetainPtr webViewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    TestWebKitAPI::setFeatureEnabled(webViewConfiguration.get(), @"EnhancedSecurityEnabledByDefault", false);
     EXPECT_FALSE(webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled);
     webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled = NO; // Explicitly opt out via default WKWebpagePreferences.
 
@@ -9813,6 +9832,7 @@ TEST(ProcessSwap, LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSet
     [WKProcessPool _setCaptivePortalModeEnabledGloballyForTesting:YES];
 
     RetainPtr webViewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    TestWebKitAPI::setFeatureEnabled(webViewConfiguration.get(), @"EnhancedSecurityEnabledByDefault", false);
     EXPECT_TRUE(webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled);
     webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled = NO; // Explicitly opt out via default WKWebpagePreferences.
 
@@ -9857,6 +9877,7 @@ TEST(ProcessSwap, LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSet
     // Captive portal mode is disabled globally and explicitly opted out for the load.
 
     RetainPtr webViewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    TestWebKitAPI::setFeatureEnabled(webViewConfiguration.get(), @"EnhancedSecurityEnabledByDefault", false);
     EXPECT_FALSE(webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled);
 
     RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
@@ -9907,6 +9928,7 @@ TEST(ProcessSwap, LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSet
     [WKProcessPool _setCaptivePortalModeEnabledGloballyForTesting:YES];
 
     RetainPtr webViewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    TestWebKitAPI::setFeatureEnabled(webViewConfiguration.get(), @"EnhancedSecurityEnabledByDefault", false);
     EXPECT_TRUE(webViewConfiguration.get().defaultWebpagePreferences.lockdownModeEnabled);
 
     RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
@@ -10263,11 +10285,13 @@ TEST(WebProcessCache, ReusedCrashedCachedWebProcess)
 
     crashCount = 0;
     done = false;
-    kill([webView2 _webProcessIdentifier], 9);
+    auto webView2PID = [webView2 _webProcessIdentifier];
+    kill(webView2PID, 9);
     kill(cachedProcessPID, 9);
 
     // Intentional hang to delay processing of crash notifications.
-    sleep(1);
+    EXPECT_TRUE(TestWebKitAPI::waitForProcessExitWithoutSpinningRunLoop(webView2PID));
+    EXPECT_TRUE(TestWebKitAPI::waitForProcessExitWithoutSpinningRunLoop(cachedProcessPID));
 
     // View should reload due to crash.
     TestWebKitAPI::Util::run(&done);
@@ -10369,7 +10393,8 @@ TEST(WebProcessCache, ReusedCrashedBackForwardSuspendedWebProcess)
     kill(firstWebProcessPID, 9);
 
     // Intentional hang to delay processing of crash notifications.
-    sleep(1);
+    EXPECT_TRUE(TestWebKitAPI::waitForProcessExitWithoutSpinningRunLoop(secondWebProcessPID));
+    EXPECT_TRUE(TestWebKitAPI::waitForProcessExitWithoutSpinningRunLoop(firstWebProcessPID));
 
     // View should reload due to crash.
     TestWebKitAPI::Util::run(&done);

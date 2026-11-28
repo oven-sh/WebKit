@@ -105,6 +105,7 @@ public:
 #if ENABLE(THREADED_ANIMATIONS)
     void clearAcceleratedEffectsAndBaseValues() override;
     void setAcceleratedEffectsAndBaseValues(const WebCore::AcceleratedEffects&, const WebCore::AcceleratedEffectValues&) override;
+    void setAnimationExtent(std::optional<WebCore::FloatRect>) override;
 #endif
 
     void setMaskLayer(RefPtr<WebCore::PlatformCALayer>&&) override;
@@ -183,7 +184,7 @@ public:
     void setOpacity(float) override;
 
     void setFilters(const WebCore::FilterOperations&) override;
-    static bool LEGACY_NODELETE filtersCanBeComposited(const WebCore::FilterOperations&);
+    NODELETE static bool filtersCanBeComposited(const WebCore::FilterOperations&);
     void copyFiltersFrom(const WebCore::PlatformCALayer&) override;
 
     void setBlendMode(WebCore::BlendMode) override;
@@ -202,6 +203,8 @@ public:
 
     WebCore::Path shadowPath() const override;
     void setShadowPath(const WebCore::Path&) override;
+
+    void setHidesFromScreenCapture(bool) override;
 
     void setAntialiasesEdges(bool) override;
 
@@ -264,7 +267,7 @@ public:
 
     unsigned backingStoreBytesPerPixel() const override;
 
-    void LEGACY_NODELETE setClonedLayer(const PlatformCALayer*);
+    NODELETE void setClonedLayer(const PlatformCALayer*);
 
     LayerProperties& properties() LIFETIME_BOUND { return m_properties; }
     const LayerProperties& properties() const LIFETIME_BOUND { return m_properties; }
@@ -289,6 +292,9 @@ public:
     std::optional<WTF::MachSendRightAnnotated> sendRightAnnotated() const { return m_sendRightAnnotated; }
 #endif
 
+    void updateChildrenPropertyIfNeeded();
+    bool sendsPropertiesToUIProcess() const;
+
 protected:
     PlatformCALayerRemote(WebCore::PlatformCALayer::LayerType, WebCore::PlatformCALayerClient* owner, RemoteLayerTreeContext&);
     PlatformCALayerRemote(const PlatformCALayerRemote&, WebCore::PlatformCALayerClient*, RemoteLayerTreeContext&);
@@ -307,7 +313,7 @@ private:
     WebCore::IncludeDynamicContentScalingDisplayList shouldIncludeDisplayListInBackingStore() const;
 #endif
 
-    bool LEGACY_NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
+    NODELETE bool requiresCustomAppearanceUpdateOnBoundsChange() const;
 
     LayerProperties m_properties;
     WebCore::PlatformCALayerList m_children;

@@ -60,6 +60,8 @@ private:
     void paintTextWithShadows(const Style::ComputedStyle&, TextRun&, const SVGTextFragment&, unsigned startPosition, unsigned endPosition);
     void paintText(const Style::ComputedStyle&, const Style::ComputedStyle& selectionStyle, const SVGTextFragment&, bool hasSelection, bool paintSelectedTextOnly);
 
+    void adjustPaintServerForTextScale(GraphicsContext&, float scalingFactor);
+
     bool acquirePaintingResource(SVGPaintServerHandling&, float scalingFactor, const RenderBoxModelObject&, const Style::ComputedStyle&);
     void releasePaintingResource(SVGPaintServerHandling&);
 
@@ -69,8 +71,8 @@ private:
     std::pair<unsigned, unsigned> selectionStartEnd() const;
 
     const InlineIterator::SVGTextBox m_textBox;
-    const RenderSVGInlineText& m_renderer;
-    const RenderBoxModelObject& m_parentRenderer;
+    const CheckedRef<const RenderSVGInlineText> m_renderer;
+    const CheckedRef<const RenderBoxModelObject> m_parentRenderer;
     PaintInfo& m_paintInfo;
     const TextBoxSelectableRange m_selectableRange;
     const LayoutPoint m_paintOffset;
@@ -80,8 +82,9 @@ private:
     LegacyRenderSVGResource* m_legacyPaintingResource { nullptr };
 };
 
+TextRun constructTextRun(StringView, TextDirection, const Style::ComputedStyle&);
 TextRun constructTextRun(StringView, TextDirection, const Style::ComputedStyle&, const SVGTextFragment&);
 FloatRect selectionRectForTextFragment(const RenderSVGInlineText&, TextDirection, const SVGTextFragment&, unsigned startPosition, unsigned endPosition, const Style::ComputedStyle&);
-bool LEGACY_NODELETE mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition);
+NODELETE bool mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition);
 
 }

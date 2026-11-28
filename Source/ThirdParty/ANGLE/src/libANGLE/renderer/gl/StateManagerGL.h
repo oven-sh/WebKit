@@ -411,6 +411,12 @@ class StateManagerGL final : angle::NonCopyable
     VertexArrayStateGL *getOrCreateVAOState(GLuint vao);
     VertexArrayStateGL *getCurrentVAOState();
 
+    void onProgramTextureAndImageBindingsChanged()
+    {
+        mLocalDirtyBits.set(gl::state::DIRTY_BIT_TEXTURE_BINDINGS);
+        mLocalDirtyBits.set(gl::state::DIRTY_BIT_IMAGE_BINDINGS);
+    }
+
     void validateState();
 
     std::unique_ptr<ContextStateGL> createContextStateGL() const;
@@ -458,7 +464,7 @@ class StateManagerGL final : angle::NonCopyable
     void setDefaultVAOState(const VertexArrayStateGL &state, bool isHardenedContext);
     angle::Result setState(const gl::Context *context, const ContextStateGL &state);
 
-    void ensurePlaceholderFramebuffer();
+    GLuint ensurePlaceholderFramebuffer();
     void maybeDrainDeferredBuffers();
 
     const FunctionsGL *mFunctions;

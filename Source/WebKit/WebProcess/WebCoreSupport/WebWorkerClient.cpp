@@ -33,7 +33,6 @@
 #include "RemoteImageBufferProxy.h"
 #include "RemotePlaceholderRenderingContextSource.h"
 #include "RemoteRenderingBackendProxy.h"
-#include "WebGPUDowncastConvertToBackingContext.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include <WebCore/ImageBuffer.h>
@@ -141,10 +140,12 @@ RefPtr<GraphicsContextGL> GPUProcessWebWorkerClient::createGraphicsContextGL(con
     if (!dispatcher)
         return nullptr;
     assertIsCurrent(*dispatcher);
+#if !PLATFORM(COCOA)
     if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
         // ANGLE does not support multithreading, so we cannot create in-process contexts in worker threads.
         return nullptr;
     }
+#endif
     return RemoteGraphicsContextGLProxy::create(attributes, protect(ensureRenderingBackend()), *dispatcher);
 }
 #endif
@@ -156,7 +157,7 @@ RefPtr<WebCore::WebGPUIntegration> GPUProcessWebWorkerClient::createGPUForWebGPU
     if (!dispatcher)
         return nullptr;
     assertIsCurrent(*dispatcher);
-    return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ModelDowncastConvertToBackingContext::create(), protect(ensureRenderingBackend()), *dispatcher);
+    return RemoteGPUProxy::create(ModelDowncastConvertToBackingContext::create(), protect(ensureRenderingBackend()), *dispatcher);
 }
 #endif
 

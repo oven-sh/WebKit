@@ -1,0 +1,67 @@
+# class Ledger { push(row) { return [sink, row]; } }  function feed(out: Ledger | string[], row: string) { return out.push(row); }  function size(out: Ledger | string[]) { return out.length; }
+# Of `out` a Ledger or a list is expected. At an access, of a set that holds layouts beside objects without one, the one layout that has the name asked is expected; that was withheld where a built-in answers the name too,
+# so `out.push(row)` went by the key alone to the stub of Array.prototype.push, which missed on every Ledger: 144 instructions a call in the place of 52, 213,000 times in a session of an application.
+# The layout is tested there too. The other side is as likely: it is no rare block, and the call in it still goes to the stub that looks at the receiver.
+# `length` no field of Ledger answers: it cuts nothing.
+# RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="push"}]
+# CHECK: = CallDirect {{*}}function=f2
+# RUN(LIST): walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# LIST-LABEL: code f3:Body
+# LIST: = ShapeTest
+# LIST-NEXT: Branch {{*}}notTaken [[other]]()
+# LIST: [[other]]():
+# LIST-NEXT: = PropGet {{*}}key="push"
+# RUN(STUB): walk f3 mechanisms=all
+# STUB-LABEL: code f3:Body
+# STUB: = ShapeTest {{*}}layouts=[L0]
+# STUB: = Call {{*}}calleeKey="push"{{*}}methodOfReceiverAsMade=ArrayPrototypePush
+# RUN(NOTHING): walk f4 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# NOTHING-NOT: ShapeTest
+# RUN(VERIFIED): same-bytes-alone f3:Body
+# VERIFIED: f3:Body same:
+
+layout L0 kind=Instance name="Ledger" module=m0 constructor=f1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure v1 function=f2
+    DefineMethod v3, v4 layout=L0 key="push"
+    v6 = FinishClass v3 layout=L0
+    v7 = NewClosure function=f3
+    v8 = Construct v6
+    v9 = NewClosure function=f4
+    v10 = Call v1, -, v7, v8, v9
+    Return v10
+}
+function f1 name="Ledger" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="push" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewArray v0, v2
+    Return v3
+}
+function f3 name="feed" module=m0 length=2 thisType={type=anything} parameters=[{type=L0|Array<string>}, {type=string}] results=[{type=anything}] {
+  b0(v0: L0|Array<string>, v1: string):
+    v2 = Convert v0 declared={type=L0|Array<string>}
+    v3 = PropGet v2 key="push"
+    v4 = Call v3, v2, v1 calleeKey="push"
+    Return v4
+}
+function f4 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=L0|Array<string>}] results=[{type=anything}] {
+  b0(v0: L0|Array<string>):
+    v1 = Convert v0 declared={type=L0|Array<string>}
+    v2 = PropGet v1 key="length"
+    Return v2
+}

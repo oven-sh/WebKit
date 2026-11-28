@@ -55,8 +55,8 @@ class VisibleSelection;
 
 class AccessibilityRenderObject : public AccessibilityNodeObject {
 public:
-    static Ref<AccessibilityRenderObject> LEGACY_NODELETE create(AXID, RenderObject&, AXObjectCache&);
-    static Ref<AccessibilityRenderObject> LEGACY_NODELETE create(AXID, Node&, AXObjectCache&);
+    NODELETE static Ref<AccessibilityRenderObject> create(AXID, RenderObject&, AXObjectCache&);
+    NODELETE static Ref<AccessibilityRenderObject> create(AXID, Node&, AXObjectCache&);
     virtual ~AccessibilityRenderObject();
 
     // Returns true if the renderer changed.
@@ -90,12 +90,11 @@ public:
     int layoutCount() const final;
 
     AccessibilityObject* firstChild() const final;
-    AccessibilityObject* lastChild() const final;
     AccessibilityObject* previousSibling() const final;
     AccessibilityObject* nextSibling() const final;
     AccessibilityObject* parentObject() const override;
     AccessibilityObject* observableObject() const override;
-    AccessibilityObject* titleUIElement() const final;
+    RefPtr<AXCoreObject> titleUIElement() const final;
 
 #if ENABLE_ACCESSIBILITY_LOCAL_FRAME
     AccessibilityObject* crossFrameParentObject() const final;
@@ -199,7 +198,7 @@ private:
     RefPtr<AccessibilityObject> elementAccessibilityHitTest(const IntPoint&) const override;
 
     bool renderObjectIsObservable(RenderObject&) const;
-    RenderObject* LEGACY_NODELETE renderParentObject() const;
+    NODELETE RenderObject* renderParentObject() const;
     RenderObject* markerRenderer() const;
 
     bool isSVGImage() const;
@@ -224,10 +223,10 @@ private:
 
     bool inheritsPresentationalRole() const override;
 
-    bool LEGACY_NODELETE shouldGetTextFromNode(const TextUnderElementMode&) const;
+    NODELETE bool shouldGetTextFromNode(const TextUnderElementMode&) const;
 
 #if ENABLE(APPLE_PAY)
-    bool LEGACY_NODELETE isApplePayButton() const;
+    NODELETE bool isApplePayButton() const;
     ApplePayButtonType applePayButtonType() const;
     String applePayButtonDescription() const;
 #endif

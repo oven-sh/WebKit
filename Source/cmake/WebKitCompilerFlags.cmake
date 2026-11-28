@@ -172,6 +172,11 @@ if (DEVELOPER_MODE OR ARM)
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-fno-omit-frame-pointer)
 endif ()
 
+# Where wtf/PlatformEnable.h has ENABLE(RETURN_ADDRESS_SIGNING).
+if (WTF_CPU_ARM64 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_FLAGS MATCHES "-D(BUN_HARDENED|ENABLE_RETURN_ADDRESS_SIGNING=1)" AND NOT CMAKE_CXX_FLAGS MATCHES "-DENABLE_RETURN_ADDRESS_SIGNING=0")
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-mbranch-protection=pac-ret)
+endif ()
+
 if (COMPILER_IS_GCC_OR_CLANG)
     if (NOT APPLE AND (COMPILER_IS_CLANG OR (DEVELOPER_MODE AND NOT ARM)))
         # Split debug information in ".debug_types" / ".debug_info" sections - this leads
@@ -223,7 +228,9 @@ if (COMPILER_IS_GCC_OR_CLANG)
     if (NOT WTF_CPU_ARM)
         WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wcast-align)
     endif ()
-    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wformat-security
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wvla
+                                         -Walloca
+                                         -Wformat-security
                                          -Wmissing-format-attribute
                                          -Wpointer-arith
                                          -Wundef)
@@ -249,6 +256,10 @@ if (COMPILER_IS_GCC_OR_CLANG)
             $<$<COMPILE_LANGUAGE:CXX>:-D__cpp_concepts=202002>
             $<$<COMPILE_LANGUAGE:CXX>:-Wno-builtin-macro-redefined>
         )
+    endif ()
+
+    if ((CMAKE_CXX_COMPILER_ID STREQUAL Clang) AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 22))
+        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-dangling)
     endif ()
 
     # GCC gives false warnings for subobject-linkage <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105595>
@@ -453,12 +464,13 @@ if (COMPILER_IS_GCC_OR_CLANG)
                     add_compile_options(--param=asan-use-after-return=0)
                 endif ()
             elseif (${SANITIZER} MATCHES "undefined")
-                # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
+                # Please keep these options synchronized with WK_UNDEFINED_BEHAVIOR_SANITIZER_OTHER_CFLAGS_YES in Configurations/Sanitizers.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")
                 # -fsanitize=vptr is disabled because incompatible with -fno-rtti.
-                # swiftc rejects -fno-sanitize=, so that one is C-family only.
+                # swiftc rejects -fno-sanitize= and -fsanitize=local-bounds, so those are C-family only.
                 add_compile_options("${_cc_sanitize}=undefined"
-                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>")
+                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>"
+                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fsanitize=local-bounds>")
                 add_link_options("${_ld_sanitize}=undefined")
                 list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=undefined")
 

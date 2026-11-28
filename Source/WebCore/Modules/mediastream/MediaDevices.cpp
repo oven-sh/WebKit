@@ -61,6 +61,7 @@
 #include "UserMediaController.h"
 #include "UserMediaRequest.h"
 #include <ranges>
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -104,7 +105,7 @@ Document* MediaDevices::document() const
     return downcast<Document>(scriptExecutionContext());
 }
 
-static bool LEGACY_NODELETE shouldEnableEnumerateDeviceQuirk(const Document& document)
+NODELETE static bool shouldEnableEnumerateDeviceQuirk(const Document& document)
 {
     return document.settings().exposeCaptureDevicesAfterCaptureEnabled() && document.quirks().shouldEnableEnumerateDeviceQuirk();
 }
@@ -328,7 +329,7 @@ static inline bool checkMicrophoneAccess(const Document& document)
     return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Microphone, document, PermissionsPolicy::ShouldReportViolation::No);
 }
 
-static bool isFeaturePolicyAllowingSpeakerSelection(const Document& document)
+bool MediaDevices::isFeaturePolicyAllowingSpeakerSelection(const Document& document)
 {
     return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::SpeakerSelection, document, PermissionsPolicy::ShouldReportViolation::No) || (document.quirks().shouldEnableSpeakerSelectionPermissionsPolicyQuirk() && PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Microphone, document, PermissionsPolicy::ShouldReportViolation::No));
 }
@@ -337,10 +338,10 @@ static inline bool checkSpeakerAccess(const Document& document)
 {
     return document.frame()
         && document.frame()->settings().exposeSpeakersEnabled()
-        && isFeaturePolicyAllowingSpeakerSelection(document);
+        && MediaDevices::isFeaturePolicyAllowingSpeakerSelection(document);
 }
 
-static inline bool LEGACY_NODELETE exposeSpeakersWithoutMicrophoneAccess(const Document& document)
+NODELETE static inline bool exposeSpeakersWithoutMicrophoneAccess(const Document& document)
 {
     return document.frame() && document.frame()->settings().exposeSpeakersWithoutMicrophoneEnabled();
 }
@@ -383,7 +384,7 @@ void MediaDevices::exposeDevices(Vector<CaptureDeviceWithCapabilities>&& newDevi
     m_audioOutputDeviceIdToPersistentId.clear();
 
     Vector<Variant<Ref<MediaDeviceInfo>, Ref<InputDeviceInfo>>> devices;
-    for (auto& newDeviceWithCapabilities : newDevices) {
+    for (auto& newDeviceWithCapabilities : borrow(newDevices)) {
         auto& newDevice = newDeviceWithCapabilities.device;
         if (!canAccessMicrophone && newDevice.type() == CaptureDevice::DeviceType::Microphone)
             continue;

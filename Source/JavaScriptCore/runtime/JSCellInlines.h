@@ -252,7 +252,7 @@ ALWAYS_INLINE bool JSCell::isConstructor()
 
 ALWAYS_INLINE bool JSCell::isPristine() const
 {
-    ASSERT(!TypeInfo::isPristine(inlineTypeFlags()) || structure()->isPristine());
+    ASSERT(!TypeInfo::isPristine(inlineTypeFlags()) || (structure()->isPristine() && (!pristineFlagOfCellCoversElements(type()) || structure()->hasPristineElements())));
     return TypeInfo::isPristine(inlineTypeFlags());
 }
 

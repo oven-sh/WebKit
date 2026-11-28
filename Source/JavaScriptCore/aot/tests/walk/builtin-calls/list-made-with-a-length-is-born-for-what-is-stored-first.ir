@@ -1,0 +1,153 @@
+# A list that is made with a length holds nothing yet, so nothing at its birth says what storage it needs. The first operation that names a kind of storage for it says so, and the birth takes that kind:
+# a store by the type of what it stores, a test in front of a loop by the kind that the loop is built for. A later store may ask for wider storage, never for narrower. It is a hint: each of them tests at run time.
+# function whole(n) { const list = new Array(n | 0); list[0] = 1; return list; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArrayLike {{*}}arrayStorage=Int32
+# function fraction(n) { const list = new Array(n | 0); list[0] = 0.5; return list; }
+# RUN(FRACTION): walk f2 mechanisms=all
+# FRACTION-LABEL: code f2:Body
+# FRACTION: = NewArrayLike {{*}}arrayStorage=Double
+# function text(n) { const list = new Array(n | 0); list[0] = "x"; return list; }
+# RUN(TEXT): walk f3 mechanisms=all
+# TEXT-LABEL: code f3:Body
+# TEXT: = NewArrayLike {{*}}arrayStorage=Contiguous
+# What may be a number or not says nothing: the list is born for integers, and the store that finds them widens the storage where it stands.
+# function anything(n, value) { const list = new Array(n | 0); list[0] = value; return list; }
+# RUN(ANYTHING): walk f4 mechanisms=all
+# ANYTHING-LABEL: code f4:Body
+# ANYTHING: = NewArrayLike
+# RUN(UNSAID): walk f4 mechanisms=all
+# UNSAID-NOT: NewArrayLike {{*}}arrayStorage=
+# Where nothing is stored nothing is said: function bare(n) { return new Array(n | 0); }
+# RUN(BARE): walk f8 mechanisms=all
+# BARE-LABEL: code f8:Body
+# BARE: = NewArrayLike
+# RUN(SILENT): walk f8 mechanisms=all
+# SILENT-NOT: arrayStorage=
+# function wider(n) { const list = new Array(n | 0); list[0] = 1; list[1] = "x"; return list; }
+# RUN(WIDER): walk f5 mechanisms=all
+# WIDER-LABEL: code f5:Body
+# WIDER: = NewArrayLike {{*}}arrayStorage=Contiguous
+# function narrower(n) { const list = new Array(n | 0); list[0] = "x"; list[1] = 1; return list; }
+# RUN(NARROWER): walk f6 mechanisms=all
+# NARROWER-LABEL: code f6:Body
+# NARROWER: = NewArrayLike {{*}}arrayStorage=Contiguous
+# function filled(n) { const list = new Array(n | 0); for (let i = 0; i < list.length; i++) list[i] = i & 7; return list; }
+# RUN(LOOP): walk f7 mechanisms=all
+# LOOP-LABEL: code f7:Body
+# LOOP: = NewArrayLike {{*}}arrayStorage=Int32
+# LOOP: = HasArrayStorage {{*}} [isWritable, admitsInt32Storage]
+# With typed operations withheld nothing is asked of the birth.
+# RUN(CLOSED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CLOSED-NOT: arrayStorage=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9
+    Return v10
+}
+function f1 name="whole" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = Integer integer=1
+    ElemSet v4, v2, v5
+    Return v4
+}
+function f2 name="fraction" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = Double number=0.5
+    ElemSet v4, v2, v5
+    Return v4
+}
+function f3 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = String string="x"
+    ElemSet v4, v2, v5
+    Return v4
+}
+function f4 name="anything" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Array
+    v3 = Integer
+    v4 = BitOr v0, v3
+    v5 = Construct v2, -, v4 calleeName="Array"
+    ElemSet v5, v3, v1
+    Return v5
+}
+function f5 name="wider" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = Integer integer=1
+    ElemSet v4, v2, v5
+    v7 = String string="x"
+    ElemSet v4, v5, v7
+    Return v4
+}
+function f6 name="narrower" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = String string="x"
+    ElemSet v4, v2, v5
+    v7 = Integer integer=1
+    ElemSet v4, v7, v7
+    Return v4
+}
+function f7 name="filled" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    Jump -> next b1(v2)
+  b1(v5):
+    LoopHint
+    v7 = PropGet v4 key="length"
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Integer integer=7
+    v10 = BitAnd v5, v9
+    ElemSet v4, v5, v10
+    v12 = Increment v5
+    Jump -> next b1(v12)
+  b3():
+    Return v4
+}
+function f8 name="bare" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    Return v4
+}

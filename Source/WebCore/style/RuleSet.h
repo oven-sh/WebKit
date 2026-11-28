@@ -92,7 +92,7 @@ public:
     void addRule(const StyleRule&, unsigned selectorIndex, unsigned selectorListIndex);
     void addPageRule(StyleRulePage&);
     void setViewTransitionRule(StyleRuleViewTransition&);
-    RefPtr<StyleRuleViewTransition> LEGACY_NODELETE viewTransitionRule() const;
+    NODELETE RefPtr<StyleRuleViewTransition> viewTransitionRule() const;
 
     void addToRuleSet(const AtomString& key, AtomRuleMap&, const RuleData&);
     void shrinkToFit();
@@ -128,11 +128,11 @@ public:
     EnumSet<PseudoElementType> universalHTMLPseudoElementTypes() const { return m_universalHTMLPseudoElementTypes; }
     // Pseudo element types applying to all elements.
     EnumSet<PseudoElementType> universalPseudoElementTypes() const { return m_universalPseudoElementTypes; }
-    // Whether any universal ::before/::after rule may generate a box.
+    // Whether any universal ::before/::after/::marker rule may generate a box.
     PseudoElementBoxGeneration universalHTMLPseudoElementBoxGeneration() const { return m_universalHTMLPseudoElementBoxGeneration; }
     PseudoElementBoxGeneration universalPseudoElementBoxGeneration() const { return m_universalPseudoElementBoxGeneration; }
 
-    const Vector<StyleRulePage*>& pageRules() const LIFETIME_BOUND { return m_pageRules; }
+    const Vector<Ref<StyleRulePage>>& pageRules() const LIFETIME_BOUND { return m_pageRules; }
 
     unsigned ruleCount() const { return m_ruleCount; }
 
@@ -156,7 +156,7 @@ public:
     const RefPtr<const StyleRulePositionTry> positionTryRuleForName(const AtomString&) const;
 
 #if ENABLE(SPATIAL_PORTAL)
-    RefPtr<const StyleRuleEnvironmentMap> LEGACY_NODELETE environmentMapRuleForName(const AtomString&) const;
+    NODELETE RefPtr<const StyleRuleEnvironmentMap> environmentMapRuleForName(const AtomString&) const;
 #endif
 
     WTF::String selectorsForDebugging() const;
@@ -210,7 +210,7 @@ private:
     Vector<Ref<const StyleRuleContainer>> containerQueryChainFor(ContainerQueryIdentifier) const;
 
     struct DynamicMediaQueryRules {
-        Vector<MQ::MediaQueryList> mediaQueries;
+        Vector<Box<const MQ::MediaQueryList>> mediaQueries;
         Vector<size_t> affectedRulePositions;
         Vector<Ref<const StyleRule>> affectedRules;
         bool requiresFullReset { false };
@@ -248,9 +248,9 @@ private:
     RuleDataVector m_universalPseudoElementRules;
     EnumSet<PseudoElementType> m_universalHTMLPseudoElementTypes;
     EnumSet<PseudoElementType> m_universalPseudoElementTypes;
-    PseudoElementBoxGeneration m_universalHTMLPseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
-    PseudoElementBoxGeneration m_universalPseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
-    Vector<StyleRulePage*> m_pageRules;
+    PseudoElementBoxGeneration m_universalHTMLPseudoElementBoxGeneration { PseudoElementBoxGeneration::NoGeneratedContent };
+    PseudoElementBoxGeneration m_universalPseudoElementBoxGeneration { PseudoElementBoxGeneration::NoGeneratedContent };
+    Vector<Ref<StyleRulePage>> m_pageRules;
     RefPtr<StyleRuleViewTransition> m_viewTransitionRule;
     RuleFeatureSet m_features;
     Vector<DynamicMediaQueryRules> m_dynamicMediaQueryRules;

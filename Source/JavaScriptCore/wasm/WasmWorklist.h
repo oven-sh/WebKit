@@ -29,7 +29,9 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "HelperThreadPool.h"
 #include <wtf/AutomaticThread.h>
+#include <wtf/FixedVector.h>
 #include <wtf/PrintStream.h>
 #include <wtf/PriorityQueue.h>
 #include <wtf/TZoneMalloc.h>
@@ -43,7 +45,7 @@ namespace Wasm {
 
 class Plan;
 
-class Worklist {
+class Worklist final : public HelperThreadClient {
     WTF_MAKE_TZONE_ALLOCATED(Worklist);
 public:
     Worklist();
@@ -76,11 +78,24 @@ private:
         Ticket ticket;
         RefPtr<Plan> plan;
 
-        void LEGACY_NODELETE setToNextPriority();
+        NODELETE void setToNextPriority();
     };
 
+    struct WorkerSlot {
+        // Only modified while holding m_lock.
+        QueueElement element;
+        Condition synchronize;
+    };
+
+    AutomaticThread::PollResult poll(const AbstractLocker&, WorkerSlot&);
+    void runOnSlot(WorkerSlot&);
+    void notifyPlanEnqueued(const AbstractLocker&, bool multiThreaded);
+
+    TaskResult runOneTask() final;
+    void publishDemand(const AbstractLocker&);
+
     struct QueueElementIsLowerPriority {
-        bool LEGACY_NODELETE operator()(const QueueElement& left, const QueueElement& right) const
+        NODELETE bool operator()(const QueueElement& left, const QueueElement& right) const
         {
             // Within one Priority, the earliest ticket is served first.
             if (left.priority == right.priority)
@@ -90,6 +105,8 @@ private:
         }
     };
 
+    const bool m_usesSharedHelperThreadPool;
+    FixedVector<WorkerSlot> m_slots;
     Box<Lock> m_lock;
     const Ref<AutomaticThreadCondition> m_planEnqueued;
     // Technically, this could overflow but that's unlikely. Even if it did, we will just compile things of the same
@@ -99,7 +116,7 @@ private:
     Vector<Ref<Thread>> m_threads;
 };
 
-Worklist* LEGACY_NODELETE existingWorklistOrNull();
+NODELETE Worklist* existingWorklistOrNull();
 JS_EXPORT_PRIVATE Worklist& ensureWorklist();
 
 } } // namespace JSC::Wasm

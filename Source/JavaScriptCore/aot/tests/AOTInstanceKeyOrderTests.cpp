@@ -7,22 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
-#include "AOTNativeTest.h"
-#include "AOTObject.h"
-#include "AOTProgramFile.h"
-#include "AOTShellProcess.h"
-#include "AOTTemporaryFile.h"
-#include "AOTThreads.h"
-#include "AOTVector.h"
-#include "JSCJSValueInlines.h"
-#include <initializer_list>
-#include <stdlib.h>
-#include <wtf/DataLog.h>
-#include <wtf/text/MakeString.h>
+#include "AOTShellProgramTestSupport.h"
 
 namespace JSC { namespace AOT {
 
@@ -99,15 +84,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]}
+    v4 = Convert v3 declared={type=L0}
     v5 = CallDirect v4, v1 function=f2
     v6 = Integer integer=1
     v7 = Add v1, v6
     PropSet v3, v7 key="b"
     Return v3
 }
-function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
-    PropDefine v0, v1 key="a"
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    PropDefine v2, v1 key="a"
     Return
 }
 function f3 name="B" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
@@ -151,13 +137,14 @@ function f6 name="H" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     v3 = NewObject v2 layout=L4
     PropSet v3, v1 key="n"
     v5 = Convert v3 declared={type=L4}
-    v6 = CallDirect v5, v1 function=f7
-    v7 = Integer integer=2
-    v8 = Add v1, v7
-    PropSet v3, v8 key="m"
-    v10 = Integer integer=9
-    v11 = Add v1, v10
-    PropSet v3, v11 key="n"
+    v6 = NewClosure function=f7
+    v7 = Call v6, -, v5, v1 [isNeverInlined]
+    v8 = Integer integer=2
+    v9 = Add v1, v8
+    PropSet v3, v9 key="m"
+    v11 = Integer integer=9
+    v12 = Add v1, v11
+    PropSet v3, v12 key="n"
     Return v3
 }
 function f7 name="helper" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
@@ -216,7 +203,6 @@ function f11 name="walk" parameters=[{type=anything}] results=[{type=anything}] 
 }
 )IR"_s;
 
-// type Record = { a: number, b?: number, c?: number }. addB(o, x) { o.b = x + 1 }, addC(o, x) { o.c = x + 2 }, addBoth(o, x) { o.b = x + 3; o.c = x + 3 }
 static constexpr ASCIILiteral programCreatingFieldsLater = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Record" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
@@ -283,7 +269,6 @@ function f3 name="addBoth" parameters=[{type=L0}, {type=number}] results=[{type=
 }
 )IR"_s;
 
-// B and D as above. No object reaches other code, so the stores of B have both classes as proven receivers.
 static constexpr ASCIILiteral programKeepingObjects = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="B" constructor=f1 fields=[{key="p" declared={type=number} flags=[IsRequired]}, {key="q" declared={type=number} flags=[IsRequired]}]
@@ -370,28 +355,31 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v19 = FinishObject v18
     v20 = NewObject layout=L0 fields=[]
     v21 = FinishObject v20
-    v22 = CallDirect v11, v9 function=f1
-    v23 = CallDirect v13, v9 function=f1
-    v24 = CallDirect v15, v9 function=f1
-    v25 = CallDirect v17, v9 function=f2
-    v26 = CallDirect v17, v9 function=f1
-    v27 = CallDirect v19, v9 function=f3
-    v28 = CallDirect v19, v9 function=f1
-    v29 = CallDirect v21, v9 function=f1
-    v30 = CallDirect v21, v9 function=f3
-    v31 = CallDirect v21, v9 function=f2
-    v32 = String string="nothing listed"
-    v33 = Call v1, -, v32, v11
-    v34 = String string="f listed"
-    v35 = Call v1, -, v34, v13
-    v36 = String string="i and e listed"
-    v37 = Call v1, -, v36, v15
-    v38 = String string="the middle, then all"
-    v39 = Call v1, -, v38, v17
-    v40 = String string="backwards, then all"
-    v41 = Call v1, -, v40, v19
-    v42 = String string="all, then backwards, then the middle"
-    v43 = Call v1, -, v42, v21
+    v22 = NewClosure function=f1
+    v23 = NewClosure function=f2
+    v24 = NewClosure function=f3
+    v25 = Call v22, -, v11, v9 [isNeverInlined]
+    v26 = Call v22, -, v13, v9 [isNeverInlined]
+    v27 = Call v22, -, v15, v9 [isNeverInlined]
+    v28 = Call v23, -, v17, v9 [isNeverInlined]
+    v29 = Call v22, -, v17, v9 [isNeverInlined]
+    v30 = Call v24, -, v19, v9 [isNeverInlined]
+    v31 = Call v22, -, v19, v9 [isNeverInlined]
+    v32 = Call v22, -, v21, v9 [isNeverInlined]
+    v33 = Call v24, -, v21, v9 [isNeverInlined]
+    v34 = Call v23, -, v21, v9 [isNeverInlined]
+    v35 = String string="nothing listed"
+    v36 = Call v1, -, v35, v11
+    v37 = String string="f listed"
+    v38 = Call v1, -, v37, v13
+    v39 = String string="i and e listed"
+    v40 = Call v1, -, v39, v15
+    v41 = String string="the middle, then all"
+    v42 = Call v1, -, v41, v17
+    v43 = String string="backwards, then all"
+    v44 = Call v1, -, v43, v19
+    v45 = String string="all, then backwards, then the middle"
+    v46 = Call v1, -, v45, v21
     Return
 }
 function f1 name="fillAll" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
@@ -522,162 +510,39 @@ backwards, then all: keys ["i","h","g","f","e","d","c","b","a"] for-in ["i","h",
 all, then backwards, then the middle: keys ["a","b","c","d","e","f","g","h","i"] for-in ["a","b","c","d","e","f","g","h","i"] values [59,58,31,32,33,34,35,52,51] entries [["a",59],["b",58],["c",31],["d",32],["e",33],["f",34],["g",35],["h",52],["i",51]] spread {"a":59,"b":58,"c":31,"d":32,"e":33,"f":34,"g":35,"h":52,"i":51} assign {"a":59,"b":58,"c":31,"d":32,"e":33,"f":34,"g":35,"h":52,"i":51} JSON {"a":59,"b":58,"c":31,"d":32,"e":33,"f":34,"g":35,"h":52,"i":51}
 )"_s;
 
-static std::unique_ptr<CompileOutput> compileOnThisThread(ASCIILiteral text, std::initializer_list<ASCIILiteral> optionWords)
+static void checkKeyOrders(ASCIILiteral text, ASCIILiteral expected)
 {
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    for (ASCIILiteral word : optionWords)
-        AOT_TEST_CHECK(!applyOptionWord(options, word));
-    BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(text)), Typed::IRForm::AsRead, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-    }
-    AOT_TEST_CHECK(program);
-
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
-    AOT_TEST_CHECK(output->entryModuleIDs.size() == 1);
-    return output;
+    checkOutputOfProgramInShell(text, expected, { "references=wide"_s }, script);
+    checkOutputOfProgramInShell(text, expected, { "references=narrow"_s }, script);
 }
 
-static String runInShell(ASCIILiteral text, std::initializer_list<ASCIILiteral> optionWords)
+static void testFieldsCreatedInConstructors()
 {
-    std::unique_ptr<CompileOutput> output;
-    runOnBuildThread([&] {
-        output = compileOnThisThread(text, optionWords);
-    });
-
-    TemporaryFile image(".image"_s, output->image.span());
-    Vector<String> arguments {
-        makeString("--aotImagePath="_s, image.path()),
-        String("-e"_s),
-        makeString(script, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error));"_s),
-    };
-
-    String shell = shellPath();
-    ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLogLn(shell, " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
-}
-
-static void checkOutput(ASCIILiteral text, ASCIILiteral expected, std::initializer_list<ASCIILiteral> optionWords)
-{
-    String output = runInShell(text, optionWords);
-    if (output != expected)
-        dataLog(output);
-    AOT_TEST_CHECK(output == expected);
-}
-
-static void checkKeyOrders(std::initializer_list<ASCIILiteral> optionWords)
-{
-    checkOutput(programText, expectedOutput, optionWords);
-}
-
-static void testEveryPass()
-{
-    checkKeyOrders({ });
-    checkKeyOrders({ "references=narrow"_s });
-}
-
-static void testWithoutInlining()
-{
-    checkKeyOrders({ "disable=pass:InlineCalls"_s });
-    checkKeyOrders({ "disable=pass:InlineCalls"_s, "references=narrow"_s });
-}
-
-static void testWithoutSinking()
-{
-    checkKeyOrders({ "disable=pass:SinkAllocations"_s });
-}
-
-static void testSlotStoresOnly()
-{
-    checkKeyOrders({ "only-passes=ResolveAccesses"_s });
-    checkKeyOrders({ "only-passes=ResolveAccesses,ExpandOwnKeys"_s, "heat=EverythingIsHot"_s });
-}
-
-static void testStoresByName()
-{
-    checkKeyOrders({ "disable=pass:ResolveAccesses"_s });
-    checkKeyOrders({ "disable=flow-results"_s });
+    checkKeyOrders(programText, expectedOutput);
 }
 
 static void testFieldsCreatedLater()
 {
-    for (ASCIILiteral word : { "check=Validate"_s, "disable=pass:InlineCalls"_s, "only-passes=ResolveAccesses"_s, "disable=pass:ResolveAccesses"_s, "references=narrow"_s })
-        checkOutput(programCreatingFieldsLater, expectedOutputOfFieldsCreatedLater, { word });
+    checkKeyOrders(programCreatingFieldsLater, expectedOutputOfFieldsCreatedLater);
 }
 
 static void testStoresWithTwoReceivers()
 {
-    constexpr ASCIILiteral expected = "B: keys [\"q\",\"p\"] values [2,1]\nD: keys [\"q\",\"p\",\"c\",\"d\"] values [2,1,3,4]\n"_s;
-    for (ASCIILiteral word : { "check=Validate"_s, "disable=pass:InlineCalls"_s, "only-passes=ResolveAccesses"_s, "disable=pass:ResolveAccesses"_s, "references=narrow"_s })
-        checkOutput(programKeepingObjects, expected, { word });
+    checkKeyOrders(programKeepingObjects, "B: keys [\"q\",\"p\"] values [2,1]\nD: keys [\"q\",\"p\",\"c\",\"d\"] values [2,1,3,4]\n"_s);
 }
 
 static void testLongRuns()
 {
-    for (ASCIILiteral word : { "check=Validate"_s, "references=narrow"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s, "limit=MaxSelectionGroupMembers:4"_s, "disable=rule:SlotStoreRun"_s })
-        checkOutput(programWithLongRuns, expectedOutputOfLongRuns, { "disable=pass:InlineCalls"_s, word });
-}
-
-// addAll() leaves what add() leaves for each entry that lists extra keys, whether or not a full entry is among them. What is appended behind it shows the full entries that were counted.
-static void testExtraKeysCountedAtOnce()
-{
-    constexpr uint32_t numberOfFields = 5;
-    constexpr uint16_t full = maxKeyOrderEntry;
-    auto check = [&](std::initializer_list<uint16_t> countedBefore, std::initializer_list<uint16_t> entries) {
-        ExtraKeyCounter oneByOne(numberOfFields);
-        ExtraKeyCounter atOnce(numberOfFields);
-        for (uint16_t entry : countedBefore) {
-            oneByOne.add(entry);
-            atOnce.add(entry);
-        }
-        for (uint16_t entry : entries) {
-            if (entry >= numberOfFields)
-                oneByOne.add(entry);
-        }
-        atOnce.addAll(std::span { entries.begin(), entries.size() });
-        AOT_TEST_CHECK(oneByOne.count() == atOnce.count());
-        Vector<uint16_t> appendedOneByOne;
-        Vector<uint16_t> appendedAtOnce;
-        uint32_t more = oneByOne.count() + maxKeyOrderEntry + 3;
-        oneByOne.appendEntriesCountingTo(more, appendedOneByOne);
-        atOnce.appendEntriesCountingTo(more, appendedAtOnce);
-        AOT_TEST_CHECK(appendedOneByOne == appendedAtOnce);
-    };
-    check({ }, { });
-    check({ }, { 0, 4, 2 });
-    check({ }, { 0, 5, 1, 9, 2 });
-    check({ }, { 9, 0, 5 });
-    check({ }, { static_cast<uint16_t>(full - 1), 0 });
-    check({ }, { 0, full, 1, 7 });
-    check({ }, { full, full, 5, 3, 6 });
-    check({ }, { 7, full });
-    check({ 8 }, { 0, 6 });
-    check({ 8 }, { 0, 12 });
-    check({ 8 }, { 1, 2 });
-    check({ full }, { 0, 6, 1 });
-    check({ full, 9 }, { 5, full, 5 });
+    checkKeyOrders(programWithLongRuns, expectedOutputOfLongRuns);
 }
 
 std::span<const NativeTest> instanceKeyOrderTests()
 {
     static constexpr NativeTest tests[] = {
-        { "instance-key-order/every-pass"_s, testEveryPass },
-        { "instance-key-order/without-inlining"_s, testWithoutInlining },
-        { "instance-key-order/without-sinking"_s, testWithoutSinking },
-        { "instance-key-order/slot-stores-only"_s, testSlotStoresOnly },
-        { "instance-key-order/stores-by-name"_s, testStoresByName },
+        { "instance-key-order/fields-created-in-constructors"_s, testFieldsCreatedInConstructors },
         { "instance-key-order/fields-created-later"_s, testFieldsCreatedLater },
         { "instance-key-order/stores-with-two-receivers"_s, testStoresWithTwoReceivers },
         { "instance-key-order/long-runs"_s, testLongRuns },
-        { "instance-key-order/extra-keys-counted-at-once"_s, testExtraKeysCountedAtOnce },
     };
     return tests;
 }

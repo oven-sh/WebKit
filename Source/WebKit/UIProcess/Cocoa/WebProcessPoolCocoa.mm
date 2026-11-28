@@ -46,6 +46,7 @@
 #import "ProcessThrottler.h"
 #import "SandboxExtension.h"
 #import "SandboxUtilities.h"
+#import "SecurityFlags.h"
 #import "TextChecker.h"
 #import "WKContentRuleListInternal.h"
 #import "WKContentRuleListStoreInternal.h"
@@ -238,14 +239,14 @@ static void registerUserDefaults()
     [[NSUserDefaults standardUserDefaults] registerDefaults:registrationDictionary.get()];
 }
 
-static std::optional<bool>& LEGACY_NODELETE cachedLockdownModeEnabledGlobally()
+NODELETE static std::optional<bool>& cachedLockdownModeEnabledGlobally()
 {
     static std::optional<bool> cachedLockdownModeEnabledGlobally;
     return cachedLockdownModeEnabledGlobally;
 }
 
 #if PLATFORM(MAC)
-static NSApplication* LEGACY_NODELETE NSAppSingleton()
+NODELETE static NSApplication* NSAppSingleton()
 {
     return NSApp;
 }
@@ -355,7 +356,7 @@ static void logProcessPoolState(const WebProcessPool& pool)
             }
         }
 
-        RELEASE_LOG(Process, "WebProcessProxy %p - %" PUBLIC_LOG_STRING ", domain: %" PRIVATE_LOG_STRING ", pageURLs: %" SENSITIVE_LOG_STRING, process.ptr(), processDescription.release().utf8(), domainString.utf8(), pageURLs.release().utf8());
+        RELEASE_LOG(Process, "WebProcessProxy %p - %" PUBLIC_LOG_STRING ", domain: %" PRIVATE_LOG_STRING ", pageURLs: %" SENSITIVE_LOG_STRING, process.ptr(), makeUTF8CString(processDescription.release()), makeUTF8CString(domainString), makeUTF8CString(pageURLs.release()));
     }
 }
 
@@ -632,6 +633,8 @@ void WebProcessPool::platformInitializeNetworkProcess(NetworkProcessCreationPara
 #if HAVE(ENHANCED_SECURITY_LINKS)
     parameters.enableEnhancedSecurityLinks = ![defaults objectForKey:WebPreferencesKey::enhancedSecurityLinksEnabledKey().createNSString().get()] || [defaults boolForKey:WebPreferencesKey::enhancedSecurityLinksEnabledKey().createNSString().get()];
 #endif
+
+    RELEASE_LOG(Process, "SecurityFlags: radar184485266 is %" PUBLIC_LOG_STRING, SecurityFlags::radar184485266() ? "enforced" : "disabled");
 }
 
 void WebProcessPool::platformInvalidateContext()
@@ -687,6 +690,12 @@ void WebProcessPool::accessibilityPreferencesChangedCallback(CFNotificationCente
     auto pool = extractWebProcessPool(observer);
     if (!pool)
         return;
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    for (Ref process : pool->m_processes) {
+        for (Ref page : process->pages())
+            page->clearImageAnimationEnabledOverride();
+    }
+#endif
     pool->sendToAllProcesses(Messages::WebProcess::AccessibilityPreferencesDidChange(accessibilityPreferences()));
 }
 
@@ -741,7 +750,7 @@ void WebProcessPool::remoteWebInspectorEnabledCallback(CFNotificationCenterRef, 
     auto pool = extractWebProcessPool(observer);
     if (!pool)
         return;
-    for (auto& process : pool->m_processes)
+    for (auto& process : borrow(pool->m_processes))
         process->enableRemoteInspectorIfNeeded();
 }
 #endif
@@ -779,7 +788,7 @@ void WebProcessPool::hardwareKeyboardAvailabilityChanged()
 {
     for (Ref process : borrow(this->processes())) {
         auto pages = process->mainPages();
-        for (auto& page : pages)
+        for (auto& page : borrow(pages))
             page->hardwareKeyboardAvailabilityChanged(cachedHardwareKeyboardState());
     }
 }
@@ -996,10 +1005,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     auto notificationName = adoptNS([[NSString alloc] initWithCString:kGSEventHardwareKeyboardAvailabilityChangedNotification encoding:NSUTF8StringEncoding]);
     addCFNotificationObserver(hardwareKeyboardAvailabilityChangedCallback, (__bridge CFStringRef)notificationName.get(), CFNotificationCenterGetDarwinNotifyCenterSingleton());
 
-    lazyInitialize(m_accessibilityEnabledObserver, RetainPtr<NSObject> { [[NSNotificationCenter defaultCenter] addObserverForName:(__bridge id)kAXSApplicationAccessibilityEnabledNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *) {
+    lazyInitialize(m_accessibilityEnabledObserver, RetainPtr<NSObject> { [[NSNotificationCenter defaultCenter] addObserverForName:(__bridge NSString *)kAXSApplicationAccessibilityEnabledNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *) {
         if (!_AXSApplicationAccessibilityEnabled())
             return;
-        for (auto& process : m_processes)
+        for (auto& process : borrow(m_processes))
             process->unblockAccessibilityServerIfNeeded();
     }] });
 #if PLATFORM(IOS) || PLATFORM(VISION)
@@ -1196,8 +1205,7 @@ void WebProcessPool::clearPermanentCredentialsForProtectionSpace(WebCore::Protec
     RetainPtr sharedStorage = [NSURLCredentialStorage sharedCredentialStorage];
     RetainPtr space = protectionSpace.nsSpace();
     RetainPtr credentials = [sharedStorage credentialsForProtectionSpace:space.get()];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString* user in credentials.get()) {
+    for (NSString* user in credentials.get()) {
         RetainPtr<NSURLCredential> credential = credentials.get()[user];
         if (credential.get().persistence == NSURLCredentialPersistencePermanent)
             [sharedStorage removeCredential:retainPtr(credentials.get()[user]).get() forProtectionSpace:space.get()];
@@ -1228,14 +1236,14 @@ int webProcessThroughputQOS()
     return qos;
 }
 
-static WeakHashSet<LockdownModeObserver>& LEGACY_NODELETE lockdownModeObservers()
+NODELETE static WeakHashSet<LockdownModeObserver>& lockdownModeObservers()
 {
     RELEASE_ASSERT(isMainRunLoop());
     static NeverDestroyed<WeakHashSet<LockdownModeObserver>> observers;
     return observers;
 }
 
-static std::optional<bool>& LEGACY_NODELETE isLockdownModeEnabledGloballyForTesting()
+NODELETE static std::optional<bool>& isLockdownModeEnabledGloballyForTesting()
 {
     static NeverDestroyed<std::optional<bool>> enabledForTesting;
     return enabledForTesting;
@@ -1255,7 +1263,7 @@ static bool isLockdownModeEnabledBySystemIgnoringCaching()
 #endif
     
 #if PLATFORM(MAC)
-    if (!WTF::MacApplication::isSafari() && !WTF::MacApplication::isMiniBrowser())
+    if (!WTF::MacApplication::isSafari() && !WTF::MacApplication::isMiniBrowser() && !WTF::MacApplication::isCaptiveNetworkAssistant())
         return false;
 #endif
     
@@ -1372,7 +1380,7 @@ void WebProcessPool::setProcessesShouldSuspend(bool shouldSuspend)
         return;
 
     m_processesShouldSuspend = shouldSuspend;
-    for (auto& process : m_processes) {
+    for (auto& process : borrow(m_processes)) {
         protect(process->throttler())->setAllowsActivities(!m_processesShouldSuspend);
 
 #if ENABLE(WEBXR) && !USE(OPENXR)
@@ -1771,8 +1779,7 @@ void WebProcessPool::registerAdditionalFonts(NSArray *fontNames)
         m_sandboxExtensionURLs = Vector<URL>();
     }
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *nsFontName : fontNames) {
+    for (NSString *nsFontName : fontNames) {
         RetainPtr ctFont = adoptCF(CTFontCreateWithName(bridge_cast(nsFontName), 0.0, nullptr));
         RetainPtr downloaded = adoptCF(static_cast<CFBooleanRef>(CTFontCopyAttribute(ctFont.get(), kCTFontDownloadedAttribute)));
         if (downloaded == kCFBooleanFalse)
@@ -1831,7 +1838,7 @@ void WebProcessPool::registerAssetFonts(WebProcessProxy& process)
                 protectedThis->m_assetFontURLs = Vector<URL> { };
                 for (auto& fontName : borrow(assetFonts)) {
                     URL fontURL = fontURLFromName(fontName);
-                    RELEASE_LOG(Process, "Registering font name %s with url %s", fontName.characters(), fontURL.string().utf8());
+                    RELEASE_LOG(Process, "Registering font name %s with url %s", fontName.characters(), makeUTF8CString(fontURL.string()));
                     protectedThis->m_assetFontURLs->append(WTF::move(fontURL));
                 }
             }

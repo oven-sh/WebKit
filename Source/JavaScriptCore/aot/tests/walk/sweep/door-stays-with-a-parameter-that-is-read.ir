@@ -1,0 +1,24 @@
+# function f(a, b) { const e = new SuppressedError(b, b); define(e, "name", a); return a; }   with a door in front of the store
+# The store goes with its object, and the parameter that the door asks is handed back: the door stays.
+# RUN: sweep-code
+# CHECK: dropped v1, v3, v4
+# CHECK: v2 @Void = CheckProof v0
+# CHECK-NEXT: Return v0
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2 @Void = CheckProof v0 checkedType=undefined typeWithoutProof=anything source=Field [goesWithItsValue]
+#     v3: anything @Cell = NewSuppressedError v1, v1 traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = PropDefine v3, v0 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return v0
+# }
+# -- end of code

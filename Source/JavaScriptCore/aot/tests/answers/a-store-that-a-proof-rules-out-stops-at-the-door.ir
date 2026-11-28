@@ -1,0 +1,242 @@
+# const box = { count: 1, inner: { n: 1 }, kept: "", get x() { return this.kept; }, set x(v) { this.kept = "first" + v; } };
+# function marks(b) { b.count = undefined; }
+# function texts(b) { b.inner = "text"; }
+# function lays(b) { Object.defineProperty(b, "x", { set(v) { this.kept = "other" + v; } }); }
+# function marksBox(b: Box) { b.count = undefined; }   function textsBox(b: Box) { b.inner = "text"; }   the layout of `box` is speculated for the parameter: a typed store after a speculation
+# function assigns(b) { Object.assign(b, { inner: "text" }); }   stranger: a function in the shell's own source, which the interpreter runs
+# function count(b) { return b.count + 1; }   function inner(b) { return b.inner.n; }   function store(b) { b.x = 5; return b.kept; }
+# if (which === 1) id(marks)(box);   if (which === 2) id(texts)(box);   if (which === 3) id(lays)(box);   if (which === 4) id(marksBox)(box);   if (which === 5) id(textsBox)(box);   if (which === 6) id(stranger)(box);   if (which === 7) id(assigns)(box);
+# print(count(box), inner(box), store(box));   print("went on");
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So the call of that result has no callee, `box` never escapes from compiled code and every writer is known.
+# The writer that Link does not know about is compiled code that stores by name.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(MARK): run-in-shell mechanisms=all globalThis.which = 1;
+# MARK: bun: internal AOT error: object mutation check failed
+# MARK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# MARK-NOT: went on
+# MARK: crashed with
+# RUN(TEXT): run-in-shell mechanisms=all globalThis.which = 2;
+# TEXT: bun: internal AOT error: object mutation check failed
+# TEXT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# TEXT-NOT: went on
+# TEXT: crashed with
+# RUN(SETTER): run-in-shell mechanisms=all globalThis.which = 3;
+# SETTER: bun: internal AOT error: object mutation check failed
+# SETTER-NEXT: RedefineProperty on an {{*}}, but the compiler proved that
+# SETTER-NOT: went on
+# SETTER: crashed with
+# RUN(TYPEDMARK): run-in-shell mechanisms=all globalThis.which = 4;
+# TYPEDMARK: bun: internal AOT error: object mutation check failed
+# TYPEDMARK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# TYPEDMARK-NOT: went on
+# TYPEDMARK: crashed with
+# RUN(TYPEDTEXT): run-in-shell mechanisms=all globalThis.which = 5;
+# TYPEDTEXT: bun: internal AOT error: object mutation check failed
+# TYPEDTEXT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# TYPEDTEXT-NOT: went on
+# TYPEDTEXT: crashed with
+# RUN(RUNTIMECODE): run-in-shell mechanisms=all globalThis.which = 6; globalThis.stranger = function (b) { b.inner = "text"; };
+# RUNTIMECODE: bun: internal AOT error: object mutation check failed
+# RUNTIMECODE-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# RUNTIMECODE-NOT: went on
+# RUNTIMECODE: crashed with
+# RUN(HOST): run-in-shell mechanisms=all globalThis.which = 7;
+# HOST: bun: internal AOT error: object mutation check failed
+# HOST-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# HOST-NOT: went on
+# HOST: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 2 1 first5
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="inner" declared={type=anything} flags=[IsRequired]}, {key="kept" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="set" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = FinishObject v2
+    v4 = String string=""
+    v5 = NewObject -, v0, v3, v4 layout=L0 fields=[0, 1, 2]
+    v6 = NewClosure function=f1
+    DefineGetter v5, v6 key="x"
+    v8 = NewClosure function=f2
+    DefineSetter v5, v8 key="x"
+    v10 = FinishObject v5
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="which" [isFreeName]
+    v13 = PropGet v11 key="id" [isFreeName]
+    v14 = Integer integer=1
+    v15 = StrictEq v12, v14
+    Branch v15 -> taken b1(), notTaken b2()
+  b1():
+    v16 = NewClosure function=f3
+    v17 = Call v13, -, v16 calleeName="id"
+    v18 = Call v17, -, v10
+    Jump -> next b2()
+  b2():
+    v19 = Integer integer=2
+    v20 = StrictEq v12, v19
+    Branch v20 -> taken b3(), notTaken b4()
+  b3():
+    v21 = NewClosure function=f4
+    v22 = Call v13, -, v21 calleeName="id"
+    v23 = Call v22, -, v10
+    Jump -> next b4()
+  b4():
+    v24 = Integer integer=3
+    v25 = StrictEq v12, v24
+    Branch v25 -> taken b5(), notTaken b6()
+  b5():
+    v26 = NewClosure function=f5
+    v27 = Call v13, -, v26 calleeName="id"
+    v28 = Call v27, -, v10
+    Jump -> next b6()
+  b6():
+    v29 = Integer integer=4
+    v30 = StrictEq v12, v29
+    Branch v30 -> taken b7(), notTaken b8()
+  b7():
+    v31 = NewClosure function=f10
+    v32 = Call v13, -, v31 calleeName="id"
+    v33 = Call v32, -, v10
+    Jump -> next b8()
+  b8():
+    v34 = Integer integer=5
+    v35 = StrictEq v12, v34
+    Branch v35 -> taken b9(), notTaken b10()
+  b9():
+    v36 = NewClosure function=f11
+    v37 = Call v13, -, v36 calleeName="id"
+    v38 = Call v37, -, v10
+    Jump -> next b10()
+  b10():
+    v39 = Integer integer=6
+    v40 = StrictEq v12, v39
+    Branch v40 -> taken b11(), notTaken b12()
+  b11():
+    v41 = PropGet v11 key="stranger" [isFreeName]
+    v42 = Call v13, -, v41 calleeName="id"
+    v43 = Call v42, -, v10
+    Jump -> next b12()
+  b12():
+    v44 = Integer integer=7
+    v45 = StrictEq v12, v44
+    Branch v45 -> taken b13(), notTaken b14()
+  b13():
+    v46 = NewClosure function=f12
+    v47 = Call v13, -, v46 calleeName="id"
+    v48 = Call v47, -, v10
+    Jump -> next b14()
+  b14():
+    v49 = NewClosure function=f7
+    v50 = Call v49, -, v10 calleeName="count"
+    v51 = NewClosure function=f8
+    v52 = Call v51, -, v10 calleeName="inner"
+    v53 = NewClosure function=f9
+    v54 = Call v53, -, v10 calleeName="store"
+    v55 = PropGet v11 key="print" [isFreeName]
+    v56 = Call v55, -, v50, v52, v54 calleeName="print"
+    v57 = String string="went on"
+    v58 = Call v55, -, v57 calleeName="print"
+    v59 = Undefined
+    Return v59
+}
+function f1 name="x" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kept"
+    Return v1
+}
+function f2 name="x" module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="first"
+    v3 = Add v2, v1
+    PropSet v0, v3 key="kept"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="marks" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    PropSet v0, v1 key="count"
+    Return v1
+}
+function f4 name="texts" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="text"
+    PropSet v0, v1 key="inner"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="lays" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = PropGet v2 key="defineProperty"
+    v4 = String string="x"
+    v5 = NewClosure function=f6
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    v8 = Call v3, v2, v0, v4, v7 calleeKey="defineProperty"
+    v9 = Undefined
+    Return v9
+}
+function f6 name="set" module=m0 kind=Method flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="other"
+    v3 = Add v2, v1
+    PropSet v0, v3 key="kept"
+    v5 = Undefined
+    Return v5
+}
+function f7 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+function f8 name="inner" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="n"
+    Return v2
+}
+function f9 name="store" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=5
+    PropSet v0, v1 key="x"
+    v3 = PropGet v0 key="kept"
+    Return v3
+}
+function f10 name="marksBox" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PropSet v0, v1 key="count"
+    Return v1
+}
+function f11 name="textsBox" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = String string="text"
+    PropSet v0, v1 key="inner"
+    v3 = Undefined
+    Return v3
+}
+function f12 name="assigns" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = PropGet v2 key="assign"
+    v4 = String string="text"
+    v5 = NewObject -, v4 layout=L3 fields=[0]
+    v6 = Call v3, v2, v0, v5 calleeKey="assign" calleeName="Object.assign"
+    v7 = Undefined
+    Return v7
+}

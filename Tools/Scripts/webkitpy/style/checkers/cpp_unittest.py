@@ -2340,6 +2340,92 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_lint('while (  foo) {', 'Extra space after ( in while'
                          '  [whitespace/parens] [5]')
 
+    def test_raw_strings(self):
+        # The contents of a multi-line raw string with a delimiter are not checked.
+        self.assert_multi_line_lint(
+            'String description()\n'
+            '{\n'
+            '    return R"DL(\n'
+            '(set-state\n'
+            '  (change-flags [should-antialias])\n'
+            '  (should-antialias 0))\n'
+            '(clip-to-native-image\n'
+            '  (dest-rect at (0,1) size 77x99)))DL"_s;\n'
+            '}\n',
+            '', 'foo.cpp')
+        self.assert_multi_line_lint(
+            'String description()\n'
+            '{\n'
+            '    return R"(\n'
+            '  (a,b)\n'
+            ')";\n'
+            '}\n',
+            '', 'foo.cpp')
+
+        # Raw strings that start and end on the same line, with all prefixes.
+        self.assert_lint('foo(R"(a,b [c] (d))", 1);', '')
+        self.assert_lint('foo(R"DL(a,b [c] (d))DL", 1);', '')
+        self.assert_lint('foo(u8R"(a,b)", uR"(a,b)", UR"(a,b)", LR"(a,b)");', '')
+        self.assert_lint('foo(R"(a,b)", R"x(c,d)x");', '')
+
+        # Code before the start and after the end of a raw string is checked.
+        self.assert_lint('foo(bar,R"(a, b)");', 'Missing space after ,  [whitespace/comma] [3]')
+        self.assert_lint('foo(R"(a, b)",bar);', 'Missing space after ,  [whitespace/comma] [3]')
+        self.assert_lint('foo(R"DL(a, b)DL",bar);', 'Missing space after ,  [whitespace/comma] [3]')
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    bar(R"DL(\n'
+            '  (a,b)\n'
+            '  (c,d))DL",baz);\n'
+            '}\n',
+            'Missing space after ,  [whitespace/comma] [3]', 'foo.cpp')
+
+        # Code after a multi-line raw string is checked, and line numbers are preserved.
+        code = ('void foo()\n'
+                '{\n'
+                '    bar(R"DL(\n'
+                '  (a,b)\n'
+                '  (c,d))DL");\n'
+                '    baz (1);\n'
+                '}\n')
+        expected = 'Extra space before ( in function call  [whitespace/parens] [4]'
+        self.assert_multi_line_lint(code, expected, 'foo.cpp')
+        self.assertEqual(expected, self.perform_lint(code, 'foo.cpp', [], lines_to_check=[6]))
+        self.assertEqual('', self.perform_lint(code, 'foo.cpp', [], lines_to_check=[3, 4, 5]))
+
+        # )" does not end a raw string with a different delimiter.
+        self.assert_multi_line_lint(
+            'String description()\n'
+            '{\n'
+            '    return R"DL(\n'
+            '(a)"\n'
+            '  (b,c) [d]\n'
+            ')DL";\n'
+            '}\n',
+            '', 'foo.cpp')
+
+        # A raw string content line starting with /* does not start a multi-line comment.
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    bar(R"DL(\n'
+            '/* (a,b)\n'
+            ')DL");\n'
+            '    baz(a,b);\n'
+            '}\n',
+            'Missing space after ,  [whitespace/comma] [3]', 'foo.cpp')
+
+        # R"( inside a string or a comment does not start a raw string.
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    bar("R\\"(");\n'
+            '    bar(1); // R"(\n'
+            '    baz(a,b);\n'
+            '}\n',
+            'Missing space after ,  [whitespace/comma] [3]', 'foo.cpp')
+
     def test_spacing_for_fncall(self):
         self.assert_lint('if (foo) {', '')
         self.assert_lint('for (foo;bar;baz) {', '')
@@ -2392,7 +2478,7 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_lint('dispatch_async(mainDispatchQueueSingleton(), ^{', '')
         self.assert_lint('[outOfBandTracks.get() addObject:@{', '')
         self.assert_lint('EXPECT_DEBUG_DEATH({', '')
-        self.assert_lint('LOCAL_LOG(R"({ "url": "%{public}s",)", url.string().utf8().data());', '')
+        self.assert_lint('LOCAL_LOG(R"({ "url": "%{public}s",)", makeUTF8CString(url.string()).data());', '')
 
     def test_spacing_between_braces(self):
         self.assert_lint('    { }', '')
@@ -3463,25 +3549,62 @@ class CleansedLinesTest(unittest.TestCase):
                  'Line 4 "foo"']
 
         clean_lines = cpp_style.CleansedLines(lines)
-        self.assertEqual(lines, clean_lines.raw_lines)
+        self.assertEqual(lines, clean_lines.lines_without_raw_strings)
         self.assertEqual(4, clean_lines.num_lines())
 
         self.assertEqual(['Line 1',
-                           'Line 2',
-                           'Line 3 ',
-                           'Line 4 "foo"'],
-                          clean_lines.lines)
+                          'Line 2',
+                          'Line 3 ',
+                          'Line 4 "foo"'],
+                         clean_lines.lines)
 
         self.assertEqual(['Line 1',
-                           'Line 2',
-                           'Line 3 ',
-                           'Line 4 ""'],
-                          clean_lines.elided)
+                          'Line 2',
+                          'Line 3 ',
+                          'Line 4 ""'],
+                         clean_lines.elided)
 
     def test_init_empty(self):
         clean_lines = cpp_style.CleansedLines([])
-        self.assertEqual([], clean_lines.raw_lines)
+        self.assertEqual([], clean_lines.lines_without_raw_strings)
         self.assertEqual(0, clean_lines.num_lines())
+
+    def test_init_raw_strings(self):
+        lines = ['    return R"DL(',
+                 '(a,b) // c',
+                 '(d)"',
+                 '  (e)))DL" + f; // g',
+                 'h(R"(i)", 1, u8R"x(j)x"); // k',
+                 'l();']
+
+        clean_lines = cpp_style.CleansedLines(cpp_style.cleanse_raw_strings(lines))
+        self.assertEqual(6, clean_lines.num_lines())
+
+        self.assertEqual(['    return ""',
+                          '    ""',
+                          '    ""',
+                          '    "" + f; // g',
+                          'h("", 1, ""); // k',
+                          'l();'],
+                         clean_lines.lines_without_raw_strings)
+
+        self.assertEqual(['    return ""',
+                          '    ""',
+                          '    ""',
+                          '    "" + f; ',
+                          'h("", 1, ""); ',
+                          'l();'],
+                         clean_lines.elided)
+
+    def test_cleanse_raw_strings(self):
+        cleanse = cpp_style.cleanse_raw_strings
+        self.assertEqual(['f("");'], cleanse(['f(R"(a)");']))
+        self.assertEqual(['f("", "");'], cleanse(['f(R"(a)", R"(b)");']))
+        self.assertEqual(['f("");'], cleanse(['f(LR"(a)");']))
+        self.assertEqual(['f("R\\"(");', 'g();'], cleanse(['f("R\\"(");', 'g();']))
+        self.assertEqual(['f(); // R"(', 'g();'], cleanse(['f(); // R"(', 'g();']))
+        self.assertEqual(['f(FOOR"(a)");'], cleanse(['f(FOOR"(a)");']))
+        self.assertEqual(['f(""', '""', '""'], cleanse(['f(R"(', 'a', 'b']))
 
     def test_collapse_strings(self):
         collapse = cpp_style.CleansedLines.collapse_strings
@@ -5725,6 +5848,33 @@ class WebKitStyleTest(CppStyleTestBase):
             '[delegate setPolicyForURL:^_WKWebsitePolicy(NSURL *url) {\n'
             '    return _WKWebsitePolicyDoIt;\n'
             '}];', '', file_name='foo.mm')
+        self.assert_multi_line_lint(
+            'static void doSomething(NSString *name, void (^completionHandler)(NSInteger, NSArray<NSString *> *))\n'
+            '{\n'
+            '    completionHandler(0, nil);\n'
+            '}\n', '', file_name='foo.mm')
+        self.assert_multi_line_lint(
+            'static void doSomething(void (^ _Nullable completionHandler)(BOOL), id (^)(void))\n'
+            '{\n'
+            '}\n', '', file_name='foo.mm')
+        self.assert_multi_line_lint(
+            'static void doSomething(void (^completionHandler)(BOOL)) {\n'
+            '}\n',
+            'Place brace on its own line for function definitions.  [whitespace/braces] [4]', file_name='foo.mm')
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    auto block = ^(int value)\n'
+            '    {\n'
+            '    };\n'
+            '}\n',
+            'This { should be at the end of the previous line  [whitespace/braces] [4]', file_name='foo.mm')
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    auto block = ^(int value) {\n'
+            '    };\n'
+            '}\n', '', file_name='foo.mm')
 
         # 3. One-line control clauses should not use braces unless
         #    comments are included or a single statement spans multiple
@@ -6953,13 +7103,13 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'auto escaped = GMallocString::unsafeAdoptFromUTF8(g_markup_escape_text(label.utf8().legacyCStringPointer(), -1));',
+            'auto escaped = GMallocString::unsafeAdoptFromUTF8(g_markup_escape_text(makeUTF8CString(label).legacyCStringPointer(), -1));',
             "Use 'gMarkupEscapeText()' from <wtf/glib/GLibExtras.h> instead of 'g_markup_escape_text()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'char* copy = g_strdup(string.utf8().legacyCStringPointer());',
+            'char* copy = g_strdup(makeUTF8CString(string).legacyCStringPointer());',
             "Use 'gStrdup()' from <wtf/glib/GLibExtras.h> instead of 'g_strdup()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
@@ -6971,7 +7121,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'GVariant* variant = g_variant_new("(so)", name, path.utf8().legacyCStringPointer());',
+            'GVariant* variant = g_variant_new("(so)", name, makeUTF8CString(path).legacyCStringPointer());',
             "Use 'gVariantNew()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
@@ -6983,13 +7133,13 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'GUniquePtr<char> message(g_strdup_printf("The site says: %s", realm.utf8().legacyCStringPointer()));',
+            'GUniquePtr<char> message(g_strdup_printf("The site says: %s", makeUTF8CString(realm).legacyCStringPointer()));',
             "Use 'SAFE_G_STRDUP_PRINTF()' from <wtf/glib/GLibExtras.h> instead of 'g_strdup_printf()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host \'%s\'", host.utf8().legacyCStringPointer());',
+            'g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host \'%s\'", makeUTF8CString(host).legacyCStringPointer());',
             "Use 'SAFE_G_SET_ERROR()' from <wtf/glib/GLibExtras.h> instead of 'g_set_error()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
@@ -7001,7 +7151,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'SAFE_G_SET_ERROR(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host \'%s\'", host.utf8());',
+            'SAFE_G_SET_ERROR(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host \'%s\'", makeUTF8CString(host));',
             '',
             'foo.cpp')
 
@@ -7011,13 +7161,13 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'g_set_error(error, domain, code, format.legacyCStringPointer(), host.utf8().legacyCStringPointer());',
+            'g_set_error(error, domain, code, format.legacyCStringPointer(), makeUTF8CString(host).legacyCStringPointer());',
             "Use 'SAFE_G_SET_ERROR()' from <wtf/glib/GLibExtras.h> instead of 'g_set_error()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'g_variant_builder_add(&builder, "{sv}", "reason", g_variant_new_string(reason.utf8().legacyCStringPointer()));',
+            'g_variant_builder_add(&builder, "{sv}", "reason", g_variant_new_string(makeUTF8CString(reason).legacyCStringPointer()));',
             "Use 'gVariantNewString()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new_string()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
@@ -7030,43 +7180,43 @@ class WebKitStyleTest(CppStyleTestBase):
 
         self.assert_multi_line_lint(
             'GVariant* variant = g_variant_new("(so)",\n'
-            '    path.utf8().legacyCStringPointer(), name);\n',
+            '    makeUTF8CString(path).legacyCStringPointer(), name);\n',
             "Use 'gVariantNew()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_multi_line_lint(
-            'auto* object = g_object_new(TYPE, "id", id.utf8().legacyCStringPointer(),\n'
+            'auto* object = g_object_new(TYPE, "id", makeUTF8CString(id).legacyCStringPointer(),\n'
             '    nullptr);\n',
             "Use 'gObjectNew()' from <wtf/glib/GLibExtras.h> instead of 'g_object_new()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'g_dbus_connection_emit_signal(connection, nullptr, path.utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "StateChanged", nullptr, nullptr);',
+            'g_dbus_connection_emit_signal(connection, nullptr, makeUTF8CString(path).legacyCStringPointer(), "org.a11y.atspi.Event.Object", "StateChanged", nullptr, nullptr);',
             "Use 'gDBusConnectionEmitSignal()' from <wtf/glib/GLibExtras.h> instead of 'g_dbus_connection_emit_signal()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'gst_structure_set(headers.get(), key.utf8().legacyCStringPointer(), G_TYPE_STRING, value.utf8().legacyCStringPointer(), nullptr);',
+            'gst_structure_set(headers.get(), makeUTF8CString(key).legacyCStringPointer(), G_TYPE_STRING, makeUTF8CString(value).legacyCStringPointer(), nullptr);',
             "Use 'gstStructureSet()' from \"GStreamerCommon.h\" instead of 'gst_structure_set()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'GUniquePtr<GstStructure> properties(gst_structure_new("stream-properties", "media.role", G_TYPE_STRING, role.utf8().legacyCStringPointer(), nullptr));',
+            'GUniquePtr<GstStructure> properties(gst_structure_new("stream-properties", "media.role", G_TYPE_STRING, makeUTF8CString(role).legacyCStringPointer(), nullptr));',
             "Use 'gstStructureNew()' from \"GStreamerCommon.h\" instead of 'gst_structure_new()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/glib_string_wrappers] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'char* copy = g_strdup(convert(string.utf8().legacyCStringPointer()));',
+            'char* copy = g_strdup(convert(makeUTF8CString(string).legacyCStringPointer()));',
             '',
             'foo.cpp')
 
         self.assert_lint(
-            'char* copy = gStrdup(string.utf8());',
+            'char* copy = gStrdup(makeUTF8CString(string));',
             '',
             'foo.cpp')
 
@@ -7095,8 +7245,8 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'send(socket, message.utf8().legacyCStringPointer(), message.utf8().size(), 0);',
-            "Store 'message.utf8().span()', or 'byteCast<char>(message.utf8().span())' for a const char* parameter, in a local and pass its data() and size() "
+            'send(socket, makeUTF8CString(message).legacyCStringPointer(), makeUTF8CString(message).size(), 0);',
+            "Store 'makeUTF8CString(message).span()', or 'byteCast<char>(makeUTF8CString(message).span())' for a const char* parameter, in a local and pass its data() and size() "
             "instead of calling legacyCStringPointer(), since the length is passed too. Use 'gBytesNew()' or 'gBytesNewStatic()' from "
             "<wtf/glib/GLibExtras.h> instead of 'g_bytes_new()' or 'g_bytes_new_static()'."
             "  [runtime/legacy_cstring_pointer_with_length] [4]",
@@ -7111,7 +7261,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'loadFromData(file, data.utf8().legacyCStringPointer(), data.length());',
+            'loadFromData(file, makeUTF8CString(data).legacyCStringPointer(), data.length());',
             '',
             'foo.cpp')
 
@@ -7122,31 +7272,31 @@ class WebKitStyleTest(CppStyleTestBase):
 
     def test_log_string_conversions(self):
         self.assert_lint(
-            'RELEASE_LOG(Network, "Loading %s", url.string().utf8().legacyCStringPointer());',
+            'RELEASE_LOG(Network, "Loading %s", makeUTF8CString(url.string()).legacyCStringPointer());',
             "Pass the typed string instead of calling legacyCStringPointer(). 'RELEASE_LOG()' converts typed strings itself."
             "  [runtime/log_string_conversion] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'WEBPAGEPROXY_RELEASE_LOG(Loading, "Loading %s", url.string().utf8().legacyCStringPointer());',
+            'WEBPAGEPROXY_RELEASE_LOG(Loading, "Loading %s", makeUTF8CString(url.string()).legacyCStringPointer());',
             "Pass the typed string instead of calling legacyCStringPointer(). 'WEBPAGEPROXY_RELEASE_LOG()' converts typed strings itself."
             "  [runtime/log_string_conversion] [4]",
             'foo.cpp')
 
         self.assert_lint(
             'LOG(Network, "Loading %s", url.string().ascii().data());',
-            "Pass '.utf8()' instead of '.ascii().data()' to 'LOG()'. It converts typed strings itself, and ASCII conversion loses non-ASCII characters."
+            "Pass 'makeUTF8CString(string)' instead of 'string.ascii().data()' to 'LOG()'. It converts typed strings itself, and ASCII conversion loses non-ASCII characters."
             "  [runtime/log_string_conversion] [4]",
             'foo.cpp')
 
         self.assert_lint(
             'SAFE_PRINTF("Loading %s", url.string().latin1().data());',
-            "Pass '.utf8()' instead of '.latin1().data()' to 'SAFE_PRINTF()'. It converts typed strings itself, and a Latin-1 pointer loses non-ASCII characters."
+            "Pass 'makeUTF8CString(string)' instead of 'string.latin1().data()' to 'SAFE_PRINTF()'. It converts typed strings itself, and a Latin-1 pointer loses non-ASCII characters."
             "  [runtime/log_string_conversion] [4]",
             'foo.cpp')
 
         self.assert_lint(
-            'RELEASE_LOG(Network, "Loading %s", url.string().utf8());',
+            'RELEASE_LOG(Network, "Loading %s", makeUTF8CString(url.string()));',
             '',
             'foo.cpp')
 
@@ -7168,7 +7318,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'stream->printf(templateHTML, substitute.utf8().legacyCStringPointer(), other.utf8().legacyCStringPointer());',
+            'stream->printf(templateHTML, makeUTF8CString(substitute).legacyCStringPointer(), makeUTF8CString(other).legacyCStringPointer());',
             "Use SAFE_PRINTSTREAM_PRINTF() instead of calling printf() on a PrintStream, and pass the typed string instead of calling legacyCStringPointer()."
             "  [safercpp/printf] [4]",
             'foo.mm')
@@ -7214,7 +7364,7 @@ class WebKitStyleTest(CppStyleTestBase):
 
     def test_safe_logging_macros(self):
         self.assert_lint(
-            'WTFLog(&channel, "%s", message.utf8().legacyCStringPointer());',
+            'WTFLog(&channel, "%s", makeUTF8CString(message).legacyCStringPointer());',
             "Use 'SAFE_WTFLOG()' from <wtf/StdLibExtras.h> instead of 'WTFLog()'. It converts typed strings itself, so pass them without unwrapping them."
             "  [safercpp/printf] [4]",
             'foo.cpp')
@@ -7285,7 +7435,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.mm')
 
         self.assert_lint(
-            'SAFE_WTFLOG(&channel, "%s", message.utf8());',
+            'SAFE_WTFLOG(&channel, "%s", makeUTF8CString(message));',
             '',
             'foo.cpp')
 
@@ -7334,7 +7484,7 @@ class WebKitStyleTest(CppStyleTestBase):
 
     def test_darwin_string_wrappers(self):
         self.assert_lint(
-            'return !sandbox_check(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, service.utf8().legacyCStringPointer());',
+            'return !sandbox_check(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, makeUTF8CString(service).legacyCStringPointer());',
             "Use 'sandboxCheck()' from <wtf/darwin/DarwinExtras.h> instead of 'sandbox_check()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/darwin_string_wrappers] [4]",
             'foo.cpp')
@@ -7358,7 +7508,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.mm')
 
         self.assert_lint(
-            'xpc_dictionary_set_string(message.get(), key.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());',
+            'xpc_dictionary_set_string(message.get(), makeUTF8CString(key).legacyCStringPointer(), makeUTF8CString(value).legacyCStringPointer());',
             "Use 'xpcDictionarySetString()' from <wtf/darwin/XPCExtras.h> instead of 'xpc_dictionary_set_string()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/darwin_string_wrappers] [4]",
             'foo.mm')
@@ -7387,7 +7537,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.mm')
 
         self.assert_lint(
-            'return !sandboxCheck(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, service.utf8());',
+            'return !sandboxCheck(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, makeUTF8CString(service));',
             '',
             'foo.cpp')
 
@@ -7399,7 +7549,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'm_iterator = ubrk_open(type, locale.string().utf8().legacyCStringPointer(), nullptr, 0, &status);',
+            'm_iterator = ubrk_open(type, makeUTF8CString(locale.string()).legacyCStringPointer(), nullptr, 0, &status);',
             "Use 'ubrkOpen()' from <wtf/text/icu/UnicodeExtras.h> instead of 'ubrk_open()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/icu_string_wrappers] [4]",
             'foo.cpp')
@@ -7412,7 +7562,7 @@ class WebKitStyleTest(CppStyleTestBase):
 
         self.assert_multi_line_lint(
             'UStringSearch* searcher = usearch_open(pattern, 1, text, 1,\n'
-            '    collatorName.utf8().legacyCStringPointer(), 0, &status);',
+            '    makeUTF8CString(collatorName).legacyCStringPointer(), 0, &status);',
             "Use 'usearchOpen()' from <wtf/text/icu/UnicodeExtras.h> instead of 'usearch_open()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/icu_string_wrappers] [4]",
             'foo.cpp')
@@ -7484,7 +7634,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'int result = sqlitePrepare(m_db, query.utf8(), &statement);',
+            'int result = sqlitePrepare(m_db, makeUTF8CString(query), &statement);',
             '',
             'foo.cpp')
 
@@ -7502,7 +7652,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.mm')
 
         self.assert_lint(
-            'FILE* file = fopen(fileName.utf8().legacyCStringPointer(), "rb");',
+            'FILE* file = fopen(makeUTF8CString(fileName).legacyCStringPointer(), "rb");',
             "Use 'posixFopen()' from <wtf/posix/POSIXExtras.h> instead of 'fopen()', and pass the typed string instead of calling legacyCStringPointer()."
             "  [runtime/posix_string_wrappers] [4]",
             'foo.cpp')
@@ -7762,7 +7912,7 @@ class WebKitStyleTest(CppStyleTestBase):
             'foo.cpp')
 
         self.assert_lint(
-            'SAFE_DATALOGF("%s", s.utf8());',
+            'SAFE_DATALOGF("%s", makeUTF8CString(s));',
             '',
             'foo.cpp')
 
@@ -8811,6 +8961,55 @@ class WebKitStyleTest(CppStyleTestBase):
         # WKFoundation.h defines WK_HEADER_AUDIT_BEGIN / WK_HEADER_AUDIT_END in terms of these.
         self.assert_lint('#define WK_HEADER_AUDIT_BEGIN(...) NS_ASSUME_NONNULL_BEGIN', '',
                          'Source/WebKit/Shared/API/Cocoa/WKFoundation.h')
+
+    def test_unbalanced_diagnostic_pragmas(self):
+        missing_end = 'Diagnostic BEGIN / push without a matching END / pop in this file. This leaks warning suppressions of enclosing BEGIN / END pairs into the rest of the translation unit.  [build/unbalanced_diagnostic_pragma] [5]'
+        missing_begin = 'Diagnostic END / pop without a matching BEGIN / push in this file.  [build/unbalanced_diagnostic_pragma] [5]'
+
+        self.assert_multi_line_lint(
+            'WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN\n'
+            'int x;\n'
+            'WTF_ALLOW_UNSAFE_BUFFER_USAGE_END\n', '', 'foo.cpp')
+        self.assert_multi_line_lint(
+            'IGNORE_WARNINGS_BEGIN("dangling")\n'
+            'ALLOW_DEPRECATED_DECLARATIONS_BEGIN\n'
+            'int x;\n'
+            'ALLOW_DEPRECATED_DECLARATIONS_END\n'
+            'IGNORE_WARNINGS_END\n', '', 'foo.cpp')
+        self.assert_multi_line_lint(
+            '#pragma clang diagnostic push\n'
+            '#pragma clang diagnostic ignored "-Wdangling"\n'
+            '#pragma GCC diagnostic pop\n', '', 'foo.cpp')
+        self.assert_multi_line_lint(
+            'WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN return p[1]; WTF_ALLOW_UNSAFE_BUFFER_USAGE_END\n', '', 'foo.cpp')
+        # A bare "ignored" pragma does not push.
+        self.assert_multi_line_lint('#pragma clang diagnostic ignored "-Wdangling"\n', '', 'foo.cpp')
+        # Macro definitions are not uses, including multi-line ones.
+        self.assert_multi_line_lint(
+            '#define FOO_BEGIN IGNORE_WARNINGS_BEGIN("foo")\n'
+            '#define LOG_IT(x) \\\n'
+            '    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \\\n'
+            '    doSomething(x);\n'
+            'int x;\n', '', 'foo.cpp')
+
+        self.assert_multi_line_lint(
+            '#if defined(__clang__) && __clang_major__ < 22\n'
+            'IGNORE_WARNINGS_BEGIN("dangling")\n'
+            '#endif\n', missing_end, 'foo.cpp')
+        self.assert_multi_line_lint(
+            'ALLOW_DEPRECATED_DECLARATIONS_BEGIN\n'
+            'int x;\n', missing_end, 'foo.cpp')
+        self.assert_multi_line_lint(
+            '#pragma clang diagnostic push\n'
+            'int x;\n', missing_end, 'foo.cpp')
+        self.assert_multi_line_lint(
+            'int x;\n'
+            'IGNORE_WARNINGS_END\n', missing_begin, 'foo.cpp')
+        self.assert_multi_line_lint(
+            'int x;\n'
+            '#pragma clang diagnostic pop\n', missing_begin, 'foo.cpp')
+        # Commented-out uses are ignored.
+        self.assert_multi_line_lint('// IGNORE_WARNINGS_BEGIN("foo")\n', '', 'foo.cpp')
 
     def test_os_version_checks(self):
         self.assert_lint('#if PLATFORM(IOS_FAMILY) && __IPHONE_OS_VERSION_MIN_REQUIRED < 110000', 'Misplaced OS version check. Please use a named macro in one of headers in the wtf/Platform.h suite of files or an appropriate internal file.  [build/version_check] [5]')

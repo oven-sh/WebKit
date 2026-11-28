@@ -1,0 +1,49 @@
+# If a member of a cycle counted as run while the member that was entered first still runs, require.cache would list it, and through it the running one
+# suite.js: import "./x.js"; keep(() => require("./x.js")); report("behind the cycle")    x.js: import "./y.js"; report("while x.js runs")    y.js: import "./x.js"; report("while y.js runs")
+# A function may be the first to require x.js, so x.js has a start and a status. Its start runs y.js and marks it behind its body: the table says that y.js has run and that x.js is running,
+# and the run time finds that y.js waits for x.js.
+# RUN: plan module-starts
+# CHECK: module-start m1 body=f1: BeginOrReturn m1, {{*}}CallBody f2, Begin m2, Finish m2, CallBody f1, Finish m1
+# RUN(NONE): run-in-shell mechanisms=none globalThis.keep = () => { }; globalThis.report = when => print(when + ": " + (filesInRequireCache() || "none"));
+# NONE: while y.js runs: none
+# NONE-NEXT: while x.js runs: none
+# NONE-NEXT: behind the cycle: /x.js,/y.js
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.keep = () => { }; globalThis.report = when => print(when + ": " + (filesInRequireCache() || "none"));
+# ALL: while y.js runs: none
+# ALL-NEXT: while x.js runs: none
+# ALL-NEXT: behind the cycle: /x.js,/y.js
+# ALL-NEXT: exited with 0
+
+module m0 path="/suite.js" displayPath="suite.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true}, {target=m1 kind=Require completes=true}]
+module m1 path="/x.js" displayPath="x.js" flags=[IsListedInCache] body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/y.js" displayPath="y.js" flags=[IsListedInCache] body=f2 requests=[{target=m1 completes=true}]
+entry module=m0
+function f0 name="suite" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f3
+    v2 = PropGet v0 key="keep" [isFreeName]
+    v3 = Call v2, -, v1
+    v4 = PropGet v0 key="report" [isFreeName]
+    v5 = String string="behind the cycle"
+    v6 = Call v4, -, v5
+    Return
+}
+function f1 name="x" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="while x.js runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="y" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="while y.js runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="late" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    Return
+}

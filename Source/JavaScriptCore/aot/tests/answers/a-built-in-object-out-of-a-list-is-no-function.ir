@@ -1,0 +1,45 @@
+# function kind(list, at) { const each = list[at]; if (typeof each === "function") return "function"; return typeof each; }
+# const mixed = [JSON, "text"]; print(kind(mixed, 0)); print(kind(mixed, 1));
+# The test in front of the branch asks what the list has just given. Its type and that of functions have JSON in common, as a built-in object may be a function: a test for JSON does not answer whether it is one.
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: TypeTest {{*}} testedType=function
+# FORM-NOT: testedType=builtin(JSON)
+# RUN: run-in-shell mechanisms=all
+# CHECK: object
+# CHECK-NEXT: string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=JSON
+    v3 = String string="text"
+    v4 = NewArray v2, v3 contents=anything
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="print" [isFreeName]
+    v7 = Integer
+    v8 = Call v1, -, v4, v7 calleeName="kind"
+    v9 = Call v6, -, v8 calleeName="print"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="print" [isFreeName]
+    v12 = Integer integer=1
+    v13 = Call v1, -, v4, v12 calleeName="kind"
+    v14 = Call v11, -, v13 calleeName="print"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="kind" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything):
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = String string="function"
+    Return v5
+  b2(v6):
+    v7 = NarrowByTest v2, v6
+    v8 = TypeOf v7
+    Return v8
+}

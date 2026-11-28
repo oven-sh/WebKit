@@ -6,6 +6,7 @@
 #include "config.h"
 #include "CagedAlignedMemoryAllocator.h"
 
+#include "AOTRuntimeHooks.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 #include "Options.h"
 #include "VM.h"
@@ -177,7 +178,11 @@ CagedAlignedMemoryAllocator::~CagedAlignedMemoryAllocator() = default;
 
 void* CagedAlignedMemoryAllocator::tryAllocateBlockToFill()
 {
-    if (Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount() && !VM::isInMiniMode() && ++m_numberOfBlocksToFillRequested >= Options::warmUpMarkedBlockStartAfterBlocks()) {
+    bool mayStartThread = true;
+#if ENABLE(AOT)
+    mayStartThread = !AOT::RuntimeHooks::isInNoHelperThreadsScope();
+#endif
+    if (mayStartThread && Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount() && !VM::isInMiniMode() && ++m_numberOfBlocksToFillRequested >= Options::warmUpMarkedBlockStartAfterBlocks()) {
         if (!m_residentBlocks) {
             m_residentBlocks = makeUnique<ResidentBlocks>(m_cage);
             didPassWarmUpStartThresholdInAnotherAllocator();

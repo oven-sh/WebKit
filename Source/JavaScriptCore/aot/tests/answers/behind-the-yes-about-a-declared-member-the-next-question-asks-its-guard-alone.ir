@@ -1,0 +1,1103 @@
+# THE YES OF `$findsDeclaredMember(object, "read")` TEACHES THE WALK, AND THE NEXT QUESTION ABOUT THE SAME OBJECT ASKS ITS GUARD ALONE.
+# A yes has shown the shape, the bit of the object's own prototype link and the guard of the class and the name. So on the taken edge the object is of the layouts that were stamped and stands below its prototype:
+# `$findsDeclaredMember(object, "step")` behind it is one test of one guard, and `object.step()` behind that yes is a direct call. Nine questions in a row were nine tests of one shape and of one bit.
+# (Questions joined by `&&` with one place for every no are one test since: a-row-of-questions-about-declared-members-of-one-object-is-one-test.ir: `row` and `turns` here.)
+# IT IS LEARNED ONLY WHILE THE ANSWER STILL STANDS: whatever may give the object another prototype between two questions, or between a question and the branch on it, brings the whole question back.
+# An object that is given another prototype keeps its shape and ends no guard: the bit in its cell alone tells. RELINKED is the run that shows it: with the guard alone each `first other` would begin with `both`.
+# A guard speaks for the receivers that declare ITS name: `either` is handed an heir that lays a `step` of its own, and the yes about `read` says nothing about that.
+# IT IS LEARNED ONLY WHERE THE BRANCH THAT THE WALK HAS BUILT DECIDES THE QUESTION: `idle` asks and does nothing with the answer: OVERWRITTEN is the run that shows it: the declared `step` would be called for the new one.
+# The functions that ask lie in a file of the library, and so do the three methods of Meter.
+# function Meter(level) { this.level = level; }
+# Meter.prototype.read = function () { return "read"; };
+# Meter.prototype.step = function () { return "step"; };
+# Meter.prototype.name = function () { return "name"; };
+# function Gauge(level) { this.level = level; }
+# Object.setPrototypeOf(Gauge.prototype, Meter.prototype);
+# Gauge.prototype.step = heirs();
+# function row(object) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step") && $findsDeclaredMember(object, "name")) return "all"; return "-"; }
+# function amidst(object) { if (!$findsDeclaredMember(object, "read")) return "-"; amid(object); if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); }
+# function stale(object) { const finds = $findsDeclaredMember(object, "step"); amid(object); if (finds) return "found " + object.step(); return "- " + object.step(); }
+# function staleRow(object) { const finds = $findsDeclaredMember(object, "read"); amid(object); if (finds) { if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); } return "-"; }
+# function turns(object, count) { let text = ""; for (let turn = 0; turn < count; turn++) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step")) text += "y"; else text += "n"; if (turn === 1) amid(object); } return text; }
+# function caught(object) { if (!$findsDeclaredMember(object, "read")) return "-"; try { amid(object); fail(); } catch { if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); } return "no throw"; }
+# function inner(object) { return $findsDeclaredMember(object, "step"); }
+# function outer(object) { if (!$findsDeclaredMember(object, "read")) return "-"; amid(object); if (inner(object)) return "both " + object.step(); return "first " + object.step(); }
+# function straight(object) { if (!$findsDeclaredMember(object, "read")) return "-"; if (inner(object)) return "both " + object.step(); return "first " + object.step(); }
+# function relinks(object, link) { if (!$findsDeclaredMember(object, "read")) return "-"; Object.setPrototypeOf(object, link); if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); }
+# function stores(object, link) { if (!$findsDeclaredMember(object, "read")) return "-"; object.__proto__ = link; if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); }
+# function either(object) { if ($findsDeclaredMember(object, "read") && $findsDeclaredMember(object, "step")) return "both " + object.step(); return "- " + object.step(); }
+# async function awaited(object) { if (!$findsDeclaredMember(object, "read")) return "-"; await undefined; if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); }
+# function idle(object) { if (!$findsDeclaredMember(object, "read")) return "-"; if ($findsDeclaredMember(object, "step")) { } return object.step(); }
+# function busy(object) { if (!$findsDeclaredMember(object, "read")) return "-"; let word = "no "; if ($findsDeclaredMember(object, "step")) word = "yes "; return word + object.step(); }
+# function quiet(object, link, count) { let text = ""; for (let turn = 0; turn < count; turn++) { if ($findsDeclaredMember(object, "read")) { text += $findsDeclaredMember(object, "step") ? "y" : "n"; if (turn === 1) Object.setPrototypeOf(object, link); } else text += "-"; } return text; }
+# function still(object, count) { let text = ""; for (let turn = 0; turn < count; turn++) { if ($findsDeclaredMember(object, "read")) text += $findsDeclaredMember(object, "step") ? "y" : "n"; else text += "-"; } return text; }
+# print(row(new Meter(1)), row({ read() { } }), row(7), row(null), row(new Proxy(new Meter(1), { })));
+# print(amidst(new Meter(2)));
+# print(stale(new Meter(3)));
+# print(staleRow(new Meter(3)));
+# print(turns(new Meter(4), count()));
+# print(caught(new Meter(5)));
+# print(outer(new Meter(6)));
+# print(straight(new Meter(7)));
+# print(relinks(new Meter(8), above()));
+# print(stores(new Meter(8), above()));
+# print(either(new Meter(8)), either(new Gauge(8)));
+# print(idle(new Meter(10)), busy(new Meter(10)));
+# print(quiet(new Meter(11), above(), count()), still(new Meter(11), count()));
+# const late = new Meter(9);
+# awaited(late).then(print);
+# amid(late);
+# f4 = row, f5 = amidst, f6 = stale, f7 = staleRow, f8 = turns, f9 = caught, f1 = inner, f10 = outer, f11 = straight, f12 = relinks, f13 = stores, f14 = either, f15 = awaited, f16 = idle, f17 = busy, f18 = quiet, f19 = still
+# OPTIONS: mechanisms=all
+# RUN(ROW): walk f4
+# ROW: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L0 key="read"}, {layout=L0 key="step"}, {layout=L0 key="name"}] receivers=[L0]
+# ROW-NOT: AreMembersUnchanged
+# ROW-NOT: FindsDeclaredMember
+# RUN(AMIDST): walk f5
+# AMIDST: = FindsDeclaredMember {{*}}key="read"
+# AMIDST: calleeName="amid"
+# AMIDST: = FindsDeclaredMember {{*}}key="step"
+# RUN(STALE): walk f6
+# STALE: = FindsDeclaredMember {{*}}key="step"
+# STALE: calleeName="amid"
+# STALE: = HasLayoutPrototype
+# STALE: = AreMembersUnchanged conditions=[{layout=L0 key="step"}]
+# RUN(STALEROW): walk f7
+# STALEROW: = FindsDeclaredMember {{*}}key="read"
+# STALEROW: calleeName="amid"
+# STALEROW: = FindsDeclaredMember {{*}}key="step"
+# RUN(TURNS): walk f8
+# TURNS: isLoopHead=true
+# TURNS: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L0 key="read"}, {layout=L0 key="step"}] receivers=[L0]
+# TURNS: calleeName="amid"
+# RUN(CAUGHT): walk f9
+# CAUGHT: = FindsDeclaredMember {{*}}key="read"
+# CAUGHT: calleeName="amid"
+# CAUGHT: = FindsDeclaredMember {{*}}key="step"
+# RUN(OUTER): walk f10
+# OUTER: = FindsDeclaredMember {{*}}key="read"
+# OUTER: calleeName="amid"
+# OUTER: = FindsDeclaredMember {{*}}key="step"
+# RUN(STRAIGHT): walk f11
+# STRAIGHT: = FindsDeclaredMember {{*}}key="read"
+# STRAIGHT-NOT: FindsDeclaredMember
+# STRAIGHT: = AreMembersUnchanged conditions=[{layout=L0 key="step"}]
+# RUN(RELINKS): walk f12
+# RELINKS: = FindsDeclaredMember {{*}}key="read"
+# RELINKS: overload=ObjectSetPrototypeOf
+# RELINKS: = FindsDeclaredMember {{*}}key="step"
+# RUN(STORES): walk f13
+# STORES: = FindsDeclaredMember {{*}}key="read"
+# STORES: PropSet {{*}}key="__proto__"
+# STORES: = FindsDeclaredMember {{*}}key="step"
+# RUN(EITHER): walk f14
+# EITHER: = FindsDeclaredMember {{*}}key="read" conditions=[{layout=L0 key="read"}, {layout=L1 key="read"}] receivers=[L0, L1]
+# EITHER: = FindsDeclaredMember {{*}}key="step" conditions=[{layout=L0 key="step"}] receivers=[L0]
+# RUN(AWAITED): walk f15:CoroutineBody
+# AWAITED: = FindsDeclaredMember {{*}}key="read"
+# AWAITED: = AwaitBySavingFrame
+# AWAITED: = FindsDeclaredMember {{*}}key="step"
+# A question whose two ways come to one place is decided by no branch: it teaches nothing, and the call behind it asks its guard itself.
+# RUN(IDLE): walk f16
+# IDLE: = FindsDeclaredMember {{*}}key="read"
+# IDLE: = AreMembersUnchanged conditions=[{layout=L0 key="step"}]
+# IDLE: Branch
+# A relink by a typed writer inside the yes, with no code out of sight: each turn asks the whole question anew.
+# RUN(QUIET): walk f18
+# QUIET: isLoopHead=true
+# QUIET: = FindsDeclaredMember {{*}}key="read"
+# QUIET: = AreMembersUnchanged conditions=[{layout=L0 key="step"}]
+# QUIET: overload=ObjectSetPrototypeOf
+# RUN(NOTHING): run-in-shell above = function () { return { step() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; amid = function () { };
+# NOTHING: all - - - -
+# NOTHING-NEXT: both step
+# NOTHING-NEXT: found step
+# NOTHING-NEXT: both step
+# NOTHING-NEXT: yyy
+# NOTHING-NEXT: both step
+# NOTHING-NEXT: both step
+# NOTHING-NEXT: both step
+# NOTHING-NEXT: first other
+# NOTHING-NEXT: first other
+# NOTHING-NEXT: both step - heir
+# NOTHING-NEXT: step yes step
+# NOTHING-NEXT: yy- yyy
+# NOTHING-NEXT: both step
+# NOTHING-NEXT: exited with 0
+# RUN(RELINKED): run-in-shell above = function () { return { step() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; amid = function (made) { Object.setPrototypeOf(made, above()); };
+# RELINKED: all - - - -
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: found other
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: yyn
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: both step
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: both step - heir
+# RELINKED-NEXT: step yes step
+# RELINKED-NEXT: yy- yyy
+# RELINKED-NEXT: first other
+# RELINKED-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell above = function () { return { step() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; amid = function (made) { made.step = function () { return "own"; }; };
+# HIDDEN: all - - - -
+# HIDDEN-NEXT: first own
+# HIDDEN-NEXT: - own
+# HIDDEN-NEXT: first own
+# HIDDEN-NEXT: nnn
+# HIDDEN-NEXT: first own
+# HIDDEN-NEXT: first own
+# HIDDEN-NEXT: first step
+# HIDDEN-NEXT: first other
+# HIDDEN-NEXT: first other
+# HIDDEN-NEXT: - step - heir
+# HIDDEN-NEXT: step no step
+# HIDDEN-NEXT: nn- nnn
+# HIDDEN-NEXT: first own
+# HIDDEN-NEXT: exited with 0
+# RUN(ACCESSOR): run-in-shell above = function () { return { step() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; amid = function (made) { Object.defineProperty(made, "step", { get() { return function () { return "got"; }; }, configurable: true }); };
+# ACCESSOR: all - - - -
+# ACCESSOR-NEXT: first got
+# ACCESSOR-NEXT: - got
+# ACCESSOR-NEXT: first got
+# ACCESSOR-NEXT: nnn
+# ACCESSOR-NEXT: first got
+# ACCESSOR-NEXT: first got
+# ACCESSOR-NEXT: first step
+# ACCESSOR-NEXT: first other
+# ACCESSOR-NEXT: first other
+# ACCESSOR-NEXT: - step - heir
+# ACCESSOR-NEXT: step no step
+# ACCESSOR-NEXT: nn- nnn
+# ACCESSOR-NEXT: first got
+# ACCESSOR-NEXT: exited with 0
+# RUN(OVERWRITTEN): run-in-shell above = function () { return { step() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; amid = function (made) { Object.getPrototypeOf(made).step = function () { return "new"; }; };
+# OVERWRITTEN: all - - - -
+# OVERWRITTEN-NEXT: first new
+# OVERWRITTEN-NEXT: - new
+# OVERWRITTEN-NEXT: first new
+# OVERWRITTEN-NEXT: nnn
+# OVERWRITTEN-NEXT: first new
+# OVERWRITTEN-NEXT: first new
+# OVERWRITTEN-NEXT: first new
+# OVERWRITTEN-NEXT: first other
+# OVERWRITTEN-NEXT: first other
+# OVERWRITTEN-NEXT: - new - heir
+# OVERWRITTEN-NEXT: new no new
+# OVERWRITTEN-NEXT: nn- nnn
+# OVERWRITTEN-NEXT: first new
+# OVERWRITTEN-NEXT: exited with 0
+# RUN(FROZEN): run-in-shell above = function () { return { step() { return "other"; } }; }; heirs = function () { return function () { return "heir"; }; }; fail = function () { throw 1; }; count = function () { return 3; }; amid = function (made) { Object.freeze(made); };
+# FROZEN: all - - - -
+# FROZEN-NEXT: both step
+# FROZEN-NEXT: found step
+# FROZEN-NEXT: both step
+# FROZEN-NEXT: yyy
+# FROZEN-NEXT: both step
+# FROZEN-NEXT: both step
+# FROZEN-NEXT: both step
+# FROZEN-NEXT: first other
+# FROZEN-NEXT: first other
+# FROZEN-NEXT: both step - heir
+# FROZEN-NEXT: step yes step
+# FROZEN-NEXT: yy- yyy
+# FROZEN-NEXT: both step
+# FROZEN-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/PromiseConstructor.ts" displayPath="/$bun/js/engine/PromiseConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f2 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Gauge" module=m0 position=211 base=L0 constructor=f3 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 module=m0 position=3755 fields=[{key="read" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L3 fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
+data d0 root=Object{layout=L3} module=m0
+variable g0 name="inner" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f9 @0
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f10 @0
+    v17 = Convert v16 declared={type=f10 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f11 @0
+    v19 = Convert v18 declared={type=f11 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f12 @0
+    v21 = Convert v20 declared={type=f12 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f13 @0
+    v23 = Convert v22 declared={type=f13 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f14 @0
+    v25 = Convert v24 declared={type=f14 flags=[IsFromCompiler]} @0
+    v26 = NewClosure function=f15 @0
+    v27 = Convert v26 declared={type=f15 flags=[IsFromCompiler]} @0
+    v28 = NewClosure function=f16 @0
+    v29 = Convert v28 declared={type=f16 flags=[IsFromCompiler]} @0
+    v30 = NewClosure function=f17 @0
+    v31 = Convert v30 declared={type=f17 flags=[IsFromCompiler]} @0
+    v32 = NewClosure function=f18 @0
+    v33 = Convert v32 declared={type=f18 flags=[IsFromCompiler]} @0
+    v34 = NewClosure function=f19 @0
+    v35 = Convert v34 declared={type=f19 flags=[IsFromCompiler]} @0
+    v36 = PropGet v1 key="prototype" @46
+    v37 = NewClosure function=f20 @69
+    PropSet v36, v37 key="read" @52
+    v39 = PropGet v1 key="prototype" @101
+    v40 = NewClosure function=f21 @124
+    PropSet v39, v40 key="step" @107
+    v42 = PropGet v1 key="prototype" @156
+    v43 = NewClosure function=f22 @179
+    PropSet v42, v43 key="name" @162
+    v45 = Builtin builtin=Object @257
+    v46 = Builtin builtin=ObjectSetPrototypeOf @257
+    v47 = PropGet v3 key="prototype" @279
+    v48 = PropGet v1 key="prototype" @296
+    v49 = Call v46, v45, v47, v48 calleeName="Object.setPrototypeOf" @264
+    v50 = PropGet v3 key="prototype" @314
+    v51 = Builtin builtin=GlobalThis @337
+    v52 = PropGet v51 key="heirs" [isFreeName] @337
+    v53 = Call v52 calleeName="heirs" @337
+    PropSet v50, v53 key="step" @320
+    v55 = Builtin builtin=GlobalThis @3726
+    v56 = PropGet v55 key="print" [isFreeName] @3726
+    v57 = Integer integer=1 @3746
+    v58 = Construct v1, -, v57 calleeName="Meter" @3740
+    v59 = Call v5, -, v58 calleeName="row" @3732
+    v60 = NewClosure function=f23 @3757
+    v61 = NewObject -, v60 layout=L2 fields=[0] @3755
+    v62 = FinishObject v61 @3755
+    v63 = Call v5, -, v62 calleeName="row" @3751
+    v64 = Integer integer=7 @3776
+    v65 = Call v5, -, v64 calleeName="row" @3772
+    v66 = Null @3784
+    v67 = Call v5, -, v66 calleeName="row" @3780
+    v68 = Builtin builtin=Proxy @3799
+    v69 = Integer integer=1 @3815
+    v70 = Construct v1, -, v69 calleeName="Meter" @3809
+    v71 = Data data=d0 @3819
+    v72 = Construct v68, -, v70, v71 calleeName="Proxy" @3799
+    v73 = Call v5, -, v72 calleeName="row" @3791
+    v74 = Call v56, -, v59, v63, v65, v67, v73 calleeName="print" @3726
+    v75 = Builtin builtin=GlobalThis @3827
+    v76 = PropGet v75 key="print" [isFreeName] @3827
+    v77 = Integer integer=2 @3850
+    v78 = Construct v1, -, v77 calleeName="Meter" @3844
+    v79 = Call v7, -, v78 calleeName="amidst" @3833
+    v80 = Call v76, -, v79 calleeName="print" @3827
+    v81 = Builtin builtin=GlobalThis @3856
+    v82 = PropGet v81 key="print" [isFreeName] @3856
+    v83 = Integer integer=3 @3878
+    v84 = Construct v1, -, v83 calleeName="Meter" @3872
+    v85 = Call v9, -, v84 calleeName="stale" @3862
+    v86 = Call v82, -, v85 calleeName="print" @3856
+    v87 = Builtin builtin=GlobalThis @3884
+    v88 = PropGet v87 key="print" [isFreeName] @3884
+    v89 = Integer integer=3 @3909
+    v90 = Construct v1, -, v89 calleeName="Meter" @3903
+    v91 = Call v11, -, v90 calleeName="staleRow" @3890
+    v92 = Call v88, -, v91 calleeName="print" @3884
+    v93 = Builtin builtin=GlobalThis @3915
+    v94 = PropGet v93 key="print" [isFreeName] @3915
+    v95 = Integer integer=4 @3937
+    v96 = Construct v1, -, v95 calleeName="Meter" @3931
+    v97 = Builtin builtin=GlobalThis @3941
+    v98 = PropGet v97 key="count" [isFreeName] @3941
+    v99 = Call v98 calleeName="count" @3941
+    v100 = Call v13, -, v96, v99 calleeName="turns" @3921
+    v101 = Call v94, -, v100 calleeName="print" @3915
+    v102 = Builtin builtin=GlobalThis @3952
+    v103 = PropGet v102 key="print" [isFreeName] @3952
+    v104 = Integer integer=5 @3975
+    v105 = Construct v1, -, v104 calleeName="Meter" @3969
+    v106 = Call v15, -, v105 calleeName="caught" @3958
+    v107 = Call v103, -, v106 calleeName="print" @3952
+    v108 = Builtin builtin=GlobalThis @3981
+    v109 = PropGet v108 key="print" [isFreeName] @3981
+    v110 = Integer integer=6 @4003
+    v111 = Construct v1, -, v110 calleeName="Meter" @3997
+    v112 = Call v17, -, v111 calleeName="outer" @3987
+    v113 = Call v109, -, v112 calleeName="print" @3981
+    v114 = Builtin builtin=GlobalThis @4009
+    v115 = PropGet v114 key="print" [isFreeName] @4009
+    v116 = Integer integer=7 @4034
+    v117 = Construct v1, -, v116 calleeName="Meter" @4028
+    v118 = Call v19, -, v117 calleeName="straight" @4015
+    v119 = Call v115, -, v118 calleeName="print" @4009
+    v120 = Builtin builtin=GlobalThis @4040
+    v121 = PropGet v120 key="print" [isFreeName] @4040
+    v122 = Integer integer=8 @4064
+    v123 = Construct v1, -, v122 calleeName="Meter" @4058
+    v124 = Builtin builtin=GlobalThis @4068
+    v125 = PropGet v124 key="above" [isFreeName] @4068
+    v126 = Call v125 calleeName="above" @4068
+    v127 = Call v21, -, v123, v126 calleeName="relinks" @4046
+    v128 = Call v121, -, v127 calleeName="print" @4040
+    v129 = Builtin builtin=GlobalThis @4079
+    v130 = PropGet v129 key="print" [isFreeName] @4079
+    v131 = Integer integer=8 @4102
+    v132 = Construct v1, -, v131 calleeName="Meter" @4096
+    v133 = Builtin builtin=GlobalThis @4106
+    v134 = PropGet v133 key="above" [isFreeName] @4106
+    v135 = Call v134 calleeName="above" @4106
+    v136 = Call v23, -, v132, v135 calleeName="stores" @4085
+    v137 = Call v130, -, v136 calleeName="print" @4079
+    v138 = Builtin builtin=GlobalThis @4117
+    v139 = PropGet v138 key="print" [isFreeName] @4117
+    v140 = Integer integer=8 @4140
+    v141 = Construct v1, -, v140 calleeName="Meter" @4134
+    v142 = Call v25, -, v141 calleeName="either" @4123
+    v143 = Integer integer=8 @4162
+    v144 = Construct v3, -, v143 calleeName="Gauge" @4156
+    v145 = Call v25, -, v144 calleeName="either" @4145
+    v146 = Call v139, -, v142, v145 calleeName="print" @4117
+    v147 = Builtin builtin=GlobalThis @4168
+    v148 = PropGet v147 key="print" [isFreeName] @4168
+    v149 = Integer integer=10 @4189
+    v150 = Construct v1, -, v149 calleeName="Meter" @4183
+    v151 = Call v29, -, v150 calleeName="idle" @4174
+    v152 = Integer integer=10 @4210
+    v153 = Construct v1, -, v152 calleeName="Meter" @4204
+    v154 = Call v31, -, v153 calleeName="busy" @4195
+    v155 = Call v148, -, v151, v154 calleeName="print" @4168
+    v156 = Builtin builtin=GlobalThis @4217
+    v157 = PropGet v156 key="print" [isFreeName] @4217
+    v158 = Integer integer=11 @4239
+    v159 = Construct v1, -, v158 calleeName="Meter" @4233
+    v160 = Builtin builtin=GlobalThis @4244
+    v161 = PropGet v160 key="above" [isFreeName] @4244
+    v162 = Call v161 calleeName="above" @4244
+    v163 = Builtin builtin=GlobalThis @4253
+    v164 = PropGet v163 key="count" [isFreeName] @4253
+    v165 = Call v164 calleeName="count" @4253
+    v166 = Call v33, -, v159, v162, v165 calleeName="quiet" @4223
+    v167 = Integer integer=11 @4279
+    v168 = Construct v1, -, v167 calleeName="Meter" @4273
+    v169 = Builtin builtin=GlobalThis @4284
+    v170 = PropGet v169 key="count" [isFreeName] @4284
+    v171 = Call v170 calleeName="count" @4284
+    v172 = Call v35, -, v168, v171 calleeName="still" @4263
+    v173 = Call v157, -, v166, v172 calleeName="print" @4217
+    v174 = Integer integer=9 @4318
+    v175 = Construct v1, -, v174 calleeName="Meter" @4312
+    v176 = Call v27, -, v175 calleeName="awaited" @4322
+    v177 = PropGet v176 key="then" @4334
+    v178 = Builtin builtin=GlobalThis @4341
+    v179 = PropGet v178 key="print" [isFreeName] @4341
+    v180 = Call v177, v176, v179 calleeKey="then" calleeName="then" @4336
+    v181 = Builtin builtin=GlobalThis @4349
+    v182 = PropGet v181 key="amid" [isFreeName] @4349
+    v183 = Call v182, -, v175 calleeName="amid" @4349
+    v184 = Undefined @4349
+    Return v184 @4349
+}
+function f1 name="inner" module=m4 position=1618 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @1650
+    v2 = Undefined @1650
+    v3 = String string="step" @1679
+    v4 = FindsDeclaredMember v0 key="step" @1650
+    Return v4 @1650
+}
+function f2 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f3 name="Gauge" module=m0 position=211 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="level" @235
+    v3 = Undefined @235
+    Return v3 @235
+}
+function f4 name="row" module=m4 position=346 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @373
+    v2 = Undefined @373
+    v3 = String string="read" @402
+    v4 = FindsDeclaredMember v0 key="read" @373
+    v5 = ToBoolean v4 @373
+    Branch v5 -> taken b1(| 0), notTaken b4() @373
+  b1(v6):
+    v7 = Undefined @413
+    v8 = Undefined @413
+    v9 = String string="step" @442
+    v10 = FindsDeclaredMember v0 key="step" @413
+    v11 = ToBoolean v10 @413
+    Branch v11 -> taken b2(| 0), notTaken b4() @413
+  b2(v12):
+    v13 = Undefined @453
+    v14 = Undefined @453
+    v15 = String string="name" @482
+    v16 = FindsDeclaredMember v0 key="name" @453
+    v17 = ToBoolean v16 @453
+    Branch v17 -> taken b3(| 0), notTaken b4() @453
+  b3(v18):
+    v19 = String string="all" @498
+    Return v19 @498
+  b4():
+    v20 = String string="-" @512
+    Return v20 @512
+}
+function f5 name="amidst" module=m4 position=519 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @550
+    v2 = Undefined @550
+    v3 = String string="read" @579
+    v4 = FindsDeclaredMember v0 key="read" @550
+    v5 = ToBoolean v4 @550
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @550
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @600
+    v8 = PropGet v7 key="amid" [isFreeName] @600
+    v9 = Call v8, -, v0 calleeName="amid" @600
+    v10 = Undefined @618
+    v11 = Undefined @618
+    v12 = String string="step" @647
+    v13 = FindsDeclaredMember v0 key="step" @618
+    v14 = ToBoolean v13 @618
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @618
+  b2(v15):
+    v16 = String string="both " @663
+    v17 = PropGet v0 key="step" @673
+    v18 = Call v17, v0 calleeKey="step" calleeName="object.step" @680
+    v19 = Add v16, v18 @673
+    Return v19 @673
+  b3(v20):
+    v21 = String string="first " @695
+    v22 = PropGet v0 key="step" @706
+    v23 = Call v22, v0 calleeKey="step" calleeName="object.step" @713
+    v24 = Add v21, v23 @706
+    Return v24 @706
+  b4(v25):
+    v26 = String string="-" @595
+    Return v26 @595
+}
+function f6 name="stale" module=m4 position=723 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @762
+    v2 = Undefined @762
+    v3 = String string="step" @791
+    v4 = FindsDeclaredMember v0 key="step" @762
+    v5 = Builtin builtin=GlobalThis @800
+    v6 = PropGet v5 key="amid" [isFreeName] @800
+    v7 = Call v6, -, v0 calleeName="amid" @800
+    v8 = ToBoolean v4 @818
+    Branch v8 -> taken b1(| 0), notTaken b2(| 0) @818
+  b1(v9):
+    v10 = String string="found " @832
+    v11 = PropGet v0 key="step" @843
+    v12 = Call v11, v0 calleeKey="step" calleeName="object.step" @850
+    v13 = Add v10, v12 @843
+    Return v13 @843
+  b2(v14):
+    v15 = String string="- " @865
+    v16 = PropGet v0 key="step" @872
+    v17 = Call v16, v0 calleeKey="step" calleeName="object.step" @879
+    v18 = Add v15, v17 @872
+    Return v18 @872
+}
+function f7 name="staleRow" module=m4 position=889 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @931
+    v2 = Undefined @931
+    v3 = String string="read" @960
+    v4 = FindsDeclaredMember v0 key="read" @931
+    v5 = Builtin builtin=GlobalThis @969
+    v6 = PropGet v5 key="amid" [isFreeName] @969
+    v7 = Call v6, -, v0 calleeName="amid" @969
+    v8 = ToBoolean v4 @987
+    Branch v8 -> taken b1(| 0), notTaken b4(| 0) @987
+  b1(v9):
+    v10 = Undefined @1000
+    v11 = Undefined @1000
+    v12 = String string="step" @1029
+    v13 = FindsDeclaredMember v0 key="step" @1000
+    v14 = ToBoolean v13 @1000
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @1000
+  b2(v15):
+    v16 = String string="both " @1045
+    v17 = PropGet v0 key="step" @1055
+    v18 = Call v17, v0 calleeKey="step" calleeName="object.step" @1062
+    v19 = Add v16, v18 @1055
+    Return v19 @1055
+  b3(v20):
+    v21 = String string="first " @1077
+    v22 = PropGet v0 key="step" @1088
+    v23 = Call v22, v0 calleeKey="step" calleeName="object.step" @1095
+    v24 = Add v21, v23 @1088
+    Return v24 @1088
+  b4(v25):
+    v26 = String string="-" @1112
+    Return v26 @1112
+}
+function f8 name="turns" module=m4 position=1119 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = String string="" @1162
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @1162
+    v4 = Integer @1182
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1182
+    Jump -> next b1(v3, v5) @1175
+  b1(v6, v7):
+    LoopHint @1175
+    v9 = Less v7, v1 @1192
+    Branch v9 -> taken b2(), notTaken b9() @1192
+  b2():
+    v10 = Undefined @1213
+    v11 = Undefined @1213
+    v12 = String string="read" @1242
+    v13 = FindsDeclaredMember v0 key="read" @1213
+    v14 = ToBoolean v13 @1213
+    Branch v14 -> taken b3(| 0), notTaken b5() @1213
+  b3(v15):
+    v16 = Undefined @1253
+    v17 = Undefined @1253
+    v18 = String string="step" @1282
+    v19 = FindsDeclaredMember v0 key="step" @1253
+    v20 = ToBoolean v19 @1253
+    Branch v20 -> taken b4(| 0), notTaken b5() @1253
+  b4(v21):
+    v22 = String string="y" @1299
+    v23 = Add v6, v22 @1299
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @1291
+    Jump -> next b6(v24) @1291
+  b5():
+    v25 = String string="n" @1317
+    v26 = Add v6, v25 @1317
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @1309
+    Jump -> next b6(v27) @1309
+  b6(v28):
+    v29 = Integer integer=1 @1335
+    v30 = StrictEq v7, v29 @1335
+    Branch v30 -> taken b7(), notTaken b8() @1335
+  b7():
+    v31 = Builtin builtin=GlobalThis @1338
+    v32 = PropGet v31 key="amid" [isFreeName] @1338
+    v33 = Call v32, -, v0 calleeName="amid" @1338
+    Jump -> next b8() @1338
+  b8():
+    v34 = Increment v7 @1199
+    v35 = Convert v34 declared={type=number flags=[IsExpected]} @1199
+    Jump -> next b1(v28, v35) @1199
+  b9():
+    Return v6 @1361
+}
+function f9 name="caught" module=m4 position=1369 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @1400
+    v2 = Undefined @1400
+    v3 = String string="read" @1429
+    v4 = FindsDeclaredMember v0 key="read" @1400
+    v5 = ToBoolean v4 @1400
+    Branch v5 -> taken b1(| 0), notTaken b7(| 0) @1400
+  b1(v6):
+    Jump -> next b2() @1450
+  b2() handler=b4():
+    v7 = Builtin builtin=GlobalThis @1456
+    v8 = PropGet v7 key="amid" [isFreeName] @1456
+    v9 = Call v8, -, v0 calleeName="amid" @1456
+    v10 = Builtin builtin=GlobalThis @1470
+    v11 = PropGet v10 key="fail" [isFreeName] @1470
+    v12 = Call v11 calleeName="fail" @1470
+    Jump -> next b3() @1470
+  b3():
+    v13 = String string="no throw" @1604
+    Return v13 @1604
+  b4() role=CatchHandler:
+    v14 = CatchValue @1486
+    v15 = Undefined @1492
+    v16 = Undefined @1492
+    v17 = String string="step" @1521
+    v18 = FindsDeclaredMember v0 key="step" @1492
+    v19 = ToBoolean v18 @1492
+    Branch v19 -> taken b5(| 0), notTaken b6(| 0) @1492
+  b5(v20):
+    v21 = String string="both " @1537
+    v22 = PropGet v0 key="step" @1547
+    v23 = Call v22, v0 calleeKey="step" calleeName="object.step" @1554
+    v24 = Add v21, v23 @1547
+    Return v24 @1547
+  b6(v25):
+    v26 = String string="first " @1569
+    v27 = PropGet v0 key="step" @1580
+    v28 = Call v27, v0 calleeKey="step" calleeName="object.step" @1587
+    v29 = Add v26, v28 @1580
+    Return v29 @1580
+  b7(v30):
+    v31 = String string="-" @1445
+    Return v31 @1445
+}
+function f10 name="outer" module=m4 position=1690 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @1720
+    v2 = Undefined @1720
+    v3 = String string="read" @1749
+    v4 = FindsDeclaredMember v0 key="read" @1720
+    v5 = ToBoolean v4 @1720
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @1720
+  b1(v6):
+    v7 = Builtin builtin=GlobalThis @1770
+    v8 = PropGet v7 key="amid" [isFreeName] @1770
+    v9 = Call v8, -, v0 calleeName="amid" @1770
+    v10 = GetModuleVariable variable=g0 @1788
+    v11 = Call v10, -, v0 calleeName="inner" @1788
+    v12 = ToBoolean v11 @1788
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @1788
+  b2(v13):
+    v14 = String string="both " @1810
+    v15 = PropGet v0 key="step" @1820
+    v16 = Call v15, v0 calleeKey="step" calleeName="object.step" @1827
+    v17 = Add v14, v16 @1820
+    Return v17 @1820
+  b3(v18):
+    v19 = String string="first " @1842
+    v20 = PropGet v0 key="step" @1853
+    v21 = Call v20, v0 calleeKey="step" calleeName="object.step" @1860
+    v22 = Add v19, v21 @1853
+    Return v22 @1853
+  b4(v23):
+    v24 = String string="-" @1765
+    Return v24 @1765
+}
+function f11 name="straight" module=m4 position=1870 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @1903
+    v2 = Undefined @1903
+    v3 = String string="read" @1932
+    v4 = FindsDeclaredMember v0 key="read" @1903
+    v5 = ToBoolean v4 @1903
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @1903
+  b1(v6):
+    v7 = GetModuleVariable variable=g0 @1957
+    v8 = Call v7, -, v0 calleeName="inner" @1957
+    v9 = ToBoolean v8 @1957
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @1957
+  b2(v10):
+    v11 = String string="both " @1979
+    v12 = PropGet v0 key="step" @1989
+    v13 = Call v12, v0 calleeKey="step" calleeName="object.step" @1996
+    v14 = Add v11, v13 @1989
+    Return v14 @1989
+  b3(v15):
+    v16 = String string="first " @2011
+    v17 = PropGet v0 key="step" @2022
+    v18 = Call v17, v0 calleeKey="step" calleeName="object.step" @2029
+    v19 = Add v16, v18 @2022
+    Return v19 @2022
+  b4(v20):
+    v21 = String string="-" @1948
+    Return v21 @1948
+}
+function f12 name="relinks" module=m4 position=2039 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: undefined|null|object):
+    v2 = Undefined @2077
+    v3 = Undefined @2077
+    v4 = String string="read" @2106
+    v5 = FindsDeclaredMember v0 key="read" @2077
+    v6 = ToBoolean v5 @2077
+    Branch v6 -> taken b1(| 0), notTaken b4(| 0) @2077
+  b1(v7):
+    v8 = Builtin builtin=Object @2127
+    v9 = Builtin builtin=ObjectSetPrototypeOf @2127
+    v10 = Call v9, v8, v0, v1 calleeName="Object.setPrototypeOf" @2134
+    v11 = Undefined @2168
+    v12 = Undefined @2168
+    v13 = String string="step" @2197
+    v14 = FindsDeclaredMember v0 key="step" @2168
+    v15 = ToBoolean v14 @2168
+    Branch v15 -> taken b2(| 0), notTaken b3(| 0) @2168
+  b2(v16):
+    v17 = String string="both " @2213
+    v18 = PropGet v0 key="step" @2223
+    v19 = Call v18, v0 calleeKey="step" calleeName="object.step" @2230
+    v20 = Add v17, v19 @2223
+    Return v20 @2223
+  b3(v21):
+    v22 = String string="first " @2245
+    v23 = PropGet v0 key="step" @2256
+    v24 = Call v23, v0 calleeKey="step" calleeName="object.step" @2263
+    v25 = Add v22, v24 @2256
+    Return v25 @2256
+  b4(v26):
+    v27 = String string="-" @2122
+    Return v27 @2122
+}
+function f13 name="stores" module=m4 position=2273 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = Undefined @2310
+    v3 = Undefined @2310
+    v4 = String string="read" @2339
+    v5 = FindsDeclaredMember v0 key="read" @2310
+    v6 = ToBoolean v5 @2310
+    Branch v6 -> taken b1(| 0), notTaken b4(| 0) @2310
+  b1(v7):
+    PropSet v0, v1 key="__proto__" @2360
+    v9 = Undefined @2389
+    v10 = Undefined @2389
+    v11 = String string="step" @2418
+    v12 = FindsDeclaredMember v0 key="step" @2389
+    v13 = ToBoolean v12 @2389
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0) @2389
+  b2(v14):
+    v15 = String string="both " @2434
+    v16 = PropGet v0 key="step" @2444
+    v17 = Call v16, v0 calleeKey="step" calleeName="object.step" @2451
+    v18 = Add v15, v17 @2444
+    Return v18 @2444
+  b3(v19):
+    v20 = String string="first " @2466
+    v21 = PropGet v0 key="step" @2477
+    v22 = Call v21, v0 calleeKey="step" calleeName="object.step" @2484
+    v23 = Add v20, v22 @2477
+    Return v23 @2477
+  b4(v24):
+    v25 = String string="-" @2355
+    Return v25 @2355
+}
+function f14 name="either" module=m4 position=2494 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = Undefined @2524
+    v2 = Undefined @2524
+    v3 = String string="read" @2553
+    v4 = FindsDeclaredMember v0 key="read" @2524
+    v5 = ToBoolean v4 @2524
+    Branch v5 -> taken b1(| 0), notTaken b3() @2524
+  b1(v6):
+    v7 = Undefined @2564
+    v8 = Undefined @2564
+    v9 = String string="step" @2593
+    v10 = FindsDeclaredMember v0 key="step" @2564
+    v11 = ToBoolean v10 @2564
+    Branch v11 -> taken b2(| 0), notTaken b3() @2564
+  b2(v12):
+    v13 = String string="both " @2609
+    v14 = PropGet v0 key="step" @2619
+    v15 = Call v14, v0 calleeKey="step" calleeName="object.step" @2626
+    v16 = Add v13, v15 @2619
+    Return v16 @2619
+  b3():
+    v17 = String string="- " @2641
+    v18 = PropGet v0 key="step" @2648
+    v19 = Call v18, v0 calleeKey="step" calleeName="object.step" @2655
+    v20 = Add v17, v19 @2648
+    Return v20 @2648
+}
+function f15 name="awaited" module=m4 position=2665 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+  b0(v0: anything, v1: undefined|null|L0):
+    v2 = Undefined @2703
+    v3 = Undefined @2703
+    v4 = String string="read" @2732
+    v5 = FindsDeclaredMember v1 key="read" @2703
+    v6 = ToBoolean v5 @2703
+    Branch v6 -> taken b1(| 0), notTaken b4(| 0) @2703
+  b1(v7):
+    v8 = Undefined @2759
+    v9 = Await v8, v1, v0 @2759
+    v10 = Undefined @2774
+    v11 = Undefined @2774
+    v12 = String string="step" @2803
+    v13 = FindsDeclaredMember v1 key="step" @2774
+    v14 = ToBoolean v13 @2774
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @2774
+  b2(v15):
+    v16 = String string="both " @2819
+    v17 = PropGet v1 key="step" @2829
+    v18 = Call v17, v1 calleeKey="step" calleeName="object.step" @2836
+    v19 = Add v16, v18 @2829
+    Return v19 @2829
+  b3(v20):
+    v21 = String string="first " @2851
+    v22 = PropGet v1 key="step" @2862
+    v23 = Call v22, v1 calleeKey="step" calleeName="object.step" @2869
+    v24 = Add v21, v23 @2862
+    Return v24 @2862
+  b4(v25):
+    v26 = String string="-" @2748
+    Return v26 @2748
+}
+function f16 name="idle" module=m4 position=2879 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @2908
+    v2 = Undefined @2908
+    v3 = String string="read" @2937
+    v4 = FindsDeclaredMember v0 key="read" @2908
+    v5 = ToBoolean v4 @2908
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0) @2908
+  b1(v6):
+    v7 = Undefined @2962
+    v8 = Undefined @2962
+    v9 = String string="step" @2991
+    v10 = FindsDeclaredMember v0 key="step" @2962
+    v11 = ToBoolean v10 @2962
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @2962
+  b2(v12):
+    Jump -> next b4() @2962
+  b3(v13):
+    Jump -> next b4() @2962
+  b4():
+    v14 = PropGet v0 key="step" @3011
+    v15 = Call v14, v0 calleeKey="step" calleeName="object.step" @3018
+    ReturnCall v15 @3018
+  b5(v16):
+    v17 = String string="-" @2953
+    Return v17 @2953
+}
+function f17 name="busy" module=m4 position=3028 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @3057
+    v2 = Undefined @3057
+    v3 = String string="read" @3086
+    v4 = FindsDeclaredMember v0 key="read" @3057
+    v5 = ToBoolean v4 @3057
+    Branch v5 -> taken b1(| 0), notTaken b4(| 0) @3057
+  b1(v6):
+    v7 = String string="no " @3118
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @3118
+    v9 = Undefined @3129
+    v10 = Undefined @3129
+    v11 = String string="step" @3158
+    v12 = FindsDeclaredMember v0 key="step" @3129
+    v13 = ToBoolean v12 @3129
+    Branch v13 -> taken b2(| 0), notTaken b3(v8) @3129
+  b2(v14):
+    v15 = String string="yes " @3174
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @3167
+    Jump -> next b3(v16) @3167
+  b3(v17):
+    v18 = PropGet v0 key="step" @3196
+    v19 = Call v18, v0 calleeKey="step" calleeName="object.step" @3203
+    v20 = Add v17, v19 @3196
+    Return v20 @3196
+  b4(v21):
+    v22 = String string="-" @3102
+    Return v22 @3102
+}
+function f18 name="quiet" module=m4 position=3213 role=Library flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: undefined|null|object, v2: anything):
+    v3 = String string="" @3262
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @3262
+    v5 = Integer @3282
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @3282
+    Jump -> next b1(v4, v6) @3275
+  b1(v7, v8):
+    LoopHint @3275
+    v10 = Less v8, v2 @3292
+    Branch v10 -> taken b2(), notTaken b10() @3292
+  b2():
+    v11 = Undefined @3313
+    v12 = Undefined @3313
+    v13 = String string="read" @3342
+    v14 = FindsDeclaredMember v0 key="read" @3313
+    v15 = ToBoolean v14 @3313
+    Branch v15 -> taken b3(| 0), notTaken b8(| 0) @3313
+  b3(v16):
+    v17 = Undefined @3361
+    v18 = Undefined @3361
+    v19 = String string="step" @3390
+    v20 = FindsDeclaredMember v0 key="step" @3361
+    v21 = ToBoolean v20 @3361
+    Branch v21 -> taken b4(| 0), notTaken b5(| 0) @3361
+  b4(v22):
+    v23 = String string="y" @3400
+    Jump -> next b6(v23) @3400
+  b5(v24):
+    v25 = String string="n" @3406
+    Jump -> next b6(v25) @3406
+  b6(v26):
+    v27 = Add v7, v26 @3406
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]} @3353
+    v29 = Integer integer=1 @3424
+    v30 = StrictEq v8, v29 @3424
+    Branch v30 -> taken b7(), notTaken b9(v28) @3424
+  b7():
+    v31 = Builtin builtin=Object @3427
+    v32 = Builtin builtin=ObjectSetPrototypeOf @3427
+    v33 = Call v32, v31, v0, v1 calleeName="Object.setPrototypeOf" @3434
+    Jump -> next b9(v28) @3427
+  b8(v34):
+    v35 = String string="-" @3479
+    v36 = Add v7, v35 @3479
+    v37 = Convert v36 declared={type=undefined|null|string flags=[IsExpected]} @3471
+    Jump -> next b9(v37) @3471
+  b9(v38):
+    v39 = Increment v8 @3299
+    v40 = Convert v39 declared={type=number flags=[IsExpected]} @3299
+    Jump -> next b1(v38, v40) @3299
+  b10():
+    Return v7 @3493
+}
+function f19 name="still" module=m4 position=3501 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = String string="" @3544
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @3544
+    v4 = Integer @3564
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @3564
+    Jump -> next b1(v3, v5) @3557
+  b1(v6, v7):
+    LoopHint @3557
+    v9 = Less v7, v1 @3574
+    Branch v9 -> taken b2(), notTaken b9() @3574
+  b2():
+    v10 = Undefined @3595
+    v11 = Undefined @3595
+    v12 = String string="read" @3624
+    v13 = FindsDeclaredMember v0 key="read" @3595
+    v14 = ToBoolean v13 @3595
+    Branch v14 -> taken b3(| 0), notTaken b7(| 0) @3595
+  b3(v15):
+    v16 = Undefined @3641
+    v17 = Undefined @3641
+    v18 = String string="step" @3670
+    v19 = FindsDeclaredMember v0 key="step" @3641
+    v20 = ToBoolean v19 @3641
+    Branch v20 -> taken b4(| 0), notTaken b5(| 0) @3641
+  b4(v21):
+    v22 = String string="y" @3680
+    Jump -> next b6(v22) @3680
+  b5(v23):
+    v24 = String string="n" @3686
+    Jump -> next b6(v24) @3686
+  b6(v25):
+    v26 = Add v6, v25 @3686
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @3633
+    Jump -> next b8(v27) @3633
+  b7(v28):
+    v29 = String string="-" @3704
+    v30 = Add v6, v29 @3704
+    v31 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]} @3696
+    Jump -> next b8(v31) @3696
+  b8(v32):
+    v33 = Increment v7 @3581
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @3581
+    Jump -> next b1(v32, v34) @3581
+  b9():
+    Return v6 @3718
+}
+function f20 module=m4 position=69 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="read" @90
+    Return v0 @90
+}
+function f21 module=m4 position=124 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="step" @145
+    Return v0 @145
+}
+function f22 module=m4 position=179 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="name" @200
+    Return v0 @200
+}
+function f23 name="read" module=m0 position=3757 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @3757
+    Return v0 @3757
+}
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f38 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+function f39 name="Promise" module=m3 position=1836 kind=BaseConstructor role=Library flags=[HasNewTarget, IsChecked, HasExplicitName, IsNakedConstructor] length=1 enclosingRuntimeFunction=PromiseConstructorPromise thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined @1860
+    v3 = TypeTest v1 testedType=function @1900
+    Branch v3 -> taken b1(| 0), notTaken b7(| 0) @1900
+  b1(v4):
+    v5 = NarrowByTest v1, v4 @1900
+    v6 = CreatePromise v0 @2016
+    Jump -> next b2() @2078
+  b2() handler=b3():
+    v7 = NewClosure v6 function=f40 @2114
+    v8 = NewClosure v6 function=f41 @2263
+    v9 = Call v5, -, v7, v8 calleeName="executor" @2092
+    Jump -> next b4() @2092
+  b3() role=CatchHandler:
+    v10 = CatchValue @2412
+    v11 = Convert v6 declared={type=object flags=[IsFromCompiler, IsClaim]} @2422
+    RejectPromise v11, v10 @2422
+    v13 = Undefined @2422
+    Jump -> next b4() @2422
+  b4():
+    v14 = TypeTest v6 testedType=object @2507
+    Branch v14 -> taken b5(| 0), notTaken b6(v0) @2507
+  b5(v15):
+    Jump -> next b6(v15) @2507
+  b6(v16):
+    Return v16 @2507
+  b7(v17):
+    v18 = ThrowNewError errorKind=TypeError message="Promise constructor takes a function argument" @1931
+    Unreachable @1931
+}
+function f40 module=m3 position=2114 kind=Arrow role=Library flags=[IsChecked] length=1 enclosingRuntimeFunction=PromiseConstructorPromise captures=[{type=anything variableName="capturedPromise"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @2155
+    ResolvePromise v2, v1 @2155
+    v4 = Undefined @2155
+    Return v4 @2155
+}
+function f41 module=m3 position=2263 kind=Arrow role=Library flags=[IsChecked] length=1 enclosingRuntimeFunction=PromiseConstructorPromise captures=[{type=anything variableName="capturedPromise"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @2300
+    RejectPromise v2, v1 @2300
+    v4 = Undefined @2300
+    Return v4 @2300
+}
+runtimefunction id=PromiseConstructorPromise function=f39
+runtimefunction id=JSIteratorPrototypeDispose function=f38
+runtimefunction id=ArrayIteratorPrototypeNext function=f37 visibility=Private

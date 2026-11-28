@@ -150,7 +150,15 @@ function parseMember(cursor: Cursor, isEngine: boolean): MemberSyntax {
 }
 
 function parseMembers(cursor: Cursor): MemberSyntax[] {
-  return parseWireThenEngine(cursor, "}", parseMember);
+  let shared: ValueSyntax[] = [];
+  return parseWireThenEngine(cursor, "}", (cursor, isEngine) => {
+    while (cursor.accept("[")) {
+      shared = parseValues(cursor, "]");
+      cursor.expect("]");
+    }
+    const member = parseMember(cursor, isEngine);
+    return member.values.length > 0 ? member : { ...member, values: shared };
+  });
 }
 
 export function parseEnum(cursor: Cursor, declares: "enum" | "flags"): EnumSyntax {

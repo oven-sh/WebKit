@@ -49,7 +49,7 @@ struct SampledGradientCacheKey {
 };
 
 template<>
-bool LEGACY_NODELETE TinyLRUCachePolicy<SampledGradientCacheKey, RetainPtr<CGGradientRef>>::isKeyNull(const SampledGradientCacheKey& key)
+NODELETE bool TinyLRUCachePolicy<SampledGradientCacheKey, RetainPtr<CGGradientRef>>::isKeyNull(const SampledGradientCacheKey& key)
 {
     return key.colorStops.isEmpty();
 }
@@ -134,11 +134,9 @@ GradientRendererCG::Gradient GradientRendererCG::makeGradient(ColorInterpolation
     auto numberOfStops = stops.size();
 
     static constexpr auto reservedStops = 3;
-    Vector<CGFloat, reservedStops> locations;
-    locations.reserveInitialCapacity(numberOfStops);
+    Vector<CGFloat, reservedStops> locations(ReserveCapacityTag { }, numberOfStops);
 
-    Vector<CGFloat, 4 * reservedStops> colorComponents;
-    colorComponents.reserveInitialCapacity(numberOfStops * 4);
+    Vector<CGFloat, 4 * reservedStops> colorComponents(ReserveCapacityTag { }, numberOfStops * 4);
 
     RetainPtr cgColorSpace = [&] () -> CGColorSpaceRef {
         if (m_colorSpace) {
@@ -204,7 +202,7 @@ GradientRendererCG::Gradient GradientRendererCG::makeGradient(ColorInterpolation
 
 GradientRendererCG::Gradient GradientRendererCG::makeGradientBySampling(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops) const
 {
-    auto colorStops = stops.sorted().stops();
+    auto colorStops = stops.stops();
     static NeverDestroyed<ThreadSpecific<TinyLRUCache<WTF::SampledGradientCacheKey, RetainPtr<CGGradientRef>, 8>>> cache;
     RetainPtr gradient = cache.get()->get({ colorInterpolationMethod, colorStops, m_colorSpace });
     return Gradient { WTF::move(gradient) };

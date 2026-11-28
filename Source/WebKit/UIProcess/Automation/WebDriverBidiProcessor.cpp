@@ -35,6 +35,7 @@
 #include "BidiBrowserAgent.h"
 #include "BidiBrowsingContextAgent.h"
 #include "BidiDigitalCredentialsAgent.h"
+#include "BidiEmulationAgent.h"
 #include "BidiInputAgent.h"
 #include "BidiPermissionsAgent.h"
 #include "BidiScriptAgent.h"
@@ -45,8 +46,10 @@
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/MathCommon.h>
+#include <cmath>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebKit {
 
@@ -61,6 +64,7 @@ WebDriverBidiProcessor::WebDriverBidiProcessor(WebAutomationSession& session)
     , m_browserAgent(makeUniqueRef<BidiBrowserAgent>(session, m_backendDispatcher))
     , m_browsingContextAgent(BidiBrowsingContextAgent::create(session, m_backendDispatcher))
     , m_digitalCredentialsAgent(makeUniqueRef<BidiDigitalCredentialsAgent>(session, m_backendDispatcher))
+    , m_emulationAgent(makeUniqueRef<BidiEmulationAgent>(session, m_backendDispatcher))
     , m_inputAgent(makeUniqueRef<BidiInputAgent>(session, m_backendDispatcher))
     , m_permissionsAgent(makeUniqueRef<BidiPermissionsAgent>(session, m_backendDispatcher))
     , m_scriptAgent(makeUniqueRef<BidiScriptAgent>(session, m_backendDispatcher))
@@ -93,33 +97,43 @@ void WebDriverBidiProcessor::processBidiMessage(const String& message)
     m_backendDispatcher->dispatch(message);
 }
 
+std::optional<double> WebDriverBidiProcessor::integerValue(const JSON::Value& value, double minimum, double maximum)
+{
+    if (value.type() != JSON::Value::Type::Double && value.type() != JSON::Value::Type::Integer)
+        return std::nullopt;
+
+    auto number = value.asDouble();
+    if (!number || std::trunc(*number) != *number || *number < minimum || *number > maximum)
+        return std::nullopt;
+
+    return number;
+}
+
+std::optional<WebDriverBidiProcessor::RemoteReference> WebDriverBidiProcessor::parseRemoteReference(const JSON::Object& object)
+{
+    RemoteReference remoteReference;
+    if (auto sharedId = object.getValue("sharedId"_s); sharedId && !sharedId->asString(remoteReference.sharedId))
+        return std::nullopt;
+    if (auto handle = object.getValue("handle"_s); handle && !handle->asString(remoteReference.handle))
+        return std::nullopt;
+    if (remoteReference.sharedId.isNull() && remoteReference.handle.isNull())
+        return std::nullopt;
+    return remoteReference;
+}
+
 Inspector::CommandResult<void> WebDriverBidiProcessor::validateSerializationOptions(const JSON::Object& serializationOptions)
 {
-    RefPtr<JSON::Value> maxDomDepthValue;
-    if (serializationOptions.getValue("maxDomDepth"_s, maxDomDepthValue)) {
-        if (auto maxDomDepth = maxDomDepthValue->asDouble()) {
-            if (*maxDomDepth < 0)
-                return makeUnexpected("serializationOptions.maxDomDepth must be non-negative"_s);
-            if (std::floor(*maxDomDepth) != *maxDomDepth)
-                return makeUnexpected("serializationOptions.maxDomDepth must be an integer"_s);
-            if (*maxDomDepth > JSC::maxSafeInteger())
-                return makeUnexpected("serializationOptions.maxDomDepth exceeds maximum safe integer"_s);
-        }
+    for (auto key : { "maxDomDepth"_s, "maxObjectDepth"_s }) {
+        if (auto value = serializationOptions.getValue(key); value && !value->isNull() && !integerValue(*value, 0, JSC::maxSafeInteger()))
+            return makeUnexpected(makeString("serializationOptions."_s, key, " must be null or an integer between 0 and 2^53-1"_s));
     }
 
-    RefPtr<JSON::Value> maxObjectDepthValue;
-    if (serializationOptions.getValue("maxObjectDepth"_s, maxObjectDepthValue)) {
-        if (auto maxObjectDepth = maxObjectDepthValue->asDouble()) {
-            if (*maxObjectDepth < 0)
-                return makeUnexpected("serializationOptions.maxObjectDepth must be non-negative"_s);
-            if (std::floor(*maxObjectDepth) != *maxObjectDepth)
-                return makeUnexpected("serializationOptions.maxObjectDepth must be an integer"_s);
-            if (*maxObjectDepth > JSC::maxSafeInteger())
-                return makeUnexpected("serializationOptions.maxObjectDepth exceeds maximum safe integer"_s);
-        }
+    RefPtr<JSON::Value> includeShadowTreeValue;
+    if (serializationOptions.getValue("includeShadowTree"_s, includeShadowTreeValue)) {
+        String includeShadowTree;
+        if (!includeShadowTreeValue->asString(includeShadowTree) || (includeShadowTree != "none"_s && includeShadowTree != "open"_s && includeShadowTree != "all"_s))
+            return makeUnexpected("serializationOptions.includeShadowTree must be none, open, or all"_s);
     }
-
-    // Note: includeShadowTree validation is handled by the protocol enum definition in BidiScript.json
 
     return { };
 }
@@ -156,7 +170,7 @@ static String toBidiErrorCode(int errorCode, const String& inspectorInternalMsg)
     case Inspector::Protocol::Automation::ErrorMessage::JavaScriptTimeout:
         return "script timeout"_s;
     case Inspector::Protocol::Automation::ErrorMessage::WindowNotFound:
-        return "no such browsing context"_s;
+        return "no such frame"_s;
     case Inspector::Protocol::Automation::ErrorMessage::FrameNotFound:
         return "no such frame"_s;
     case Inspector::Protocol::Automation::ErrorMessage::NodeNotFound:
@@ -194,9 +208,33 @@ static String toBidiErrorCode(int errorCode, const String& inspectorInternalMsg)
         return "no such user context"_s;
     case Inspector::Protocol::Automation::ErrorMessage::NoSuchScript:
         return "no such script"_s;
+    case Inspector::Protocol::Automation::ErrorMessage::NoSuchHistoryEntry:
+        return "no such history entry"_s;
+    case Inspector::Protocol::Automation::ErrorMessage::NodeIsNotAnElement:
+        return "no such element"_s;
+    case Inspector::Protocol::Automation::ErrorMessage::UnableToSetFileInput:
+        return "unable to set file input"_s;
+    case Inspector::Protocol::Automation::ErrorMessage::NoSuchHandle:
+        return "no such handle"_s;
     default:
         return "unknown error"_s;
     }
+}
+
+// BackendDispatcher writes a response's "id" member last, so it can be found even when the rest
+// of the response can't be parsed.
+static std::optional<int> commandIdForUnparsableResponse(StringView message)
+{
+    static constexpr auto idMemberPrefix = ",\"id\":"_s;
+    if (!message.endsWith('}'))
+        return std::nullopt;
+
+    auto idMemberStart = message.reverseFind(idMemberPrefix);
+    if (idMemberStart == notFound)
+        return std::nullopt;
+
+    auto idStart = idMemberStart + idMemberPrefix.length();
+    return parseInteger<int>(message.substring(idStart, message.length() - 1 - idStart));
 }
 
 void WebDriverBidiProcessor::sendBidiMessage(const String& message)
@@ -212,18 +250,29 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
 
     auto msgValue = JSON::Object::parseJSON(message);
     if (!msgValue) {
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON: %s", session->sessionIdentifier().utf8(), message.utf8());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON: %s", makeUTF8CString(session->sessionIdentifier()), makeUTF8CString(message));
+
+        // The JSON parser limits nesting depth, and the serializer that produced the message doesn't.
+        // Answer the command so that the client isn't left waiting.
+        if (auto commandId = commandIdForUnparsableResponse(message)) {
+            auto bidiErrorObj = JSON::Object::create();
+            bidiErrorObj->setString("type"_s, "error"_s);
+            bidiErrorObj->setString("error"_s, "unknown error"_s);
+            bidiErrorObj->setString("message"_s, "The command result could not be encoded."_s);
+            bidiErrorObj->setInteger("id"_s, *commandId);
+            session->sendBidiMessage(bidiErrorObj->toJSONString());
+        }
         return;
     }
     auto msgObj = msgValue->asObject();
     if (!msgObj) {
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON object: %s", session->sessionIdentifier().utf8(), message.utf8());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON object: %s", makeUTF8CString(session->sessionIdentifier()), makeUTF8CString(message));
         return;
     }
 
     if (auto internalErrorObj = msgObj->getObject("error"_s)) {
         if (auto codeField = internalErrorObj->getInteger("code"_s)) {
-            RELEASE_LOG(Automation, "[s:%s] sendBidiMessage converting internal error into BiDi error: %s", session->sessionIdentifier().utf8(), message.utf8());
+            RELEASE_LOG(Automation, "[s:%s] sendBidiMessage converting internal error into BiDi error: %s", makeUTF8CString(session->sessionIdentifier()), makeUTF8CString(message));
 
             auto bidiErrorObj = JSON::Object::create();
             bidiErrorObj->setString("type"_s, "error"_s);
@@ -247,7 +296,7 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
             return;
         }
         // FIXME should we forward some unknown error?
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse error code: %s", session->sessionIdentifier().utf8(), message.utf8());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse error code: %s", makeUTF8CString(session->sessionIdentifier()), makeUTF8CString(message));
     } else if (msgObj->getInteger("id"_s))
         msgObj->setString("type"_s, "success"_s);
     else

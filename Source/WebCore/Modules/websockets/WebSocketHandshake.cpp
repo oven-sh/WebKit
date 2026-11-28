@@ -163,7 +163,7 @@ String WebSocketHandshake::clientLocation() const
     return makeString(m_secure ? "wss"_s : "ws"_s, "://"_s, hostName(m_url, m_secure), resourceName(m_url));
 }
 
-static bool LEGACY_NODELETE isStandardWebSocketHandshakeRequestHeader(HTTPHeaderName name)
+NODELETE static bool isStandardWebSocketHandshakeRequestHeader(HTTPHeaderName name)
 {
     switch (name) {
     case HTTPHeaderName::Upgrade:
@@ -214,7 +214,7 @@ UTF8CString WebSocketHandshake::clientHandshakeMessage() const
         extraHeaders.append(header.key, ": "_s, header.value, "\r\n"_s);
 
     auto extensions = m_extensionDispatcher.createHeaderValue();
-    return makeString("GET "_s, resourceName(m_url), " HTTP/1.1\r\n"
+    return makeUTF8CString(makeString("GET "_s, resourceName(m_url), " HTTP/1.1\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Host: "_s, hostName(m_url, m_secure), "\r\n"
@@ -227,7 +227,7 @@ UTF8CString WebSocketHandshake::clientHandshakeMessage() const
         extensions.isEmpty() ? ""_s : "Sec-WebSocket-Extensions: "_s, extensions, extensions.isEmpty() ? ""_s : "\r\n"_s,
         "User-Agent: "_s, m_userAgent, "\r\n"_s,
         extraHeaders.toString(),
-        "\r\n"_s).utf8();
+        "\r\n"_s));
 }
 
 ResourceRequest WebSocketHandshake::clientHandshakeRequest(NOESCAPE const Function<String(const URL&)>& cookieRequestHeaderFieldValue) const

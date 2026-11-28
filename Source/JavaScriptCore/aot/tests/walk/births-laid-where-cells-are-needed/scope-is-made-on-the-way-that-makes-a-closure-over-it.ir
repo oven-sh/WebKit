@@ -1,0 +1,111 @@
+# A scope is written at the head of its function. Where the closures over it are all that needs its cell, it is made where they are, and the way that returns early makes none
+# function inArm(skip, publish) { let id = 0; if (skip) return 1; publish(() => ++id); return 2; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = NewObject
+# CHECK: Branch
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK: = NewClosure {{*}}function=f2
+# The closure is written in front of the branch. It goes to the call that takes it, and the scope, which it lists, goes where it comes to stand
+# function inFront(skip, publish) { let id = 0; const bump = () => ++id; if (skip) return 1; publish(bump); return 2; }
+# RUN(FRONT): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# FRONT-LABEL: code f3:Body
+# FRONT-NOT: = NewClosure
+# FRONT: Branch
+# FRONT: = NewObject {{*}}layout=L1
+# FRONT: = NewClosure {{*}}function=f4
+# FRONT: = Call
+# RUN(COUNT): compile AllocationsSunk mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# COUNT: statistic AllocationsSunk 3
+# The same with one thing changed: the closure is handed out in front of the branch. Closure and scope are needed in the block that makes them
+# function both(skip, publish) { let id = 0; publish(() => ++id); if (skip) return 1; return 2; }
+# RUN(STAYS): walk f5 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# STAYS-LABEL: code f5:Body
+# STAYS: = NewObject {{*}}layout=L2
+# STAYS: = NewClosure {{*}}function=f6
+# STAYS: Branch
+# STAYS-NOT: = NewObject
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="id"}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="id"}] ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="id"}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v4 calleeName="sink"
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v6 calleeName="sink"
+    Return v7
+}
+function f1 name="inArm" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = NewClosure v3 function=f2
+    v7 = Call v1, -, v6
+    v8 = Integer integer=2
+    Return v8
+}
+function f2 name="bump" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Increment v1
+    PutEnvironmentField v0, v2 layout=L0
+    Return v2
+}
+function f3 name="inFront" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = NewClosure v3 function=f4
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=1
+    Return v6
+  b2():
+    v7 = Call v1, -, v4
+    v8 = Integer integer=2
+    Return v8
+}
+function f4 name="bump" module=m0 kind=Arrow captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1
+    v2 = Increment v1
+    PutEnvironmentField v0, v2 layout=L1
+    Return v2
+}
+function f5 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L2 fields=[0]
+    v4 = NewClosure v3 function=f6
+    v5 = Call v1, -, v4
+    v6 = ToBoolean v0
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer integer=1
+    Return v7
+  b2():
+    v8 = Integer integer=2
+    Return v8
+}
+function f6 name="bump" module=m0 kind=Arrow captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2
+    v2 = Increment v1
+    PutEnvironmentField v0, v2 layout=L2
+    Return v2
+}

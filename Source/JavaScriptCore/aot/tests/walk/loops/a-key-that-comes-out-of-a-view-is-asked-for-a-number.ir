@@ -1,0 +1,117 @@
+# function pick(words: Int32Array, keys: Int32Array) { let s = 0; for (let at = 0; at < keys.length; at += 2) s = (s + words[keys[at]] + words[keys[at + 1]]) | 0; return s; }
+# function lay(words: Int32Array, keys: Int32Array) { for (let at = 0; at < keys.length; at += 2) words[keys[at + 1]] = at; return words; }
+# What a read out of a view gives is expected to be a number or undefined. The test for an int32 did not admit all of that, so the looks at the loop did not count on it
+# and took the access under such a key for other code: the turn was not clean, the view of keys was asked in every turn whether it is as its class makes it, and the counter was a double.
+# A key is asked for the number, as an operand of an operator on numbers is. Under undefined, which names a property, the turn begins again in the closed copy.
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
+# CHECK: = GetTypedArrayLength
+# CHECK: @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: = IsPristine
+# CHECK-NOT: = ElemGet
+# CHECK: = Less {{*}}form=Integers
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
+# CHECK: @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: = IsPristine
+# CHECK-NOT: = ElemSet
+# CHECK: = PutTypedArrayElement
+# RUN(SHELL): run-in-shell let asked = 0; const all = [new Int32Array([5, -6, 7, 8]), new Int32Array([0, 2, 1, 3]), new Int32Array([5, -6, 7, 8]), new Int32Array([0, -1, 9]), new Int32Array(4), new Int32Array([9, 1, 9, 3, 9])]; globalThis.hidden = () => all[asked++]; globalThis.sink = (first, second, laid) => { print(first + " " + second + " " + laid.join() + " " + laid.undefined); };
+# SHELL: 14 0 0,0,0,2 4
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @400
+    v5 = PropGet v4 key="sink" [isFreeName] @400
+    v6 = Builtin builtin=GlobalThis @410
+    v7 = PropGet v6 key="hidden" [isFreeName] @410
+    v8 = Call v7 calleeName="hidden" @410
+    v9 = Convert v8 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @410
+    v10 = Builtin builtin=GlobalThis @434
+    v11 = PropGet v10 key="hidden" [isFreeName] @434
+    v12 = Call v11 calleeName="hidden" @434
+    v13 = Convert v12 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @434
+    v14 = Call v1, -, v9, v13 calleeName="pick" @405
+    v15 = Builtin builtin=GlobalThis @464
+    v16 = PropGet v15 key="hidden" [isFreeName] @464
+    v17 = Call v16 calleeName="hidden" @464
+    v18 = Convert v17 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @464
+    v19 = Builtin builtin=GlobalThis @488
+    v20 = PropGet v19 key="hidden" [isFreeName] @488
+    v21 = Call v20 calleeName="hidden" @488
+    v22 = Convert v21 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @488
+    v23 = Call v1, -, v18, v22 calleeName="pick" @459
+    v24 = Builtin builtin=GlobalThis @517
+    v25 = PropGet v24 key="hidden" [isFreeName] @517
+    v26 = Call v25 calleeName="hidden" @517
+    v27 = Convert v26 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @517
+    v28 = Builtin builtin=GlobalThis @541
+    v29 = PropGet v28 key="hidden" [isFreeName] @541
+    v30 = Call v29 calleeName="hidden" @541
+    v31 = Convert v30 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @541
+    v32 = Call v3, -, v27, v31 calleeName="lay" @513
+    v33 = Call v5, -, v14, v23, v32 calleeName="sink" @400
+    v34 = Undefined @400
+    Return v34 @400
+}
+function f1 name="pick" module=m0 position=84 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Int32Array):
+    v2 = Integer @145
+    v3 = Convert v2 declared={type=number} @145
+    v4 = Integer @162
+    v5 = Convert v4 declared={type=number} @162
+    Jump -> next b1(v3, v5) @157
+  b1(v6: number, v7: number):
+    LoopHint @157
+    v9 = PropGet v1 key="length" @170
+    v10 = Less v7, v9 @170
+    Branch v10 -> taken b2(), notTaken b3() @170
+  b2():
+    v11 = ElemGet v1, v7 @207
+    v12 = ElemGet v0, v11 @201
+    v13 = Add v6, v12 @201
+    v14 = Integer integer=1 @237
+    v15 = Add v7, v14 @237
+    v16 = ElemGet v1, v15 @227
+    v17 = ElemGet v0, v16 @221
+    v18 = Add v13, v17 @221
+    v19 = Integer @246
+    v20 = BitOr v18, v19 @246
+    v21 = Convert v20 declared={type=number} @192
+    v22 = Integer integer=2 @189
+    v23 = Add v7, v22 @189
+    v24 = Convert v23 declared={type=number} @183
+    Jump -> next b1(v21, v24) @183
+  b3():
+    Return v6 @256
+}
+function f2 name="lay" module=m0 position=261 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Int32Array):
+    v2 = Integer @327
+    v3 = Convert v2 declared={type=number} @327
+    Jump -> next b1(v3) @322
+  b1(v4: number):
+    LoopHint @322
+    v6 = PropGet v1 key="length" @335
+    v7 = Less v4, v6 @335
+    Branch v7 -> taken b2(), notTaken b3() @335
+  b2():
+    v8 = Integer integer=1 @373
+    v9 = Add v4, v8 @373
+    v10 = ElemGet v1, v9 @363
+    ElemSet v0, v10, v4 @357
+    v12 = Integer integer=2 @354
+    v13 = Add v4, v12 @354
+    v14 = Convert v13 declared={type=number} @348
+    Jump -> next b1(v14) @348
+  b3():
+    Return v0 @391
+}

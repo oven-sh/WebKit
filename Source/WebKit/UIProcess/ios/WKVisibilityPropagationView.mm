@@ -34,6 +34,7 @@
 #import "UIKitSPI.h"
 #import <wtf/RetainPtr.h>
 #import <wtf/WeakPtr.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import "UIKitSPI.h"
@@ -104,7 +105,7 @@ using ProcessAndVisibilityPropagatorPair = std::pair<WeakPtr<AuxiliaryProcessPro
 - (void)stopPropagatingVisibilityToProcess:(WebKit::AuxiliaryProcessProxy&)process
 {
     _processesAndVisibilityPropagators.removeAllMatching([&](auto& processAndVisibilityPropagator) {
-        auto existingProcess = processAndVisibilityPropagator.first.get();
+        RefPtr existingProcess = processAndVisibilityPropagator.first;
         if (existingProcess && existingProcess != &process)
             return false;
 
@@ -120,6 +121,14 @@ using ProcessAndVisibilityPropagatorPair = std::pair<WeakPtr<AuxiliaryProcessPro
     return _processesAndVisibilityPropagators.containsIf([&](auto& processesAndVisibilityPropagator) {
         return processesAndVisibilityPropagator.first.get() == &process;
     });
+}
+
+- (NSArray<NSNumber *> *)processIdentifiersForTesting
+{
+    return createNSArray(_processesAndVisibilityPropagators, [](auto& processAndVisibilityPropagator) -> NSNumber * {
+        RefPtr process = processAndVisibilityPropagator.first;
+        return process ? @(process->processID()) : nil;
+    }).autorelease();
 }
 
 - (void)clear

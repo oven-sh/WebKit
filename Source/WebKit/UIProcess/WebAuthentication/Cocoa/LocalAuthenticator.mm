@@ -86,7 +86,7 @@ static void updateQueryIfNecessary(NSMutableDictionary *dictionary)
     [dictionary setObject:@YES forKey:(__bridge id)kSecAttrSynchronizable];
 }
 
-static inline RefPtr<ArrayBuffer> LEGACY_NODELETE alternateBlobIfNecessary(const WebKit::WebAuthenticationRequestData& requestData)
+NODELETE static inline RefPtr<ArrayBuffer> alternateBlobIfNecessary(const WebKit::WebAuthenticationRequestData& requestData)
 {
 #if HAVE(WEB_AUTHN_PRF_API)
     return nullptr;
@@ -200,8 +200,7 @@ static inline void performEnterpriseAttestation(const WebCore::PublicKeyCredenti
     cbor::CBORValue::MapValue attestationStatementMap;
     {
         Vector<cbor::CBORValue> cborArray;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL id nsCert in chain.get())
+        for (id nsCert in chain.get())
             cborArray.append(cbor::CBORValue(makeVector((NSData *)adoptCF(SecCertificateCopyData((__bridge SecCertificateRef)nsCert)).get())));
         attestationStatementMap[cbor::CBORValue("x5c")] = cbor::CBORValue(WTF::move(cborArray));
         attestationStatementMap[cbor::CBORValue("alg")] = cbor::CBORValue(coseAlgorithmES256);
@@ -228,7 +227,7 @@ static inline HashSet<String> produceHashSet(const Vector<PublicKeyCredentialDes
     return result;
 }
 
-static inline uint8_t LEGACY_NODELETE authDataFlags(ClientDataType type, LocalConnection::UserVerification verification, bool synchronizable, std::optional<MediationRequirement> mediation)
+NODELETE static inline uint8_t authDataFlags(ClientDataType type, LocalConnection::UserVerification verification, bool synchronizable, std::optional<MediationRequirement> mediation)
 {
     auto flags = 0;
     if (type != ClientDataType::Create || mediation != MediationRequirement::Conditional)
@@ -296,10 +295,8 @@ LocalAuthenticator::LocalAuthenticator(Ref<LocalConnection>&& connection)
 std::optional<Vector<Ref<AuthenticatorAssertionResponse>>> LocalAuthenticator::getExistingCredentials(const String& rpId)
 {
     RetainPtr sortedAttributesArray = m_connection->getExistingCredentials(rpId);
-    Vector<Ref<AuthenticatorAssertionResponse>> result;
-    result.reserveInitialCapacity([sortedAttributesArray count]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *attributes in sortedAttributesArray.get()) {
+    Vector<Ref<AuthenticatorAssertionResponse>> result(ReserveCapacityTag { }, [sortedAttributesArray count]);
+    for (NSDictionary *attributes in sortedAttributesArray.get()) {
         auto decodedResponse = cbor::CBORReader::read(makeVector(protect(checked_objc_cast<NSData>(attributes[(id)kSecAttrApplicationTag])).get()));
         if (!decodedResponse || !decodedResponse->isMap()) {
             ASSERT_NOT_REACHED();
@@ -394,7 +391,7 @@ void LocalAuthenticator::makeCredential()
 
     if (RefPtr observer = this->observer()) {
         auto callback = [weakThis = WeakPtr { *this }] (LAContext *context) {
-            ASSERT(RunLoop::isMain());
+            RELEASE_ASSERT(RunLoop::isMain());
             if (RefPtr protectedThis = weakThis.get())
                 protectedThis->continueMakeCredentialAfterReceivingLAContext(context);
         };
@@ -419,7 +416,7 @@ void LocalAuthenticator::continueMakeCredentialAfterReceivingLAContext(LAContext
     }
 
     auto callback = [accessControl, context = retainPtr(context), weakThis = WeakPtr { *this }] (LocalConnection::UserVerification verification) {
-        ASSERT(RunLoop::isMain());
+        RELEASE_ASSERT(RunLoop::isMain());
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->continueMakeCredentialAfterUserVerification(accessControl.get(), verification, context.get());
     };
@@ -667,7 +664,7 @@ void LocalAuthenticator::continueMakeCredentialAfterUserVerification(SecAccessCo
 
     if (creationOptions.attestation == AttestationConveyancePreference::Enterprise) {
         auto callback = [credentialId = WTF::move(credentialId), weakThis = WeakPtr { *this }] (Vector<uint8_t>&& attestationObject, std::optional<ExceptionData> exception) mutable {
-            ASSERT(RunLoop::isMain());
+            RELEASE_ASSERT(RunLoop::isMain());
             if (RefPtr protectedThis = weakThis)
                 protectedThis->finishMakeCredential(WTF::move(credentialId), WTF::move(attestationObject), std::nullopt);
         };
@@ -768,7 +765,7 @@ void LocalAuthenticator::continueGetAssertionAfterResponseSelected(Ref<WebCore::
     RetainPtr accessControlRef = response->accessControl();
     RetainPtr context = response->laContext();
     auto callback = [weakThis = WeakPtr { *this }, response = WTF::move(response)] (LocalConnection::UserVerification verification) mutable {
-        ASSERT(RunLoop::isMain());
+        RELEASE_ASSERT(RunLoop::isMain());
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->continueGetAssertionAfterUserVerification(WTF::move(response), verification, protect(response->laContext()).get());
     };
@@ -880,7 +877,7 @@ void LocalAuthenticator::continueGetAssertionAfterUserVerification(Ref<WebCore::
 
 void LocalAuthenticator::receiveException(ExceptionData&& exception, WebAuthenticationStatus status) const
 {
-    LOG_ERROR("%s", exception.message.utf8());
+    LOG_ERROR("%s", makeUTF8CString(exception.message));
 
     // Roll back the just created credential.
     if (m_provisionalCredentialId) {

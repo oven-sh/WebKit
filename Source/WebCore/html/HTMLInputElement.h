@@ -26,6 +26,7 @@
 
 #include <WebCore/HTMLTextFormControlElement.h>
 #include <memory>
+#include <wtf/CancellableTask.h>
 #include <wtf/ValueOrReference.h>
 
 namespace WebCore {
@@ -69,11 +70,11 @@ public:
     static Ref<HTMLInputElement> create(const QualifiedName&, Document&, bool createdByParser);
     virtual ~HTMLInputElement();
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE alpha();
+    NODELETE WEBCORE_EXPORT bool alpha();
     bool checked() const { return m_isChecked; }
     WEBCORE_EXPORT void setChecked(bool, WasSetByJavaScript = WasSetByJavaScript::Yes);
     String colorSpace();
-    WEBCORE_EXPORT FileList* LEGACY_NODELETE files();
+    NODELETE WEBCORE_EXPORT FileList* files();
     WEBCORE_EXPORT void setFiles(RefPtr<FileList>&&, WasSetByJavaScript = WasSetByJavaScript::No);
     FileList* filesForBindings() { return files(); }
     void setFilesForBindings(RefPtr<FileList>&& fileList) { return setFiles(WTF::move(fileList), WasSetByJavaScript::Yes); }
@@ -134,52 +135,52 @@ public:
     std::optional<Decimal> findClosestTickMarkValue(const Decimal&);
     std::optional<double> listOptionValueAsDouble(const HTMLOptionElement&);
 
-    bool LEGACY_NODELETE isPresentingAttachedView() const;
+    NODELETE bool isPresentingAttachedView() const;
 
-    RefPtr<InputType> LEGACY_NODELETE inputType() const;
+    NODELETE WEBCORE_EXPORT RefPtr<InputType> inputType() const;
 
-    bool LEGACY_NODELETE isSteppable() const; // stepUp()/stepDown() for user-interaction.
-    WEBCORE_EXPORT bool LEGACY_NODELETE isTextButton() const;
-    bool LEGACY_NODELETE isRadioButton() const;
+    NODELETE bool isSteppable() const; // stepUp()/stepDown() for user-interaction.
+    NODELETE WEBCORE_EXPORT bool isTextButton() const;
+    NODELETE bool isRadioButton() const;
     WEBCORE_EXPORT bool isTextField() const final;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isSearchField() const;
-    bool LEGACY_NODELETE isInputTypeHidden() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isPasswordField() const;
+    NODELETE WEBCORE_EXPORT bool isSearchField() const;
+    NODELETE bool isInputTypeHidden() const;
+    NODELETE WEBCORE_EXPORT bool isPasswordField() const;
     bool isSecureField() const { return isPasswordField() || autofilledAndObscured(); }
-    bool LEGACY_NODELETE isCheckbox() const;
-    bool LEGACY_NODELETE isSwitch() const;
-    bool LEGACY_NODELETE isCheckable() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isRangeControl() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isColorControl() const;
+    NODELETE bool isCheckbox() const;
+    NODELETE bool isSwitch() const;
+    NODELETE bool isCheckable() const;
+    NODELETE WEBCORE_EXPORT bool isRangeControl() const;
+    NODELETE WEBCORE_EXPORT bool isColorControl() const;
     // FIXME: It's highly likely that any call site calling this function should instead
     // be using a different one. Many input elements behave like text fields, and in addition
     // any unknown input type is treated as text. Consider, for example, isTextField or
     // isTextField && !isPasswordField.
-    WEBCORE_EXPORT bool LEGACY_NODELETE isText() const;
-    bool LEGACY_NODELETE isTextType() const;
+    NODELETE WEBCORE_EXPORT bool isText() const;
+    NODELETE bool isTextType() const;
     bool supportsWritingSuggestions() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isEmailField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isFileUpload() const;
-    bool LEGACY_NODELETE isImageButton() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isNumberField() const;
+    NODELETE WEBCORE_EXPORT bool isEmailField() const;
+    NODELETE WEBCORE_EXPORT bool isFileUpload() const;
+    NODELETE bool isImageButton() const;
+    NODELETE WEBCORE_EXPORT bool isNumberField() const;
     WEBCORE_EXPORT bool isSubmitButton() const final;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isTelephoneField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isURLField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isDateField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isDateTimeLocalField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isMonthField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isTimeField() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isWeekField() const;
+    NODELETE WEBCORE_EXPORT bool isTelephoneField() const;
+    NODELETE WEBCORE_EXPORT bool isURLField() const;
+    NODELETE WEBCORE_EXPORT bool isDateField() const;
+    NODELETE WEBCORE_EXPORT bool isDateTimeLocalField() const;
+    NODELETE WEBCORE_EXPORT bool isMonthField() const;
+    NODELETE WEBCORE_EXPORT bool isTimeField() const;
+    NODELETE WEBCORE_EXPORT bool isWeekField() const;
 
     bool isDevolvableWidget() const override;
 
-    DateComponentsType LEGACY_NODELETE dateType() const;
+    NODELETE DateComponentsType dateType() const;
 
     HTMLElement* containerElement() const;
 
     RefPtr<TextControlInnerTextElement> innerTextElement() const final;
     RefPtr<TextControlInnerTextElement> innerTextElementCreatingShadowSubtreeIfNeeded() final;
-    Style::ComputedStyle createInnerTextStyle(const Style::ComputedStyle&) final;
+    UniqueRef<Style::ComputedStyle> createInnerTextStyle(const Style::ComputedStyle&) final;
 
     HTMLElement* innerBlockElement() const;
     HTMLElement* innerSpinButtonElement() const;
@@ -191,7 +192,7 @@ public:
     WEBCORE_EXPORT HTMLElement* autoFillButtonElement() const;
     WEBCORE_EXPORT HTMLElement* dataListButtonElement() const;
 
-    bool LEGACY_NODELETE matchesCheckedPseudoClass() const;
+    NODELETE bool matchesCheckedPseudoClass() const;
     bool matchesIndeterminatePseudoClass() const final;
     void setDefaultCheckedState(bool);
 
@@ -220,8 +221,8 @@ public:
     void setValueFromRenderer(const String&);
 
     bool rendererIsNeeded(const Style::ComputedStyle&) final;
-    bool LEGACY_NODELETE supportsBaseAppearance(StyleAppearance) const final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    NODELETE bool supportsBaseAppearance(StyleAppearance) const final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void willAttachRenderers() final;
     void didAttachRenderers() final;
@@ -237,14 +238,17 @@ public:
 
     void didBlur();
 
+    bool requiresLayerForScreenCaptureProtection() const;
+    bool shouldHideFromScreenCapture() const;
+
     int maxResults() const { return m_maxResults; }
 
     Vector<String> acceptMIMETypes() const;
     Vector<String> acceptFileExtensions() const;
 
-    unsigned LEGACY_NODELETE effectiveMaxLength() const;
+    NODELETE unsigned effectiveMaxLength() const;
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE multiple() const;
+    NODELETE WEBCORE_EXPORT bool multiple() const;
 
     // AutoFill.
     using AutofillButtonType = WebCore::AutoFillButtonType;
@@ -265,7 +269,7 @@ public:
         Visible,
         Hidden,
     };
-    AutofillVisibility LEGACY_NODELETE autofillVisibility() const;
+    NODELETE AutofillVisibility autofillVisibility() const;
     void setAutofillVisibility(AutofillVisibility);
     bool autofillSpellcheck() const { return !m_isSpellcheckDisabledExceptTextReplacement; }
     void setAutofillSpellcheck(bool value) { m_isSpellcheckDisabledExceptTextReplacement = !value; }
@@ -276,8 +280,8 @@ public:
     bool receiveDroppedFiles(const DragData&);
 #endif
 
-    Icon* LEGACY_NODELETE icon() const;
-    String LEGACY_NODELETE displayString() const;
+    NODELETE Icon* icon() const;
+    NODELETE String displayString() const;
 
     // These functions are used for rendering the input active during a drag-and-drop operation.
     bool canReceiveDroppedFiles() const { return m_canReceiveDroppedFiles; }
@@ -292,6 +296,7 @@ public:
     bool hasDataList() const;
     RefPtr<HTMLDataListElement> dataList() const;
     void dataListMayHaveChanged();
+    void scheduleDataListMayHaveChanged();
 
     Vector<Ref<HTMLInputElement>> radioButtonGroup() const;
     RefPtr<HTMLInputElement> checkedRadioButtonForGroup() const;
@@ -304,7 +309,7 @@ public:
     bool isTextFormControlMouseFocusable() const;
     bool valueAttributeWasUpdatedAfterParsing() const { return m_valueAttributeWasUpdatedAfterParsing; }
 
-    bool LEGACY_NODELETE hasCustomFocusLogic() const final;
+    NODELETE bool hasCustomFocusLogic() const final;
 
     void cacheSelectionInResponseToSetValue(int caretOffset) { cacheSelection(caretOffset, caretOffset, normalizeSelectionDirection(SelectionHasNoDirection)); }
 
@@ -343,7 +348,7 @@ public:
 
     void capsLockStateMayHaveChanged();
 
-    bool LEGACY_NODELETE shouldTruncateText(const Style::ComputedStyle&) const;
+    NODELETE bool shouldTruncateText(const Style::ComputedStyle&) const;
 
     String resultForDialogSubmit() const final;
 
@@ -353,9 +358,9 @@ public:
     bool hasEverBeenPasswordField() const { return m_hasEverBeenPasswordField; }
 
     float switchAnimationVisuallyOnProgress() const;
-    bool LEGACY_NODELETE isSwitchVisuallyOn() const;
+    NODELETE bool isSwitchVisuallyOn() const;
     float switchAnimationHeldProgress() const;
-    bool LEGACY_NODELETE isSwitchHeld() const;
+    NODELETE bool isSwitchHeld() const;
 
     void initializeInputTypeAfterParsingOrCloning();
 
@@ -385,7 +390,7 @@ private:
     int defaultTabIndex() const final;
     bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isMouseFocusable() const final;
-    bool LEGACY_NODELETE isEnumeratable() const final;
+    NODELETE bool isEnumeratable() const final;
     bool isLabelable() const final;
     void updateFocusAppearance(SelectionRestorationMode, SelectionRevealMode) final;
     bool shouldUseInputMethod() final;
@@ -402,7 +407,7 @@ private:
 
     void resignStrongPasswordAppearance();
 
-    bool LEGACY_NODELETE canHaveSelection() const;
+    NODELETE bool canHaveSelection() const;
     bool canStartSelection() const final;
 
     bool accessKeyAction(bool sendMouseEvents) final;
@@ -420,7 +425,7 @@ private:
 
     void reset() final;
 
-    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    NODELETE bool isURLAttribute(const Attribute&) const final;
     bool isInRange() const final;
     bool isOutOfRange() const final;
 
@@ -429,15 +434,15 @@ private:
 
     void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
 
-    bool LEGACY_NODELETE needsSuspensionCallback();
+    NODELETE bool needsSuspensionCallback();
     void registerForSuspensionCallbackIfNeeded();
     void unregisterForSuspensionCallbackIfNeeded();
 
     bool supportsReadOnly() const final;
     bool supportsMinLength() const { return isTextType(); }
     bool supportsMaxLength() const { return isTextType(); }
-    bool LEGACY_NODELETE tooShort(StringView, NeedsToCheckDirtyFlag) const;
-    bool LEGACY_NODELETE tooLong(StringView, NeedsToCheckDirtyFlag) const;
+    NODELETE bool tooShort(StringView, NeedsToCheckDirtyFlag) const;
+    NODELETE bool tooLong(StringView, NeedsToCheckDirtyFlag) const;
 
     bool supportsPlaceholder() const final;
     void updatePlaceholderText() final;
@@ -445,8 +450,8 @@ private:
     void handleFocusEvent(Node* oldFocusedNode, FocusDirection) final;
     void handleBlurEvent() final;
 
-    bool LEGACY_NODELETE isOptionalFormControl() const final { return !isRequiredFormControl(); }
-    bool LEGACY_NODELETE isRequiredFormControl() const final;
+    NODELETE bool isOptionalFormControl() const final { return !isRequiredFormControl(); }
+    NODELETE bool isRequiredFormControl() const final;
     bool computeWillValidate() const final;
     void requiredStateChanged() final;
 
@@ -463,6 +468,13 @@ private:
     void maxLengthAttributeChanged(const AtomString& newValue);
     void minLengthAttributeChanged(const AtomString& newValue);
     void updateValueIfNeeded();
+
+    ValueOrReference<String> valueWithoutScriptTrackingPrivacyProtection() const;
+
+    bool isScreenCaptureProtectionEnabled() const;
+    void updateScreenCaptureProtectionIfNeeded();
+    void invalidateScreenCaptureProtectionOnFocusChangeIfNeeded();
+    void invalidateScreenCaptureProtection();
 
     void addToRadioButtonGroup();
     void removeFromRadioButtonGroup();
@@ -504,7 +516,9 @@ private:
     bool m_hasPendingUserAgentShadowTreeUpdate : 1 { false };
     bool m_hasSwitchAttribute : 1 { false };
     bool m_hasEverBeenPasswordField : 1 { false };
+    bool m_isHiddenFromScreenCapture : 1 { false };
     RefPtr<InputType> m_inputType;
+    TaskCancellationGroup m_dataListMayHaveChangedTaskCancellationGroup;
     // The ImageLoader must be owned by this element because the loader code assumes
     // that it lives as long as its owning element lives. If we move the loader into
     // the ImageInput object we may delete the loader while this element lives on.

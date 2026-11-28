@@ -72,6 +72,11 @@ public:
     bool hasCancelledPointerEventForIdentifier(PointerID) const;
     bool preventsCompatibilityMouseEventsForIdentifier(PointerID) const;
 
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+    bool preventsCompatibilityMouseEventsForPrimaryTouch() const { return m_preventsCompatibilityMouseEventsForPrimaryTouch; }
+    void resetCompatibilityMouseEventSuppressionForPrimaryTouch() { m_preventsCompatibilityMouseEventsForPrimaryTouch = false; }
+#endif
+
 #if PLATFORM(MAC)
     bool dispatchEventForTrackedPointer(Element& target, const MouseEvent&, PointerID, const String& pointerType);
     void cancelTrackedPointer(PointerID);
@@ -121,7 +126,7 @@ private:
         bool isPrimary { false };
         bool preventsCompatibilityMouseEvents { false };
         bool pointerIsPressed { false };
-        MouseButton previousMouseButton { MouseButton::PointerHasNotChanged };
+        std::expected<MouseButton, MouseButtonState> previousMouseButton { std::unexpected { MouseButtonState::PointerHasNotChanged } };
 
     private:
         CapturingData(const String& pointerType)
@@ -147,10 +152,13 @@ private:
     WeakPtr<Page> m_page;
     // While PointerID is defined as int32_t, we use int64_t here so that we may use a value outside of the int32_t range to have safe
     // empty and removed values, allowing any int32_t to be provided through the API for lookup in this hashmap.
-    using PointerIdToCapturingDataMap = HashMap<int64_t, Ref<CapturingData>, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>>;
+    using PointerIdToCapturingDataMap = HashMap<int64_t, Ref<CapturingData>>;
     PointerIdToCapturingDataMap m_activePointerIdsToCapturingData;
     bool m_processingPendingPointerCapture { false };
     bool m_haveAnyCapturingElement { false };
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+    bool m_preventsCompatibilityMouseEventsForPrimaryTouch { false };
+#endif
 };
 
 inline void PointerCaptureController::elementWasRemoved(Element& element)

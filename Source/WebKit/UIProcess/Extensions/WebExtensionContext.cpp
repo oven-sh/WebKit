@@ -161,7 +161,17 @@ bool WebExtensionContext::isURLForThisExtension(const URL& url) const
     return url.isValid() && protocolHostAndPortAreEqual(baseURL(), url);
 }
 
-bool WebExtensionContext::canOpenURLInNewTabOrWindow(const URL& url) const
+bool WebExtensionContext::hasResource(const String& path) const
+{
+    URL url { baseURL(), path };
+    if (!isURLForThisExtension(url))
+        return false;
+
+    // The path excludes any query or fragment.
+    return protect(extension())->hasResourceForPath(url.path().toString());
+}
+
+bool WebExtensionContext::canNavigateToURL(const URL& url) const
 {
     if (url.protocolIsJavaScript())
         return false;
@@ -172,11 +182,10 @@ bool WebExtensionContext::canOpenURLInNewTabOrWindow(const URL& url) const
     return true;
 }
 
-String WebExtensionContext::unsupportedURLForNewTabOrWindowMessage(const URL& url) const
+String WebExtensionContext::unsupportedNavigationURLMessage(const URL& url) const
 {
     if (url.protocolIsJavaScript())
         return "it cannot be a JavaScript URL"_s;
-
     return "it cannot be a local file URL"_s;
 }
 
@@ -218,7 +227,7 @@ RefPtr<API::Data> WebExtensionContext::localizedResourceData(const RefPtr<API::D
     if (localizedString == stylesheetContents)
         return resourceData;
 
-    return API::Data::create(localizedString.utf8().span());
+    return API::Data::create(makeUTF8CString(localizedString).span());
 }
 
 String WebExtensionContext::localizedResourceString(const String& resourceContents, const String& mimeType)
@@ -264,6 +273,12 @@ void WebExtensionContext::setHasAccessToPrivateData(bool hasAccess)
         return;
 
     m_hasAccessToPrivateData = hasAccess;
+
+#if PLATFORM(COCOA)
+    // The delegate leaves out private windows while access is off, so ask for the open windows again.
+    if (m_hasAccessToPrivateData && isLoaded())
+        populateWindowsAndTabs();
+#endif
 
     if (!safeToInjectContent())
         return;
@@ -618,8 +633,12 @@ bool WebExtensionContext::removeGrantedPermissionMatchPatterns(MatchPatternSet& 
             continue;
 
         for (auto& pattern : matchPatternsToRemove) {
-            if (temporaryPattern->matchesPattern(pattern))
+            if (temporaryPattern->matchesPattern(pattern)) {
                 tab->setTemporaryPermissionMatchPattern(nullptr);
+                removeInjectedContent(tab);
+                temporaryPermissionMatchPatternsDidChange(PermissionNotification::GrantedPermissionMatchPatternsWereRemoved, MatchPatternSet { *temporaryPattern }, tab);
+                break;
+            }
         }
     }
 #endif
@@ -1225,23 +1244,8 @@ WebExtensionContext::InjectedContentVector WebExtensionContext::injectedContents
 bool WebExtensionContext::hasInjectedContentForURL(const URL& url)
 {
     for (auto& injectedContent : injectedContents()) {
-        // FIXME: <https://webkit.org/b/246492> Add support for exclude globs.
-        bool isExcluded = false;
-        for (auto& excludeMatchPattern : injectedContent.excludeMatchPatterns) {
-            if (excludeMatchPattern->matchesURL(url)) {
-                isExcluded = true;
-                break;
-            }
-        }
-
-        if (isExcluded)
-            continue;
-
-        // FIXME: <https://webkit.org/b/246492> Add support for include globs.
-        for (auto& includeMatchPattern : injectedContent.includeMatchPatterns) {
-            if (includeMatchPattern->matchesURL(url))
-                return true;
-        }
+        if (injectedContent.matchesURL(url))
+            return true;
     }
 
     return false;
@@ -1306,7 +1310,7 @@ void WebExtensionContext::addInjectedContent(const InjectedContentVector& inject
         addInjectedContent(injectedContents, pattern);
 }
 
-static WebCore::UserScriptInjectionTime LEGACY_NODELETE toImpl(WebExtension::InjectionTime injectionTime)
+NODELETE static WebCore::UserScriptInjectionTime toImpl(WebExtension::InjectionTime injectionTime)
 {
     switch (injectionTime) {
     case WebExtension::InjectionTime::DocumentStart:
@@ -1343,23 +1347,27 @@ API::ContentWorld& WebExtensionContext::toContentWorld(WebExtensionContentWorldT
 
 void WebExtensionContext::addInjectedContent(const InjectedContentVector& injectedContents, WebExtensionMatchPattern& pattern)
 {
+    auto& originInjectedScripts = m_injectedScriptsPerPatternMap.add(pattern, UserScriptVector { }).iterator->value;
+    auto& originInjectedStyleSheets = m_injectedStyleSheetsPerPatternMap.add(pattern, UserStyleSheetVector { }).iterator->value;
+
+    addInjectedContent(injectedContents, pattern, originInjectedScripts, originInjectedStyleSheets, nullptr);
+}
+
+void WebExtensionContext::addInjectedContent(const InjectedContentVector& injectedContents, WebExtensionMatchPattern& pattern, const TabInjectionTarget& injectionTarget)
+{
+    auto& tabContent = m_temporaryInjectedContentPerTabMap.add(injectionTarget.tabIdentifier, TabInjectedContent { }).iterator->value;
+
+    addInjectedContent(injectedContents, pattern, tabContent.userScripts, tabContent.userStyleSheets, injectionTarget.page.ptr(), &tabContent);
+}
+
+void WebExtensionContext::addInjectedContent(const InjectedContentVector& injectedContents, WebExtensionMatchPattern& pattern, UserScriptVector& originInjectedScripts, UserStyleSheetVector& originInjectedStyleSheets, RefPtr<WebPageProxy> page, TabInjectedContent* tabContent)
+{
     if (!safeToInjectContent())
         return;
 
     OptionSet<WebExtensionMatchPattern::Options> expandOptions;
     if (m_hasAccessToFileURLs)
         expandOptions.add(WebExtensionMatchPattern::Options::AllowFileScheme);
-
-    auto scriptAddResult = m_injectedScriptsPerPatternMap.ensure(pattern, [&] {
-        return UserScriptVector { };
-    });
-
-    auto styleSheetAddResult = m_injectedStyleSheetsPerPatternMap.ensure(pattern, [&] {
-        return UserStyleSheetVector { };
-    });
-
-    auto& originInjectedScripts = scriptAddResult.iterator->value;
-    auto& originInjectedStyleSheets = styleSheetAddResult.iterator->value;
 
     HashSet<String> baseExcludeMatchPatternsSet;
 
@@ -1451,13 +1459,23 @@ void WebExtensionContext::addInjectedContent(const InjectedContentVector& inject
 
             auto scriptString = scriptStringResult.value();
 
-            Ref userScript = API::UserScript::create(WebCore::UserScript { WTF::move(scriptString), URL { m_baseURL, scriptPath }, Vector { includeMatchPatterns }, Vector { excludeMatchPatterns }, injectionTime, injectedFrames, matchParentFrame }, executionWorld);
+            Ref userScript = API::UserScript::create(WebCore::UserScript { WTF::move(scriptString), URL { m_baseURL, scriptPath }, Vector { includeMatchPatterns }, Vector { excludeMatchPatterns }, injectionTime, injectedFrames, matchParentFrame }, executionWorld, page.get());
             originInjectedScripts.append(userScript);
 
-            for (Ref userContentController : userContentControllers)
-                userContentController->addUserScript(userScript, InjectUserScriptImmediately::Yes);
+            // Content for an activeTab grant is tagged with the page ID, so WebCore injects it only into that page even if the controller is shared.
+            // Other content is added to every controller.
+            if (page)
+                page->userContentController().addUserScript(userScript, InjectUserScriptImmediately::Yes);
+            else {
+                for (Ref userContentController : userContentControllers)
+                    userContentController->addUserScript(userScript, InjectUserScriptImmediately::Yes);
+            }
 
-            if (isRegisteredScript) {
+            // If temporary, keep track of the registered script for the tab.
+            bool isTemporaryRegisteredScript = isRegisteredScript && tabContent;
+            if (isTemporaryRegisteredScript)
+                tabContent->registeredUserScripts.add(scriptID, UserScriptVector { }).iterator->value.append(userScript);
+            else if (isRegisteredScript) {
                 RefPtr registeredScript = m_registeredScriptsMap.get(scriptID);
                 ASSERT(registeredScript);
                 if (!registeredScript)
@@ -1476,13 +1494,24 @@ void WebExtensionContext::addInjectedContent(const InjectedContentVector& inject
 
             auto styleSheetString = localizedResourceString(styleSheetStringResult.value(), "text/css"_s);
 
-            Ref userStyleSheet = API::UserStyleSheet::create(WebCore::UserStyleSheet { WTF::move(styleSheetString), URL { m_baseURL, styleSheetPath }, Vector { includeMatchPatterns }, Vector { excludeMatchPatterns }, injectedFrames, matchParentFrame, styleLevel, std::nullopt }, executionWorld);
+            // A style sheet for an activeTab grant belongs to one page, and has to be reapplied to that page's later documents, like after a reload.
+            bool persistsAcrossDocuments = !!page;
+
+            Ref userStyleSheet = API::UserStyleSheet::create(WebCore::UserStyleSheet { WTF::move(styleSheetString), URL { m_baseURL, styleSheetPath }, Vector { includeMatchPatterns }, Vector { excludeMatchPatterns }, injectedFrames, matchParentFrame, styleLevel, std::nullopt, persistsAcrossDocuments }, executionWorld, page.get());
             originInjectedStyleSheets.append(userStyleSheet);
 
-            for (Ref userContentController : userContentControllers)
-                userContentController->addUserStyleSheet(userStyleSheet);
+            if (page)
+                page->userContentController().addUserStyleSheet(userStyleSheet);
+            else {
+                for (Ref userContentController : userContentControllers)
+                    userContentController->addUserStyleSheet(userStyleSheet);
+            }
 
-            if (isRegisteredScript) {
+            // If temporary, keep track of the registered stylesheet for the tab.
+            bool isTemporaryRegisteredScript = isRegisteredScript && tabContent;
+            if (isTemporaryRegisteredScript)
+                tabContent->registeredUserStyleSheets.add(scriptID, UserStyleSheetVector { }).iterator->value.append(userStyleSheet);
+            else if (isRegisteredScript) {
                 RefPtr registeredScript = m_registeredScriptsMap.get(scriptID);
                 ASSERT(registeredScript);
                 if (!registeredScript)
@@ -1553,6 +1582,43 @@ void WebExtensionContext::removeInjectedContent()
     m_injectedStyleSheetsPerPatternMap.clear();
 }
 
+void WebExtensionContext::removeTemporaryInjectedContent(const String& scriptID)
+{
+    for (auto& entry : m_temporaryInjectedContentPerTabMap) {
+        auto& tabContent = entry.value;
+
+        auto userScripts = tabContent.registeredUserScripts.take(scriptID);
+        auto userStyleSheets = tabContent.registeredUserStyleSheets.take(scriptID);
+        removeInjectedContent(userScripts, userStyleSheets);
+
+        tabContent.userScripts.removeAllMatching([&](auto& userScript) {
+            return userScripts.containsIf([&](auto& removedUserScript) {
+                return removedUserScript.ptr() == userScript.ptr();
+            });
+        });
+
+        tabContent.userStyleSheets.removeAllMatching([&](auto& userStyleSheet) {
+            return userStyleSheets.containsIf([&](auto& removedUserStyleSheet) {
+                return removedUserStyleSheet.ptr() == userStyleSheet.ptr();
+            });
+        });
+    }
+}
+
+void WebExtensionContext::removeAllInjectedContent()
+{
+    if (!isLoaded())
+        return;
+
+    // Content for tabs with a temporary grant is only removed here, when unloading, so changing the content for patterns leaves it alone.
+    for (auto& entry : m_temporaryInjectedContentPerTabMap)
+        removeInjectedContent(entry.value.userScripts, entry.value.userStyleSheets);
+
+    m_temporaryInjectedContentPerTabMap.clear();
+
+    removeInjectedContent();
+}
+
 void WebExtensionContext::removeInjectedContent(const MatchPatternSet& removedMatchPatterns)
 {
     if (!isLoaded())
@@ -1575,16 +1641,30 @@ void WebExtensionContext::removeInjectedContent(WebExtensionMatchPattern& patter
     const Vector originInjectedScripts = m_injectedScriptsPerPatternMap.take(pattern);
     const Vector originInjectedStyleSheets = m_injectedStyleSheetsPerPatternMap.take(pattern);
 
-    if (originInjectedScripts.isEmpty() && originInjectedStyleSheets.isEmpty())
+    removeInjectedContent(originInjectedScripts, originInjectedStyleSheets);
+}
+
+void WebExtensionContext::removeInjectedContent(WebExtensionTab& tab)
+{
+    if (!isLoaded())
+        return;
+
+    auto tabContent = m_temporaryInjectedContentPerTabMap.take(tab.identifier());
+    removeInjectedContent(tabContent.userScripts, tabContent.userStyleSheets);
+}
+
+void WebExtensionContext::removeInjectedContent(const UserScriptVector& userScripts, const UserStyleSheetVector& userStyleSheets)
+{
+    if (userScripts.isEmpty() && userStyleSheets.isEmpty())
         return;
 
     // Use all user content controllers in case the extension was briefly allowed in private browsing
     // and content was injected into any of those content controllers.
     for (Ref userContentController : extensionController()->allUserContentControllers()) {
-        for (auto& userScript : originInjectedScripts)
+        for (auto& userScript : borrow(userScripts))
             userContentController->removeUserScript(userScript);
 
-        for (auto& userStyleSheet : originInjectedStyleSheets)
+        for (auto& userStyleSheet : borrow(userStyleSheets))
             userContentController->removeUserStyleSheet(userStyleSheet);
     }
 }
@@ -1676,7 +1756,7 @@ void WebExtensionContext::addDeclarativeNetRequestRulesToPrivateUserContentContr
     });
 }
 
-static HashMap<WebExtensionContextIdentifier, WeakRef<WebExtensionContext>>& LEGACY_NODELETE webExtensionContexts()
+NODELETE static HashMap<WebExtensionContextIdentifier, WeakRef<WebExtensionContext>>& webExtensionContexts()
 {
     static NeverDestroyed<HashMap<WebExtensionContextIdentifier, WeakRef<WebExtensionContext>>> contexts;
     return contexts;
@@ -1725,6 +1805,7 @@ WebExtensionContextParameters WebExtensionContext::parameters(IncludePrivilegedI
         extension->serializeLocalization(),
         extension->serializeManifest(),
         extension->manifestVersion(),
+        extension->usesStructuredCloneMessageSerialization(),
         m_storageAccessLevels,
         protect(extensionController()->configuration())->defaultWebsiteDataStore().sessionID(),
         backgroundPageIdentifier(destinationProcess),
@@ -1798,7 +1879,7 @@ WebExtensionContext::WebProcessProxySet WebExtensionContext::processes(EventList
 
 String WebExtensionContext::processDisplayName()
 {
-    return WEB_UI_FORMAT_STRING("%s Web Extension", "Extension's process name that appears in Activity Monitor where the parameter is the name of the extension", protect(extension())->displayShortName().utf8());
+    return WEB_UI_FORMAT_STRING("%s Web Extension", "Extension's process name that appears in Activity Monitor where the parameter is the name of the extension", makeUTF8CString(protect(extension())->displayShortName()));
 }
 
 Vector<String> WebExtensionContext::corsDisablingPatterns()
@@ -1897,9 +1978,9 @@ const String& WebExtensionContext::backgroundWebViewInspectionName()
         return m_backgroundWebViewInspectionName;
 
     if (protect(extension())->backgroundContentIsServiceWorker())
-        m_backgroundWebViewInspectionName = WEB_UI_FORMAT_STRING("%s — Extension Service Worker", "Label for an inspectable Web Extension service worker", protect(extension())->displayShortName().utf8());
+        m_backgroundWebViewInspectionName = WEB_UI_FORMAT_STRING("%s — Extension Service Worker", "Label for an inspectable Web Extension service worker", makeUTF8CString(protect(extension())->displayShortName()));
     else
-        m_backgroundWebViewInspectionName = WEB_UI_FORMAT_STRING("%s — Extension Background Page", "Label for an inspectable Web Extension background page", protect(extension())->displayShortName().utf8());
+        m_backgroundWebViewInspectionName = WEB_UI_FORMAT_STRING("%s — Extension Background Page", "Label for an inspectable Web Extension background page", makeUTF8CString(protect(extension())->displayShortName()));
 
     return m_backgroundWebViewInspectionName;
 }
@@ -2048,6 +2129,157 @@ Ref<WebExtensionRegisteredScriptsSQLiteStore> WebExtensionContext::registeredCon
     if (!m_registeredContentScriptsStorage)
         m_registeredContentScriptsStorage = WebExtensionRegisteredScriptsSQLiteStore::create(m_uniqueIdentifier, storageDirectory(), !storageIsPersistent());
     return *m_registeredContentScriptsStorage;
+}
+
+void WebExtensionContext::reloadBackgroundContentForTesting()
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    unloadBackgroundWebView();
+    loadBackgroundWebViewIfNeeded();
+}
+
+void WebExtensionContext::unloadBackgroundContentForTesting()
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    unloadBackgroundWebView();
+}
+
+void WebExtensionContext::sendTestMessage(const String& message, const String& argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    constexpr auto eventType = WebExtensionEventListenerType::TestOnMessage;
+
+    if (!hasTestEventListeners(eventType)) {
+        addTestMessageToQueue(message, argument, eventType);
+        return;
+    }
+
+    sendToProcesses(processes(eventType, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argument, WebExtensionContentWorldType::WebPage));
+
+    sendToContentScriptProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argument, WebExtensionContentWorldType::ContentScript));
+
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ eventType }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argument, WebExtensionContentWorldType::Main));
+    });
+}
+
+void WebExtensionContext::sendTestStarted(const String& argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    constexpr auto type = WebExtensionEventListenerType::TestOnTestStarted;
+
+    if (!hasTestEventListeners(type)) {
+        addTestMessageToQueue(nullString(), argument, type);
+        return;
+    }
+
+    sendToProcesses(processes(type, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argument, WebExtensionContentWorldType::WebPage));
+
+    sendToContentScriptProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argument, WebExtensionContentWorldType::ContentScript));
+
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argument, WebExtensionContentWorldType::Main));
+    });
+}
+
+void WebExtensionContext::sendTestFinished(const String& argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    constexpr auto type = WebExtensionEventListenerType::TestOnTestFinished;
+
+    if (!hasTestEventListeners(type)) {
+        addTestMessageToQueue(nullString(), argument, type);
+        return;
+    }
+
+    sendToProcesses(processes(type, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argument, WebExtensionContentWorldType::WebPage));
+
+    sendToContentScriptProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argument, WebExtensionContentWorldType::ContentScript));
+
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argument, WebExtensionContentWorldType::Main));
+    });
+}
+
+void WebExtensionContext::addTestMessageToQueue(const String& message, const String& argument, WebExtensionEventListenerType type)
+{
+    switch (type) {
+    case WebExtensionEventListenerType::TestOnMessage:
+        m_testMessageQueue.append({ message, argument });
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        m_testStartedQueue.append({ message, argument });
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        m_testFinishedQueue.append({ message, argument });
+        break;
+
+    default:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+void WebExtensionContext::sendQueuedTestMessagesIfNeeded(WebExtensionEventListenerType type)
+{
+    switch (type) {
+    case WebExtensionEventListenerType::TestOnMessage:
+        while (!m_testMessageQueue.isEmpty()) {
+            const auto& testMessage = m_testMessageQueue.takeFirst();
+            sendTestMessage(testMessage.message, testMessage.argument);
+        }
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        while (!m_testStartedQueue.isEmpty()) {
+            const auto& testMessage = m_testStartedQueue.takeFirst();
+            sendTestStarted(testMessage.argument);
+        }
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        while (!m_testFinishedQueue.isEmpty()) {
+            const auto& testMessage = m_testFinishedQueue.takeFirst();
+            sendTestFinished(testMessage.argument);
+        }
+        break;
+
+    default:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+bool WebExtensionContext::hasTestEventListeners(WebExtensionEventListenerType type)
+{
+    switch (type) {
+    case WebExtensionEventListenerType::TestOnMessage:
+        return m_testMessageListenersCount;
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        return m_testStartedListenersCount;
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        return m_testFinishedListenersCount;
+
+    default:
+        return false;
+    }
 }
 
 } // namespace WebKit

@@ -46,10 +46,10 @@ public:
     const ListHashSet<Node*>& results() const LIFETIME_BOUND { return m_results; }
 
 private:
-    bool LEGACY_NODELETE checkEquals(const String&, const String&);
-    bool LEGACY_NODELETE checkContains(const String&, const String&);
-    bool LEGACY_NODELETE checkStartsWith(const String&, const String&);
-    bool LEGACY_NODELETE checkEndsWith(const String&, const String&);
+    NODELETE bool checkEquals(const String&, const String&);
+    NODELETE bool checkContains(const String&, const String&);
+    NODELETE bool checkStartsWith(const String&, const String&);
+    NODELETE bool checkEndsWith(const String&, const String&);
 
     bool matchesAttribute(const Attribute&);
     bool matchesElement(const Element&);
@@ -61,9 +61,9 @@ private:
     String m_query;
     String m_tagNameQuery;
     String m_attributeQuery;
-    bool m_caseSensitive;
 
     ListHashSet<Node*> m_results;
+    bool m_caseSensitive;
     bool m_startTagFound;
     bool m_endTagFound;
     bool m_exactAttributeMatch;

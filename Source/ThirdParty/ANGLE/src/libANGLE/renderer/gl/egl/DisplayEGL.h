@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "common/SimpleMutex.h"
 #include "libANGLE/renderer/gl/DisplayGL.h"
 #include "libANGLE/renderer/gl/egl/egl_utils.h"
 
@@ -31,10 +32,33 @@ class ThreadSafeDisplayEGL : public ThreadSafeDisplayGL
     ThreadSafeDisplayEGL()           = default;
     ~ThreadSafeDisplayEGL() override = default;
 
+    egl::Error makeCurrent(egl::Surface *drawSurface,
+                           egl::Surface *readSurface,
+                           gl::Context *context) override;
+    egl::Error beforeDestroyContext(const gl::Context *context) override;
+    egl::Error afterDestroyContext() override;
+
     EGLSyncImpl *createSync() override;
 
   protected:
-    FunctionsEGLDL *mEGL = nullptr;
+    struct CurrentNativeContext
+    {
+        EGLSurface surface = EGL_NO_SURFACE;
+        EGLContext context = EGL_NO_CONTEXT;
+        // True if the current context is an external context.  In that case, |context| is the
+        // application's native context, which ANGLE never makes current itself, and |surface| is
+        // unset, since ANGLE does not know the application's native surfaces.
+        bool isExternalContext = false;
+        bool needsRestore      = false;
+    };
+    angle::SimpleMutex mCurrentNativeContextsMutex;
+    angle::HashMap<uint64_t, CurrentNativeContext> mCurrentNativeContexts;
+
+    FunctionsEGLDL *mEGL    = nullptr;
+    EGLSurface mMockPbuffer = EGL_NO_SURFACE;
+
+  private:
+    egl::Error makeCurrentSurfaceless(gl::Context *context) override;
 };
 
 class DisplayEGL : public DisplayGL, public ThreadSafeDisplayEGL
@@ -85,11 +109,6 @@ class DisplayEGL : public DisplayGL, public ThreadSafeDisplayEGL
     egl::Error waitClient(const gl::Context *context) override;
     egl::Error waitNative(const gl::Context *context, EGLint engine) override;
 
-    egl::Error makeCurrent(egl::Display *display,
-                           egl::Surface *drawSurface,
-                           egl::Surface *readSurface,
-                           gl::Context *context) override;
-
     gl::Version getMaxSupportedESVersion() const override;
 
     void initializeFrontendFeatures(angle::FrontendFeatures *features) const override;
@@ -139,8 +158,6 @@ class DisplayEGL : public DisplayGL, public ThreadSafeDisplayEGL
                               bool isExternalContext,
                               std::shared_ptr<RendererEGL> *outRenderer);
 
-    egl::Error makeCurrentSurfaceless(gl::Context *context) override;
-
     template <typename T>
     void getConfigAttrib(EGLConfig config, EGLint attribute, T *value) const;
 
@@ -163,16 +180,6 @@ class DisplayEGL : public DisplayGL, public ThreadSafeDisplayEGL
     egl::AttributeMap mDisplayAttributes;
     std::vector<EGLint> mConfigAttribList;
 
-    struct CurrentNativeContext
-    {
-        EGLSurface surface = EGL_NO_SURFACE;
-        EGLContext context = EGL_NO_CONTEXT;
-        // True if the current context is an external context. and both surface and context will be
-        // unset when an external context is current.
-        bool isExternalContext = false;
-    };
-    angle::HashMap<uint64_t, CurrentNativeContext> mCurrentNativeContexts;
-
     void generateCaps(egl::Caps *outCaps) const override;
 
     std::map<EGLint, EGLint> mConfigIds;
@@ -182,8 +189,6 @@ class DisplayEGL : public DisplayGL, public ThreadSafeDisplayEGL
 
     bool mSupportsSurfaceless      = false;
     bool mSupportsNoConfigContexts = false;
-
-    EGLSurface mMockPbuffer = EGL_NO_SURFACE;
 
     // Supported DRM formats
     bool mSupportsDmaBufImportModifiers = false;

@@ -199,14 +199,23 @@
 /* Allow screen button title in window and screen sharing prompt */
 "Allow to Share Screen" = "Allow to Share Screen";
 
+/* Allow tab button title in window, screen and tab sharing prompt */
+"Allow to Share Tab" = "Allow to Share Tab";
+
 /* Allow window button title in window and screen sharing prompt */
 "Allow to Share Window" = "Allow to Share Window";
+
+/* Allow window or screen button title in window, screen and tab sharing prompt */
+"Allow to Share Window or Screen" = "Allow to Share Window or Screen";
 
 /* Message for requesting cross-site cookie and website data access. */
 "Allow “%@” and “%@” to use cookies and website data while browsing “%@”?" = "Allow “%@” and “%@” to use cookies and website data while browsing “%@”?";
 
 /* Message for spechrecognition prompt */
 "Allow “%@” to capture your audio and use it for speech recognition?" = "Allow “%@” to capture your audio and use it for speech recognition?";
+
+/* Message for window, screen and tab sharing prompt */
+"Allow “%@” to observe a window, screen, or tab?" = "Allow “%@” to observe a window, screen, or tab?";
 
 /* Message for window and screen sharing prompt */
 "Allow “%@” to observe one of your windows or screens?" = "Allow “%@” to observe one of your windows or screens?";
@@ -294,6 +303,9 @@
 
 /* Display name for closed captions text tracks. */
 "CC (text track)" = "CC";
+
+/* Accessibility label for the camera menu in the user media prompt */
+"Camera (usermedia)" = "Camera";
 
 /* Cancel */
 "Cancel" = "Cancel";
@@ -499,6 +511,9 @@
 /* Disallow button title in window and screen sharing prompt */
 "Don’t Allow (window and screen sharing)" = "Don’t Allow";
 
+/* PIP Call-to-action button label */
+"Download" = "Download";
+
 /* Download Audio To Disk context menu item */
 "Download Audio" = "Download Audio";
 
@@ -510,6 +525,9 @@
 
 /* Download Video To Disk context menu item */
 "Download Video" = "Download Video";
+
+/* Label shown in an attachment while its file is downloading */
+"Downloading (attachment)" = "Downloading";
 
 /* Undo action name */
 "Drag (Undo action name)" = "Drag";
@@ -772,6 +790,9 @@
 /* WKWebExtensionErrorInvalidManifestEntry description for commands */
 "Invalid `commands` manifest entry." = "Invalid `commands` manifest entry.";
 
+/* WKWebExtensionErrorInvalidManifestEntry description for message_serialization */
+"Invalid `message_serialization` manifest entry. The value must be `json` or `structured_clone`." = "Invalid `message_serialization` manifest entry. The value must be `json` or `structured_clone`.";
+
 /* WKWebExtensionErrorInvalidBackgroundPersistence description */
 "Invalid `persistent` manifest entry." = "Invalid `persistent` manifest entry.";
 
@@ -1009,6 +1030,9 @@
 /* WKWebExtensionErrorInvalidBackgroundContent description for empty or invalid preferred environment key */
 "Manifest `background` entry has an empty or invalid `preferred_environment` key." = "Manifest `background` entry has an empty or invalid `preferred_environment` key.";
 
+/* WKWebExtensionErrorInvalidBackgroundContent description for both background page and scripts keys */
+"Manifest `background` entry has both `page` and `scripts` keys. The `page` key is used and `scripts` is ignored." = "Manifest `background` entry has both `page` and `scripts` keys. The `page` key is used and `scripts` is ignored.";
+
 /* WKWebExtensionErrorInvalidBackgroundContent description for missing background page or scripts keys */
 "Manifest `background` entry has missing or empty required `page` or `scripts` key for `preferred_environment` of `document`." = "Manifest `background` entry has missing or empty required `page` or `scripts` key for `preferred_environment` of `document`.";
 
@@ -1056,6 +1080,12 @@
 
 /* Display name for text track kind 'metadata'. */
 "Metadata (text track)" = "Metadata";
+
+/* Accessibility label for the microphone menu in the user media prompt */
+"Microphone (usermedia)" = "Microphone";
+
+/* Accessibility label for the microphone level meter in the user media prompt */
+"Microphone level (usermedia)" = "Microphone level";
 
 /* Label text to be used when a plugin is missing */
 "Missing Plug-in" = "Missing Plug-in";
@@ -1255,6 +1285,9 @@
 /* Title for file upload progress view */
 "Preparing (file upload)" = "Preparing…";
 
+/* Badge label identifying the live camera preview in the user media prompt */
+"Preview (usermedia)" = "Preview";
+
 /* Previous Page context menu item */
 "Previous Page" = "Previous Page";
 
@@ -1365,6 +1398,12 @@
 
 /* Label for the set up with Apple Pay button. */
 "Set up with Apple Pay" = "Set up with Apple Pay";
+
+/* Button title in the tab capture picker to share the selected tab */
+"Share This Tab" = "Share This Tab";
+
+/* Title of the tab capture picker prompt */
+"Share this tab with “%@”?" = "Share this tab with “%@”?";
 
 /* Default name for the file created for a shared image with no explicit name. */
 "Shared Image" = "Shared Image";
@@ -1788,6 +1827,12 @@
 
 /* View in AR? */
 "View in AR?" = "View in AR?";
+
+/* PIP Call-to-action button label */
+"Visit App Store" = "Visit App Store";
+
+/* PIP Call-to-action button label */
+"Visit Website" = "Visit Website";
 
 /* Codec Strings */
 "Vorbis Codec String" = "Vorbis";

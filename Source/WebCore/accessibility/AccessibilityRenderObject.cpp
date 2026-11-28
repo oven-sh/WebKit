@@ -29,6 +29,7 @@
 #include "config.h"
 #include "AccessibilityRenderObject.h"
 
+#include "AXChildIterator.h"
 #include "AXImageMapHelpers.h"
 #include "AXListHelpers.h"
 #include "AXLogger.h"
@@ -86,11 +87,11 @@
 #include "Image.h"
 #include "ImageOverlay.h"
 #include "InlineIteratorBoxInlines.h"
+#include "InlineIteratorLineBox.h"
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineIteratorTextBox.h"
 #include "LegacyRenderSVGRoot.h"
 #include "LegacyRenderSVGShape.h"
-#include "LineSelection.h"
 #include "LocalFrame.h"
 #include "LocalizedStrings.h"
 #include "Logging.h"
@@ -107,7 +108,6 @@
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderFileUploadControl.h"
-#include "RenderGlyph.h"
 #include "RenderHTMLCanvas.h"
 #include "RenderImage.h"
 #include "RenderIterator.h"
@@ -116,7 +116,6 @@
 #include "RenderLineBreak.h"
 #include "RenderListBox.h"
 #include "RenderListItem.h"
-#include "RenderListOutsideMarker.h"
 #include "RenderMathMLBlock.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInlineText.h"
@@ -161,7 +160,7 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-static Node* LEGACY_NODELETE nodeForRenderer(RenderObject& renderer)
+NODELETE static Node* nodeForRenderer(RenderObject& renderer)
 {
     if (!renderer.isRenderView()) [[likely]]
         return renderer.node();
@@ -221,22 +220,6 @@ AccessibilityObject* AccessibilityRenderObject::firstChild() const
     // not rendered (like a <meter> element).
     if (!canHaveChildren())
         return AccessibilityNodeObject::firstChild();
-
-    return nullptr;
-}
-
-AccessibilityObject* AccessibilityRenderObject::lastChild() const
-{
-    if (!m_renderer)
-        return AccessibilityNodeObject::lastChild();
-
-    if (CheckedPtr lastChild = protect(m_renderer)->lastChildSlow()) {
-        CheckedPtr cache = axObjectCache();
-        return cache ? cache->getOrCreate(lastChild) : nullptr;
-    }
-
-    if (!canHaveChildren())
-        return AccessibilityNodeObject::lastChild();
 
     return nullptr;
 }
@@ -315,8 +298,8 @@ AccessibilityObject* AccessibilityRenderObject::parentObject() const
 #endif // !USE(ATSPI)
 
     // Expose markers that are not direct children of a list item too.
-    if (CheckedPtr marker = dynamicDowncast<RenderListOutsideMarker>(*m_renderer)) {
-        if (CheckedPtr listItem = marker->listItem(); listItem && listItem->markerBox() == marker) {
+    if (m_renderer->isListMarkerBox()) {
+        if (CheckedPtr listItem = RenderListItem::listItemForMarker(protect(*m_renderer))) {
             if (RefPtr parent = cache->getOrCreate(*listItem); parent && parent->isListItem())
                 return parent.unsafeGet();
         }
@@ -410,16 +393,6 @@ Element* AccessibilityRenderObject::anchorElement() const
     return nullptr;
 }
 
-// Null is distinct from empty: empty asks for the content to be ignored.
-static const String& LEGACY_NODELETE generatedContentAltText(const RenderText* renderText)
-{
-    if (auto* renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText))
-        return renderTextFragment->altText();
-    if (auto* renderGlyph = dynamicDowncast<RenderGlyph>(renderText))
-        return renderGlyph->altText();
-    return nullString();
-}
-
 String AccessibilityRenderObject::textUnderElement(TextUnderElementMode mode) const
 {
     // If we are within a hidden context, we don't want to add any text for this object, instead
@@ -428,24 +401,22 @@ String AccessibilityRenderObject::textUnderElement(TextUnderElementMode mode) co
     if (!m_renderer || mode.isHidden())
         return AccessibilityNodeObject::textUnderElement(WTF::move(mode));
 
+    if (m_renderer->isListMarkerBox()) {
+        if (mode.includeListMarkers == IncludeListMarkerText::No)
+            return { };
+        return RenderListItem::markerText(protect(*m_renderer));
+    }
+
+    if (auto contentAlt = altTextFromStyle(); !contentAlt.isNull())
+        return contentAlt;
+
     if (CheckedPtr fileUpload = dynamicDowncast<RenderFileUploadControl>(*m_renderer))
         return fileUpload->buttonValue();
 
-    if (CheckedPtr markerInlineBox = m_renderer->parent(); is<RenderText>(*m_renderer) && markerInlineBox && markerInlineBox->style().isListMarkerStyle()) {
+    if (CheckedPtr markerInlineBox = m_renderer->parent(); is<RenderText>(*m_renderer) && markerInlineBox && markerInlineBox->isInlineBox() && markerInlineBox->style().isListMarkerStyle()) {
         if (mode.includeListMarkers == IncludeListMarkerText::Yes)
             return downcast<RenderText>(*m_renderer).text();
         return { };
-    }
-
-    if (CheckedPtr listMarker = dynamicDowncast<RenderListOutsideMarker>(*m_renderer)) {
-        // A `content` marker has no text of its own; the child walk below reads the renderers holding it.
-        if (!listMarker->hasContentProperty()) {
-            if (mode.includeListMarkers == IncludeListMarkerText::Yes) {
-                CheckedPtr listItem = listMarker->listItem();
-                return listItem ? listItem->markerText() : String();
-            }
-            return { };
-        }
     }
 
     // Reflect when a content author has explicitly marked a line break.
@@ -505,8 +476,6 @@ String AccessibilityRenderObject::textUnderElement(TextUnderElementMode mode) co
 
         // Sometimes text fragments don't have Nodes associated with them (like when
         // CSS content is used to insert text or when a RenderCounter is used.)
-        if (auto& altText = generatedContentAltText(renderText.get()); !altText.isNull())
-            return altText;
         if (WeakPtr renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText.get()))
             return renderTextFragment->contentString();
         if (renderText)
@@ -559,12 +528,17 @@ String AccessibilityRenderObject::stringValue() const
         return AccessibilityNodeObject::stringValue();
 
     bool isStaticText = this->isStaticText();
-    if (isStaticText && node()) {
-        // FIXME: Implement text stitching for node-less static text, like CSS generated content.
-        // This is relevant here because only AccessibilityNodeObject::stringValue() knows how to
-        // stitch text. Ideally, we would shrink this implementation into AccessibilityNodeObject,
-        // since that is intended to become the "node and or renderer having" accessibility object class.
-        return AccessibilityNodeObject::stringValue();
+    if (isStaticText) {
+        if (auto contentAlt = altTextFromStyle(); !contentAlt.isNull())
+            return contentAlt;
+
+        if (node()) {
+            // FIXME: Implement text stitching for node-less static text, like CSS generated content.
+            // This is relevant here because only AccessibilityNodeObject::stringValue() knows how to
+            // stitch text. Ideally, we would shrink this implementation into AccessibilityNodeObject,
+            // since that is intended to become the "node and or renderer having" accessibility object class.
+            return AccessibilityNodeObject::stringValue();
+        }
     }
 
     if (isStaticText || isTextControl() || isSecureField()) {
@@ -574,8 +548,27 @@ String AccessibilityRenderObject::stringValue() const
         return text();
     }
 
-    if (RefPtr selectElement = dynamicDowncast<HTMLSelectElement>(node()); selectElement && selectElement->isDropdownBox())
+    if (RefPtr selectElement = dynamicDowncast<HTMLSelectElement>(node()); selectElement && selectElement->isDropdownBox()) {
+        // With base appearance the author's button renders, so its content gives the value.
+        if (RefPtr button = selectElement->buttonElement(); button && m_renderer->style().usedAppearance() == StyleAppearance::Base) {
+            // Reading the text of the button's children lays out (TextIterator), which flushes pending updates to
+            // the select's content. Do that before walking the children, so they don't change mid-walk.
+            if (RefPtr document = this->document(); document && needsLayoutOrStyleRecalc(*document) && !Accessibility::inRenderTreeOrStyleUpdate(*document)) {
+                RefPtr protectedThis { this };
+                document->updateLayoutIgnorePendingStylesheets();
+                // Layout may have destroyed the renderer or the button.
+                if (!m_renderer || !axObjectCache())
+                    return { };
+                button = selectElement->buttonElement();
+                if (!button)
+                    return selectElement->buttonText(HTMLSelectElement::ForAccessibility::Yes);
+            }
+            CheckedPtr cache = axObjectCache();
+            if (RefPtr buttonObject = cache ? cache->getOrCreate(*button) : nullptr)
+                return buttonObject->textUnderElement();
+        }
         return selectElement->buttonText(HTMLSelectElement::ForAccessibility::Yes);
+    }
 
     if (RefPtr optGroup = optGroupForLabel(); optGroup && role() == AccessibilityRole::ListBoxOption)
         return optGroup->groupLabelText();
@@ -585,14 +578,11 @@ String AccessibilityRenderObject::stringValue() const
         return textUnderElement();
 #endif
 
-    if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(m_renderer.get())) {
-        CheckedPtr listItem = renderListMarker->listItem();
-        if (!listItem)
-            return { };
+    if (m_renderer->isListMarkerBox()) {
 #if USE(ATSPI)
-        return listItem->markerText();
+        return RenderListItem::markerText(protect(*m_renderer));
 #else
-        return listItem->markerText(ListMarkerIncludeSuffix::No);
+        return RenderListItem::markerText(protect(*m_renderer), ListMarkerIncludeSuffix::No);
 #endif
     }
 
@@ -675,7 +665,7 @@ LayoutRect AccessibilityRenderObject::boundingBoxRect() const
                         if (axID == objectID())
                             break;
                         if (RefPtr object = cache->objectForID(axID)) {
-                            if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(object->renderer())) {
+                            if (CheckedPtr renderListMarker = object->renderer(); renderListMarker && renderListMarker->isOutsideListMarker()) {
                                 if (!object->isAXHidden())
                                     renderListMarker->absoluteFocusRingQuads(quads);
                             }
@@ -738,7 +728,7 @@ static Path computePathForRenderBox(const RenderBox& renderBox)
 // different block-direction positions. For horizontal text, rects on different
 // lines have different Y positions. For vertical text, different columns have
 // different X positions.
-static bool LEGACY_NODELETE rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHorizontal)
+NODELETE static bool rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHorizontal)
 {
     for (size_t i = 1; i < rects.size(); ++i) {
         if (isHorizontal) {
@@ -851,8 +841,7 @@ Path AccessibilityRenderObject::elementPath() const
             std::optional<Path> clipPathResult;
             WTF::switchOn(renderBox->style().clipPath(),
                 [&](const Style::BasicShapePath& clipPath) {
-                    // FIXME: Remove suppression once rdar://189998444 is fixed.
-                    SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(renderBox->borderBoxRect());
+                    auto referenceBox = FloatRect(renderBox->borderBoxRect());
                     auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
                     mapLocalPathToAbsolute(path, *renderBox);
                     clipPathResult = WTF::move(path);
@@ -862,7 +851,7 @@ Path AccessibilityRenderObject::elementPath() const
             if (clipPathResult)
                 return *clipPathResult;
         }
-        if (renderBox->style().border().hasBorderRadius())
+        if (renderBox->usedStyle().hasBorderRadius())
             return computePathForRenderBox(*renderBox);
     }
 
@@ -925,7 +914,7 @@ void AccessibilityRenderObject::labelText(Vector<AccessibilityText>& textOrder) 
     AccessibilityNodeObject::labelText(textOrder);
 }
 
-AccessibilityObject* AccessibilityRenderObject::titleUIElement() const
+RefPtr<AXCoreObject> AccessibilityRenderObject::titleUIElement() const
 {
     if (is<RenderTableCell>(m_renderer.get())) {
         // Try to find if the first cell in this row is a <th>. If it is,
@@ -963,7 +952,7 @@ AccessibilityObject* AccessibilityRenderObject::titleUIElement() const
         return cache ? cache->getOrCreate(*headerCell) : nullptr;
     }
 
-    return downcast<AccessibilityObject>(AccessibilityNodeObject::titleUIElement());
+    return AccessibilityNodeObject::titleUIElement();
 }
 
 bool AccessibilityRenderObject::isAllowedChildOfTree() const
@@ -998,7 +987,7 @@ AccessibilityObject* AccessibilityRenderObject::containingTree() const
     });
 }
 
-static AccessibilityObjectInclusion LEGACY_NODELETE objectInclusionFromAltText(const String& altText)
+NODELETE static AccessibilityObjectInclusion objectInclusionFromAltText(const String& altText)
 {
     // Don't ignore an image that has alt text.
     if (!altText.containsOnly<isASCIIWhitespace>())
@@ -1128,6 +1117,16 @@ bool AccessibilityRenderObject::computeIsIgnored() const
     if (m_renderer->isBR())
         return true;
 
+    // The alt text may be set on generated content through CSS, which should be honored.
+    if (auto contentAlt = altTextFromStyle(); !contentAlt.isNull())
+        return objectInclusionFromAltText(contentAlt) == AccessibilityObjectInclusion::IgnoreObject;
+
+    // A marker is exposed as the marker of its list item, and only when that is what its parent is.
+    if (m_renderer->isListMarkerBox()) {
+        RefPtr parent = parentObjectUnignored();
+        return parent && !parent->isListItem();
+    }
+
     if (CheckedPtr renderText = dynamicDowncast<RenderText>(m_renderer.get())) {
         // Text elements with no rendered text, or only whitespace should not be part of the AX tree.
         if (!renderText->hasRenderedText()) {
@@ -1146,13 +1145,6 @@ bool AccessibilityRenderObject::computeIsIgnored() const
 
         if (renderText->text().containsOnly<isASCIIWhitespace>())
             return true;
-
-        // The alt text may be set on generated content through CSS, which should be honored.
-        auto altTextInclusion = objectInclusionFromAltText(generatedContentAltText(renderText.get()));
-        if (altTextInclusion == AccessibilityObjectInclusion::IgnoreObject)
-            return true;
-        if (altTextInclusion == AccessibilityObjectInclusion::IncludeObject)
-            return false;
 
         bool checkForIgnored = true;
         for (RefPtr ancestor = parentObject(); ancestor; ancestor = ancestor->parentObject()) {
@@ -1242,7 +1234,7 @@ bool AccessibilityRenderObject::computeIsIgnored() const
         if (image)
             altTextInclusion = objectInclusionFromAltText(image->altText());
         else
-            altTextInclusion = objectInclusionFromAltText(altTextFromAttributeOrStyle());
+            altTextInclusion = objectInclusionFromAltText(altText());
 
         if (altTextInclusion == AccessibilityObjectInclusion::IncludeObject)
             return false;
@@ -1339,11 +1331,6 @@ bool AccessibilityRenderObject::computeIsIgnored() const
                 return true;
         }
         // Otherwise fall through; use presence of help text, title, or description to decide.
-    }
-
-    if (m_renderer->isRenderListOutsideMarker()) {
-        RefPtr parent = parentObjectUnignored();
-        return parent && !parent->isListItem();
     }
 
     if (isWebArea())
@@ -1468,7 +1455,7 @@ CharacterRange AccessibilityRenderObject::selectedTextRange() const
 // content cannot be a valid text position nor be selected (with a mouse or otherwise), so emitting
 // text runs for it would make the isolated tree's text-marker strings diverge from what can actually
 // be represented on the main-thread.
-static bool LEGACY_NODELETE shouldExcludeTextRunsForPseudoElement(std::optional<PseudoElementType> pseudoElementType)
+NODELETE static bool shouldExcludeTextRunsForPseudoElement(std::optional<PseudoElementType> pseudoElementType)
 {
     if (!pseudoElementType) {
         // No pseudo type, so this function is not applicable.
@@ -1586,14 +1573,6 @@ AXTextRuns AccessibilityRenderObject::textRuns()
             return { };
     }
 
-    for (CheckedPtr ancestor = renderText->parent(); ancestor && !ancestor->element(); ancestor = ancestor->parent()) {
-        // A marker that needs renderers for its content (a synthesized glyph, bidi text, or a `content`
-        // value) puts them in an anonymous inline-block inside the RenderListOutsideMarker, and that anonymous
-        // style carries no pseudo type for the ::marker case above to catch. We do so here instead.
-        if (ancestor->isRenderListOutsideMarker())
-            return { };
-    }
-
     // FIXME: Need to handle PseudoElementType::FirstLetter. Right now, it will be chopped off from the other
     // other text in the line, and AccessibilityRenderObject::computeIsIgnored ignores the
     // first-letter RenderText, meaning we can't recover it later by combining text across AX objects.
@@ -1633,11 +1612,13 @@ AXTextRuns AccessibilityRenderObject::textRuns()
         if (text.isEmpty())
             return;
 
+        String untransformedText;
         CheckedRef textBoxStyle = textBox->style();
         if (textBoxStyle->textTransform().contains(Style::TextTransformValue::FullSizeKana)) {
             // We don't want to serve transformed kana text to AT since it is a visual affordance.
             // Using the original text from the renderer provides the untransformed string.
-            text = protect(textBox->renderer())->originalText().substring(textBox->start(), textBox->length());
+            untransformedText = protect(textBox->renderer())->originalText().substring(textBox->start(), textBox->length());
+            text = untransformedText;
         }
 
         bool collapseTabs = textBoxStyle->collapseWhiteSpace();
@@ -1645,7 +1626,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
 
         auto textRun = textBox->textRun(InlineIterator::TextRunMode::Editing);
         auto lineBox = textBox->lineBox();
-        lineHeight = LineSelection::logicalRect(lineBox).height();
+        lineHeight = lineBox.contentAreaLogicalRectAdjustedForAdjacentLineBoxes().height();
 
         // Compute distanceFromBoundsInDirection only for the first text box on each
         // line. Multiple text boxes can share a line (e.g. due to inline formatting
@@ -1779,9 +1760,8 @@ AXTextRuns AccessibilityRenderObject::textRuns()
 
 String AccessibilityRenderObject::listMarkerText() const
 {
-    CheckedPtr marker = dynamicDowncast<RenderListOutsideMarker>(renderer());
-    CheckedPtr listItem = marker ? marker->listItem() : nullptr;
-    return listItem ? listItem->markerText() : String();
+    CheckedPtr renderer = this->renderer();
+    return renderer && renderer->isListMarkerBox() ? RenderListItem::markerText(*renderer) : String();
 }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
@@ -1815,7 +1795,7 @@ int AccessibilityRenderObject::insertionPointLineNumber() const
     return lineForPosition(makeDeprecatedLegacyPosition(selectedTextRange->start));
 }
 
-static void LEGACY_NODELETE setTextSelectionIntent(AXObjectCache* cache, AXTextStateChangeType type)
+NODELETE static void setTextSelectionIntent(AXObjectCache* cache, AXTextStateChangeType type)
 {
     if (!cache)
         return;
@@ -1824,7 +1804,7 @@ static void LEGACY_NODELETE setTextSelectionIntent(AXObjectCache* cache, AXTextS
     cache->setIsSynchronizingSelection(true);
 }
 
-static void LEGACY_NODELETE clearTextSelectionIntent(AXObjectCache* cache)
+NODELETE static void clearTextSelectionIntent(AXObjectCache* cache)
 {
     if (!cache)
         return;
@@ -2462,6 +2442,18 @@ bool AccessibilityRenderObject::shouldIgnoreAttributeRole() const
     return m_ariaRole == AccessibilityRole::Document && hasContentEditableAttributeSet();
 }
 
+NODELETE static bool generatedContentIsOnlyImages(const Style::ComputedStyle& style)
+{
+    auto* contentData = style.content().tryData();
+    if (!contentData || contentData->visible.isEmpty())
+        return false;
+    for (auto& item : contentData->visible) {
+        if (!WTF::holdsAlternative<Style::Content::Image>(item))
+            return false;
+    }
+    return true;
+}
+
 AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
 {
     // Handle list role determination before checking for a renderer, because we want to use the same codepath in both scenarios.
@@ -2520,7 +2512,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
             return AccessibilityRole::ListItem;
     }
 
-    if (m_renderer->isRenderListOutsideMarker())
+    if (m_renderer->isListMarkerBox())
         return AccessibilityRole::ListMarker;
     if (m_renderer->isBR())
         return AccessibilityRole::LineBreak;
@@ -2594,6 +2586,12 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
 
     if (roleFromNode != AccessibilityRole::Unknown)
         return roleFromNode;
+
+    if (!altTextFromStyle().isNull()) {
+        // FIXME: Generated content made only of images is exposed as an image, and other generated content as text.
+        // Should all generated content with alternative text be exposed as text?
+        return generatedContentIsOnlyImages(m_renderer->style()) ? AccessibilityRole::Image : AccessibilityRole::StaticText;
+    }
 
 #if !PLATFORM(COCOA)
     // This block should be deleted for all platforms, but doing so causes a lot of test failures that need to be sorted out.
@@ -2771,7 +2769,7 @@ AccessibilitySVGObject* AccessibilityRenderObject::remoteSVGRootElement(CreateIf
     if (!svgImage)
         return nullptr;
 
-    RefPtr frameView = svgImage->frameView();
+    RefPtr frameView = svgImage->defaultInstanceFrameView();
     if (!frameView)
         return nullptr;
 
@@ -2984,6 +2982,13 @@ void AccessibilityRenderObject::addChildren()
         AccessibilityNodeObject::addChildren();
         return;
     }
+
+#if ENABLE(VIDEO)
+    // Building the controls runs script, which must not happen while children are being computed.
+    if (RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(node()))
+        mediaElement->scheduleEnsureDeferredMediaControls();
+#endif
+
     // If the need to add more children in addition to existing children arises,
     // childrenChanged should have been called, leaving the object with no children.
     AX_ASSERT(!m_childrenInitialized);
@@ -3009,7 +3014,7 @@ void AccessibilityRenderObject::addChildren()
     auto addChildIfNeeded = [this](AccessibilityObject& object) {
 #if USE(ATSPI)
         // FIXME: Consider removing this ATSPI-only branch with https://bugs.webkit.org/show_bug.cgi?id=282117.
-        if (object.renderer() && object.renderer()->isRenderListOutsideMarker())
+        if (object.renderer() && object.renderer()->isListMarkerBox())
             return;
 #endif
         addChild(object);
@@ -3212,7 +3217,15 @@ bool AccessibilityRenderObject::hasSameStyle(AXCoreObject& object)
     if (!m_renderer || !renderer)
         return false;
 
-    return m_renderer->style() == renderer->style();
+    // Non-inherited properties like the background color come from the parent of text.
+    auto styleForComparison = [](const RenderObject& renderer) -> const Style::ComputedStyle* {
+        if (is<RenderText>(renderer))
+            return renderer.parent() ? &renderer.parent()->style() : nullptr;
+        return &renderer.style();
+    };
+    CheckedPtr style = styleForComparison(*m_renderer);
+    CheckedPtr otherStyle = styleForComparison(*renderer);
+    return style && otherStyle && *style == *otherStyle;
 }
 
 bool AccessibilityRenderObject::hasUnderline() const

@@ -1,0 +1,27 @@
+# the read of a getter that the code itself calls, by itself. No walk runs: the Code is written out.
+# its stub counts the misses of its site and has the site filled: words of the run time, as the rows of GetAccessorOfMember and GetCachedValue say of theirs.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Patch({{*}}Writes:{RuntimeState
+# -- code
+# code f1:Body {
+#   b0(v0: object @JSValue) entry=0:
+#     v1: object @Cell = Unbox v0
+#     v2: anything @JSValue = GetCachedGetter v1 key="x" traits=[mayTouchMemory]
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asked" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

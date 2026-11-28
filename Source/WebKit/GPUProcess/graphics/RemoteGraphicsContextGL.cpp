@@ -185,6 +185,7 @@ void RemoteGraphicsContextGL::didReceiveInvalidMessage(IPC::StreamServerConnecti
 {
     RefPtr gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get();
     uint64_t webProcessID = gpuConnectionToWebProcess ? gpuConnectionToWebProcess->webProcessIdentifier().toUInt64() : 0;
+    UNUSED_VARIABLE(webProcessID);
     RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from WebContent process %" PRIu64 ", requesting for it to be terminated.", description(messageName), webProcessID);
     callOnMainRunLoop([weakGPUConnectionToWebProcess = m_gpuConnectionToWebProcess, messageName] {
         if (RefPtr gpuConnectionToWebProcess = weakGPUConnectionToWebProcess.get())
@@ -276,12 +277,14 @@ void RemoteGraphicsContextGL::copyNativeImage(WebCore::GraphicsContextGL::Surfac
 }
 
 #if ENABLE(MEDIA_STREAM) || ENABLE(WEB_CODECS)
-void RemoteGraphicsContextGL::surfaceBufferToVideoFrame(WebCore::GraphicsContextGL::SurfaceBuffer buffer, CompletionHandler<void(std::optional<WebKit::RemoteVideoFrameProxy::Properties>&&)>&& completionHandler)
+void RemoteGraphicsContextGL::surfaceBufferToVideoFrame(WebCore::GraphicsContextGL::SurfaceBuffer buffer, WebKit::RemoteVideoFrameReference reference, CompletionHandler<void(std::optional<WebKit::RemoteVideoFrameProxy::Properties>&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
     std::optional<WebKit::RemoteVideoFrameProxy::Properties> result;
-    if (auto videoFrame = protect(m_context)->surfaceBufferToVideoFrame(buffer))
-        result = m_videoFrameObjectHeap->add(videoFrame.releaseNonNull());
+    if (RefPtr videoFrame = protect(m_context)->surfaceBufferToVideoFrame(buffer)) {
+        result = RemoteVideoFrameProxy::properties(*videoFrame);
+        m_videoFrameObjectHeap->add(reference, videoFrame.releaseNonNull());
+    }
     completionHandler(WTF::move(result));
 }
 #endif
@@ -297,7 +300,7 @@ bool RemoteGraphicsContextGL::webXREnabled() const
 bool RemoteGraphicsContextGL::webXRPromptAccepted() const
 {
 #if ENABLE(WEBXR) && PLATFORM(COCOA) && !PLATFORM(IOS_FAMILY_SIMULATOR)
-    auto currentAcceptedValue = GPUProcess::singleton().immersiveModeProcessIdentity();
+    auto currentAcceptedValue = protect(GPUProcess::singleton())->immersiveModeProcessIdentity();
     return currentAcceptedValue && m_sharedResourceCache->resourceOwner() == *currentAcceptedValue;
 #else
     return webXREnabled();

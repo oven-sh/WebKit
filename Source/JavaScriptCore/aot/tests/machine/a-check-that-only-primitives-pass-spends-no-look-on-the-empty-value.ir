@@ -1,0 +1,26 @@
+# The emitter of a test of a boxed value, by itself. No walk runs: the Code is written out.
+# What may come is anything or the empty value; what passes is undefined or a number. The empty value has no bit set: it bears no tag of a number and it is not undefined, so every case that passes refuses it, and no look of its own is spent on it: two branches.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK-COUNT-2: = Branch(
+# CHECK-NOT: = Branch(
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1 @Void = CheckProof v0 checkedType=undefined|number typeWithoutProof=absent|anything source=Contents
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asks" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

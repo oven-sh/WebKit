@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,9 +57,11 @@ ALWAYS_INLINE constexpr RepatchingInfo noFlush(RepatchingInfo i)
 template<size_t bits, typename Type>
 ALWAYS_INLINE constexpr bool isInt(Type t)
 {
+    static_assert(std::is_signed_v<Type>);
     constexpr size_t shift = sizeof(Type) * CHAR_BIT - bits;
     static_assert(sizeof(Type) * CHAR_BIT > shift, "shift is larger than the size of the value");
-    return ((t << shift) >> shift) == t;
+    using UnsignedType = std::make_unsigned_t<Type>;
+    return (static_cast<Type>(static_cast<UnsignedType>(t) << shift) >> shift) == t;
 }
 
 ALWAYS_INLINE bool isInt9(int32_t value)
@@ -68,9 +70,10 @@ ALWAYS_INLINE bool isInt9(int32_t value)
 }
 
 template<typename Type>
-ALWAYS_INLINE bool isUInt12(Type value)
+ALWAYS_INLINE constexpr bool isUInt12(Type value)
 {
-    return !(value & ~static_cast<Type>(0xfff));
+    using Promoted = std::common_type_t<Type, int>;
+    return !(static_cast<Promoted>(value) & ~static_cast<Promoted>(0xfff));
 }
 
 template<int datasize>
@@ -178,6 +181,7 @@ public:
 
     bool is64bit() const
     {
+        ASSERT(isValid());
         return m_value & (1 << 12);
     }
 
@@ -670,16 +674,16 @@ ALWAYS_INLINE void* memcpyAtomic(void* dst, const void* src, size_t n)
     ASSERT(isPowerOfTwo(n) && WTF::isAligned(WTF::opaque(dst), n));
     switch (n) {
     case 1:
-        WTF::atomicStore(std::bit_cast<uint8_t*>(dst), *std::bit_cast<const uint8_t*>(src), std::memory_order_relaxed);
+        WTF::atomicStore<MemoryOrder::Relaxed>(std::bit_cast<uint8_t*>(dst), *std::bit_cast<const uint8_t*>(src));
         return dst;
     case 2:
-        WTF::atomicStore(std::bit_cast<uint16_t*>(dst), *std::bit_cast<const uint16_t*>(src), std::memory_order_relaxed);
+        WTF::atomicStore<MemoryOrder::Relaxed>(std::bit_cast<uint16_t*>(dst), *std::bit_cast<const uint16_t*>(src));
         return dst;
     case 4:
-        WTF::atomicStore(std::bit_cast<uint32_t*>(dst), *std::bit_cast<const uint32_t*>(src), std::memory_order_relaxed);
+        WTF::atomicStore<MemoryOrder::Relaxed>(std::bit_cast<uint32_t*>(dst), *std::bit_cast<const uint32_t*>(src));
         return dst;
     case 8:
-        WTF::atomicStore(std::bit_cast<uint64_t*>(dst), *std::bit_cast<const uint64_t*>(src), std::memory_order_relaxed);
+        WTF::atomicStore<MemoryOrder::Relaxed>(std::bit_cast<uint64_t*>(dst), *std::bit_cast<const uint64_t*>(src));
         return dst;
     default:
         break;

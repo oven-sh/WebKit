@@ -1,0 +1,53 @@
+# the join of the first operator is passed by only where nothing but the next operator reads what it takes. Here the answer of the first two alternatives is read once more behind the last join, so that join is walked, and two constants are no switch
+# function both(kind) { const inner = kind === 1 || kind === 4; return [inner || kind === 9, inner]; }   with the list left out: the two are added
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: Branch
+# CHECK: Branch
+# CHECK: = Add
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: Switch
+# RUN(SHELL): run-in-shell globalThis.sink = both => { print([1, 4, 9, 2].map(value => both(value)).join()); };
+# SHELL: 2,2,1,0
+# SHELL-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b4(v4)
+  b2(v5):
+    Jump -> next b3()
+  b3():
+    v6 = Integer integer=4
+    v7 = StrictEq v0, v6
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = ToBoolean v8
+    Branch v9 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v10):
+    Jump -> next b8(v10)
+  b6(v11):
+    Jump -> next b7()
+  b7():
+    v12 = Integer integer=9
+    v13 = StrictEq v0, v12
+    Jump -> next b8(v13)
+  b8(v14):
+    v15 = Add v14, v8
+    Return v15
+}

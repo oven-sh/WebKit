@@ -1,0 +1,78 @@
+# A generator that one for-of alone holds is never made: its body is walked in place of the loop, and the blocks of the loop where it yields
+# function* range(n) { for (let i = 0; i < n; i++) yield i; }  function sum(n) { let total = 0; for (const value of range(n)) total += value; return total; }  sink(sum);
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f2
+# CHECK: isLoopHead=true
+# CHECK: = Less
+# CHECK: = Add
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: function=f2
+# NEVER-NOT: StepGenerator
+# NEVER-NOT: IteratorResume
+# With copies withheld the generator is made and stepped.
+# RUN(WITHHELD): walk f1 mechanisms=all-Inlining
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: = CallDirect {{*}}function=f2
+
+variable g0 name="range" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="sum" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0
+    v4 = IteratorOpen v3
+    Jump -> next b1(v1)
+  b1(v5):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v10 = Add v5, v9
+    Jump -> next b1(v10)
+  b5() role=IterationCleanup subject=v4:
+    v11 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v11
+}
+function f2 name="range" module=m0 flags=[IsGenerator, HasThis, TakesCallee, IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: function, v2: anything):
+    InitialYield v2, v0
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = Yield v5, v5, v2, v0
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b3(), case b4(), otherwise b6()
+  b3():
+    Throw v9
+  b4():
+    Return v9
+  b5():
+    v11 = Undefined
+    Return v11
+  b6():
+    v12 = Increment v5
+    Jump -> next b1(v12)
+}

@@ -1,0 +1,107 @@
+# nothing is known of the receiver: under a name that a class of the engine answers to with a stub for so many arguments, the closed call goes by that stub. With one argument more it is the call by name that it was
+# function ran(p, t) { return [p.exec(t)]; }  function ranWithMore(p, t) { return [p.exec(t, t)]; }  function matched(t, p) { return [t.match(p)]; }  function sound(t) { return [t.isWellFormed()]; }
+# function pushedTwo(l, a, b) { return [l.push(a, b)]; }  function found(t, p, i) { return [t.indexOf(p, i)]; }  function foundWithMore(t, p, i) { return [t.indexOf(p, i, i)]; }
+# each is handed to code that nobody has seen, so its parameters are anything
+# RUN(EXEC): bytes f1:Body mechanisms=all
+# EXEC-LABEL: unit f1:Body
+# EXEC: CallMethodOfBuiltinClass{{*}}RegExpExec count 1
+# RUN(MORE): bytes f2:Body mechanisms=all
+# MORE-LABEL: unit f2:Body
+# MORE: CallMethod{{*}}count 2
+# RUN(NOEXEC): bytes f2:Body mechanisms=all
+# NOEXEC-NOT: RegExpExec
+# RUN(MATCH): bytes f3:Body mechanisms=all
+# MATCH-LABEL: unit f3:Body
+# MATCH: CallMethodOfBuiltinClass{{*}}StringMatch count 1
+# RUN(SOUND): bytes f4:Body mechanisms=all
+# SOUND-LABEL: unit f4:Body
+# SOUND: CallMethodOfBuiltinClass{{*}}StringIsWellFormed
+# RUN(PUSH): bytes f5:Body mechanisms=all
+# PUSH-LABEL: unit f5:Body
+# PUSH: CallMethodOfBuiltinClass{{*}}ArrayPush count 2
+# RUN(FOUND): bytes f6:Body mechanisms=all
+# FOUND-LABEL: unit f6:Body
+# FOUND: CallMethodOfBuiltinClass{{*}}StringIndexOf count 2
+# RUN(THREE): bytes f7:Body mechanisms=all
+# THREE-LABEL: unit f7:Body
+# THREE: CallMethod{{*}}count 3
+# RUN(NOINDEX): bytes f7:Body mechanisms=all
+# NOINDEX-NOT: StringIndexOf
+# RUN(ANSWERS): run-in-shell globalThis.sink = (ran, ranWithMore, matched, sound, pushedTwo, found, foundWithMore) => { print(String(ran(/b(c)/, "abcd")[0])); print(String(ranWithMore(/b(c)/, "abcd")[0])); print(String(matched("abcd", /b(c)/)[0])); print(sound("abc")[0]); print(sound("\ud800")[0]); const list = [1]; print(pushedTwo(list, 2, 3)[0]); print(list.join()); print(found("abcabc", "c", 3)[0]); print(foundWithMore("abcabc", "c", 3)[0]); };
+# ANSWERS: bc,c
+# ANSWERS-NEXT: bc,c
+# ANSWERS-NEXT: bc,c
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: false
+# ANSWERS-NEXT: 3
+# ANSWERS-NEXT: 1,2,3
+# ANSWERS-NEXT: 5
+# ANSWERS-NEXT: 5
+# ANSWERS-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return v9
+}
+function f1 name="ran" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="exec"
+    v3 = Call v2, v0, v1 calleeKey="exec"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f2 name="ranWithMore" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="exec"
+    v3 = Call v2, v0, v1, v1 calleeKey="exec"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f3 name="matched" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="match"
+    v3 = Call v2, v0, v1 calleeKey="match"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f4 name="sound" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="isWellFormed"
+    v2 = Call v1, v0 calleeKey="isWellFormed"
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f5 name="pushedTwo" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1, v2 calleeKey="push"
+    v5 = NewArray v4 contents=anything
+    Return v5
+}
+function f6 name="found" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="indexOf"
+    v4 = Call v3, v0, v1, v2 calleeKey="indexOf"
+    v5 = NewArray v4 contents=anything
+    Return v5
+}
+function f7 name="foundWithMore" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="indexOf"
+    v4 = Call v3, v0, v1, v2, v2 calleeKey="indexOf"
+    v5 = NewArray v4 contents=anything
+    Return v5
+}

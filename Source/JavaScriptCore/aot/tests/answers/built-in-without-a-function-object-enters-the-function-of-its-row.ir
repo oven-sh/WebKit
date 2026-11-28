@@ -1,0 +1,92 @@
+# A member of %CompilerHelpers% whose row names a function of the compiler has no function object at run time. Whoever calls it enters that function, with every mechanism withheld too.
+# print(createElement("a", "b")); print(createElement("a", "b", "c", "d", "e")); print(inTailPosition("x"));
+# try { checkedArrayLength("thrown"); } catch (error) { print(error); }
+# print(arrayFromLength(20, (_, index) => index + 1));
+# RUN: run-in-shell
+# CHECK: abundefinedundefined
+# CHECK-NEXT: abcd
+# CHECK-NEXT: xtundefinedundefined
+# CHECK-NEXT: thrown
+# CHECK-NEXT: 21
+# CHECK-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: abundefinedundefined
+# CLOSED-NEXT: abcd
+# CLOSED-NEXT: xtundefinedundefined
+# CLOSED-NEXT: thrown
+# CLOSED-NEXT: 21
+# CLOSED-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/helpers.ts" displayPath="/$bun/js/prelude/helpers.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=DecoratorsCreateElement function=f1
+runtimefunction id=WrittenListsArrayFromLength function=f2
+runtimefunction id=WrittenListsCheckedArrayLength function=f3
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="a"
+    v3 = String string="b"
+    v4 = String string="c"
+    v5 = String string="d"
+    v6 = String string="e"
+    v7 = Builtin builtin=CompilerHelpersCreateElement [isNotReadFromHolder]
+    v8 = Call v7, -, v2, v3
+    v9 = Call v1, -, v8
+    v10 = Builtin builtin=CompilerHelpersCreateElement [isNotReadFromHolder]
+    v11 = Call v10, -, v2, v3, v4, v5, v6
+    v12 = Call v1, -, v11
+    v13 = NewClosure function=f4
+    v14 = String string="x"
+    v15 = Call v13, -, v14
+    v16 = Call v1, -, v15
+    Jump -> next b1()
+  b1() handler=b2():
+    v17 = String string="thrown"
+    v18 = Builtin builtin=CompilerHelpersCheckedArrayLength [isNotReadFromHolder]
+    v19 = Call v18, -, v17
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v20 = CatchValue
+    v21 = Call v1, -, v20
+    Jump -> next b3()
+  b3():
+    v22 = Integer integer=20
+    v23 = NewClosure function=f5
+    v24 = Builtin builtin=CompilerHelpersArrayFromLength [isNotReadFromHolder]
+    v25 = Call v24, -, v22, v23
+    v26 = Call v1, -, v25
+    Return
+}
+function f1 name="createElement" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=4 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Add v0, v1
+    v5 = Add v4, v2
+    v6 = Add v5, v3
+    Return v6
+}
+function f2 name="arrayFromLength" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsArrayFromLength thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = Call v1, -, v2, v0
+    Return v3
+}
+function f3 name="checkedArrayLength" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=WrittenListsCheckedArrayLength thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Throw v0
+}
+function f4 name="inTailPosition" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="t"
+    v2 = Builtin builtin=CompilerHelpersCreateElement [isNotReadFromHolder]
+    v3 = Call v2, -, v0, v1
+    ReturnCall v3
+}
+function f5 name="mapper" module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}

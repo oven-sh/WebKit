@@ -1,0 +1,111 @@
+# function inside(view: Uint8Array, i) { const k = i >>> 0; if (k < view.length) return view[k]; }
+# function behindOtherCode(view: Uint8Array, i) { const k = i >>> 0; if (k < view.length) { keep(); return view[k]; } }
+# function next(view: Uint8Array, i) { const k = i >>> 0; if (k < view.length) return view[k + 1]; }
+# function stored(view: Uint8Array, i) { const k = i >>> 0; if (k < view.length) { view[k] = 7; return view[k]; } }
+# The length that was read is noted of the view until something may write the storage of views. A position that is an index below it lies inside the view: the access asks no bound, and a read gives no undefined.
+# Code that nobody has seen may resize a buffer or hand it away, so behind it the read asks again. The position behind one that lies inside may be the length itself.
+# GetTypedArrayElement and PutTypedArrayElement once had the mark, its result rule and its code, and nobody set it.
+# RUN: walk f1 f2 f3 f4 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[length]]: {{*}} = GetTypedArrayLength
+# CHECK: = Less {{*}}, [[length]] form=Integers
+# CHECK: : int[0, 255] {{*}} = GetTypedArrayElement {{*}}isInsideView]
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayLength
+# CHECK: = Call
+# CHECK: : undefined|int[0, 255] {{*}} = GetTypedArrayElement {{*}}[keyIsIntegral]
+# CHECK-LABEL: code f3:Body
+# CHECK: : undefined|int[0, 255] {{*}} = GetTypedArrayElement {{*}}[keyIsIntegral]
+# CHECK-LABEL: code f4:Body
+# CHECK: = PutTypedArrayElement {{*}}isInsideView]
+# RUN(SHELL): run-in-shell globalThis.keep = () => { }; globalThis.pick = () => 3; globalThis.sink = (...all) => { print(all.map(String).join(" ")); };
+# SHELL: 0 0 undefined 7
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=Uint8Array
+    v5 = Integer integer=4
+    v6 = Construct v4, -, v5
+    v7 = Construct v4, -, v5
+    v8 = Construct v4, -, v5
+    v9 = Construct v4, -, v5
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="pick" [isFreeName]
+    v12 = Call v11, -
+    v13 = Call v0, -, v6, v12
+    v14 = Call v1, -, v7, v12
+    v15 = Call v2, -, v8, v12
+    v16 = Call v3, -, v9, v12
+    v17 = PropGet v10 key="sink" [isFreeName]
+    v18 = Call v17, -, v13, v14, v15, v16
+    Return v18
+}
+function f1 name="inside" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array, v1: anything):
+    v2 = Integer
+    v3 = URShift v1, v2
+    v4 = PropGet v0 key="length"
+    v5 = Less v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = ElemGet v0, v3
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="behindOtherCode" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array, v1: anything):
+    v2 = Integer
+    v3 = URShift v1, v2
+    v4 = PropGet v0 key="length"
+    v5 = Less v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="keep" [isFreeName]
+    v8 = Call v7, -
+    v9 = ElemGet v0, v3
+    Return v9
+  b2():
+    v10 = Undefined
+    Return v10
+}
+function f3 name="next" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array, v1: anything):
+    v2 = Integer
+    v3 = URShift v1, v2
+    v4 = PropGet v0 key="length"
+    v5 = Less v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Increment v3
+    v7 = ElemGet v0, v6
+    Return v7
+  b2():
+    v8 = Undefined
+    Return v8
+}
+function f4 name="stored" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array, v1: anything):
+    v2 = Integer
+    v3 = URShift v1, v2
+    v4 = PropGet v0 key="length"
+    v5 = Less v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=7
+    ElemSet v0, v3, v6
+    v8 = ElemGet v0, v3
+    Return v8
+  b2():
+    v9 = Undefined
+    Return v9
+}

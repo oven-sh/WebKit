@@ -1,0 +1,18 @@
+# take(Function.prototype)
+# The text of the program hands the holder on, and nobody follows what is done with it: `Reflect.get(holder, "constructor")` names the member in a text. So all that hangs below it has gone out of sight with it, the evaluator too.
+# It is the control of Bun's test/aot/engine-tests/image/holder-that-the-library-lets-go-hands-out-no-evaluator.ir.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags {{*}}AdmitsUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=FunctionPrototype
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="take" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="take"
+    v4 = Undefined
+    Return v4
+}

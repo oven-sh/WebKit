@@ -50,14 +50,13 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayerFilters);
 
-Ref<RenderLayerFilters> RenderLayerFilters::create(RenderLayer& layer, FloatSize scale)
+Ref<RenderLayerFilters> RenderLayerFilters::create(RenderLayer& layer)
 {
-    return adoptRef(*new RenderLayerFilters(layer, scale));
+    return adoptRef(*new RenderLayerFilters(layer));
 }
 
-RenderLayerFilters::RenderLayerFilters(RenderLayer& layer, FloatSize scale)
+RenderLayerFilters::RenderLayerFilters(RenderLayer& layer)
     : m_layer(&layer)
-    , m_filterScale(scale)
 {
 }
 
@@ -111,7 +110,7 @@ void RenderLayerFilters::updateReferenceFilterClients(const Style::Filter& filte
                     CheckedPtr layer = m_layer.get();
                     if (!layer)
                         return;
-                    RefPtr filterElement = layer->renderer().document().getElementById(filterReference.cachedFragment);
+                    RefPtr filterElement = protect(layer->renderer().document())->getElementById(filterReference.cachedFragment);
                     if (!filterElement)
                         return;
                     CheckedPtr renderer = dynamicDowncast<LegacyRenderSVGResourceFilter>(filterElement->renderer());
@@ -197,9 +196,10 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
     if (usesSVGUserSpace)
         referenceBox = enclosingLayoutRect(renderer.objectBoundingBox());
 
-    auto filterScale = m_filterScale;
+    auto deviceScaleFactor = renderer.page().deviceScaleFactor();
+    auto filterScale = FloatSize { deviceScaleFactor, deviceScaleFactor };
     if (usesSVGUserSpace)
-        filterScale = m_filterScale * SVGTransformComputation(downcast<RenderLayerModelObject>(renderer)).calculateAccumulatedSVGAncestorTransformScale();
+        filterScale = (filterScale * SVGTransformComputation(downcast<RenderLayerModelObject>(renderer)).computeAccumulatedSVGAncestorTransformScale()).expandedTo(context.scaleFactor());
 
     auto geometry = FilterGeometry {
         .referenceBox = referenceBox,
@@ -239,7 +239,10 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
         return nullptr;
 
     Ref filter = *m_filter;
-    if (!filter->hasFilterThatMovesPixels())
+    // Like the legacy engine, paint the whole SVG source graphic, so the result does not depend on the dirty rect.
+    if (usesSVGUserSpace)
+        m_repaintRect = filterRegion;
+    else if (!filter->hasFilterThatMovesPixels())
         m_repaintRect = dirtyRect;
     else if (hasUpdatedBackingStore || !hasSourceImage())
         m_repaintRect = filterRegion;
@@ -257,8 +260,7 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
             // If the region was clamped to MaxClampedArea, source from the bounding box to
             // avoid a huge mostly-transparent buffer. Otherwise source the full region.
             bool filterRegionOversized = !referenceBox.isEmpty() && m_filter->filterScale() != m_lastUnclampedFilterScale;
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST sourceImageRect = filterRegionOversized ? FloatRect(referenceBox) : FloatRect(dirtyFilterRegion);
+            sourceImageRect = filterRegionOversized ? FloatRect(referenceBox) : FloatRect(dirtyFilterRegion);
         } else
             sourceImageRect = dirtyFilterRegion;
 

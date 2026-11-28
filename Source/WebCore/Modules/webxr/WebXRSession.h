@@ -44,7 +44,9 @@
 #include "XRSessionMode.h"
 #include "XRVisibilityState.h"
 #include <numbers>
+#include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -52,15 +54,23 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+#include "WebXRPlane.h"
+#endif
+
 namespace WebCore {
 
 class XRFrameRequestCallback;
 class WebCoreOpaqueRoot;
 class WebXRView;
 class WebXRReferenceSpace;
+class XRCompositionLayer;
 struct XRCanvasConfiguration;
 struct XRRenderStateInit;
 
+#if ENABLE(WEBXR_ANCHORS)
+class WebXRAnchor;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
 struct XRHitTestOptionsInit;
 struct XRTransientInputHitTestOptionsInit;
@@ -84,7 +94,7 @@ public:
     XREnvironmentBlendMode environmentBlendMode() const;
     XRInteractionMode interactionMode() const;
     XRVisibilityState visibilityState() const;
-    const WebXRRenderState& LEGACY_NODELETE renderState() const;
+    NODELETE const WebXRRenderState& renderState() const;
     const WebXRInputSourceArray& inputSources() const LIFETIME_BOUND { return m_inputSources; }
     RefPtr<PlatformXR::Device> device() const { return m_device; }
 
@@ -130,6 +140,11 @@ public:
     bool isHandTrackingEnabled() const;
 #endif
 
+#if ENABLE(WEBXR_ANCHORS)
+    void addAnchor(Ref<WebXRAnchor>&&);
+    RefPtr<WebXRAnchor> anchor(PlatformXR::AnchorIdentifier) const;
+    void deleteAnchor(PlatformXR::AnchorIdentifier);
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     using RequestHitTestSourcePromise = DOMPromiseDeferred<IDLInterface<WebXRHitTestSource>>;
     void requestHitTestSource(const XRHitTestOptionsInit&, RequestHitTestSourcePromise&&);
@@ -139,8 +154,15 @@ public:
     ExceptionOr<void> cancelTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource);
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    void initiateRoomCapture(DOMPromiseDeferred<void>&&);
+    Vector<Ref<WebXRPlane>> detectedPlanes() const;
+#endif
+
 #if ENABLE(WEBXR_LAYERS)
     unsigned maxRenderLayers() const;
+    void layerDestroyed(const XRCompositionLayer&);
+    bool areLayersEnabled() const;
 #endif
 
     void initializeTrackingAndRendering(std::optional<XRCanvasConfiguration>&&);
@@ -151,6 +173,7 @@ public:
         uint32_t arrayLength { 0 };
     };
     std::optional<InitialRenderingDimensions> initialRenderingDimensions() const { return m_initialRenderingDimensions; }
+    void whenRenderingInitialized(CompletionHandler<void(bool)>&&);
 
 private:
     WebXRSession(Document&, XRSessionMode, PlatformXR::Device&, FeatureList&&);
@@ -188,6 +211,11 @@ private:
     void cleanupInactiveHitTestSources();
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    void updateDetectedPlanes(DOMHighResTimeStamp);
+    void invalidateDetectedPlanes();
+#endif
+
     XRInteractionMode m_interactionMode { XRInteractionMode::WorldSpace };
     XRVisibilityState m_visibilityState { XRVisibilityState::Visible };
     const UniqueRef<WebXRInputSourceArray> m_inputSources;
@@ -212,6 +240,7 @@ private:
     PlatformXR::FrameData m_frameData;
     std::optional<PlatformXR::RequestData> m_requestData;
     std::optional<InitialRenderingDimensions> m_initialRenderingDimensions;
+    Vector<CompletionHandler<void(bool)>> m_renderingInitializedCallbacks;
 
     double m_minimumInlineFOV { 0.0 };
     double m_maximumInlineFOV { std::numbers::pi };
@@ -223,9 +252,17 @@ private:
     // https://immersive-web.github.io/webxr/#xrsession-promise-resolved
     bool m_inputInitialized { false };
 
+#if ENABLE(WEBXR_ANCHORS)
+    HashMap<PlatformXR::AnchorIdentifier, RefPtr<WebXRAnchor>> m_activeAnchors;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     HashMap<PlatformXR::HitTestSource, WeakPtr<WebXRHitTestSource>> m_activeHitTestSources;
     HashMap<PlatformXR::HitTestSource, WeakPtr<WebXRTransientInputHitTestSource>> m_activeTransientInputHitTestSources;
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    HashMap<uint64_t, Ref<WebXRPlane>> m_detectedPlanes;
+    bool m_roomCaptureCompleted { false };
 #endif
 };
 

@@ -1,0 +1,11 @@
+# function pick(c, v) { if (c === null) return one(v).x; if (c === undefined) return two(v).y; return v; }
+# below each head of the framed part the call alone reads v, and no way leads from there to the reads of the later arms. So v is neither moved to a register that callees save nor stored, and no setup saves a register
+# f1 = pick, f2 = one, f3 = two. pick is handed to sink
+# REQUIRES: unsanitized-code
+# RUN: allocate f1:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: usedCalleeSaves
+# CHECK: headOfFramedPart =
+# CHECK-NEXT: headOfFramedPart =
+# CHECK-NOT: needsFrameAheadOfFramedPart
+# PROGRAM-OF: two-parts-that-call-each-set-up-their-frame.ir

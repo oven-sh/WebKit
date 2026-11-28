@@ -1,0 +1,40 @@
+# A field that the literal does not list is claimed with the bounds of the int32s that are stored in it, as a field that it lists is. Of doubles the kind alone is claimed.
+#   function make(n) { const o = { a: n }; o.id = 1; o.wide = -1; o.large = 3000000000; return read(o); }
+#   function read(o) { return o.id; }
+# RUN: link fields mechanisms=all
+# CHECK: field L0.1 "id" appended proven=int[0, 2147483647]
+# CHECK: field L0.2 "wide" appended proven=i32
+# CHECK: field L0.3 "large" appended proven=int writers-known
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=40 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="read" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="make"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="id"
+    v5 = Integer integer=-1
+    PropSet v2, v5 key="wide"
+    v7 = Double number=3000000000
+    PropSet v2, v7 key="large"
+    v9 = GetModuleVariable variable=g1
+    v10 = Call v9, -, v2 calleeName="read"
+    Return v10
+}
+function f2 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="id"
+    Return v1
+}

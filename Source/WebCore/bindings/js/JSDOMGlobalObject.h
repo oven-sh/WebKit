@@ -79,8 +79,8 @@ public:
     DOMConstructors& constructors() LIFETIME_BOUND { return m_constructors; }
 
     // No locking is necessary for call sites that do not mutate the containers and are not on a GC thread.
-    const JSDOMStructureMap& structures() const LIFETIME_BOUND WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT(!Thread::mayBeGCThread()); return m_structures; }
-    const DOMGuardedObjectSet& guardedObjects() const LIFETIME_BOUND WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT(!Thread::mayBeGCThread()); return m_guardedObjects; }
+    const JSDOMStructureMap& structures() const LIFETIME_BOUND WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT_WITH_SECURITY_IMPLICATION(!Thread::mayBeGCThread()); return m_structures; }
+    const DOMGuardedObjectSet& guardedObjects() const LIFETIME_BOUND WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT_WITH_SECURITY_IMPLICATION(!Thread::mayBeGCThread()); return m_guardedObjects; }
     const DOMConstructors& constructors() const LIFETIME_BOUND { ASSERT(!Thread::mayBeGCThread()); return m_constructors; }
 
     // The following don't require grabbing the gcLock first and should only be called when the Heap says that mutators don't have to be fenced.
@@ -126,13 +126,13 @@ public:
     using ScriptErrorCallback = Function<void(const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber)>;
 
     void addScriptErrorCallback(ScriptErrorCallback&&);
-    bool LEGACY_NODELETE hasScriptErrorCallbacks() const;
+    NODELETE bool hasScriptErrorCallbacks() const;
     void invokeScriptErrorCallbacks(const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber) const;
 
-    void addJSHandle(JSHandleIdentifier, JSC::JSObject&);
-    void LEGACY_NODELETE refJSHandle(JSHandleIdentifier);
+    JSHandleIdentifier addJSHandle(JSC::JSObject&);
+    NODELETE void refJSHandle(JSHandleIdentifier);
     bool derefJSHandle(JSHandleIdentifier);
-    JSC::JSObject* LEGACY_NODELETE jsHandle(JSHandleIdentifier) const;
+    NODELETE JSC::JSObject* jsHandle(JSHandleIdentifier) const;
 
 protected:
     JSDOMGlobalObject(JSC::VM&, JSC::Structure*, Ref<DOMWrapperWorld>&&, const JSC::GlobalObjectMethodTable* = nullptr);
@@ -151,7 +151,7 @@ protected:
     static JSC::JSValue moduleLoaderEvaluate(JSC::JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, RefPtr<JSC::ScriptFetcher>, JSC::JSValue, JSC::JSValue);
     static JSC::JSPromise* moduleLoaderImportModule(JSC::JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString*, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSC::JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
-    static bool LEGACY_NODELETE moduleTypeIsAllowed(JSC::ScriptFetchParameters::Type);
+    NODELETE static bool moduleTypeIsAllowed(JSC::ScriptFetchParameters::Type);
 
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
@@ -179,6 +179,8 @@ private:
         size_t refCount { 0 };
     };
     HashMap<JSHandleIdentifier, JSHandleSlot> m_jsHandles WTF_GUARDED_BY_LOCK(m_gcLock);
+    // Keys are kept alive by the matching slot in m_jsHandles, so an address here is never stale.
+    HashMap<JSC::JSObject*, JSHandleIdentifier> m_jsHandleIdentifiers WTF_GUARDED_BY_LOCK(m_gcLock);
 };
 
 JSDOMGlobalObject* toJSDOMGlobalObject(ScriptExecutionContext&, DOMWrapperWorld&);

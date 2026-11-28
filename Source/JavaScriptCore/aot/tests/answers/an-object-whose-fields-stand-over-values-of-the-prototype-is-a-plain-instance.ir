@@ -1,0 +1,153 @@
+# `$isPlainInstanceOf(object, Meter)` WHERE FIELDS STAND OVER PLAIN VALUES OF THE SAME NAMES ON THE PROTOTYPE, as _events and _eventsCount of an emitter of events do.
+# function Meter(level) { this.level = level; this.count = 1; this.events = undefined; }
+# Meter.prototype.count = 0;
+# Meter.prototype.events = undefined;
+# Meter.prototype.read = function () { return this.level; };
+# function ask(object) { return $isPlainInstanceOf(object, Meter) ? "plain" : "-"; }      in a file of the library
+# const made = new Meter(5);
+# print(ask(made), ask(new Meter(6)));
+# change(made, Meter);
+# print(ask(made), ask(new Meter(8)));
+# print(made.read(), made.count, made.events);
+# A field that hides a value above ends the guards by which READS find that value. The question asks the guards of STORES, which such a field leaves alone: a plain value above runs no code.
+# OPTIONS: mechanisms=all
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: plain plain
+# NOTHING-NEXT: plain plain
+# NOTHING-NEXT: 5 1 undefined
+# NOTHING-NEXT: exited with 0
+# RUN(STORES): run-in-shell change = function (made) { made.count = 7; made.events = "e"; };
+# STORES: plain plain
+# STORES-NEXT: plain plain
+# STORES-NEXT: 5 7 e
+# Here the plan counts on `count` from birth on, so a delete of it marks the object: it gets a no, the others do not.
+# RUN(DELETED): run-in-shell change = function (made) { delete made.count; };
+# DELETED: plain plain
+# DELETED-NEXT: - plain
+# DELETED-NEXT: 5 0 undefined
+# RUN(ABOVE): run-in-shell change = function (made, Meter) { delete made.count; Object.defineProperty(Meter.prototype, "count", { get() { return "above"; }, set(value) { }, configurable: true }); };
+# ABOVE: plain plain
+# ABOVE-NEXT: - -
+# ABOVE-NEXT: 5 above undefined
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}, {key="events" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+variable g0 name="Meter" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = GetModuleVariable variable=g0 @87
+    v3 = PropGet v2 key="prototype" @87
+    v4 = Integer @111
+    PropSet v3, v4 key="count" @93
+    v6 = GetModuleVariable variable=g0 @114
+    v7 = PropGet v6 key="prototype" @114
+    v8 = Undefined @139
+    PropSet v7, v8 key="events" @120
+    v10 = GetModuleVariable variable=g0 @150
+    v11 = PropGet v10 key="prototype" @150
+    v12 = NewClosure function=f3 @173
+    PropSet v11, v12 key="read" @156
+    v14 = GetModuleVariable variable=g0 @298
+    v15 = Integer integer=5 @304
+    v16 = Construct v14, -, v15 calleeName="Meter" @298
+    v17 = Builtin builtin=GlobalThis @308
+    v18 = PropGet v17 key="print" [isFreeName] @308
+    v19 = Call v1, -, v16 calleeName="ask" @314
+    v20 = GetModuleVariable variable=g0 @333
+    v21 = Integer integer=6 @339
+    v22 = Construct v20, -, v21 calleeName="Meter" @333
+    v23 = Call v1, -, v22 calleeName="ask" @325
+    v24 = Call v18, -, v19, v23 calleeName="print" @308
+    v25 = Builtin builtin=GlobalThis @345
+    v26 = PropGet v25 key="change" [isFreeName] @345
+    v27 = GetModuleVariable variable=g0 @358
+    v28 = Call v26, -, v16, v27 calleeName="change" @345
+    v29 = Builtin builtin=GlobalThis @366
+    v30 = PropGet v29 key="print" [isFreeName] @366
+    v31 = Call v1, -, v16 calleeName="ask" @372
+    v32 = GetModuleVariable variable=g0 @391
+    v33 = Integer integer=8 @397
+    v34 = Construct v32, -, v33 calleeName="Meter" @391
+    v35 = Call v1, -, v34 calleeName="ask" @383
+    v36 = Call v30, -, v31, v35 calleeName="print" @366
+    v37 = Builtin builtin=GlobalThis @403
+    v38 = PropGet v37 key="print" [isFreeName] @403
+    v39 = PropGet v16 key="read" @409
+    v40 = Call v39, v16 calleeKey="read" calleeName="made.read" @414
+    v41 = PropGet v16 key="count" @422
+    v42 = PropGet v16 key="events" @434
+    v43 = Call v38, -, v40, v41, v42 calleeName="print" @403
+    v44 = Undefined @403
+    Return v44 @403
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Integer integer=1 @57
+    PropSet v0, v3 key="count" @44
+    v5 = Undefined @74
+    PropSet v0, v5 key="events" @60
+    v7 = Undefined @60
+    Return v7 @60
+}
+function f2 name="ask" module=m3 position=209 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @239
+    v2 = Undefined @239
+    v3 = GetModuleVariable variable=g0 @255
+    v4 = IsPlainInstanceOf v0, v3 @239
+    v5 = ToBoolean v4 @239
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @239
+  b1(v6):
+    v7 = String string="plain" @264
+    Jump -> next b3(v7) @264
+  b2(v8):
+    v9 = String string="-" @274
+    Jump -> next b3(v9) @274
+  b3(v10):
+    Return v10 @274
+}
+function f3 module=m0 position=173 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @194
+    Return v1 @194
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f5 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f5
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

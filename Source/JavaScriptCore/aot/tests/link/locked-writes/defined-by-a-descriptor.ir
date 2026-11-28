@@ -1,0 +1,34 @@
+# Object.prototype takes no new name, so a definition under one throws in every run: the build stops. The literal of the descriptor is filled in front of the call, which runs no code of the program
+# a definition that asks for what is already there succeeds, locked or not: nothing is said of it
+# Object.defineProperty(Object.prototype, "w", { get() {} }); Object.defineProperty(Object.prototype, "toString", { writable: false });
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+layout L0 module=m0 fields=[{key="writable" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object @1
+    v1 = Builtin builtin=ObjectDefineProperty @1
+    v2 = Builtin builtin=ObjectPrototype @1
+    v3 = String string="w" @1
+    v4 = NewClosure function=f1 @1
+    v5 = NewObject layout=L1 @1
+    PropDefine v5, v4 key="get" @1
+    v7 = FinishObject v5 @1
+    v8 = Call v1, v0, v2, v3, v7 @2
+    v9 = String string="toString" @3
+    v10 = Boolean @3
+    v11 = NewObject layout=L0 @3
+    PropDefine v11, v10 key="writable" @3
+    v13 = FinishObject v11 @3
+    v14 = Call v1, v0, v2, v9, v13 @4
+    Return v14 @5
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -62,7 +62,7 @@ public:
     using RequestSessionPromise = DOMPromiseDeferred<IDLInterface<WebXRSession>>;
 
     static Ref<WebXRSystem> create(Navigator&);
-    ~WebXRSystem();
+    WEBCORE_EXPORT ~WebXRSystem();
 
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
@@ -85,7 +85,7 @@ public:
     WEBCORE_EXPORT void registerSimulatedXRDeviceForTesting(PlatformXR::Device&);
     WEBCORE_EXPORT void unregisterSimulatedXRDeviceForTesting(PlatformXR::Device&);
 
-    Navigator* LEGACY_NODELETE navigator();
+    NODELETE Navigator* navigator();
 
 protected:
     // EventTarget
@@ -133,9 +133,13 @@ private:
         Vector<Device::ViewData> views(XRSessionMode) const final;
         std::optional<PlatformXR::LayerInfo> createLayerProjection(uint32_t, uint32_t, bool) final { return std::nullopt; }
 #if ENABLE(WEBXR_LAYERS)
-        std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, IntSize, PlatformXR::LayerLayout) final { return std::nullopt; }
+        std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, IntSize, PlatformXR::LayerLayout, PlatformXR::LayerUpdateMode) final { return std::nullopt; }
 #endif
         void deleteLayer(PlatformXR::LayerHandle) final { }
+#if ENABLE(WEBXR_ANCHORS)
+        void createAnchor(const PlatformXR::Pose&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>)>&&) final;
+        void deleteAnchor(PlatformXR::AnchorIdentifier) final { }
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
         void requestHitTestSource(const PlatformXR::HitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&&) final { };
         void deleteHitTestSource(PlatformXR::HitTestSource) final { };

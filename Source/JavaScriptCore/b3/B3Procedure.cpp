@@ -276,24 +276,19 @@ void Procedure::resetReachability()
     
     // The common case is that this does not find any dead blocks.
     bool foundDead = false;
-    for (auto& block : m_blocks) {
-        if (isBlockDead(block.get())) {
-            foundDead = true;
-            break;
-        }
-    }
-    if (!foundDead)
-        return;
-    
     IndexSet<Value*> deadPhis;
     for (auto& block : m_blocks) {
         if (!isBlockDead(block.get()))
             continue;
+        foundDead = true;
         for (Value* value : *block) {
             if (value->opcode() == Phi)
                 deadPhis.add(value);
         }
     }
+    if (!foundDead)
+        return;
+    
     if (!deadPhis.isEmpty()) {
         for (Value* value : values()) {
             if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {

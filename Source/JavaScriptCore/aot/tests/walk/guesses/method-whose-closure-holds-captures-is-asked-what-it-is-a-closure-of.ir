@@ -1,0 +1,64 @@
+# `o.own(1)` on an object that unseen code has in hand, where the closure under the name holds a capture: the closure table has no cell for it, so the call needs the closure that lies on the holder.
+# The guard of the name says what a lookup finds. That is knowledge of the heap at one moment, and Code has no word for it: the record of a read by name says `anything`.
+# So the read stands among the looks in front of the arms, the value is asked whether it is a closure of the function, and a Narrowed carries the answer to the capture and to the call.
+# The walk once noted what the value is a closure of in its state alone, and typed the Unbox behind the read by the note: the verifier of types stopped (TypeOutOfDate: the record claims more).
+# class Meter { own(x) { return [sink, x]; } }  function both(o: Meter, n) { let x; while (n()) x = o.own(1); return x; }
+# RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="own"}]
+# CHECK: [[read]]: {{*}} = PropGet {{*}}key="own"
+# CHECK-NEXT: [[test]]: {{*}} = IsClosureOf [[read]] function=f2
+# CHECK-NEXT: Branch [[test]]
+# CHECK: [[closure]]: f2 {{*}} = Narrowed [[read]], [[test]]
+# CHECK: = GetCapture {{*}}function=f2
+# CHECK: = CallDirect {{*}}function=f2
+# The fresh worker of this command verifies Code
+# RUN(VERIFIED): same-bytes-alone f3:Body
+# VERIFIED: f3:Body same:
+
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure v1 function=f2
+    DefineMethod v3, v4 layout=L0 key="own"
+    v6 = FinishClass v3 layout=L0
+    v7 = NewClosure function=f3
+    v8 = Construct v6
+    v9 = Call v1, -, v7, v8
+    Return v9
+}
+function f1 name="Meter" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="own" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewArray v0, v2
+    Return v3
+}
+function f3 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=L0}
+    v3 = Undefined
+    Jump -> next b1(v3)
+  b1(v4: anything):
+    LoopHint
+    v6 = Call v1, -
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v2 key="own"
+    v9 = Integer integer=1
+    v10 = Call v8, v2, v9 calleeKey="own"
+    Jump -> next b1(v10)
+  b3():
+    Return v4
+}

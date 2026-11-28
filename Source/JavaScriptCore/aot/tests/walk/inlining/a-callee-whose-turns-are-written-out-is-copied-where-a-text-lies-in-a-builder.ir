@@ -1,0 +1,87 @@
+# function gather() { for (var count = arguments.length, all = new Array(count), at = 0; at < count; at++) all[at] = arguments[at]; return all.length + all[0]; }
+# function grow(turns, t) { .. for (let i = 0; i < turns; i = i + 1) text = text + "|" + gather(i, t, 1); .. }
+# A callee with a loop is copied in line where the turns of the copy can be written out. That a text of the caller lies in a string builder is no reason against it: the texts in builders belong to their own frame.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: = StackStringBuilderBegin
+# CHECK-NOT: = CallDirect {{*}}function=f1
+# layout L916 kind=Closure
+variable g0 name="gather" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 164, 359, 382] quotedSources=[{position=65 start=21 end=37}, {position=107 start=37 end=60}, {position=117 start=47 end=60}, {position=141 start=60 end=70}, {position=154 start=73 end=79}, {position=323 start=99 end=114}, {position=359 end=15}, {position=370 end=21}] quotedSourceText="globalThis.sink(grow)new Array(count)all[at] = arguments[at]all.length + all[0]text = text + \x22|\x22 + gather(i, t, 1)"} functionSource="function gather() { for (var count = arguments.length, all = new Array(count), at = 0; at < count; at++) { all[at] = arguments[at]; } return all.length + all[0]; }\x0afunction grow(turns, t) { if (typeof turns === \x22number\x22 && typeof t === \x22number\x22) { let text = \x22\x22; for (let i = 0; i < turns; i = i + 1) { text = text + \x22|\x22 + gather(i, t, 1); } return text; } }\x0aglobalThis.sink(grow);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @359
+    v3 = PropGet v2 key="globalThis" [isFreeName] @359
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @359
+    v5 = PropGet v4 key="sink" @359
+    v6 = Call v5, v4, v1 calleeKey="sink" calleeName="globalThis.sink" @370
+    v7 = Undefined @359
+    Return v7 @359
+}
+function f1 name="gather" module=m0 sourceRange={end=163} flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1 @0
+    v3 = Undefined @0
+    v4 = Builtin builtin=Array @65
+    v5 = Construct v4, -, v0 calleeName="Array" @65
+    v6 = Integer @84
+    v7 = Convert v6 declared={type=undefined|i32 flags=[IsExpected]} @84
+    Jump -> next b1(v7) @79
+  b1(v8):
+    LoopHint @79
+    v10 = Less v8, v0 @92
+    Branch v10 -> taken b2(), notTaken b3() @92
+  b2():
+    v11 = ElemGet v2, v8 @117
+    ElemSet v5, v8, v11 @107
+    v13 = Increment v8 @99
+    v14 = Convert v13 declared={type=undefined|i32 flags=[IsExpected]} @99
+    Jump -> next b1(v14) @99
+  b3():
+    v15 = PropGet v5 key="length" @141
+    v16 = Integer @154
+    v17 = ElemGet v5, v16 @154
+    v18 = Add v15, v17 @154
+    Return v18 @154
+}
+function f2 name="grow" module=m0 position=164 sourceRange={start=164 end=358} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number @194
+    Branch v2 -> taken b1(| 0), notTaken b6() @194
+  b1(v3):
+    v4 = NarrowByTest v0, v3 @194
+    v5 = TypeTest v1 testedType=number @223
+    Branch v5 -> taken b2(| 0), notTaken b6() @223
+  b2(v6):
+    v7 = NarrowByTest v1, v6 @223
+    v8 = String string="" @259
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @259
+    v10 = Integer @276
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @276
+    Jump -> next b3(v9, v11) @272
+  b3(v12, v13):
+    LoopHint @272
+    v15 = Less v13, v4 @283
+    Branch v15 -> taken b4(), notTaken b5() @283
+  b4():
+    v16 = String string="|" @317
+    v17 = Add v12, v16 @317
+    v18 = GetModuleVariable variable=g0 @323
+    v19 = Integer integer=1 @336
+    v20 = Call v18, -, v13, v7, v19 calleeName="gather" @323
+    v21 = Add v17, v20 @323
+    v22 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]} @303
+    v23 = Integer integer=1 @298
+    v24 = Add v13, v23 @298
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @290
+    Jump -> next b3(v22, v25) @290
+  b5():
+    Return v12 @349
+  b6():
+    v26 = Undefined @349
+    Return v26 @349
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app", "stop"]}, {exportName="then"}]

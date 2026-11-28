@@ -30,8 +30,7 @@
 #include "StyleCustomIdent.h"
 #include "StyleGeneratedImage.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class NamedImage final : public GeneratedImage {
 public:
@@ -42,7 +41,7 @@ public:
     virtual ~NamedImage();
 
     bool operator==(const Image&) const final;
-    bool LEGACY_NODELETE equals(const NamedImage&) const;
+    NODELETE bool equals(const NamedImage&) const;
 
 private:
     explicit NamedImage(CustomIdent&&);
@@ -51,8 +50,8 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
     bool containsCurrentColor() const final { return false; }
     void didAddClient(RenderElement&) final { }
@@ -61,8 +60,7 @@ private:
     CustomIdent m_name;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_IMAGE(NamedImage, isNamedImage)
 

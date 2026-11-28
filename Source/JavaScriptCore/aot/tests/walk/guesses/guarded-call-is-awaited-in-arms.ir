@@ -1,0 +1,65 @@
+# the callee of an awaited call is known behind a guard: each arm awaits its own call, so that the call that is known makes no promise
+# class Files { static async open(x) { await null; return x; } }  sink(Files);
+# async function each(x, n) { for (let i = 0; i < n; i++) x = await Files.open(x); return x; }  sink(each);
+# RUN: walk f3:CoroutineBody mechanisms=-Inlining
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: = AreMembersUnchanged
+# CHECK: = AwaitCallBySavingFrame {{*}}function=f2
+# RUN(CLOSED): walk f3:CoroutineBody mechanisms=-Inlining
+# CLOSED: [[promise]]: {{*}} = Call v
+# CLOSED: = AwaitBySavingFrame [[promise]]
+# RUN(NEVER): walk f3:CoroutineBody mechanisms=-Inlining
+# NEVER-NOT: = NewPromise
+
+layout L0 kind=Instance name="Files" module=m0 constructor=f1
+variable g0 name="Files" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 side=Static key="open"
+    v5 = FinishClass v1 layout=L0
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v5
+    v9 = NewClosure function=f3
+    v10 = Call v7, -, v9
+    v11 = Construct v5
+    v12 = Call v7, -, v11
+    Return v12
+}
+function f1 name="Files" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="open" module=m0 kind=Method flags=[IsAsync, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = Await v1, v0
+    Return v0
+}
+function f3 name="each" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v0, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = CheckInitialized v7 name="Files"
+    v9 = PropGet v8 key="open"
+    v10 = Call v9, v8, v3 calleeKey="open" calleeName="Files.open"
+    v11 = Await v10
+    v12 = Increment v4
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v3
+}

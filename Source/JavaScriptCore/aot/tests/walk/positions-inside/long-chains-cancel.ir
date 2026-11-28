@@ -1,0 +1,114 @@
+# A value cancels against itself however many steps it was computed in: a sum opens sixteen of them and keeps the rest as a term.
+# v45 and v85 are the ends of two chains of forty steps.
+# RUN(SAME): position-inside position=v45 length=v5 below=v86
+# SAME-NOT: not
+# SAME: shown
+# RUN(OTHER): position-inside position=v45 length=v5 below=v87
+# OTHER: not shown
+# RUN(UPTO): position-inside position=v45 length=v5 below=v89
+# UPTO: not shown
+# -- code
+# code f1:Body {
+#   constants:
+#     v4: 0 @Int64 = Integer
+#   b0(v0: Array @Cell, v1: Array @Cell, v2: int[0, 4294967295] @Int64, v3: int[0, 4294967295] @Int64) entry=0:
+#     v5: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v6: int[-1, 4294967294] @Int64 = Decrement v2 form=Integers
+#     v7: int[0, 4294967295] @Int64 = Increment v6 form=Integers
+#     v8: int[-1, 4294967294] @Int64 = Decrement v7 form=Integers
+#     v9: int[0, 4294967295] @Int64 = Increment v8 form=Integers
+#     v10: int[-1, 4294967294] @Int64 = Decrement v9 form=Integers
+#     v11: int[0, 4294967295] @Int64 = Increment v10 form=Integers
+#     v12: int[-1, 4294967294] @Int64 = Decrement v11 form=Integers
+#     v13: int[0, 4294967295] @Int64 = Increment v12 form=Integers
+#     v14: int[-1, 4294967294] @Int64 = Decrement v13 form=Integers
+#     v15: int[0, 4294967295] @Int64 = Increment v14 form=Integers
+#     v16: int[-1, 4294967294] @Int64 = Decrement v15 form=Integers
+#     v17: int[0, 4294967295] @Int64 = Increment v16 form=Integers
+#     v18: int[-1, 4294967294] @Int64 = Decrement v17 form=Integers
+#     v19: int[0, 4294967295] @Int64 = Increment v18 form=Integers
+#     v20: int[-1, 4294967294] @Int64 = Decrement v19 form=Integers
+#     v21: int[0, 4294967295] @Int64 = Increment v20 form=Integers
+#     v22: int[-1, 4294967294] @Int64 = Decrement v21 form=Integers
+#     v23: int[0, 4294967295] @Int64 = Increment v22 form=Integers
+#     v24: int[-1, 4294967294] @Int64 = Decrement v23 form=Integers
+#     v25: int[0, 4294967295] @Int64 = Increment v24 form=Integers
+#     v26: int[-1, 4294967294] @Int64 = Decrement v25 form=Integers
+#     v27: int[0, 4294967295] @Int64 = Increment v26 form=Integers
+#     v28: int[-1, 4294967294] @Int64 = Decrement v27 form=Integers
+#     v29: int[0, 4294967295] @Int64 = Increment v28 form=Integers
+#     v30: int[-1, 4294967294] @Int64 = Decrement v29 form=Integers
+#     v31: int[0, 4294967295] @Int64 = Increment v30 form=Integers
+#     v32: int[-1, 4294967294] @Int64 = Decrement v31 form=Integers
+#     v33: int[0, 4294967295] @Int64 = Increment v32 form=Integers
+#     v34: int[-1, 4294967294] @Int64 = Decrement v33 form=Integers
+#     v35: int[0, 4294967295] @Int64 = Increment v34 form=Integers
+#     v36: int[-1, 4294967294] @Int64 = Decrement v35 form=Integers
+#     v37: int[0, 4294967295] @Int64 = Increment v36 form=Integers
+#     v38: int[-1, 4294967294] @Int64 = Decrement v37 form=Integers
+#     v39: int[0, 4294967295] @Int64 = Increment v38 form=Integers
+#     v40: int[-1, 4294967294] @Int64 = Decrement v39 form=Integers
+#     v41: int[0, 4294967295] @Int64 = Increment v40 form=Integers
+#     v42: int[-1, 4294967294] @Int64 = Decrement v41 form=Integers
+#     v43: int[0, 4294967295] @Int64 = Increment v42 form=Integers
+#     v44: int[-1, 4294967294] @Int64 = Decrement v43 form=Integers
+#     v45: int[0, 4294967295] @Int64 = Increment v44 form=Integers
+#     v46: int[-1, 4294967294] @Int64 = Decrement v3 form=Integers
+#     v47: int[0, 4294967295] @Int64 = Increment v46 form=Integers
+#     v48: int[-1, 4294967294] @Int64 = Decrement v47 form=Integers
+#     v49: int[0, 4294967295] @Int64 = Increment v48 form=Integers
+#     v50: int[-1, 4294967294] @Int64 = Decrement v49 form=Integers
+#     v51: int[0, 4294967295] @Int64 = Increment v50 form=Integers
+#     v52: int[-1, 4294967294] @Int64 = Decrement v51 form=Integers
+#     v53: int[0, 4294967295] @Int64 = Increment v52 form=Integers
+#     v54: int[-1, 4294967294] @Int64 = Decrement v53 form=Integers
+#     v55: int[0, 4294967295] @Int64 = Increment v54 form=Integers
+#     v56: int[-1, 4294967294] @Int64 = Decrement v55 form=Integers
+#     v57: int[0, 4294967295] @Int64 = Increment v56 form=Integers
+#     v58: int[-1, 4294967294] @Int64 = Decrement v57 form=Integers
+#     v59: int[0, 4294967295] @Int64 = Increment v58 form=Integers
+#     v60: int[-1, 4294967294] @Int64 = Decrement v59 form=Integers
+#     v61: int[0, 4294967295] @Int64 = Increment v60 form=Integers
+#     v62: int[-1, 4294967294] @Int64 = Decrement v61 form=Integers
+#     v63: int[0, 4294967295] @Int64 = Increment v62 form=Integers
+#     v64: int[-1, 4294967294] @Int64 = Decrement v63 form=Integers
+#     v65: int[0, 4294967295] @Int64 = Increment v64 form=Integers
+#     v66: int[-1, 4294967294] @Int64 = Decrement v65 form=Integers
+#     v67: int[0, 4294967295] @Int64 = Increment v66 form=Integers
+#     v68: int[-1, 4294967294] @Int64 = Decrement v67 form=Integers
+#     v69: int[0, 4294967295] @Int64 = Increment v68 form=Integers
+#     v70: int[-1, 4294967294] @Int64 = Decrement v69 form=Integers
+#     v71: int[0, 4294967295] @Int64 = Increment v70 form=Integers
+#     v72: int[-1, 4294967294] @Int64 = Decrement v71 form=Integers
+#     v73: int[0, 4294967295] @Int64 = Increment v72 form=Integers
+#     v74: int[-1, 4294967294] @Int64 = Decrement v73 form=Integers
+#     v75: int[0, 4294967295] @Int64 = Increment v74 form=Integers
+#     v76: int[-1, 4294967294] @Int64 = Decrement v75 form=Integers
+#     v77: int[0, 4294967295] @Int64 = Increment v76 form=Integers
+#     v78: int[-1, 4294967294] @Int64 = Decrement v77 form=Integers
+#     v79: int[0, 4294967295] @Int64 = Increment v78 form=Integers
+#     v80: int[-1, 4294967294] @Int64 = Decrement v79 form=Integers
+#     v81: int[0, 4294967295] @Int64 = Increment v80 form=Integers
+#     v82: int[-1, 4294967294] @Int64 = Decrement v81 form=Integers
+#     v83: int[0, 4294967295] @Int64 = Increment v82 form=Integers
+#     v84: int[-1, 4294967294] @Int64 = Decrement v83 form=Integers
+#     v85: int[0, 4294967295] @Int64 = Increment v84 form=Integers
+#     v86: boolean @Boolean = Less v45, v5 form=Integers
+#     v87: boolean @Boolean = Less v85, v5 form=Integers
+#     v88: boolean @Boolean = Less v2, v5 form=Integers
+#     v89: boolean @Boolean = LessEq v45, v5 form=Integers
+#     Return v4
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

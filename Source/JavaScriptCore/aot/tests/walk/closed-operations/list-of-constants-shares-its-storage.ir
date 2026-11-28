@@ -1,0 +1,67 @@
+# main.ts: const once = ["a", "b"]; const numbers = [1, 2]; for (;;) { if (stop(["c", "d"])) break } function make() { keep(["e", true, null, 1.5]); keep([]); keep([["f"]]); keep([1n]) }
+# A list of constants that may be made again is a cell of 16 bytes around storage that all lists of the site share, and the first write copies it: that is right whatever is done with the list.
+# As a tree, each evaluation calls the run time and makes storage anew: a million of `["a", "b"]` are 48 MB in place of 16.
+# What the body of a module makes outside its loops is made once, so nothing would share its storage. Numbers alone lie in the image wherever the list is made.
+# An empty list is written to be filled, and the first write to shared storage goes through the run time: it is a list of its own, born with the room and the kind of storage that its site has seen its lists come to.
+# A list with a list, a BigInt or a hole in it has something that is made anew each time. Such a tree is written out where it is small (data-that-is-small-is-written-out.ir), and made by one call of the run time where it is not.
+# RUN: walk f0 f1 mechanisms=none
+# CHECK-LABEL: code f0:Body
+# CHECK: = NewArray {{*}}, {{*}} contents=anything
+# CHECK: Data data=d1 {{*}}encoding=CopyOnWriteArray
+# CHECK: Data data=d2 {{*}}encoding=CopyOnWriteArray
+# CHECK-LABEL: code f1:Body
+# CHECK: Data data=d3 {{*}}encoding=CopyOnWriteArray
+# CHECK-NOT: data=d4
+# CHECK: = NewArray contents=anything literalStorage=Profiled
+# CHECK-COUNT-3: = NewArray
+# RUN(ALL): walk f0 f1 mechanisms=all
+# ALL-COUNT-3: encoding=CopyOnWriteArray
+# Nothing says what the list will hold, so the first lists of the site begin with the narrowest storage.
+# RUN(BYTES): bytes f1:Body mechanisms=none
+# BYTES: Stub NewEmptyArrayAtSite.Int32
+
+data d0 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="c"}, String{value="d"}]} module=m0
+data d3 root=Array{contents=anything elements=[String{value="e"}, Boolean{value=true}, Null, Number{value=1.5}]} module=m0
+data d4 root=Array{contents=anything} module=m0
+data d5 root=Array{contents=anything elements=[Array{contents=anything elements=[String{value="f"}]}]} module=m0
+data d6 root=Array{contents=anything elements=[BigInt{digits="1"}]} module=m0
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Data data=d0
+    PropSet v0, v1 key="once" mode=Strict
+    v3 = Data data=d1
+    PropSet v0, v3 key="numbers" mode=Strict
+    v5 = NewClosure function=f1
+    PropSet v0, v5 key="make" mode=Strict
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = Data data=d2
+    v9 = PropGet v0 key="stop" [isFreeName]
+    v10 = Call v9, -, v8 calleeName="stop"
+    v11 = ToBoolean v10
+    Branch v11 -> taken b2(), notTaken b1()
+  b2():
+    v12 = Undefined
+    Return v12
+}
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="keep" [isFreeName]
+    v2 = Data data=d3
+    v3 = Call v1, -, v2 calleeName="keep"
+    v4 = Data data=d4 @120
+    v5 = Call v1, -, v4 calleeName="keep"
+    v6 = Data data=d5
+    v7 = Call v1, -, v6 calleeName="keep"
+    v8 = Data data=d6
+    v9 = Call v1, -, v8 calleeName="keep"
+    v10 = Undefined
+    Return v10
+}
+entry module=m0

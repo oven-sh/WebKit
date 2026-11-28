@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,15 +41,14 @@
 #include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCascade);
 
 PropertyCascade::PropertyCascade(const MatchResult& matchResult, IncludedProperties&& includedProperties, const HashMap<AnimatableCSSProperty, EnumSet<AnimationSource>>* animatedProperties, const StyleProperties* positionTryFallbackProperties)
     : m_matchResult(matchResult)
     , m_includedProperties(WTF::move(includedProperties))
-    , m_maximumOrigin(positionTryFallbackProperties ? PropertyCascade::Origin::PositionFallback : PropertyCascade::Origin::Author)
+    , m_maximumOrigin(PropertyCascade::Origin::Quirk)
     , m_animationLayer(animatedProperties ? std::optional { AnimationLayer { *animatedProperties } } : std::nullopt)
 {
     ASSERT(!m_includedProperties.isEmpty());
@@ -131,6 +130,13 @@ void PropertyCascade::buildCascade()
         if (!originsWithImportant[std::to_underlying(origin)])
             continue;
         addImportantMatches(origin);
+    }
+
+    // Quirk style sits above all other origins, so its declarations win regardless of importance elsewhere.
+    // Its own !important declarations are still ordered after its normal ones.
+    if (m_maximumOrigin >= Origin::Quirk) {
+        if (addNormalMatches(Origin::Quirk))
+            addImportantMatches(Origin::Quirk);
     }
 
     sortLogicalGroupPropertyIDs();
@@ -339,6 +345,12 @@ bool PropertyCascade::addMatch(const MatchedProperties& matchedProperties, Origi
             if (propertyAllowlist == PropertyAllowlist::Highlight && !isValidHighlightStyleProperty(propertyID))
                 return false;
 
+            if (propertyAllowlist == PropertyAllowlist::FirstLetter && !isValidFirstLetterStyleProperty(propertyID))
+                return false;
+
+            if (propertyAllowlist == PropertyAllowlist::FirstLine && !isValidFirstLineStyleProperty(propertyID))
+                return false;
+
             if (m_includedProperties.types.containsAll(normalPropertyTypes()))
                 return true;
 
@@ -438,12 +450,13 @@ void PropertyCascade::addPositionTryFallbackProperties()
     addMatch(*m_positionTryFallbackProperties, Origin::PositionFallback, IsImportant::No);
 }
 
-static auto& LEGACY_NODELETE declarationsForOrigin(const MatchResult& matchResult, PropertyCascade::Origin origin)
+NODELETE static auto& declarationsForOrigin(const MatchResult& matchResult, PropertyCascade::Origin origin)
 {
     switch (origin) {
     case PropertyCascade::Origin::UserAgent: return matchResult.userAgentDeclarations;
     case PropertyCascade::Origin::User: return matchResult.userDeclarations;
     case PropertyCascade::Origin::Author: return matchResult.authorDeclarations;
+    case PropertyCascade::Origin::Quirk: return matchResult.quirkDeclarations;
     case PropertyCascade::Origin::PositionFallback: break;
     }
     ASSERT_NOT_REACHED();
@@ -459,7 +472,7 @@ bool PropertyCascade::addNormalMatches(Origin origin)
     return hasImportant;
 }
 
-static bool LEGACY_NODELETE hasImportantProperties(const StyleProperties& properties)
+NODELETE static bool hasImportantProperties(const StyleProperties& properties)
 {
     for (auto property : properties) {
         if (property.isImportant())
@@ -535,5 +548,4 @@ ValueOrReference<HashSet<AnimatableCSSProperty>> PropertyCascade::overriddenAnim
     return { };
 }
 
-}
 }

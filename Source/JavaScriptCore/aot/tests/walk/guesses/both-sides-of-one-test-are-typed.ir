@@ -1,0 +1,29 @@
+# the parameter is proven a text or a list: both callers stand in the program. The guess tests for the list. It is the only test, so the block on its failing side has one edge: what the refusal leaves of the value is a text, and the arm that would be closed is typed by that proof
+# function square(x: string | string[]) { return x.length * x.length; }  square("ab"); square(["ab"]);
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest
+# CHECK: frequency=Rare
+# CHECK-NEXT: = Narrowed
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# NEVER-NOT: = PropGet
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0 calleeName="square"
+    v4 = Call v2, -, v1 calleeName="square"
+    Return v4
+}
+function f1 name="square" module=m0 length=1 thisType={type=anything} parameters=[{type=string|Array<string>}] results=[{type=anything}] {
+  b0(v0: string|Array<string>):
+    v1 = Convert v0 declared={type=string|Array<string>}
+    v2 = PropGet v1 key="length"
+    v3 = PropGet v1 key="length"
+    v4 = Mul v2, v3
+    Return v4
+}

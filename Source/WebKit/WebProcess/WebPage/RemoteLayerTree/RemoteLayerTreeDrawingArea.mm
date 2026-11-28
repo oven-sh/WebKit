@@ -265,6 +265,32 @@ void RemoteLayerTreeDrawingArea::updateRenderingWithForcedRepaintAsync(WebPage& 
     completionHandler();
 }
 
+void RemoteLayerTreeDrawingArea::buildFullLayerTreeState()
+{
+    ASSERT(!m_hasPendingFullStateRequest);
+
+    m_hasPendingFullStateRequest = true;
+    triggerRenderingUpdate();
+}
+
+void RemoteLayerTreeDrawingArea::encodeFullState(IPC::Encoder& commitEncoder, const RemoteLayerTreeCommitBundle& bundle)
+{
+    if (bundle.transactions.isEmpty() || !std::exchange(m_hasPendingFullStateRequest, false)) {
+        commitEncoder << RemoteLayerTreeFullState { };
+        return;
+    }
+
+    RemoteLayerTreeContext::FullStateEncodingScope scope(m_remoteLayerTreeContext);
+    bool isFirstTransaction = true;
+    auto transactions = WTF::map(bundle.transactions, [&](auto& rootFrameData) {
+        auto transaction = std::exchange(isFirstTransaction, false) ? scope.buildLayersTransaction(m_remoteLayerTreeContext) : makeUniqueRef<RemoteLayerTreeTransaction>();
+        transaction->copyRootStateFrom(protect(rootFrameData.first));
+        return transaction;
+    });
+
+    commitEncoder << transactions;
+}
+
 void RemoteLayerTreeDrawingArea::acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier layerID, const String& key, MonotonicTime startTime)
 {
     m_remoteLayerTreeContext->animationDidStart(layerID, key, startTime);
@@ -376,16 +402,22 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     auto transactionID = takeNextTransactionID();
     send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyPendingCommitLayerTree(transactionID, webPage->identifier()));
 
+    bool samplesFixedContainerEdges = webPage->samplesFixedContainerEdges();
+    Vector<WebCore::FrameIdentifier> rootsWithLayerChanges;
+
     auto transactions = WTF::map(m_rootLayers, [&](RootLayerInfo& rootLayer) -> RemoteLayerTreeCommitBundle::RootFrameData {
         backingStoreCollection->willBuildTransaction();
         rootLayer.layer->flushCompositingStateForThisLayerOnly();
 
-        RemoteLayerTreeTransaction layerTransaction;
+        auto layerTransaction = makeUniqueRef<RemoteLayerTreeTransaction>();
 
         RefPtr layer = downcast<GraphicsLayerCARemote>(rootLayer.layer.get()).platformCALayer();
         m_remoteLayerTreeContext->buildTransaction(layerTransaction, *layer, rootLayer.frameID);
 
         webPage->willCommitLayerTree(layerTransaction, rootLayer.frameID);
+
+        if (samplesFixedContainerEdges && layerTransaction->hasAnyLayerChanges())
+            rootsWithLayerChanges.append(rootLayer.frameID);
 
         m_waitingForBackingStoreSwap = true;
 
@@ -402,7 +434,7 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     webPage->serviceCanvasPaintEvents();
 
     for (auto& transaction : borrow(transactions))
-        backingStoreCollection->willCommitLayerTree(CheckedRef { transaction.first });
+        backingStoreCollection->willCommitLayerTree(CheckedRef { transaction.first.get() });
 
     RemoteLayerTreeCommitBundle bundle { WTF::move(transactions), { WTF::move(m_pendingCallbackIDs), protect(webPage->corePage())->renderTreeSize() }, std::nullopt, std::nullopt, transactionID, webPage->identifier() };
 
@@ -418,14 +450,19 @@ void RemoteLayerTreeDrawingArea::updateRendering()
 
     bundle.editorState = webPage->editorStateIfUpdateNeeded();
 
+    if (samplesFixedContainerEdges)
+        bundle.fixedContainerEdges = webPage->sampleFixedContainerEdges(rootsWithLayerChanges);
+
     bundle.startTime = *std::exchange(m_updateStartTime, std::nullopt);
 
     auto commitEncoder = makeUniqueRef<IPC::Encoder>(Messages::RemoteLayerTreeDrawingAreaProxy::CommitLayerTree::name(), m_identifier.toUInt64());
     commitEncoder.get() << bundle;
 
+    encodeFullState(commitEncoder.get(), bundle);
+
     Vector<std::unique_ptr<ThreadSafeImageBufferSetFlusher>> flushers;
     for (auto& transaction : borrow(bundle.transactions))
-        flushers.appendVector(backingStoreCollection->didFlushLayers(CheckedRef { transaction.first }));
+        flushers.appendVector(backingStoreCollection->didFlushLayers(CheckedRef { transaction.first.get() }));
 
     OptionSet<WebPage::DidUpdateRenderingFlags> didUpdateRenderingFlags;
     if (flushers.size())
@@ -471,12 +508,6 @@ void RemoteLayerTreeDrawingArea::displayDidRefresh(MonotonicTime start)
     // the callers of that function are not strictly paired.
 
     auto wasWaitingForBackingStoreSwap = std::exchange(m_waitingForBackingStoreSwap, false);
-
-    if (!WebProcess::singleton().shouldUseRemoteRenderingFor(WebCore::RenderingPurpose::DOM)) {
-        // This empty transaction serves to trigger CA's garbage collection of IOSurfaces. See <rdar://problem/16110687>
-        [CATransaction begin];
-        [CATransaction commit];
-    }
 
     if (m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap || (m_isScheduled && !m_scheduleRenderingTimer.isActive())) {
         m_updateStartTime = start;

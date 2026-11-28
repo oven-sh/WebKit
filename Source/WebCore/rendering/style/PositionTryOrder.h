@@ -27,8 +27,7 @@
 
 #include <WebCore/BoxSides.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // https://drafts.csswg.org/css-anchor-position-1/#position-try-order-property
 enum class PositionTryOrder : uint8_t {
@@ -39,9 +38,8 @@ enum class PositionTryOrder : uint8_t {
     MostInlineSize
 };
 
-LogicalBoxAxis LEGACY_NODELETE selfAxisForPositionTryOrder(PositionTryOrder, WritingMode selfWritingMode, WritingMode containingBlockWritingMode);
+NODELETE LogicalBoxAxis selfAxisForPositionTryOrder(PositionTryOrder, WritingMode selfWritingMode, WritingMode containingBlockWritingMode);
 
 WTF::TextStream& operator<<(WTF::TextStream&, PositionTryOrder);
 
-}
 }

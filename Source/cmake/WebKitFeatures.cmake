@@ -159,8 +159,14 @@ macro(WEBKIT_OPTION_BEGIN)
     # keep whatever is already defined.
     # When cross-building default to off, because the auto-detection here would pick
     # up the host swiftc instead of a cross-aware one and break the target build.
+    # Unless the toolchain sets CMAKE_Swift_COMPILER_TARGET for its own swiftc.
+    if (CMAKE_CROSSCOMPILING AND NOT CMAKE_Swift_COMPILER_TARGET)
+        set(_swift_cross_toolchain_unknown TRUE)
+    else ()
+        set(_swift_cross_toolchain_unknown FALSE)
+    endif ()
     if (NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
-        if (CMAKE_CROSSCOMPILING)
+        if (_swift_cross_toolchain_unknown)
             set(_swift_features_default OFF)
         elseif (COMPILER_IS_CLANG)
             _WEBKIT_DETECT_SWIFT_CXX_INTEROP_SUPPORT(_swift_interop_ok)
@@ -176,12 +182,25 @@ macro(WEBKIT_OPTION_BEGIN)
         set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
     endif ()
 
+    if (NOT DEFINED ENABLE_JAVASCRIPTCORE_TOOLS)
+        # Currently, libJavaScriptCoreTools relies on Mach API (for the corpse code). Hence,
+        # only Apple platforms are supported. Simulators and MacCatalyst are not supported by design.
+        if (APPLE AND NOT WEBKIT_SDK_IS_SIMULATOR AND NOT WEBKIT_SDK_IS_MACCATALYST)
+            set(ENABLE_JAVASCRIPTCORE_TOOLS ON)
+        else ()
+            set(ENABLE_JAVASCRIPTCORE_TOOLS OFF)
+        endif ()
+    endif ()
+    if (NOT APPLE)
+        SET_AND_EXPOSE_TO_BUILD(ENABLE_LIB_JSC_TOOLS ${ENABLE_JAVASCRIPTCORE_TOOLS})
+    endif ()
+
     # Annotating WTF's ref-counted base classes for Swift needs Swift 6.4 or newer;
     # older toolchains don't apply the annotation to derived classes. Cocoa ports
     # gate this in PlatformEnable.h on the SDK version instead.
     if (NOT DEFINED ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT)
         set(ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT OFF)
-        if (NOT APPLE AND NOT CMAKE_CROSSCOMPILING)
+        if (NOT APPLE AND NOT _swift_cross_toolchain_unknown)
             _WEBKIT_DETECT_SWIFT_VERSION_NUMBER(_swift_version_number)
             if (_swift_version_number AND _swift_version_number VERSION_GREATER_EQUAL 6.4)
                 set(ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT ON)
@@ -328,8 +347,10 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY "Toggle accelerated scrolling support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY "Toggle -webkit-touch-callout CSS property" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR "Toggle WebXR support" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_ANCHORS "Toggle WebXR Anchors Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_HIT_TEST "Toggle WebXR Hit Test Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_LAYERS "Toggle WebXR Layers support" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_PLANE_DETECTION "Toggle WebXR Plane Detection Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_API_STATISTICS "Toggle Web API statistics support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_AUDIO "Toggle Web Audio support" PRIVATE ON)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_AUTHN "Toggle Web AuthN support" PRIVATE OFF)
@@ -376,8 +397,10 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEPEND(ENABLE_VIDEO_PRESENTATION_MODE ENABLE_VIDEO)
     WEBKIT_OPTION_DEPEND(ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN ENABLE_VIDEO)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR ENABLE_WEBGL)
+    WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_ANCHORS ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_HIT_TEST ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_LAYERS ENABLE_WEBXR)
+    WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_PLANE_DETECTION ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(USE_SKIA_ENCODERS USE_SKIA)
     WEBKIT_OPTION_DEPEND(USE_EXTERNAL_MIMALLOC USE_MIMALLOC)
 endmacro()
@@ -423,9 +446,17 @@ endmacro()
 
 # enable_language(Swift) hasn't run yet and gets replaced by swiftc-wrapper
 # anyway, so resolve swiftc from PATH like the wrapper does on non-Apple hosts.
+# Honor SWIFTC first like enable_language(Swift). A cross toolchain sets it, and
+# find_program() could pick a host swiftc from CMAKE_PREFIX_PATH.
 macro(_WEBKIT_FIND_PROBE_SWIFTC _swiftc_var)
     set(${_swiftc_var} "${CMAKE_Swift_COMPILER}")
     if (NOT ${_swiftc_var} OR ${_swiftc_var} MATCHES "swiftc-wrapper")
+        if (NOT _WEBKIT_PROBE_SWIFTC AND NOT "$ENV{SWIFTC}" STREQUAL "")
+            get_filename_component(_probe_swiftc "$ENV{SWIFTC}" PROGRAM)
+            if (EXISTS "${_probe_swiftc}")
+                set(_WEBKIT_PROBE_SWIFTC "${_probe_swiftc}" CACHE FILEPATH "swiftc used to probe Swift support")
+            endif ()
+        endif ()
         find_program(_WEBKIT_PROBE_SWIFTC NAMES swiftc)
         set(${_swiftc_var} "${_WEBKIT_PROBE_SWIFTC}")
     endif ()

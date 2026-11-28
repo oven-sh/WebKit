@@ -28,17 +28,16 @@
 #include "StylePrimitiveNumericTypes.h"
 #include "StyleTransformFunctionBase.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // matrix() = matrix( <number>#{6} )
 // https://drafts.csswg.org/css-transforms/#funcdef-transform-matrix
 
 class MatrixTransformFunction final : public TransformFunctionBase {
 public:
-    static Ref<const MatrixTransformFunction> LEGACY_NODELETE createIdentity();
-    static Ref<const MatrixTransformFunction> LEGACY_NODELETE create(Number<>, Number<>, Number<>, Number<>, Number<>, Number<>);
-    static Ref<const MatrixTransformFunction> LEGACY_NODELETE create(const TransformationMatrix&);
+    NODELETE static Ref<const MatrixTransformFunction> createIdentity();
+    NODELETE static Ref<const MatrixTransformFunction> create(Number<>, Number<>, Number<>, Number<>, Number<>, Number<>);
+    NODELETE static Ref<const MatrixTransformFunction> create(const TransformationMatrix&);
 
     Ref<const TransformFunctionBase> clone() const override;
     Ref<TransformOperation> toPlatform(const FloatSize&, ZoomFactor) const override;
@@ -69,7 +68,6 @@ private:
     Number<> m_f;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_TRANSFORM_FUNCTION(WebCore::Style::MatrixTransformFunction, WebCore::Style::TransformFunctionBase::Type::Matrix ==)

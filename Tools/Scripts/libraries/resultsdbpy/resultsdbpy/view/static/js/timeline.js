@@ -24,22 +24,32 @@
 import {ArchiveRouter} from '/assets/js/archiveRouter.js';
 import {CommitBank} from '/assets/js/commit.js';
 import {Configuration} from '/assets/js/configuration.js';
-import {deepCompare, ErrorDisplay, escapeHTML, paramsToQuery, queryToParams, linkify, escapeEndpoint} from '/assets/js/common.js';
+import {deepCompare, ErrorDisplay, escapeHTML, paramsToQuery, queryToParams, linkify, escapeEndpoint, QueryModifier} from '/assets/js/common.js';
 import {Dashboard} from '/assets/js/dashboard.js';
 import {Expectations} from '/assets/js/expectations.js';
-import {InvestigateDrawer} from '/assets/js/investigate.js';
-import {TypeForSuite} from '/assets/js/suites.js';
+import {InvestigateDrawer, requestLinks, testRunLink} from '/assets/js/investigate.js';
 import {ToolTip} from '/assets/js/tooltip.js';
 import {Timeline} from '/library/js/components/TimelineComponents.js';
 import {DOM, EventStream, REF, FP} from '/library/js/Ref.js';
 
 
 const DEFAULT_LIMIT = 100;
+const MAX_CONDENSED_RUN_COUNT = 1000;
+const CONDENSED_TOOLTIP_DELAY = 200;
+const CONDENSED_TOOLTIP_STOP_RADIUS = 4;
+const CONDENSED_DOT_MARGIN = 1;
+const CONDENSED_CLICKED_COMMIT_GAP = 6;
+const CONDENSED_START_ARROW_WIDTH = 20;
+const CONDENSED_REFIT_DELAY = 150;
 
 let willFilterExpected = false;
 let showTestTimes = false;
 let showTestFlakiness = false;
 let showNumberOfFlakyTests = false;
+let showCondensedView = false;
+let hasCondensedViewSwitch = false;
+let selectionsMade = 0;
+const condensedViewQuery = new QueryModifier('condensed');
 
 const BUG_TRACKER_COLORS = {
     radar: 'var(--purple)',
@@ -157,6 +167,20 @@ function repositoriesForCommits(commits) {
         repositories = ['?'];
     repositories.sort();
     return repositories;
+}
+
+function commitMatchingSearch(scale, repositories, searchValue) {
+    for (let currentScale of scale) {
+        for (let repo of repositories) {
+            if (!currentScale[repo]) {
+                continue;
+            }
+            if (currentScale[repo].hash && currentScale[repo].hash.indexOf(searchValue) === 0 ||
+                currentScale[repo].identifier && currentScale[repo].identifier.indexOf(searchValue) === 0)
+                return {commit: currentScale[repo], newestUuid: currentScale.uuid};
+        }
+    }
+    return null;
 }
 
 function xAxisFromScale(scale, repository, updatesArray, isTop=false, viewport=null)
@@ -356,7 +380,7 @@ function combineResults() {
 }
 
 class TimelineFromEndpoint {
-    constructor(endpoint, {suite = null, test = null, viewport = null, searchEvent = null}) {
+    constructor(endpoint, {suite = null, test = null, subSuite = null, viewport = null, searchEvent = null}) {
         this.endpoint = endpoint;
         this.displayAllCommits = true;
 
@@ -372,18 +396,26 @@ class TimelineFromEndpoint {
         // Suite and test can often be implied by the endpoint, but doing so is more confusing then helpful
         this.suite = suite;
         this.test = test;
+        this.subSuite = subSuite;
 
         this.updates = [];
         this.xaxisUpdates = [];
         this.timelineUpdate = null;
         this.notifyRerender = () => {};
+        this.applyCondensedViewSwitch = () => {};
+        this.condensedViewSettings = null;
+        this.selection = null;
+        this.showSelection = () => {};
+        this.selectionToGoTo = () => null;
         this.repositories = [];
         this.viewport = viewport;
 
         const self = this;
 
         this.latestDispatch = Date.now();
-        searchEvent.action( (val) => this.onSearch(val));
+        this.searchEvent = searchEvent;
+        this.searchAction = (val) => this.onSearch(val);
+        searchEvent.action(this.searchAction);
 
         this.ref = REF.createRef({
             state: {},
@@ -406,11 +438,20 @@ class TimelineFromEndpoint {
 
     }
     teardown() {
+        this.latestDispatch = Infinity;
         CommitBank.callbacks = CommitBank.callbacks.filter((value, index, arr) => {
-            return this.commit_callback === value;
+            return this.commit_callback !== value;
         });
+        if (this.searchAction) {
+            this.searchEvent.stopAction(this.searchAction);
+            this.searchAction = null;
+        }
+        this.forgetUnrenderedRef();
     }
     update() {
+        this.applyCondensedViewSwitch();
+        if (showCondensedView || !this.timelineUpdate)
+            return;
         if (this.selectedDotsButtonGroupRef)
             this.selectedDotsButtonGroupRef.setState({show: false});
         const params = queryToParams(document.URL.split('?')[1]);
@@ -439,10 +480,12 @@ class TimelineFromEndpoint {
         this.xaxisUpdates.forEach(func => {func(this.scale);});
     }
     rerender() {
+        this.applyCondensedViewSwitch = () => {};
         const params = queryToParams(document.URL.split('?')[1]);
         this.ref.setState(params.limit ? parseInt(params.limit[params.limit.length - 1]) : DEFAULT_LIMIT);
     }
     reload() {
+        this.applyCondensedViewSwitch = () => {};
         let myDispatch = Date.now();
         this.latestDispatch = Math.max(this.latestDispatch, myDispatch);
         this.ref.setState(-1);
@@ -455,6 +498,10 @@ class TimelineFromEndpoint {
         delete sharedParams.suite;
         delete sharedParams.test;
         delete sharedParams.repository_id;
+        delete sharedParams.condensed;
+        delete sharedParams.sub_suite;
+        if (this.subSuite)
+            sharedParams.sub_suite = [this.subSuite];
 
         let newConfigs = Configuration.fromQuery();
         if (!deepCompare(newConfigs, this.configurations)) {
@@ -527,7 +574,12 @@ class TimelineFromEndpoint {
                 <div class="spinner"></div>
             </div>`;
     }
+    forgetUnrenderedRef() {
+        if (!this.ref.element)
+            delete REF.refs[this.ref.key];
+    }
     toString() {
+        this.forgetUnrenderedRef();
         this.ref = REF.createRef({
             state: this.ref.state,
             onStateUpdate: (element, state) => {
@@ -763,28 +815,27 @@ class TimelineFromEndpoint {
             </div>`);
     }
 
+    select(selection) {
+        if (!hasCondensedViewSwitch)
+            return;
+        this.selection = selection ? {...selection, order: ++selectionsMade, isNew: true} : null;
+        this.showSelection();
+    }
+
     onSearch(searchValue) {
         if (!searchValue || !searchValue.length) {
             this.searchScale(null);
+            this.searchCondensedView(null);
+            if (this.selection?.kind === 'search')
+                this.select(null);
+            return;
         }
-        let found = false;
-        for (let currentScale of this.scale) {
-            for (let repo of this.repositories) {
-                if (!currentScale[repo]) {
-                    continue;
-                }
-                if (currentScale[repo].hash && currentScale[repo].hash.indexOf(searchValue) === 0 || 
-                    currentScale[repo].identifier && currentScale[repo].identifier.indexOf(searchValue) === 0) {
-                    found = true;
-                    this.searchScale(currentScale[repo]);
-                    break;
-                }
-            }
-            if (found)
-                break;
-        }
-        if (!found)
-            this.searchScale(null);
+        const found = commitMatchingSearch(this.scale, this.repositories, searchValue);
+        this.searchScale(found ? found.commit : null);
+        if (this.searchCondensedView(searchValue))
+            this.select({kind: 'search', value: searchValue});
+        else if (this.selection?.kind === 'search')
+            this.select(null);
     };
 
     highlightRange(baseDotRenderer, seriesResults, uuidRange) {
@@ -859,7 +910,7 @@ class TimelineFromEndpoint {
         this.scale = scaleForCommits(commits);
         this.repositories = repositoriesForCommits(commits);
 
-        this.selectedDotsButtonGroupRef = REF.createRef({
+        this.selectedDotsButtonGroupRef = showCondensedView ? null : REF.createRef({
             state: {
                 show: false,
                 top: 0,
@@ -872,29 +923,6 @@ class TimelineFromEndpoint {
                     this.bugTrackers = bugTrackers;
                     this._renderSelectedDotsButtonGroup(element);
                 })
-            },
-            onStateUpdate: (element, stateDiff) => {
-                if ('show' in stateDiff) {
-                    if (stateDiff.show)
-                        element.style.display = 'block';
-                    else
-                        element.style.display = 'none';
-                }
-                if ('top' in stateDiff)
-                    element.style.top = `${stateDiff.top}px`;
-                if ('left' in stateDiff) {
-                    const rect = element.getBoundingClientRect();
-                    element.style.left = `${stateDiff.left - rect.width}px`;
-                }
-            }
-        });
-
-        this.radarButtonRef = REF.createRef({
-            state: {
-                show: false,
-                top: 0,
-                left: 0,
-                loading: false,
             },
             onStateUpdate: (element, stateDiff) => {
                 if ('show' in stateDiff) {
@@ -1015,8 +1043,21 @@ class TimelineFromEndpoint {
                 });
                 agregateData['configuration'] = new Configuration(partialConfiguration);
                 ToolTip.unset();
-                InvestigateDrawer.expand(self.suite, agregateData, allData);
+                InvestigateDrawer.expand(self.suite, agregateData, allData, self.test, self.subSuite);
             }
+        }
+
+        function commitLinksFor(uuid) {
+            return CommitBank.commitsDuring(uuid).map((commit) => {
+                let params = {
+                    branch: commit.branch ? [commit.branch] : branch,
+                    uuid: [commit.uuid],
+                }
+                if (!params.branch)
+                    delete params.branch;
+                const query = paramsToQuery(params);
+                return `<a href="/commit/info?${query}" target="_blank">${commit.label()}</a>`;
+            }).join(', ');
         }
 
         function onDotEnterFactory(configuration) {
@@ -1057,35 +1098,39 @@ class TimelineFromEndpoint {
                 buildParams['before_time'] = [data.start_time];
                 if (branch)
                     buildParams['branch'] = branch;
+                const investigateParams = Object.assign({}, buildParams);
+                if (self.subSuite)
+                    investigateParams.sub_suite = [`${self.suite}/${self.subSuite}`];
 
-                const typ = TypeForSuite(self.suite);
-                ToolTip.set(
-                    `<div class="content">
-                        ${data.start_time ? `<a href="/urls/build?${paramsToQuery(buildParams)}" target="_blank">${typ.runDescription}</a> @ ${new Date(data.start_time * 1000).toLocaleString()}<br>` : ''}
+                const run = {...data, configuration: configuration};
+                const linksRequest = requestLinks(self.suite, run);
+                const content = REF.createRef({});
+                const points = data.tipPoints.map((point) => {
+                    return {x: canvas.x + point.x, y: canvas.y + scrollDelta + point.y};
+                });
+                const setToolTip = () => ToolTip.set(
+                    `<div class="content" ref="${content}">
+                        ${data.start_time ? `${testRunLink(self.suite, run)}<br>` : ''}
                         ${data.start_time && ArchiveRouter.hasArchive(self.suite, data.actual) ? `<a href="/archive/${ArchiveRouter.pathFor(self.suite, data.actual, self.test)}?${paramsToQuery(buildParams)}" target="_blank">${ArchiveRouter.labelFor(self.suite, data.actual)}</a><br>` : ''}
-                        Commits: ${CommitBank.commitsDuring(data.uuid).map((commit) => {
-                            let params = {
-                                branch: commit.branch ? [commit.branch] : branch,
-                                uuid: [commit.uuid],
-                            }
-                            if (!params.branch)
-                                delete params.branch;
-                            const query = paramsToQuery(params);
-                            return `<a href="/commit/info?${query}" target="_blank">${commit.label()}</a>`;
-                        }).join(', ')}
+                        Commits: ${commitLinksFor(data.uuid)}
                         <br>
                         ${partialConfiguration}
                         <br>
-                        ${data.stats ? `<a href="/investigate?${paramsToQuery(buildParams)}" target="_blank">Investigate failures</a><br>` : ''}
+                        ${data.stats ? `<a href="/investigate?${paramsToQuery(investigateParams)}" target="_blank">Investigate failures</a><br>` : ''}
                         ${data.expected ? `Expected: ${data.expected}<br>` : ''}
                         ${data.actual ? `Actual: ${data.actual}<br>` : ''}
                     </div>`,
-                    data.tipPoints.map((point) => {
-                        return {x: canvas.x + point.x, y: canvas.y + scrollDelta + point.y};
-                    }),
+                    points,
                     (event) => {onDotClickFactory(configuration)(data);},
                     self.viewport,
                 );
+                setToolTip();
+                if (linksRequest) {
+                    linksRequest.then(() => {
+                        if (content.element && content.element.isConnected)
+                            setToolTip();
+                    });
+                }
             }
         }
 
@@ -1103,6 +1148,7 @@ class TimelineFromEndpoint {
 
         let children = [];
         let allConfigResults = [];
+        let condensedRows = [];
         this.configurations.forEach(configuration => {
             if (!this.results[configuration.toKey()] || Object.keys(this.results[configuration.toKey()]).length === 0)
                 return;
@@ -1136,15 +1182,20 @@ class TimelineFromEndpoint {
                 childrenConfigsBySDK[config.toKey()].forEach(sdkConfig => {
                     resultsForConfig = combineResults(resultsForConfig, resultsByKey[sdkConfig.toKey()]);
                 });
-                allResults = combineResults(allResults, resultsForConfig);
 
                 let queueParams = config.toParams();
                 queueParams['suite'] = [this.suite];
                 if (branch)
                     queueParams['branch'] = branch;
+                const queueUrl = `/urls/queue?${paramsToQuery(queueParams)}`;
+                const queueLink = `<a href="${queueUrl}" target="_blank">${config}</a>`;
+                condensedRows.push({configuration: config, label: queueLink, queueUrl, results: resultsForConfig});
+                if (showCondensedView)
+                    return;
+                allResults = combineResults(allResults, resultsForConfig);
                 const uuidsInThisSeries = new Set(resultsForConfig.map(r => r.uuid));
                 let myTimeline = Timeline.SeriesWithHeaderComponent(
-                    `${childrenConfigsBySDK[config.toKey()].length > 1 ? ' | ' : ''}<a href="/urls/queue?${paramsToQuery(queueParams)}" target="_blank">${config}</a>`,
+                    `${childrenConfigsBySDK[config.toKey()].length > 1 ? ' | ' : ''}${queueLink}`,
                     Timeline.CanvasSeriesComponent(resultsForConfig, this.scale, {
                         getScaleFunc: options.getScaleFunc,
                         compareFunc: options.compareFunc,
@@ -1235,6 +1286,130 @@ class TimelineFromEndpoint {
             ));
         });
 
+        const minimumUuid = minimumUuidForResults(this.results, limit);
+        const condensedRunWidth = () => parseInt(getComputedStyle(document.body).getPropertyValue('--smallSize')) + 2 * CONDENSED_DOT_MARGIN;
+        const condensedRunsPerLine = element => Math.max(1, Math.floor((element.getBoundingClientRect().width - CONDENSED_CLICKED_COMMIT_GAP - CONDENSED_START_ARROW_WIDTH) / condensedRunWidth()));
+        let drawnRunsPerLine = null;
+        const loadedCommits = () => commitsForResults(this.results, limit, this.allCommits);
+        const repositoryNameFor = (commit, repositories) => commit && repositories.length > 1 ? commit.repository_id : null;
+        const failureTypeFor = (result) => this.getTestResultStatus(result, willFilterExpected).failureType;
+        const markRun = (uuid) => {
+            const commit = CommitBank.commitsDuring(uuid).find(candidate => candidate.uuid === uuid);
+            return {source: 'click', uuid, commit, repository: repositoryNameFor(commit, repositoriesForCommits(loadedCommits()))};
+        };
+        const markSearch = (searchValue) => {
+            const commits = loadedCommits();
+            const repositories = repositoriesForCommits(commits);
+            const found = searchValue && commitMatchingSearch(scaleForCommits(commits), repositories, searchValue);
+            return found ? {source: 'search', uuid: found.commit.uuid, newestUuid: found.newestUuid, commit: found.commit, repository: repositoryNameFor(found.commit, repositories)} : null;
+        };
+        const markForSelection = (selection) => {
+            if (!selection)
+                return null;
+            return selection.kind === 'search' ? markSearch(selection.value) : markRun(selection.uuid);
+        };
+        const condensedViewSettings = this.condensedViewSettings;
+        this.condensedViewSettings = null;
+        if (!condensedViewSettings)
+            this.selection = null;
+        const carriedRun = condensedViewSettings?.clickedRun;
+        const carriedRunRow = carriedRun?.row && condensedRows.find(row => row.queueUrl === carriedRun.row.queueUrl);
+        const condensedViewRef = REF.createRef({
+            state: {show: showCondensedView, lineCount: null, expanded: false, markedCommit: null, ...condensedViewSettings,
+                clickedRun: carriedRunRow ? {row: carriedRunRow, uuid: carriedRun.uuid} : null},
+            onStateUpdate: (element, stateDiff, state) => {
+                const show = 'show' in stateDiff ? stateDiff.show : state.show;
+                if (!element.isConnected || (!show && !state.show))
+                    return;
+                const runWidth = condensedRunWidth();
+                const runsPerLine = condensedRunsPerLine(element);
+                const view = {...state, ...stateDiff, runsPerLine, lineWidth: runsPerLine * runWidth + CONDENSED_CLICKED_COMMIT_GAP + CONDENSED_START_ARROW_WIDTH};
+                view.goToLabel = commitLabelOf(view.clickedRun ? markRun(view.clickedRun.uuid) : view.markedCommit);
+                drawnRunsPerLine = view.show ? runsPerLine : null;
+                DOM.inject(element, view.show ? CondensedView(condensedRows, minimumUuid, view, {
+                    failureTypeFor,
+                    commitLinksFor,
+                    handlersFor: (configuration) => ({onDotEnter: onDotEnterFactory(configuration), onDotClick: onDotClickFactory(configuration)}),
+                    setView: (viewDiff) => {
+                        condensedViewRef.setState(viewDiff);
+                        if (viewDiff.clickedRun)
+                            this.select({kind: 'run', queueUrl: viewDiff.clickedRun.row.queueUrl, uuid: viewDiff.clickedRun.uuid});
+                    },
+                    clearMarkedCommit,
+                    bringStripIntoView: (row) => setTimeout(() => {
+                        const strip = stripWithQueueUrl(condensedViewRef.element, row.queueUrl);
+                        if (strip)
+                            scrollToMiddleIfOffScreen(strip);
+                    }),
+                }) : '');
+            },
+            onElementMount: (element) => {
+                let refitTimer = null;
+                const needsRefit = () => drawnRunsPerLine && condensedRunsPerLine(element) !== drawnRunsPerLine;
+                const resizeObserver = new ResizeObserver(() => {
+                    if (!element.isConnected) {
+                        resizeObserver.disconnect();
+                        clearTimeout(refitTimer);
+                        return;
+                    }
+                    if (!needsRefit())
+                        return;
+                    if (!refitTimer)
+                        condensedViewRef.setState({});
+                    clearTimeout(refitTimer);
+                    refitTimer = setTimeout(() => {
+                        refitTimer = null;
+                        if (element.isConnected && needsRefit())
+                            condensedViewRef.setState({});
+                    }, CONDENSED_REFIT_DELAY);
+                });
+                resizeObserver.observe(element);
+            },
+        });
+        this.searchCondensedView = (searchValue) => {
+            const markedCommit = markSearch(searchValue);
+            if (markedCommit)
+                condensedViewRef.setState({clickedRun: null, markedCommit});
+            else if (condensedViewRef.state.markedCommit?.source === 'search')
+                condensedViewRef.setState({markedCommit: null});
+            return markedCommit;
+        };
+        let clearTimelineMark = () => {};
+        const clearMarkedCommit = () => {
+            clearTimelineMark();
+            if (this.selection?.kind === 'search') {
+                this.searchEvent.add(null);
+                return;
+            }
+            condensedViewRef.setState({clickedRun: null, markedCommit: null});
+            this.select(null);
+        };
+        this.selectionToGoTo = () => {
+            const selection = this.selection;
+            if (!selection?.isNew || showCondensedView === condensedViewRef.state.show)
+                return null;
+            if (selection.kind !== 'run')
+                return {order: selection.order, element: null, counterpart: null};
+            return {order: selection.order, element: stripWithQueueUrl(this.ref.element, selection.queueUrl), counterpart: () => rowWithQueueUrl(this.ref.element, selection.queueUrl)};
+        };
+        if (showCondensedView) {
+            this.xaxisUpdates = [];
+            this.timelineUpdate = null;
+            this.notifyRerender = () => {};
+            this.searchScale = () => {};
+            this.showSelection = () => {};
+            this.applyCondensedViewSwitch = () => {
+                if (showCondensedView)
+                    condensedViewRef.setState({show: true});
+                else if (condensedViewRef.element?.isConnected) {
+                    const {lineCount, expanded, clickedRun, markedCommit} = condensedViewRef.state;
+                    this.condensedViewSettings = {lineCount, expanded, clickedRun, markedCommit};
+                    this.rerender();
+                }
+            };
+            return `<div ref="${condensedViewRef}"></div>`;
+        }
+
         let top = true;
         self.xaxisUpdates = [];
         this.repositories = repositoriesForCommits(commits);
@@ -1248,6 +1423,7 @@ class TimelineFromEndpoint {
         });
         this.searchScale = null;
         let searchDot = null;
+        let dotShowsSelection = false;
         const composer = FP.composer(FP.currying((updateTimeline, notifyRerender, exportedSearchScale, exportedSearchDot) => {
             self.timelineUpdate = (xAxises) => {
                 children.splice(0, 1);
@@ -1296,6 +1472,7 @@ class TimelineFromEndpoint {
 
             const targetResult = allConfigResults.find(r => r.uuid === regression.uuid);
             searchDot(targetResult);
+            dotShowsSelection = false;
 
             updateNavigationButtons();
         };
@@ -1423,6 +1600,72 @@ class TimelineFromEndpoint {
             jumpPreviousRegressPoint();
         });
 
+        const goToSelection = () => {
+            const selection = this.selection;
+            if (!selection)
+                return;
+            const scrollArea = containnerRef.element?.querySelector('.timeline > .content');
+            if (scrollArea)
+                this.notifyRerender(scrollArea.getBoundingClientRect().width);
+            if (selection.kind === 'search') {
+                searchDot(null);
+                const found = commitMatchingSearch(this.scale, this.repositories, selection.value);
+                this.searchScale(found ? found.commit : null);
+                return;
+            }
+            this.searchScale(null);
+            searchDot({uuid: selection.uuid});
+            dotShowsSelection = true;
+        };
+        const showTimelineFromStrips = () => {
+            if (!this.selection?.isNew)
+                return;
+            this.selection.isNew = false;
+            goToSelection();
+        };
+        const stripsStateFromTimeline = () => {
+            const selection = this.selection;
+            if (!selection?.isNew)
+                return {};
+            selection.isNew = false;
+            const markedCommit = markForSelection(selection);
+            const viewDiff = {clickedRun: null, markedCommit};
+            const view = {...condensedViewRef.state, ...viewDiff, runsPerLine: condensedRunsPerLine(condensedViewRef.element)};
+            if (markedCommit)
+                Object.assign(viewDiff, condensedViewDiffToShow(condensedRows, minimumUuid, view, failureTypeFor, markedCommit));
+            return viewDiff;
+        };
+        const goToSelectionButtonRef = REF.createRef({
+            state: {label: commitLabelOf(markForSelection(this.selection))},
+            onStateUpdate: (element, stateDiff) => {
+                element.style.display = stateDiff.label ? '' : 'none';
+                element.innerText = `Go to ${stateDiff.label}`;
+            },
+        });
+        goToSelectionButtonRef.fromEvent('click').action(e => {
+            goToSelection();
+            const row = this.selection?.kind === 'run' ? rowWithQueueUrl(this.ref.element, this.selection.queueUrl) : null;
+            if (row)
+                scrollToMiddleIfOffScreen(row);
+        });
+        const clearSelectionButtonRef = REF.createRef({
+            state: {show: Boolean(goToSelectionButtonRef.state.label)},
+            onStateUpdate: (element, stateDiff) => {
+                element.style.display = stateDiff.show ? '' : 'none';
+            },
+        });
+        clearSelectionButtonRef.fromEvent('click').action(e => clearMarkedCommit());
+        clearTimelineMark = () => {
+            if (dotShowsSelection)
+                searchDot(null);
+            dotShowsSelection = false;
+        };
+        this.showSelection = () => {
+            const label = commitLabelOf(markForSelection(this.selection));
+            goToSelectionButtonRef.setState({label});
+            clearSelectionButtonRef.setState({show: Boolean(label)});
+        };
+
         const searchBarRef = REF.createRef({
             state: {
                 float: false
@@ -1467,17 +1710,38 @@ class TimelineFromEndpoint {
             searchBarRef.element.style.width = `${containnerRef.element.getBoundingClientRect().width}px`;
         };
         const containnerRef = REF.createRef({
+            state: {show: true},
+            onStateUpdate: (element, stateDiff, state) => {
+                if (stateDiff.show === state.show)
+                    return;
+                element.style.display = stateDiff.show ? 'block' : 'none';
+                if (stateDiff.show) {
+                    onResizeAction();
+                    this.notifyRerender();
+                    showTimelineFromStrips();
+                }
+            },
             onElementMount: (element) => {
                 window.addEventListener("scroll", onScrollAction);
                 window.addEventListener("resize", onResizeAction);
                 onResizeAction();
+                if (condensedViewSettings)
+                    setTimeout(showTimelineFromStrips);
             },
             onElementUnmount: (element) => {
                 window.removeEventListener("scroll", onScrollAction);
-                window.addEventListener("resize", onResizeAction);
+                window.removeEventListener("resize", onResizeAction);
             }
         });
-        return `<div ref="${containnerRef}" style="position: relative">
+        this.applyCondensedViewSwitch = () => {
+            if (showCondensedView && !condensedViewRef.state.show)
+                condensedViewRef.setState({show: true, ...stripsStateFromTimeline()});
+            else
+                condensedViewRef.setState({show: showCondensedView});
+            containnerRef.setState({show: !showCondensedView});
+        };
+        return `<div ref="${condensedViewRef}"></div>
+        <div ref="${containnerRef}" style="position: relative">
             <div ref="${searchBarRef}" class="next-regress-bar">
                 <button class="button" ref="${findRegressButtonRef}">
                     Find Regression Point
@@ -1493,6 +1757,8 @@ class TimelineFromEndpoint {
                         Close
                     </button>
                 </div>
+                <button class="button" ref="${goToSelectionButtonRef}" style="display: none"></button>
+                <a class="link-button" ref="${clearSelectionButtonRef}" style="display: none" title="Clear the marked commit" aria-label="Clear the marked commit">X</a>
             </div>
             <div class="row" ref="${placeHolderRef}">
                 <div class="col-12" style="height: 40px; padding: 0"></div>
@@ -1514,6 +1780,246 @@ class TimelineFromEndpoint {
     }
 }
 
+let toolTipDot = null;
+let waitingDot = null;
+let waitStartPoint = null;
+let openWaitingToolTip = null;
+let toolTipTimer = null;
+
+function startToolTipWait(point) {
+    waitStartPoint = point;
+    clearTimeout(toolTipTimer);
+    toolTipTimer = setTimeout(finishToolTipWait, CONDENSED_TOOLTIP_DELAY);
+}
+
+function cancelToolTipWait() {
+    clearTimeout(toolTipTimer);
+    waitingDot = null;
+    waitStartPoint = null;
+    openWaitingToolTip = null;
+}
+
+function finishToolTipWait() {
+    if (waitingDot.isConnected) {
+        toolTipDot = waitingDot;
+        openWaitingToolTip();
+    }
+    cancelToolTipWait();
+}
+
+function closeToolTip() {
+    cancelToolTipWait();
+    ToolTip.unset();
+    toolTipDot = null;
+}
+
+function updateToolTipForCursor(event) {
+    const point = {x: event.clientX, y: event.clientY};
+    const dot = event.target.closest('.condensed-view .dot');
+    if (waitingDot && dot !== waitingDot)
+        cancelToolTipWait();
+    else if (waitingDot && Math.hypot(point.x - waitStartPoint.x, point.y - waitStartPoint.y) > CONDENSED_TOOLTIP_STOP_RADIUS)
+        startToolTipWait(point);
+    if (toolTipDot && !dot && !event.target.closest('.tooltip, .tooltip-content') && !ToolTip.isIn(point)) {
+        const dotBox = toolTipDot.getBoundingClientRect();
+        const isInDotBox = point.x >= dotBox.left && point.x <= dotBox.right && point.y >= dotBox.top && point.y <= dotBox.bottom;
+        if (!isInDotBox)
+            closeToolTip();
+    }
+    if (!waitingDot && !toolTipDot)
+        document.removeEventListener('mousemove', updateToolTipForCursor);
+}
+
+function isUnderToolTipArrow(dot) {
+    const dotBox = dot.getBoundingClientRect();
+    const elementOverDotCenter = document.elementFromPoint(dotBox.left + dotBox.width / 2, dotBox.top + dotBox.height / 2);
+    return !!(elementOverDotCenter && elementOverDotCenter.closest('.tooltip'));
+}
+
+function condensedViewDiffToShow(rows, minimumUuid, view, failureTypeFor, {row = null, uuid, newestUuid = uuid}) {
+    const maxLines = Math.floor(MAX_CONDENSED_RUN_COUNT / view.runsPerLine);
+    let runCount = Math.min(view.lineCount || 1, maxLines) * view.runsPerLine;
+    const runsOf = candidate => candidate.results.filter(result => result.uuid >= minimumUuid);
+    const runsToShow = 1 + Math.max(-1, ...(row ? [row] : rows).map(candidate => runsOf(candidate).findIndex(result => result.uuid >= uuid && result.uuid <= newestUuid)));
+    const viewDiff = {};
+    if (runsToShow > runCount) {
+        viewDiff.lineCount = Math.min(Math.ceil(runsToShow / view.runsPerLine), maxLines);
+        runCount = viewDiff.lineCount * view.runsPerLine;
+    }
+    if (row && !view.expanded && runsOf(row).slice(0, runCount).every(result => (failureTypeFor(result) || 'success') === 'success'))
+        viewDiff.expanded = true;
+    return viewDiff;
+}
+
+function stripWithQueueUrl(root, queueUrl) {
+    const link = root ? [...root.querySelectorAll('.condensed-view .strip a')].find(candidate => candidate.getAttribute('href') === queueUrl) : null;
+    return link ? link.closest('.strip') : null;
+}
+
+function rowWithQueueUrl(root, queueUrl) {
+    const rows = root ? [...root.querySelectorAll('.timeline > .header .series')] : [];
+    const index = rows.findIndex(row => [...row.querySelectorAll('a')].some(link => link.getAttribute('href') === queueUrl));
+    return index < 0 ? null : rows.slice(0, index + 1).reverse().find(row => row.getClientRects().length) || null;
+}
+
+function scrollToMiddleIfOffScreen(element) {
+    const headerBottom = document.querySelector('.header.fixed')?.getBoundingClientRect().bottom ?? 0;
+    const box = element.getBoundingClientRect();
+    if (box.top < headerBottom || box.top >= window.innerHeight)
+        window.scrollBy(0, box.top - (headerBottom + window.innerHeight - box.height) / 2);
+}
+
+function commitLabelOf(markedCommit) {
+    if (!markedCommit?.commit)
+        return '';
+    const repository = markedCommit.repository;
+    return `${repository ? `${repository.charAt(0).toUpperCase()}${repository.slice(1)} ` : ''}${markedCommit.commit.label()}`;
+}
+
+function CondensedView(rows, minimumUuid, view, {failureTypeFor, commitLinksFor, handlersFor, setView, clearMarkedCommit, bringStripIntoView}) {
+    const maxLines = Math.floor(MAX_CONDENSED_RUN_COUNT / view.runsPerLine);
+    const lineCount = Math.min(view.lineCount || 1, maxLines);
+    const runCount = lineCount * view.runsPerLine;
+    const strips = rows.map(row => {
+        const runs = row.results.filter(result => result.uuid >= minimumUuid).slice(0, runCount);
+        return {row, runs, types: runs.map(result => failureTypeFor(result) || 'success')};
+    });
+    const stripsWithFailures = strips.filter(strip => strip.types.some(type => type !== 'success'));
+    const stripsWithoutFailures = strips.filter(strip => !stripsWithFailures.includes(strip));
+    const unexpectedly = willFilterExpected ? ' unexpectedly' : '';
+
+    const lineCountNumberRef = REF.createRef({
+        onElementMount: (element) => {
+            element.onchange = () => {
+                const typedCount = parseInt(element.value, 10);
+                if (typedCount > 0)
+                    setView({lineCount: Math.min(typedCount, maxLines)});
+                else
+                    element.value = lineCount;
+            };
+        },
+    });
+    const LineCountButton = (newLineCount, symbol, name) => {
+        if (newLineCount < 1 || newLineCount > maxLines)
+            return `<button class="button tiny" title="${name}" aria-label="${name}" disabled>${symbol}</button>`;
+        const buttonRef = REF.createRef({
+            onElementMount: (element) => {
+                element.onclick = () => setView({lineCount: newLineCount});
+            },
+        });
+        return `<button class="button tiny" title="${name}" aria-label="${name}" ref="${buttonRef}">${symbol}</button>`;
+    };
+    const highlightClassFor = (row, runs, index) => {
+        const highlight = view.clickedRun || view.markedCommit;
+        if (!highlight)
+            return '';
+        const isOlderThanHighlight = run => run.uuid < highlight.uuid;
+        const carriesHighlightedCommit = run => !isOlderThanHighlight(run) && run.uuid <= (highlight.newestUuid || highlight.uuid);
+        const run = runs[index];
+        const nextOlderRun = runs[index + 1];
+        if (carriesHighlightedCommit(run))
+            return row === view.clickedRun?.row ? ' selected' : ' highlighted';
+        if (isOlderThanHighlight(run))
+            return index ? '' : ' line-before';
+        return nextOlderRun && !isOlderThanHighlight(nextOlderRun) ? '' : ' line-after';
+    };
+    const Strip = ({row, runs, types}) => {
+        const {onDotEnter, onDotClick} = handlersFor(row.configuration);
+        const runsRef = REF.createRef({
+            onElementMount: (element) => {
+                [...element.children].forEach((dot, index) => {
+                    dot.onmouseenter = (event) => {
+                        if (toolTipDot) {
+                            if (dot === toolTipDot || isUnderToolTipArrow(dot))
+                                return;
+                            closeToolTip();
+                        }
+                        waitingDot = dot;
+                        openWaitingToolTip = () => {
+                            const dotCenterX = dot.offsetWidth / 2;
+                            const arrowHalfDiagonal = parseFloat(getComputedStyle(document.body).getPropertyValue('--largeSize')) * Math.SQRT1_2;
+                            onDotEnter({...runs[index], tipPoints: [{x: dotCenterX, y: -arrowHalfDiagonal}, {x: dotCenterX, y: arrowHalfDiagonal}]}, event, dot.getBoundingClientRect());
+                        };
+                        startToolTipWait({x: event.clientX, y: event.clientY});
+                        document.addEventListener('mousemove', updateToolTipForCursor);
+                    };
+                    dot.onclick = () => {
+                        closeToolTip();
+                        setView({clickedRun: {row, uuid: runs[index].uuid}, markedCommit: null});
+                        onDotClick(runs[index]);
+                    };
+                });
+            },
+        });
+        const failures = types.filter(type => type !== 'success').length;
+        const failuresText = runs.length ? `${failures} of ${runs.length} run${runs.length === 1 ? '' : 's'} failed${unexpectedly}` : 'no runs in range';
+        const clickedRunCommitLinks = row === view.clickedRun?.row ? commitLinksFor(view.clickedRun.uuid) : '';
+        return `<div class="strip">
+                <div class="text tiny">${row.label} (${failuresText})${clickedRunCommitLinks ? ` · ${clickedRunCommitLinks}` : ''}</div>
+                <div class="runs" ref="${runsRef}" style="max-width: ${view.lineWidth}px">${types.map((type, index) => `<div class="dot small ${type}${highlightClassFor(row, runs, index)}${index && !(index % view.runsPerLine) ? ' wrapped' : ''}"><div class="text">${Expectations.symbolMap[type]}</div></div>`).join('')}</div>
+            </div>`;
+    };
+    const StripsWithoutFailures = () => {
+        const expanderRef = REF.createRef({
+            onElementMount: (element) => {
+                element.onclick = () => setView({expanded: !view.expanded});
+            },
+        });
+        const stripsWithoutRuns = stripsWithoutFailures.filter(strip => !strip.runs.length);
+        const ranCount = stripsWithoutFailures.length - stripsWithoutRuns.length;
+        const configurations = count => `${count} configuration${count === 1 ? '' : 's'}`;
+        let foldText = ranCount ? `${configurations(ranCount)} with no${unexpectedly ? ' unexpected' : ''} failures` : `${configurations(stripsWithoutRuns.length)} with no runs in range`;
+        if (ranCount && stripsWithoutRuns.length)
+            foldText += `, ${stripsWithoutRuns.length} with no runs in range`;
+        return `<div class="text tiny">
+                <a class="link-button" href="javascript:void(0)" ref="${expanderRef}">${view.expanded ? '-' : '+'}</a>
+                ${foldText}
+            </div>
+            ${view.expanded ? stripsWithoutFailures.map(Strip).join('') : ''}`;
+    };
+    const GoToBar = () => {
+        if (!view.goToLabel)
+            return '';
+        const goToButtonRef = REF.createRef({
+            onElementMount: (element) => {
+                element.onclick = () => {
+                    const {clickedRun, markedCommit} = view;
+                    setView(condensedViewDiffToShow(rows, minimumUuid, view, failureTypeFor, clickedRun || markedCommit));
+                    if (clickedRun)
+                        bringStripIntoView(clickedRun.row);
+                };
+            },
+        });
+        const clearButtonRef = REF.createRef({
+            onElementMount: (element) => {
+                element.onclick = clearMarkedCommit;
+            },
+        });
+        return `<div class="next-regress-bar">
+                <button class="button" ref="${goToButtonRef}">Go to ${escapeHTML(view.goToLabel)}</button>
+                <a class="link-button" ref="${clearButtonRef}" title="Clear the marked commit" aria-label="Clear the marked commit">X</a>
+            </div>`;
+    };
+    const markedCommitLabel = commitLabelOf(view.markedCommit);
+
+    return `<div class="condensed-view">
+            <div class="text tiny">Up to ${runCount} run${runCount === 1 ? '' : 's'} per configuration. Newest runs start at the arrow and go left to right. Click a run to mark its commit on every strip.${markedCommitLabel ? ` · marked: ${escapeHTML(markedCommitLabel)}` : ''}</div>
+            <div class="input text tiny">
+                <label>Lines:</label>
+                ${LineCountButton(lineCount - 1, '&minus;', 'One line fewer')}
+                <input type="number" min="1" max="${maxLines}" value="${lineCount}" aria-label="Lines" ref="${lineCountNumberRef}">
+                ${LineCountButton(lineCount + 1, '+', 'One more line')}
+            </div>
+            ${GoToBar()}
+            ${stripsWithFailures.map(Strip).join('')}
+            ${stripsWithoutFailures.length ? StripsWithoutFailures() : ''}
+        </div>`;
+}
+
+function isCondensedViewInAddress() {
+    const current = condensedViewQuery.current();
+    return ['true', 'TRUE', 'yes', 'YES', '1'].includes(current[current.length - 1]);
+}
 
 function LegendLabel(eventStream, filterExpectedText, filterUnexpectedText) {
     let ref = REF.createRef({
@@ -1527,9 +2033,13 @@ function LegendLabel(eventStream, filterExpectedText, filterUnexpectedText) {
     return `<div class="label" style="font-size: var(--smallSize)" ref="${ref}"></div>`;
 } 
 
-function Legend(callback=null, plural=false, defaultWillFilterExpected=false, flakinessSwitch=false, numberOfFlakySwitch=false) {
+function Legend(callback=null, plural=false, defaultWillFilterExpected=false, flakinessSwitch=false, numberOfFlakySwitch=false, condensedViewSwitch=false) {
     willFilterExpected = defaultWillFilterExpected;
     InvestigateDrawer.willFilterExpected = willFilterExpected;
+    if (condensedViewSwitch) {
+        hasCondensedViewSwitch = true;
+        showCondensedView = isCondensedViewInAddress();
+    }
     let updateLabelEvents = new EventStream();
     const legendDetails = {
         success: {
@@ -1635,6 +2145,41 @@ function Legend(callback=null, plural=false, defaultWillFilterExpected=false, fl
                 };
             },
         });
+        const updateTimeAndFlakinessSwitchesForCondensedView = () => {
+            [showTimesSwitch, showTestFlakinessSwitch].forEach(switchRef => {
+                const row = switchRef.element?.closest('.input');
+                if (row)
+                    row.style.display = showCondensedView ? 'none' : '';
+            });
+        };
+        let onCondensedViewPopState = null;
+        const showCondensedViewSwitch = REF.createRef({
+            onElementMount: (element) => {
+                element.onchange = () => {
+                    if (element.checked) {
+                        showCondensedView = true;
+                        condensedViewQuery.replace(true);
+                    } else {
+                        showCondensedView = false;
+                        condensedViewQuery.remove();
+                    }
+                    updateTimeAndFlakinessSwitchesForCondensedView();
+                    callback();
+                };
+                onCondensedViewPopState = () => {
+                    if (isCondensedViewInAddress() === showCondensedView)
+                        return;
+                    showCondensedView = !showCondensedView;
+                    element.checked = showCondensedView;
+                    updateTimeAndFlakinessSwitchesForCondensedView();
+                    callback();
+                };
+                window.addEventListener('popstate', onCondensedViewPopState);
+            },
+            onElementUnmount: () => {
+                window.removeEventListener('popstate', onCondensedViewPopState);
+            },
+        });
         result += `<div class="input">
             <label>Filter expected results</label>
             <label class="switch">
@@ -1643,7 +2188,7 @@ function Legend(callback=null, plural=false, defaultWillFilterExpected=false, fl
             </label>
         </div>`
         if (!plural)
-            result += `<div class="input">
+            result += `<div class="input"${showCondensedView ? ' style="display: none"' : ''}>
                 <label>Show test times</label>
                 <label class="switch">
                     <input type="checkbox"${showTestTimes ? ' checked': ''} ref="${showTimesSwitch}">
@@ -1651,7 +2196,7 @@ function Legend(callback=null, plural=false, defaultWillFilterExpected=false, fl
                 </label>
             </div>`;
         if (flakinessSwitch)
-            result += `<div class="input">
+            result += `<div class="input"${showCondensedView ? ' style="display: none"' : ''}>
                 <label>Show test flakiness</label>
                 <label class="switch">
                     <input type="checkbox"${showTestFlakiness ? ' checked': ''} ref="${showTestFlakinessSwitch}">
@@ -1663,6 +2208,14 @@ function Legend(callback=null, plural=false, defaultWillFilterExpected=false, fl
                 <label>Number of flakes</label>
                 <label class="switch">
                     <input type="checkbox"${showNumberOfFlakyTests ? ' checked': ''} ref="${showNumberOfFlakyTestsSwitch}">
+                    <span class="slider"></span>
+                </label>
+            </div>`;
+        if (condensedViewSwitch)
+            result += `<div class="input">
+                <label>Show condensed view</label>
+                <label class="switch">
+                    <input type="checkbox"${showCondensedView ? ' checked': ''} ref="${showCondensedViewSwitch}">
                     <span class="slider"></span>
                 </label>
             </div>`;

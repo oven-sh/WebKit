@@ -74,7 +74,7 @@ static const float minimumScrollEventRatioForSwipe = 0.5;
 static const float swipeSnapshotRemovalRenderTreeSizeTargetFraction = 0.5;
 #endif
 
-static HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>& LEGACY_NODELETE viewGestureControllersForAllPages()
+NODELETE static HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>& viewGestureControllersForAllPages()
 {
     // The key in this map is the associated page ID.
     static NeverDestroyed<HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>> viewGestureControllers;
@@ -381,7 +381,7 @@ String ViewGestureController::SnapshotRemovalTracker::eventsDescription(Events e
 
 void ViewGestureController::SnapshotRemovalTracker::log(StringView log) const
 {
-    RELEASE_LOG(ViewGestures, "Swipe Snapshot Removal (%0.2f ms) - %s", (MonotonicTime::now() - m_startTime).milliseconds(), log.utf8());
+    RELEASE_LOG(ViewGestures, "Swipe Snapshot Removal (%0.2f ms) - %s", (MonotonicTime::now() - m_startTime).milliseconds(), makeUTF8CString(log));
 }
 
 void ViewGestureController::SnapshotRemovalTracker::resume()
@@ -485,7 +485,7 @@ void ViewGestureController::SnapshotRemovalTracker::startWatchdog(Seconds durati
 }
 
 #if !PLATFORM(IOS_FAMILY)
-static bool LEGACY_NODELETE deltaShouldCancelSwipe(FloatSize delta)
+NODELETE static bool deltaShouldCancelSwipe(FloatSize delta)
 {
     return std::abs(delta.height()) >= std::abs(delta.width()) * minimumScrollEventRatioForSwipe;
 }
@@ -796,12 +796,11 @@ FloatPoint ViewGestureController::scaledMagnificationOrigin(FloatPoint origin, d
     float magnificationOriginScale = 1 - (scale / m_initialMagnification);
     scaledMagnificationOrigin.scale(magnificationOriginScale);
 
-    // Trackpad magnification (InputSource::UserDriven) should not have a moving origin
-    // during transient zoom. However, in configurations where that is possible, we do
-    // not want to double account for the potential scroll from the magnification origin
-    // moving around, which should already have been accounted for since we produced
-    // representative wheel events.
-    if (m_magnificationGestureInputSource != WebEventInputSource::Automation)
+    // Trackpad magnification should not have a moving origin during transient zoom. However,
+    // touch magnification (WebEventInputSource::Touch) can, and we do not want to double
+    // account for the potential scroll from the magnification origin moving around, which
+    // should already have been accounted for since we produced representative wheel events.
+    if (m_magnificationGestureInputSource != WebEventInputSource::Touch)
         scaledMagnificationOrigin.move(origin - m_initialMagnificationOrigin);
 
     return scaledMagnificationOrigin;

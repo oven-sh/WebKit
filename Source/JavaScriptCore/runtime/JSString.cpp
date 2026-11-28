@@ -23,6 +23,9 @@
 #include "config.h"
 #include "JSString.h"
 
+#if ENABLE(AOT)
+#include "AOTPropertyCachesStringKeys.h"
+#endif
 #include "JSGlobalObjectFunctions.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
@@ -111,13 +114,13 @@ bool JSString::equalResolvingRopes(JSString* other) const
         static_cast<const JSRopeString*>(this)->resolveRope(nullptr);
     else if (isRope() && other->isNonSubstringRope())
         static_cast<const JSRopeString*>(other)->resolveRope(nullptr);
-    // A piece of another string takes the characters of its equal as well: whoever compares it again finds them in one piece.
+    // A piece of another string takes the characters of its equal as well, where they are stored as wide as its own: whoever compares it again finds them in one piece.
     for (unsigned i = 0; i < 2; ++i) {
         const JSString* flat = operands[1 - i];
         if (!operands[i]->isRope() || flat->isRope())
             continue;
         StringImpl* impl = flat->valueInternal().impl();
-        if (impl && (impl->is8Bit() || !operands[i]->is8Bit()))
+        if (impl && impl->is8Bit() == operands[i]->is8Bit())
             static_cast<const JSRopeString*>(operands[i])->convertToNonRope(String { *impl });
     }
     return true;
@@ -249,6 +252,40 @@ void JSRopeString::resolveRopeInternalNoSubstring(std::span<CharacterType> buffe
     resolveToBuffer(fiber0(), fiber1(), fiber2(), buffer, stackLimit);
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE AtomString atomStringOfWideSubstring(std::span<const char16_t> characters)
+{
+    std::array<Latin1Character, AOT::SharedPart::maxLength> buffer;
+    if (std::optional latin1 = AOT::latin1CharactersOf(characters, buffer))
+        return *latin1;
+    return characters;
+}
+
+static NEVER_INLINE RefPtr<StringImpl> tryMakeCharactersOfWideSubstring(AOT::Instance& instance, const JSRopeString& string, std::span<const char16_t> characters)
+{
+    if (characters.size() < AOT::SharedPart::minLength || characters.size() > AOT::SharedPart::maxLength)
+        return nullptr;
+    return AOT::makeCharactersOfShortPart(instance, string, characters);
+}
+#endif
+
+// The characters of a substring that becomes flat. It is shorter than its base.
+static NEVER_INLINE Ref<StringImpl> makeCharactersOfSubstring(const JSRopeString& string, StringImpl& base, unsigned offset, unsigned length)
+{
+#if ENABLE(AOT)
+    // The end of a collection names stack frames by strings that are dead, and has already swept the cache of short parts.
+    if (!base.is8Bit() && !string.vm().heap.worldIsStopped()) {
+        if (AOT::Instance* instance = string.vm().aotState().onlyInstance) [[unlikely]] {
+            if (RefPtr impl = tryMakeCharactersOfWideSubstring(*instance, string, base.span16().subspan(offset, length)))
+                return impl.releaseNonNull();
+        }
+    }
+#else
+    UNUSED_PARAM(string);
+#endif
+    return StringImpl::createSubstringSharingImpl(base, offset, length);
+}
+
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
@@ -279,8 +316,20 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobal
             resolveRopeInternalNoSubstring(std::span { buffer }.first(length()), stackLimit);
             atomString = std::span<const char16_t> { buffer }.first(length());
         }
-    } else
-        atomString = StringView { substringBase()->valueInternal() }.substring(substringOffset(), length()).toAtomString();
+    } else {
+        const StringImpl& base = *substringBase()->valueInternal().impl();
+        if (base.is8Bit())
+            atomString = base.span8().subspan(substringOffset(), length());
+        else {
+            std::span<const char16_t> characters = base.span16().subspan(substringOffset(), length());
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode()) [[unlikely]]
+                atomString = atomStringOfWideSubstring(characters);
+            else
+#endif
+                atomString = characters;
+        }
+    }
 
     size_t sizeToReport = atomString.impl()->hasOneRef() ? atomString.impl()->cost() : 0;
     convertToNonRope(String { atomString.releaseImpl() });
@@ -338,8 +387,7 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
 
     if (isSubstring()) {
         ASSERT(!substringBase()->isRope());
-        auto newImpl = substringBase()->valueInternal().substringSharingImpl(substringOffset(), length());
-        convertToNonRope(function(newImpl.releaseImpl().releaseNonNull()));
+        convertToNonRope(function(makeCharactersOfSubstring(*this, *substringBase()->valueInternal().impl(), substringOffset(), length())));
         return valueInternal();
     }
 

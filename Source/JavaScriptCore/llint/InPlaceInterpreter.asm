@@ -648,7 +648,7 @@ macro ipintLoopOSRTierUp()
 if WEBASSEMBLY_BBQJIT
     move cfr, a1
     move PC, a2
-    # Add 1 to the index due to WTF::UncheckedKeyHashMap not supporting 0 as a key
+    # Add 1 to the index due to WTF::HashMap not supporting 0 as a key
     addq 1, a2
     move sp, a3
     operationCall(macro() cCall4(_ipint_extern_loop_osr) end)
@@ -1331,6 +1331,9 @@ end)
 
 op(ipint_entry, macro()
 if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
+    if RETURN_ADDRESS_SIGNING
+        tagReturnAddress sp
+    end
     preserveCallerPCAndCFR()
     saveIPIntRegisters()
     storep wasmInstance, CodeBlock[cfr]
@@ -1530,7 +1533,9 @@ end)
 # Trampoline entrypoints
 
 op(ipint_trampoline, macro ()
-    tagReturnAddress sp
+    if not RETURN_ADDRESS_SIGNING
+        tagReturnAddress sp
+    end
     jmp _ipint_entry
 end)
 

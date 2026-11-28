@@ -31,8 +31,7 @@
 #include "StyleScope.h"
 #include <wtf/HashSet.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class ChildChangeInvalidation {
 public:
@@ -52,7 +51,7 @@ private:
     void invalidateForChangedElement(Element&, MatchingHasSelectors&, ChangedElementRelation);
     void invalidateForHasSiblings(MatchingHasSelectors&, MutationPhase);
 
-    bool LEGACY_NODELETE emptyStateMayChange() const;
+    NODELETE bool emptyStateMayChange() const;
 
     template<typename Function> void traverseRemovedElements(NOESCAPE const Function&);
     template<typename Function> void traverseAddedElements(NOESCAPE const Function&);
@@ -95,5 +94,4 @@ inline ChildChangeInvalidation::~ChildChangeInvalidation()
     invalidateAfterChange();
 }
 
-}
 }

@@ -1,0 +1,67 @@
+# `[a, b] = [b, a]`: nothing but the pattern names the literal, so the step that is written as number k hands on what the literal lists at k.
+# What comes round is what the other parameter of the head held, so both heads hold 1 or 2 and nothing wider. Nothing needs the list, and the sweep drops it.
+# function swap(n) { let a = 1, b = 2; for (let i = 0; i < n; i++) [a, b] = [b, a]; return a * 10 + b; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[a]]: int[1, 2] {{*}}, [[b]]: int[1, 2] {{*}}isLoopHead=true
+# CHECK: Jump -> next {{*}}([[b]], [[a]],
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = NewArray
+# NEVER-NOT: @@iterator
+# NEVER-NOT: NewHeapWords
+# NEVER-NOT: = Call
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED: = NewArray
+# CLOSED: = PropGet {{*}}key=@@iterator
+# CLOSED: = NewHeapWords
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="swap" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Integer
+    Jump -> next b1(v1, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b8()
+  b2():
+    v9 = NewArray v5, v4 contents=anything
+    v10 = IteratorOpen v9 elementCount=2 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b7():
+    v11 = IteratorResume v10 stepIndex=0
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Jump -> next b4()
+  b4() handler=b7():
+    v14 = IteratorResume v10 stepIndex=1
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Jump -> next b5()
+  b5():
+    IteratorClose v10
+    Jump -> next b6()
+  b6():
+    v18 = Increment v6
+    Jump -> next b1(v13, v16, v18)
+  b7() role=IterationCleanup subject=v10:
+    v19 = CatchException
+    IteratorClose v10 completion=Throw
+    Rethrow v19
+  b8():
+    v21 = Integer integer=10
+    v22 = Mul v4, v21
+    v23 = Add v22, v5
+    Return v23
+}

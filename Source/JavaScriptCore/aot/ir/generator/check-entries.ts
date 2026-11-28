@@ -36,6 +36,8 @@ const conditionOperandName = "condition";
 const builtinNameExternal = "BuiltinName";
 const accessesWithStoredValue: ReadonlySet<string> = new Set(["Store", "Define"]);
 const columnsReadByRust: readonly string[] = ["isIntrinsic"];
+const formsByStateColumns: readonly string[] = ["openUnder", "closedUnder", "runtimeUnder"];
+const formsByPlaceColumns: readonly string[] = ["openIn", "closedIn", "runtimeIn"];
 
 export function equalsIgnoringRoles(left: Kind, right: Kind): boolean {
   switch (left.tag) {
@@ -125,7 +127,8 @@ function checkAccessorName(
   errors: ErrorList,
 ): void {
   if (!reservedAccessorNames.has(item.name) && !reservedAccessorNames.has(cppSetterName(item.name))) return;
-  errors.add(item.location, `${description} ${item.name} of ${entry.name} has the name of a member of Value`);
+  const problem = "has the name of a member of a cursor or of a record of Code";
+  errors.add(item.location, `${description} ${item.name} of ${entry.name} ${problem}`);
 }
 
 function checkNames(entry: Entry, errors: ErrorList): void {
@@ -318,17 +321,77 @@ function checkExclusiveParameters(entry: Entry, errors: ErrorList): void {
   }
 }
 
+function checkPassThroughOperand(entry: Entry, errors: ErrorList): void {
+  const way = nonzeroMemberOf(entry, "passThrough");
+  const [first, ...others] = operandsOf(entry);
+  const returns = (operand: Operand) => operand.uses.uses.some(use => use.name === "Returns");
+  if (way === null) {
+    if (entry.isTerminator || first === undefined || !returns(first)) return;
+    const rule = entry.result.unproven;
+    const givesFirst = rule.rule === "Natural" && rule.natural.tag === "SameAs" && rule.natural.operand.name === first.name;
+    const { isUnknownCode, writes, writesAllHeaps } = entry.effects;
+    if (givesFirst && !isUnknownCode && !writesAllHeaps && writes.length === 0) {
+      errors.add(entry.location, `${entry.name} gives its first operand, writes nothing and does not say how: passThrough`);
+    }
+    return;
+  }
+  if (first === undefined || first.isOptional || first.isVariadic || !returns(first)) {
+    errors.add(entry.location, `${entry.name} hands on ${way.name} and its first operand is not one that it returns`);
+  }
+  for (const operand of others.filter(returns)) {
+    errors.add(operand.location, `${entry.name} hands on its first operand and returns ${operand.name} as well`);
+  }
+  if (entry.effects.isUnknownCode || entry.result.unproven.rule === "Allocation") {
+    errors.add(entry.location, `${entry.name} hands on ${way.name} and runs code or makes something`);
+  }
+}
+
+function membersOf(entry: Entry, column: string): readonly Member[] {
+  const value = entry.columns.get(column);
+  return value?.tag === "Members" ? value.members : [];
+}
+
+function checkListsAreApart(entry: Entry, columns: readonly string[], errors: ErrorList): void {
+  const listOf = new Map<string, string>();
+  for (const column of columns) {
+    for (const member of membersOf(entry, column)) {
+      const other = listOf.get(member.name);
+      if (other !== undefined) errors.add(entry.location, `${entry.name} lists ${member.name} in ${other} and in ${column}`);
+      listOf.set(member.name, column);
+    }
+  }
+}
+
+function checkFormColumns(entry: Entry, errors: ErrorList): void {
+  const { location, name } = entry;
+  checkListsAreApart(entry, formsByStateColumns, errors);
+  checkListsAreApart(entry, formsByPlaceColumns, errors);
+  const listsFormsByState = formsByStateColumns.some(column => membersOf(entry, column).length > 0);
+  if (entry.columns.has("form") && listsFormsByState) {
+    errors.add(location, `${name} has one form and lists forms by what is known`);
+  }
+  if (!entry.isTerminator && isLegalIn(entry, "Placed") && !entry.columns.has("form") && !listsFormsByState) {
+    const columns = formsByStateColumns.join(", ");
+    errors.add(location, `${name} may stand in Code and names no form: form = Open, Closed or Runtime, or each state in one of ${columns}`);
+  }
+  const places = formsByPlaceColumns.flatMap(column => membersOf(entry, column));
+  const noPlace = places.find(place => place.number === 0);
+  if (noPlace !== undefined) errors.add(location, `${name} lists ${noPlace.name}, which is no place`);
+  if (places.some(place => place.name === "Loop") && !isTrue(entry, "formDependsOnLoop")) {
+    errors.add(location, `${name} has a form of its own in loops and does not set formDependsOnLoop`);
+  }
+}
+
 function checkColumns(entry: Entry, errors: ErrorList): void {
   checkAccessColumns(entry, errors);
+  checkFormColumns(entry, errors);
+  checkPassThroughOperand(entry, errors);
   const proof = nonzeroMemberOf(entry, "proves");
   if (proof !== null && !entry.isTerminator && !isNaturalBoolean(entry.result)) {
     errors.add(entry.location, `${entry.name} proves ${proof.name} and its result is not natural(boolean)`);
   }
   checkCollectorColumns(entry, errors);
   checkReplacedEntries(entry, errors);
-  if (entry.lastForm === firstForm && nonzeroMemberOf(entry, "removedBy") === null) {
-    errors.add(entry.location, `${entry.name} ends at ${firstForm} and has no removedBy`);
-  }
   checkExclusiveParameters(entry, errors);
 }
 

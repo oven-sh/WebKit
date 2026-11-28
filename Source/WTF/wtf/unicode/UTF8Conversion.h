@@ -30,8 +30,7 @@
 #include <wtf/ExportMacros.h>
 #include <wtf/text/Latin1Character.h>
 
-namespace WTF {
-namespace Unicode {
+namespace WTF::Unicode {
 
 enum class ConversionResultCode : uint8_t {
     Success, // conversion successful
@@ -47,14 +46,14 @@ template<typename CharacterType> struct ConversionResult {
 
 WTF_EXPORT_PRIVATE ConversionResult<char16_t> convert(std::span<const char8_t>, std::span<char16_t>);
 WTF_EXPORT_PRIVATE ConversionResult<char8_t> convert(std::span<const char16_t>, std::span<char8_t>);
-WTF_EXPORT_PRIVATE ConversionResult<char8_t> LEGACY_NODELETE convert(std::span<const Latin1Character>, std::span<char8_t>);
+NODELETE WTF_EXPORT_PRIVATE ConversionResult<char8_t> convert(std::span<const Latin1Character>, std::span<char8_t>);
 
 // Invalid sequences are converted to the replacement character.
 WTF_EXPORT_PRIVATE ConversionResult<char16_t> convertReplacingInvalidSequences(std::span<const char8_t>, std::span<char16_t>);
-WTF_EXPORT_PRIVATE ConversionResult<char8_t> LEGACY_NODELETE convertReplacingInvalidSequences(std::span<const char16_t>, std::span<char8_t>);
+NODELETE WTF_EXPORT_PRIVATE ConversionResult<char8_t> convertReplacingInvalidSequences(std::span<const char16_t>, std::span<char8_t>);
 
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equal(std::span<const char16_t>, std::span<const char8_t>);
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equal(std::span<const Latin1Character>, std::span<const char8_t>);
+NODELETE WTF_EXPORT_PRIVATE bool equal(std::span<const char16_t>, std::span<const char8_t>);
+NODELETE WTF_EXPORT_PRIVATE bool equal(std::span<const Latin1Character>, std::span<const char8_t>);
 
 // The checkUTF8 function checks the UTF-8 and returns a span of the valid complete
 // UTF-8 sequences at the start of the passed-in characters, along with the UTF-16
@@ -67,5 +66,4 @@ struct CheckedUTF8 {
 WTF_EXPORT_PRIVATE CheckedUTF8 checkUTF8(std::span<const char8_t>);
 WTF_EXPORT_PRIVATE std::span<const char8_t> checkUTF8WithoutUTF16Length(std::span<const char8_t>);
 
-} // namespace Unicode
-} // namespace WTF
+} // namespace WTF::Unicode

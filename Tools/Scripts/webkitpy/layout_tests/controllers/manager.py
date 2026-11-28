@@ -52,6 +52,7 @@ from webkitcorepy.string_utils import pluralize
 
 from webkitpy.common.net import results_database
 from webkitpy.common.iteration_compatibility import iteritems, itervalues
+from webkitpy.common.system.crashlogs import CrashLogs
 from webkitpy.layout_tests.controllers.layout_test_finder_legacy import LayoutTestFinder
 from webkitpy.layout_tests.controllers.layout_test_runner import LayoutTestRunner
 from webkitpy.layout_tests.controllers.test_result_writer import TestResultWriter
@@ -183,6 +184,9 @@ class Manager(object):
             self._expectations[(driver_name, device_type)] = test_expectations.TestExpectations(self._port, test_names, force_expectations_pass=self._options.force, device_type=device_type)
             self._expectations[(driver_name, device_type)].parse_all_expectations()
             self._expectations[(driver_name, device_type)].add_test_list_expectations(self._finder.get_test_list_expectations())
+            if driver_name == 'DumpRenderTree':
+                # FIXME: DumpRenderTree can't render WPT print reftests as printed pages (rdar://191464040).
+                self._expectations[(driver_name, device_type)].add_skipped_tests({test.test_path for test in tests if test.is_wpt_print_reftest})
 
             tests_to_run = self._tests_to_run(tests, device_type=device_type)
             tests_to_run_by_device[device_type] = [test for test in tests_to_run if test not in aggregate_tests_to_run]
@@ -315,6 +319,7 @@ class Manager(object):
         else:
             should_run_pixel_test = True
 
+        expectations = self._expectations[(self._current_driver_name, device_type)]
         return TestInput(
             test_file,
             timeout=timeout,
@@ -322,6 +327,7 @@ class Manager(object):
             needs_servers=test_file.needs_any_server,
             should_dump_jsconsolelog_in_stderr=should_dump_jsconsolelog_in_stderr,
             should_run_pixel_test=should_run_pixel_test,
+            expected_results=frozenset(expectations.filtered_expectations_for_test(test_file.test_path, self._options.pixel_tests or bool(test_file.reference_files), self._options.world_leaks)),
         )
 
     def _test_is_slow(self, test_file, device_type):
@@ -381,9 +387,12 @@ class Manager(object):
                     _log.critical('--test-list file "{}" not found'.format(list_path))
                     return test_run_results.RunDetails(exit_code=-1)
 
+        self._port.warn_about_ignored_sanitizer_options()
+
         overall_initial_results = None
         overall_retry_results = None
         overall_enabled_pixel_tests_in_retry = False
+        overall_skipped_by_disabled_keys = 0
         overall_start_time = time.time()
         max_child_processes_for_run = 1
         all_uploads = []
@@ -587,10 +596,12 @@ class Manager(object):
                     self._port, driver_expectations, initial_results, retry_results, enabled_pixel_tests_in_retry
                 )
                 self._save_json_files(summarized_results_for_driver, initial_results, subdirectory)
+                self._write_skipped_by_disabled_keys(initial_results)
 
             self._runner.stop_servers()
 
             if initial_results:
+                overall_skipped_by_disabled_keys += len(initial_results.skipped_by_disabled_keys())
                 if overall_initial_results:
                     overall_initial_results = overall_initial_results.merge(initial_results)
                 else:
@@ -619,7 +630,7 @@ class Manager(object):
                 overall_retry_results.results_by_name[test_name] = result
 
         end_time = time.time()
-        result = self._end_test_run(overall_start_time, end_time, overall_initial_results, overall_retry_results, overall_enabled_pixel_tests_in_retry)
+        result = self._end_test_run(overall_start_time, end_time, overall_initial_results, overall_retry_results, overall_enabled_pixel_tests_in_retry, overall_skipped_by_disabled_keys)
 
         if self._options.report_urls and all_uploads:
             self._printer.writeln('\n')
@@ -683,7 +694,7 @@ class Manager(object):
 
         return (initial_results, retry_results, enabled_pixel_tests_in_retry)
 
-    def _end_test_run(self, start_time, end_time, initial_results, retry_results, enabled_pixel_tests_in_retry):
+    def _end_test_run(self, start_time, end_time, initial_results, retry_results, enabled_pixel_tests_in_retry, skipped_by_disabled_keys):
         if initial_results is None:
             _log.error('No results generated')
             return test_run_results.RunDetails(exit_code=-1)
@@ -702,7 +713,7 @@ class Manager(object):
             if device_type not in flat_expectations:
                 flat_expectations[device_type] = exp
         summarized_results = test_run_results.summarize_results(self._port, flat_expectations, initial_results, retry_results, enabled_pixel_tests_in_retry)
-        self._printer.print_results(end_time - start_time, initial_results, summarized_results)
+        self._printer.print_results(end_time - start_time, initial_results, summarized_results, skipped_by_disabled_keys)
 
         if self._options.check_pre_existing_failures:
             results = retry_results if retry_results else initial_results
@@ -835,6 +846,7 @@ class Manager(object):
             test_expectations.IMAGE_PLUS_TEXT: ' '.join([Upload.Expectations.IMAGE, Upload.Expectations.TEXT]),
         }
 
+        logs = self._logs_to_upload(results)
         results_trie = {}
         for result in itervalues(results.results_by_name):
             if result.type == test_expectations.SKIP:
@@ -855,9 +867,46 @@ class Manager(object):
                 Upload.create_test_result(
                     expected=expected,
                     actual=FAILURE_TO_TEXT.get(result.type, Upload.Expectations.FAIL) if result.type else None,
+                    log=logs.get(result.test_name),
                     time=int(result.test_run_time * 1000),
                 ), results_trie)
         return results_trie
+
+    def _logs_to_upload(self, results):
+        logs = {}
+        for test_name in results.unexpected_results_by_name:
+            result_type = results.results_by_name[test_name].type
+            if result_type in (test_expectations.PASS, test_expectations.SKIP):
+                continue
+            output = self._failure_output(test_name, result_type)
+            if output:
+                logs[test_name] = Upload.truncate_log(output)
+        return logs
+
+    def _failure_output(self, test_name, result_type):
+        writer = TestResultWriter(self._filesystem, self._port, self._results_directory, test_name)
+        stderr = self._read_result_file(writer, TestResultWriter.FILENAME_SUFFIX_STDERR + '.txt')
+        if result_type == test_expectations.CRASH:
+            crash_log = self._read_result_file(writer, TestResultWriter.FILENAME_SUFFIX_CRASH_LOG + '.txt')
+            crashed_thread = CrashLogs.crashed_thread(crash_log) if crash_log else None
+            return '\n'.join(text for text in [stderr, crashed_thread] if text)
+        diff = self._read_result_file(writer, TestResultWriter.FILENAME_SUFFIX_DIFF + '.txt')
+        if diff:
+            return self._diff_without_file_names(diff)
+        return stderr
+
+    def _read_result_file(self, writer, modifier):
+        path = writer.output_filename(modifier)
+        if not self._filesystem.exists(path):
+            return None
+        return self._filesystem.read_binary_file(path).decode('utf-8', 'replace')
+
+    @staticmethod
+    def _diff_without_file_names(diff):
+        lines = diff.split('\n', 2)
+        if len(lines) == 3 and lines[0].startswith('--- ') and lines[1].startswith('+++ '):
+            return lines[2]
+        return diff
 
     def _save_json_files(self, summarized_results, initial_results, subdirectory=None):
         """Writes the results of the test run as JSON files into the results
@@ -882,6 +931,17 @@ class Manager(object):
         else:
             jsonp_string = "ADD_RESULTS({});".format(json_string)
         self._filesystem.write_text_file(full_results_path, jsonp_string)
+
+    def _write_skipped_by_disabled_keys(self, initial_results):
+        path = self._filesystem.join(self._results_directory, 'skipped-by-disabled-keys.txt')
+        if not self._port.disabled_keys():
+            if self._filesystem.isfile(path):
+                self._filesystem.remove(path)
+            return
+        self._filesystem.write_text_file(
+            path,
+            ''.join('{}\t{}\n'.format(test_name, key) for test_name, key in sorted(initial_results.skipped_by_disabled_keys().items())),
+        )
 
     def _copy_results_html_file(self, filename, destination_path):
         base_dir = self._port.harness_resources_dir()

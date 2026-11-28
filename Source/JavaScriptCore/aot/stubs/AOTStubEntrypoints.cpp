@@ -20,7 +20,7 @@
 namespace JSC { namespace AOT {
 
 static_assert([] {
-    for (StubFamily family : { StubFamily::EnterClosure, StubFamily::EnterSlimClosure, StubFamily::EnterModuleBody, StubFamily::EnterClosureForConstruct }) {
+    for (StubFamily family : { StubFamily::EnterClosure, StubFamily::EnterSlimClosure, StubFamily::EnterModuleBody, StubFamily::EnterClosureWithLoadedArguments, StubFamily::EnterClosureForConstruct }) {
         if (descriptorOf(family).linkage != StubLinkage::EnteredByRuntime)
             return false;
     }
@@ -65,30 +65,6 @@ CodePtr<JSEntryPtrTag> constructEntrypoint()
     return entrypointInCurrentImage(Image::FrequentStub::EnterClosureForConstruct, StubKey(StubFamily::EnterClosureForConstruct));
 }
 
-static CodePtr<JSEntryPtrTag> entrypointIn(const Image& image, Image::FrequentStub stub, StubKey key)
-{
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(image.frequentStub(stub, [&] {
-        const void* address = image.stubAddress(key);
-        RELEASE_ASSERT_WITH_MESSAGE(address, "The AOT image has no such stub.");
-        return tagCodePtr<JSEntryPtrTag>(const_cast<void*>(address));
-    }));
-}
-
-CodePtr<JSEntryPtrTag> closureEntrypointOf(const Image& image)
-{
-    return entrypointIn(image, Image::FrequentStub::EnterClosure, StubKey(StubFamily::EnterClosure));
-}
-
-CodePtr<JSEntryPtrTag> slimClosureEntrypointOf(const Image& image)
-{
-    return entrypointIn(image, Image::FrequentStub::EnterSlimClosure, StubKey(StubFamily::EnterSlimClosure));
-}
-
-CodePtr<JSEntryPtrTag> constructEntrypointOf(const Image& image)
-{
-    return entrypointIn(image, Image::FrequentStub::EnterClosureForConstruct, StubKey(StubFamily::EnterClosureForConstruct));
-}
-
 static BoxedCallEntry& findBoxedCallEntry(std::span<BoxedCallEntry> entries, const void* nativeFunction)
 {
     unsigned index = StubWords::indexOfBoxedCall(std::bit_cast<uintptr_t>(nativeFunction));
@@ -101,6 +77,9 @@ void initializeStubWords(Instance& instance)
 {
     instance.stubs.closureEntrypoint = closureEntrypoint().taggedPtr();
     instance.stubs.slimClosureEntrypoint = slimClosureEntrypoint().taggedPtr();
+    instance.stubs.closureEntryWithLoadedArguments = addressOfStubInCurrentImage(StubKey(StubFamily::EnterClosureWithLoadedArguments));
+    if (std::optional<BuiltinNativeFunction> push = BuiltinBindings::nativeFunctionOf(Builtins::ArrayPrototypePush); push && push->function)
+        instance.stubs.arrayPush = TaggedNativeFunction(push->function).taggedPtr();
 
     constexpr unsigned numberOfCounts = BoxedCallEntry::maxArgumentCount - BoxedCallEntry::minArgumentCount + 1;
     const Image& image = *Image::current();
@@ -118,9 +97,8 @@ void initializeStubWords(Instance& instance)
         BoxedCallEntry& entry = findBoxedCallEntry(instance.boxedCalls(), nativeFunction);
         bool isFree = !entry.nativeFunction;
         if (isFree) {
-            // A probe, here and in FindBoxedCall, ends at a free entry.
             ++numberOfUsedEntries;
-            RELEASE_ASSERT(numberOfUsedEntries * 2 <= StubWords::numberOfBoxedCallEntries);
+            RELEASE_ASSERT(numberOfUsedEntries * 4 <= StubWords::numberOfBoxedCallEntries * 3);
             entry.nativeFunction = nativeFunction;
         }
 

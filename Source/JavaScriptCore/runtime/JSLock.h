@@ -113,7 +113,7 @@ public:
         return *m_ownerThread;
     }
 
-    void LEGACY_NODELETE willDestroyVM(VM*);
+    NODELETE void willDestroyVM(VM*);
 
     class DropAllLocks {
         WTF_MAKE_NONCOPYABLE(DropAllLocks);
@@ -128,7 +128,7 @@ public:
 
     private:
         intptr_t m_droppedLockCount;
-        RefPtr<VM> m_vm;
+        const RefPtr<VM> m_vm;
         unsigned m_dropDepth;
     };
 

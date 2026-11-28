@@ -27,17 +27,23 @@
 #include "ProxyingPageAgent.h"
 
 #include "APIData.h"
+#include "FrameInspectorTarget.h"
+#include "GPUProcessProxy.h"
 #include "HandleMessage.h"
+#include "ImageOptions.h"
 #include "ProvisionalFrameProxy.h"
 #include "ProxyingPageAgentMessages.h"
+#include "RemoteSnapshotIdentifier.h"
 #include "ValidationProcedures.h"
 #include "WebFrameProxy.h"
 #include "WebInspectorBackendMessages.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <JavaScriptCore/InspectorProtocolObjects.h>
+#include <WebCore/ImageUtilities.h>
 #include <WebCore/InspectorIdentifierRegistry.h>
 #include <WebCore/SecurityOriginData.h>
+#include <WebCore/ShareableBitmap.h>
 #include <wtf/Borrow.h>
 #include <wtf/Box.h>
 #include <wtf/CallbackAggregator.h>
@@ -177,6 +183,14 @@ void ProxyingPageAgent::frameSwappedOutOfProcess(FrameIdentifier frameID, Proces
     m_frontendDispatcher->frameDetached(IdentifierRegistry::protocolFrameId(frameID, oldProcessID));
 }
 
+void ProxyingPageAgent::provisionalFrameDiscarded(FrameIdentifier frameID, ProcessIdentifier processID)
+{
+    if (!m_enabled)
+        return;
+
+    m_frontendDispatcher->frameDetached(IdentifierRegistry::protocolFrameId(frameID, processID));
+}
+
 // MARK: - Frontend lifecycle
 
 void ProxyingPageAgent::didCreateFrontendAndBackend()
@@ -209,6 +223,9 @@ void ProxyingPageAgent::enableInstrumentationForProcess(WebProcessProxy& webProc
     // exactly once per (process, page) registration, guarded above.
     if (m_showPaintRects)
         webProcess.send(Messages::WebInspectorBackend::SetShowPaintRects { true }, pageID);
+
+    for (auto& [setting, value] : m_settingOverrides)
+        webProcess.send(Messages::WebInspectorBackend::SetSettingOverride { setting, value }, pageID);
 
     // Sent before the provisional frame's load is allowed to start (see WebFrameProxy::prepareForProvisionalLoadInProcess),
     // so the first document committed in a new process already sees the script.
@@ -299,6 +316,8 @@ CommandResult<void> ProxyingPageAgent::enable()
 
 CommandResult<void> ProxyingPageAgent::disable()
 {
+    m_settingOverrides.clear();
+
     if (!m_enabled)
         return { };
 
@@ -471,8 +490,22 @@ CommandResult<void> ProxyingPageAgent::overrideUserAgent(const String&)
     return { };
 }
 
-CommandResult<void> ProxyingPageAgent::overrideSetting(Protocol::Page::Setting, std::optional<bool>&&)
+// Only the frontend may set this: relaying settings from a WebContent process would let one site change another site's process.
+CommandResult<void> ProxyingPageAgent::overrideSetting(Protocol::Page::Setting setting, std::optional<bool>&& value)
 {
+    auto settingName = Protocol::Helpers::getEnumConstantValue(setting);
+    if (value)
+        m_settingOverrides.set(settingName, *value);
+    else
+        m_settingOverrides.remove(settingName);
+
+    if (!m_enabled)
+        return { };
+
+    forEachInstrumentedProcess([&](auto& webProcess, auto pageID) {
+        webProcess.send(Messages::WebInspectorBackend::SetSettingOverride { settingName, value }, pageID);
+    });
+
     return { };
 }
 
@@ -481,20 +514,21 @@ CommandResult<void> ProxyingPageAgent::overrideUserPreference(Protocol::Page::Us
     return { };
 }
 
-// FIXME: <https://webkit.org/b/308900> Forward cookie commands to correct WebContent process.
+// Required by PageBackendDispatcherHandler. These commands are targetTypes ["page"], so the frontend
+// sends them to the WebContent page target; under Site Isolation it uses the Storage domain instead.
 CommandResult<Ref<JSON::ArrayOf<Protocol::Page::Cookie>>> ProxyingPageAgent::getCookies()
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+    return makeUnexpected("Page.getCookies is not supported for this target; use Storage.getCookies"_s);
 }
 
 CommandResult<void> ProxyingPageAgent::setCookie(Ref<JSON::Object>&&, std::optional<bool>&&)
 {
-    return { };
+    return makeUnexpected("Page.setCookie is not supported for this target; use Storage.setCookie"_s);
 }
 
 CommandResult<void> ProxyingPageAgent::deleteCookie(const String&, const String&)
 {
-    return { };
+    return makeUnexpected("Page.deleteCookie is not supported for this target; use Storage.deleteCookies"_s);
 }
 
 void ProxyingPageAgent::getResourceContent(const Protocol::Network::FrameId& frameId, const String& url, Ref<GetResourceContentCallback>&& callback)
@@ -760,14 +794,119 @@ CommandResult<void> ProxyingPageAgent::setEmulatedMedia(const String&)
     return { };
 }
 
-CommandResult<String> ProxyingPageAgent::snapshotNode(Protocol::DOM::NodeId)
+#if PLATFORM(COCOA)
+// The committed frame of this page that a frame target's identifier names.
+static RefPtr<WebFrameProxy> frameForFrameTarget(WebFrameProxy& mainFrame, const String& targetId)
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+    for (RefPtr frame = &mainFrame; frame; frame = frame->traverseNext(&mainFrame)) {
+        if (FrameInspectorTarget::toTargetID(frame->frameID(), frame->process().coreProcessIdentifier()) == targetId)
+            return frame;
+    }
+    return nullptr;
+}
+#endif
+
+// The process that hosts the DOM agent of the node's target paints the node. If frames of other processes are below
+// that target's frame, it records into a remote snapshot, which the GPU process completes and only the UI process
+// receives. See WebPageProxy::takeSnapshotForTargetedElement().
+void ProxyingPageAgent::snapshotNode(Protocol::DOM::NodeId nodeId, const String& targetId, Ref<SnapshotNodeCallback>&& callback)
+{
+#if PLATFORM(COCOA)
+    Ref inspectedPage = m_inspectedPage;
+    RefPtr mainFrame = inspectedPage->mainFrame();
+    if (!mainFrame) {
+        callback->sendFailure("Missing main frame"_s);
+        return;
+    }
+
+    // The page target's nodes come from the main frame's process, and a frame target's from its frame's.
+    std::optional<FrameIdentifier> targetFrameID;
+    RefPtr rootFrame = mainFrame;
+    if (!targetId.isEmpty()) {
+        rootFrame = frameForFrameTarget(*mainFrame, targetId);
+        if (!rootFrame) {
+            callback->sendFailure("Missing frame target for given targetId"_s);
+            return;
+        }
+        targetFrameID = rootFrame->frameID();
+    }
+
+    Ref process = rootFrame->process();
+    auto pageID = inspectedPage->webPageIDInProcess(process);
+
+#if ENABLE(GPU_PROCESS)
+    if (inspectedPage->shouldUseRemoteSnapshotting(rootFrame.get())) {
+        // Answer once both the GPU process and the root have replied, so that a failure can say why the root did not paint.
+        struct RemoteSnapshotResult {
+            String dataURL;
+            String errorString;
+        };
+        auto result = Box<RemoteSnapshotResult>::create();
+        Ref aggregator = CallbackAggregator::create([callback = WTF::move(callback), result] {
+            if (!result->dataURL.isEmpty()) {
+                callback->sendSuccess(result->dataURL);
+                return;
+            }
+            callback->sendFailure(result->errorString.isEmpty() ? "Could not capture snapshot"_s : result->errorString);
+        });
+
+        auto snapshotIdentifier = generateRemoteSnapshotIdentifier();
+        Ref gpuProcess = GPUProcessProxy::getOrCreate();
+        gpuProcess->sinkCompletedSnapshotToBitmap(snapshotIdentifier, rootFrame->frameID(), [result, aggregator](std::optional<ShareableBitmap::Handle>&& handle) {
+            if (!handle)
+                return;
+            if (RefPtr bitmap = ShareableBitmap::create(WTF::move(*handle), SharedMemory::Protection::ReadOnly)) {
+                if (RetainPtr image = bitmap->createPlatformImage(DontCopyBackingStore))
+                    result->dataURL = encodeDataURL(image.get(), "image/png"_s);
+            }
+        });
+        process->sendWithAsyncReply(Messages::WebInspectorBackend::SnapshotNodeToRemoteSnapshot { targetFrameID, nodeId, snapshotIdentifier }, [result, aggregator, releaseSnapshotIfRootFails = gpuProcess->releaseSnapshotIfRootFails(snapshotIdentifier)](std::expected<void, String>&& rootResult) mutable {
+            if (!rootResult)
+                result->errorString = rootResult.error();
+            releaseSnapshotIfRootFails(rootResult.has_value());
+        }, pageID);
+        return;
+    }
+#endif
+
+    process->sendWithAsyncReply(Messages::WebInspectorBackend::SnapshotNode { targetFrameID, nodeId }, [callback = WTF::move(callback)](std::expected<String, String>&& result) {
+        if (!result) {
+            callback->sendFailure(result.error().isEmpty() ? "Could not capture snapshot"_s : result.error());
+            return;
+        }
+        callback->sendSuccess(WTF::move(*result));
+    }, pageID);
+#else
+    UNUSED_PARAM(nodeId);
+    UNUSED_PARAM(targetId);
+    callback->sendFailure("Not yet implemented under Site Isolation"_s);
+#endif
 }
 
-CommandResult<String> ProxyingPageAgent::snapshotRect(int, int, int, int, Protocol::Page::CoordinateSystem)
+// WebPageProxy::takeSnapshot() draws the frames of every process (remote snapshotting), so cross-origin
+// iframes are included. Only the UI process receives the image, not a WebContent process.
+void ProxyingPageAgent::snapshotRect(int x, int y, int width, int height, Protocol::Page::CoordinateSystem coordinateSystem, Ref<SnapshotRectCallback>&& callback)
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+#if PLATFORM(COCOA)
+    SnapshotOptions options;
+    if (coordinateSystem == Protocol::Page::CoordinateSystem::Viewport)
+        options.add(SnapshotOption::InViewCoordinates);
+
+    protect(m_inspectedPage.get())->takeSnapshot({ x, y, width, height }, { }, options, [callback = WTF::move(callback)](CGImageRef image) {
+        if (!image) {
+            callback->sendFailure("Could not capture snapshot"_s);
+            return;
+        }
+        callback->sendSuccess(encodeDataURL(image, "image/png"_s));
+    });
+#else
+    UNUSED_PARAM(x);
+    UNUSED_PARAM(y);
+    UNUSED_PARAM(width);
+    UNUSED_PARAM(height);
+    UNUSED_PARAM(coordinateSystem);
+    callback->sendFailure("Not yet implemented under Site Isolation"_s);
+#endif
 }
 
 #if ENABLE(WEB_ARCHIVE) && USE(CF)

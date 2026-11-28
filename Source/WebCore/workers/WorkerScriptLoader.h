@@ -84,7 +84,7 @@ public:
     const String& referrerPolicy() const LIFETIME_BOUND { return m_referrerPolicy; }
     const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const LIFETIME_BOUND { return m_crossOriginEmbedderPolicy; }
     const URL& url() const LIFETIME_BOUND { return m_url; }
-    const URL& LEGACY_NODELETE responseURL() const;
+    NODELETE const URL& responseURL() const;
     ResourceResponse::Source responseSource() const { return m_responseSource; }
     bool isRedirected() const { return m_isRedirected; }
     const CertificateInfo& certificateInfo() const LIFETIME_BOUND { return m_certificateInfo; }
@@ -130,6 +130,7 @@ public:
 
     std::optional<ScriptExecutionContextIdentifier> clientIdentifier() const { return m_clientIdentifier; }
     const String& userAgentForSharedWorker() const LIFETIME_BOUND { return m_userAgentForSharedWorker; }
+    const String& navigatorPlatformForSharedWorker() const LIFETIME_BOUND { return m_navigatorPlatformForSharedWorker; }
 
 private:
     friend class RefCounted<WorkerScriptLoader>;
@@ -159,6 +160,7 @@ private:
     bool m_finishing { false };
     bool m_isRedirected { false };
     bool m_isCOEPEnabled { false };
+    CredentiallessSupport m_credentiallessSupport { CredentiallessSupport::No };
     IsSecureContext m_isSecureContext { IsSecureContext::No };
     ResourceResponse::Source m_responseSource { ResourceResponse::Source::Unknown };
     ResourceResponse::Tainting m_responseTainting { ResourceResponse::Tainting::Basic };
@@ -170,6 +172,7 @@ private:
     const RefPtr<ServiceWorkerDataManager> m_serviceWorkerDataManager;
     WeakPtr<ScriptExecutionContext> m_context;
     String m_userAgentForSharedWorker;
+    String m_navigatorPlatformForSharedWorker;
     OptionSet<AdvancedPrivacyProtections> m_advancedPrivacyProtections;
     std::optional<bool> m_globalPrivacyControlEnabled;
 };

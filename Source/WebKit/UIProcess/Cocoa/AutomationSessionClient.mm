@@ -27,6 +27,7 @@
 #import "AutomationSessionClient.h"
 
 #import "WKSharedAPICast.h"
+#import "WKWebExtensionContextInternal.h"
 #import "WKWebViewInternal.h"
 #import "WebAutomationSession.h"
 #import "WebPageProxy.h"
@@ -61,6 +62,7 @@ AutomationSessionClient::AutomationSessionClient(id <_WKAutomationSessionDelegat
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
     m_delegateMethods.loadWebExtensionWithOptions = [delegate respondsToSelector:@selector(_automationSession:loadWebExtensionWithOptions:resource:completionHandler:)];
     m_delegateMethods.unloadWebExtension = [delegate respondsToSelector:@selector(_automationSession:unloadWebExtensionWithIdentifier:completionHandler:)];
+    m_delegateMethods.webExtensionContextForIdentifier = [delegate respondsToSelector:@selector(_automationSession:webExtensionContextForIdentifier:)];
 #endif
     m_delegateMethods.performApplicationCommand = [delegate respondsToSelector:@selector(_automationSession:performCommandForWebView:commandName:arguments:completionHandler:)];
     m_delegateMethods.shouldEnableInspectorTesting = [delegate respondsToSelector:@selector(_automationSessionShouldEnableInspectorTesting:)];
@@ -72,7 +74,7 @@ void AutomationSessionClient::didDisconnectFromRemote(WebAutomationSession& sess
         [m_delegate.get() _automationSessionDidDisconnectFromRemote:RetainPtr { wrapper(session) }.get()];
 }
 
-static inline _WKAutomationSessionBrowsingContextOptions LEGACY_NODELETE toAPI(API::AutomationSessionBrowsingContextOptions options)
+NODELETE static inline _WKAutomationSessionBrowsingContextOptions toAPI(API::AutomationSessionBrowsingContextOptions options)
 {
     uint16_t wkOptions = 0;
 
@@ -83,7 +85,7 @@ static inline _WKAutomationSessionBrowsingContextOptions LEGACY_NODELETE toAPI(A
 }
 
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
-static inline _WKAutomationSessionWebExtensionResourceOptions LEGACY_NODELETE toAPI(API::AutomationSessionWebExtensionResourceOptions options)
+NODELETE static inline _WKAutomationSessionWebExtensionResourceOptions toAPI(API::AutomationSessionWebExtensionResourceOptions options)
 {
     uint16_t wkOptions = 0;
 
@@ -164,6 +166,18 @@ void AutomationSessionClient::unloadWebExtension(WebKit::WebAutomationSession& s
         completionHandler(success);
     }).get()];
 }
+
+RefPtr<WebExtensionContext> AutomationSessionClient::webExtensionContextForIdentifier(WebKit::WebAutomationSession& session, const String& identifier)
+{
+    if (!m_delegateMethods.webExtensionContextForIdentifier)
+        return nullptr;
+
+    RetainPtr extensionContext = [m_delegate.get() _automationSession:RetainPtr { wrapper(session) }.get() webExtensionContextForIdentifier:identifier.createNSString().get()];
+    if (!extensionContext)
+        return nullptr;
+
+    return &extensionContext.get()._webExtensionContext;
+}
 #endif
 
 void AutomationSessionClient::performApplicationCommand(WebAutomationSession& session, WebPageProxy& page, const String& commandName, const String& arguments, CompletionHandler<void(const String&)>&& completionHandler)
@@ -238,7 +252,7 @@ void AutomationSessionClient::setUserInputForCurrentJavaScriptPromptOnPage(WebAu
         [m_delegate.get() _automationSession:RetainPtr { wrapper(session) }.get() setUserInput:value.createNSString().get() forCurrentJavaScriptDialogForWebView:webView.get()];
 }
 
-static std::optional<API::AutomationSessionClient::JavaScriptDialogType> LEGACY_NODELETE toImpl(_WKAutomationSessionJavaScriptDialogType type)
+NODELETE static std::optional<API::AutomationSessionClient::JavaScriptDialogType> toImpl(_WKAutomationSessionJavaScriptDialogType type)
 {
     switch (type) {
     case _WKAutomationSessionJavaScriptDialogTypeNone:
@@ -252,7 +266,7 @@ static std::optional<API::AutomationSessionClient::JavaScriptDialogType> LEGACY_
     }
 }
 
-static API::AutomationSessionClient::BrowsingContextPresentation LEGACY_NODELETE toImpl(_WKAutomationSessionBrowsingContextPresentation presentation)
+NODELETE static API::AutomationSessionClient::BrowsingContextPresentation toImpl(_WKAutomationSessionBrowsingContextPresentation presentation)
 {
     switch (presentation) {
     case _WKAutomationSessionBrowsingContextPresentationTab:

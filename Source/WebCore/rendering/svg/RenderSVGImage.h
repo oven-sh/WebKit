@@ -36,10 +36,10 @@ class RenderSVGImage final : public RenderSVGModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGImage);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGImage);
 public:
-    RenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
+    RenderSVGImage(SVGImageElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGImage();
 
-    SVGImageElement& LEGACY_NODELETE imageElement() const;
+    NODELETE SVGImageElement& imageElement() const;
 
     RenderImageResource& imageResource() { return m_imageResource; }
     const RenderImageResource& imageResource() const { return m_imageResource; }
@@ -65,6 +65,7 @@ private:
     FloatRect decoratedBoundingBox() const final { return m_objectBoundingBox; }
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) final;
+    void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&) override final;
 
     void layout() final;
     void paint(PaintInfo&, const LayoutPoint&) final;

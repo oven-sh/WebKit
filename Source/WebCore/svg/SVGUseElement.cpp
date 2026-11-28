@@ -69,10 +69,10 @@ inline SVGUseElement::SVGUseElement(const QualifiedName& tagName, Document& docu
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
-        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGUseElement::m_x>();
-        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGUseElement::m_y>();
-        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGUseElement::m_width>();
-        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGUseElement::m_height>();
+        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGUseElement::m_x>(SVGLengthMode::Width);
+        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGUseElement::m_y>(SVGLengthMode::Height);
+        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGUseElement::m_width>(SVGLengthMode::Width, SVGLengthNegativeValuesMode::Forbid);
+        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGUseElement::m_height>(SVGLengthMode::Height, SVGLengthNegativeValuesMode::Forbid);
     }
 }
 
@@ -221,7 +221,7 @@ void SVGUseElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGraphicsElement::svgAttributeChanged(attrName);
 }
 
-static inline bool LEGACY_NODELETE isDisallowedElement(const SVGElement& element)
+NODELETE static inline bool isDisallowedElement(const SVGElement& element)
 {
     using namespace ElementNames;
 
@@ -258,7 +258,7 @@ static inline bool LEGACY_NODELETE isDisallowedElement(const SVGElement& element
     return true;
 }
 
-static inline bool LEGACY_NODELETE isDisallowedElement(const Element& element)
+NODELETE static inline bool isDisallowedElement(const Element& element)
 {
     auto* svgElement = dynamicDowncast<SVGElement>(element);
     return !svgElement || isDisallowedElement(*svgElement);
@@ -324,16 +324,16 @@ RefPtr<SVGElement> SVGUseElement::targetClone() const
     return root ? downcast<SVGElement>(root->firstChild()) : nullptr;
 }
 
-RenderPtr<RenderElement> SVGUseElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGUseElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
-    if (style.display() == Style::DisplayType::Contents)
+    if (style->display() == Style::DisplayType::Contents)
         return nullptr;
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGTransformableContainer>(*this, WTF::move(style));
     return createRenderer<LegacyRenderSVGTransformableContainer>(*this, WTF::move(style));
 }
 
-static bool LEGACY_NODELETE isDirectReference(const SVGElement& element)
+NODELETE static bool isDirectReference(const SVGElement& element)
 {
     using namespace SVGNames;
     return element.hasTagName(circleTag)
@@ -663,11 +663,13 @@ void SVGUseElement::updateExternalDocument()
 {
     URL externalDocumentURL;
     Ref<Document> document = this->document();
-    // FIXME: This early exit should be removed once the ASSERT(!url.protocolIsData()) is removed from isExternalURIReference().
-    if (document->encodingParseURL(href()).protocolIsData())
-        return;
-    if (isConnected() && isExternalURIReference(href(), document))
-        externalDocumentURL = document->encodingParseURL(href());
+    if (isConnected()) {
+        auto url = document->encodingParseURL(href());
+        // FIXME: This data: check should be removed once the ASSERT(!url.protocolIsData()) is removed from isExternalURIReference().
+        // A data: href never has an external document, so fall through to release any previously loaded one.
+        if (!url.protocolIsData() && isExternalURIReference(href(), document))
+            externalDocumentURL = WTF::move(url);
+    }
 
     if (externalDocumentURL == (m_externalDocument ? protect(*m_externalDocument)->url() : URL()))
         return;

@@ -33,12 +33,13 @@
 #import <WebCore/BackForwardCache.h>
 #import <WebCore/Page.h>
 #import <wtf/BlockObjCExceptions.h>
+#import <wtf/Borrow.h>
 #import <wtf/NeverDestroyed.h>
 
 
 static bool s_shouldTrackVisitedLinks;
 
-static HashSet<WeakRef<WebVisitedLinkStore>>& LEGACY_NODELETE visitedLinkStores()
+NODELETE static HashSet<WeakRef<WebVisitedLinkStore>>& visitedLinkStores()
 {
     static NeverDestroyed<HashSet<WeakRef<WebVisitedLinkStore>>> visitedLinkStores;
 
@@ -90,7 +91,7 @@ void WebVisitedLinkStore::addVisitedLink(NSString *urlString)
     }
 
     Vector<UniChar, 512> buffer(length);
-    [urlString getCharacters:buffer.mutableSpan().data()];
+    [urlString getCharacters:borrow(buffer)->mutableSpan().data()];
 
     addVisitedLinkHash(WebCore::computeSharedStringHash(spanReinterpretCast<const char16_t>(buffer.span())));
 }

@@ -10,7 +10,6 @@
 
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
-#include "AOTRuntimeWords.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubRegisters.h"
 #include "IndexingType.h"
@@ -62,6 +61,13 @@ PureDoubleBits PureDoubleBits::branchIfNotFinite(StubAssembler& jit, GPRReg bits
     return PureDoubleBits(bits);
 }
 
+PureDoubleBits PureDoubleBits::branchIfNaN(StubAssembler& jit, GPRReg bits, GPRReg scratch, GPRReg holdsInfinityDoubled, Jump& isNaN)
+{
+    jit.lshift64(bits, TrustedImm32(1), scratch);
+    isNaN = jit.branch64(CCallHelpers::Above, scratch, holdsInfinityDoubled);
+    return PureDoubleBits(bits);
+}
+
 static void subtractNumberTag(StubAssembler& jit, GPRReg bitsAndResult)
 {
     jit.withNumberTag([&](auto tag) {
@@ -91,15 +97,6 @@ void boxNaN(StubAssembler& jit, FPRReg nan, GPRReg result)
 {
     jit.moveDoubleTo64(nan, result);
     dropPayloadOfNaN(jit, result);
-    subtractNumberTag(jit, result);
-}
-
-void boxDoubleWithoutPayload(StubAssembler& jit, FPRReg number, GPRReg result)
-{
-    jit.moveDoubleTo64(number, result);
-    Jump isNumber = jit.branchIfNotNaN(number);
-    dropPayloadOfNaN(jit, result);
-    isNumber.link(&jit);
     subtractNumberTag(jit, result);
 }
 
@@ -134,8 +131,8 @@ void branchIfNotExactInt32(StubAssembler& jit, FPRReg number, GPRReg integer, Ju
     }
 #endif
 #if CPU(X86_64)
-    // The integer, made a double again, has the bits of the number, or the number is no int32: the bits of negative zero and of NaN differ from those of any integer.
-    const GPRReg difference = jit.scratchRegister();
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg difference = ownedScratch;
     RELEASE_ASSERT(integer != difference);
     jit.truncateDoubleToInt32(number, integer);
     jit.convertInt32ToDouble(integer, scratch);
@@ -158,6 +155,65 @@ void boxExactInt32(StubAssembler& jit, GPRReg integer, GPRReg result)
     boxInt32(jit, integer, result);
 }
 
+#if CPU(X86_64)
+static constexpr int32_t bitsThatNoInt32Sets = (1 << 22) - 1;
+static_assert(!((std::bit_cast<uint64_t>(static_cast<double>(std::numeric_limits<int32_t>::max())) | PNaNAsBits) & bitsThatNoInt32Sets));
+
+template<typename LoadNumber>
+static void returnBoxOfBits(StubAssembler& jit, GPRReg bits, FPRReg number, GPRReg integer, FPRReg scratch, GPRReg result, const LoadNumber& loadNumber)
+{
+    ASSERT(noOverlap(number, scratch));
+    Jump mayBeInt32 = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(bitsThatNoInt32Sets));
+    Label isNoInt32 = jit.label();
+    subtractNumberTag(jit, bits);
+    jit.move(bits, result);
+    jit.returnToCaller();
+
+    mayBeInt32.link(&jit);
+    loadNumber();
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg bitsOfInteger = ownedScratch;
+    RELEASE_ASSERT(noOverlap(bits, integer, bitsOfInteger));
+    jit.truncateDoubleToInt32(number, integer);
+    jit.convertInt32ToDouble(integer, scratch);
+    jit.moveDoubleTo64(scratch, bitsOfInteger);
+    jit.branch64(CCallHelpers::NotEqual, bitsOfInteger, bits).linkTo(isNoInt32, &jit);
+    boxInt32(jit, integer, result);
+    jit.returnToCaller();
+}
+#endif
+
+void returnBoxedNumber(StubAssembler& jit, PureDouble number, GPRReg integer, FPRReg scratch, GPRReg result)
+{
+#if CPU(X86_64)
+    jit.moveDoubleTo64(number.fpr(), result);
+    returnBoxOfBits(jit, result, number.fpr(), integer, scratch, result, [] { });
+#else
+    JumpList isNoInt32;
+    branchIfNotExactInt32(jit, number.fpr(), integer, isNoInt32, scratch);
+    boxInt32(jit, integer, result);
+    jit.returnToCaller();
+    isNoInt32.link(&jit);
+    boxDouble(jit, number, result);
+    jit.returnToCaller();
+#endif
+}
+
+void returnBoxOfDoubleElement(StubAssembler& jit, BaseIndex element, FPRReg number, GPRReg bits, GPRReg integer, FPRReg scratch, JumpList& isHole, GPRReg result)
+{
+#if CPU(X86_64)
+    jit.load64(element, bits);
+    returnBoxOfBits(jit, bits, number, integer, scratch, result, [&] {
+        jit.move64ToDouble(bits, number);
+        PureDouble::branchIfNaN(jit, number, isHole);
+    });
+#else
+    UNUSED_PARAM(bits);
+    jit.loadDouble(element, number);
+    returnBoxedNumber(jit, PureDouble::branchIfNaN(jit, number, isHole), integer, scratch, result);
+#endif
+}
+
 void decodeCell32(StubAssembler& jit, GPRReg word, GPRReg result)
 {
 #if CPU(ARM64)
@@ -169,10 +225,6 @@ void decodeCell32(StubAssembler& jit, GPRReg word, GPRReg result)
 
 void encodeCellOfProgram(StubAssembler& jit, GPRReg cell, GPRReg word)
 {
-    // The byte before a cell kept in a frame is unreadable (AOTCheckedFrameCells.h); the byte before any other cell is readable.
-    // With the address sanitizer that byte belongs to a cell that is never allocated and stays poisoned, so the read goes without the check of the shadow.
-    if (jit.options().checksProofs)
-        jit.CCallHelpers::branchTest8(CCallHelpers::Zero, Address(cell, -1)).link(&jit);
     encodeCell32(jit, cell, word);
 }
 
@@ -199,21 +251,47 @@ void appendGranule(StubAssembler& jit, GPRReg extension, GPRReg granuleBits, GPR
     jit.store64(scratch, heldBits);
 }
 
-void loadLiteralString(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance)
+void insertGranule(StubAssembler& jit, GPRReg extension, GPRReg granuleBit, GPRReg place, GPRReg last, JumpList& cannotInsert)
 {
-    RELEASE_ASSERT(noOverlap(wordAndResult, scratch) && instance != wordAndResult);
-    if (jit.options().useWideReferences) {
-        static_assert(2 << literalStringShift == sizeof(JSCell*));
-        jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings)), scratch);
-        jit.load64(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesTwo, -2 * static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
-        isNotCreated.append(jit.branchTest64(CCallHelpers::Zero, wordAndResult));
-        return;
-    }
-    static_assert(1 << literalStringShift == sizeof(uint32_t));
-    jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(runtime.constants.literalStrings)), scratch);
-    jit.load32(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesOne, -static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
-    isNotCreated.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult));
-    decodeCell32(jit, wordAndResult, wordAndResult);
+    RELEASE_ASSERT(noOverlap(extension, granuleBit, place, last));
+    const Address heldBits(extension, offsetOfExtensionGranuleBits);
+    constexpr uint64_t countOfPageOfZeros = 1;
+    static_assert(!(granuleCountsWithoutRoom & countOfPageOfZeros));
+    jit.load64(heldBits, place);
+    jit.countPopulation64(place, last, CCallHelpers::fpTempRegister);
+    jit.move(TrustedImm64(static_cast<int64_t>(granuleCountsWithoutRoom | countOfPageOfZeros)), place);
+    jit.urshift64(last, place);
+    cannotInsert.append(jit.branchTest64(CCallHelpers::NonZero, place, TrustedImm32(1)));
+    jit.load64(heldBits, place);
+    jit.getEffectiveAddress(BaseIndex(extension, last, CCallHelpers::TimesEight, offsetOfFirstExtensionSlot), last);
+    // What is behind the granules held is zero, so the collector may see the bit at any time.
+    Jump isAmongHeld = jit.branch64(CCallHelpers::Below, granuleBit, place);
+    jit.or64(granuleBit, place);
+    jit.store64(place, heldBits);
+    jit.move(last, place);
+    Jump isBehindAll = jit.jump();
+
+    isAmongHeld.link(&jit);
+    cannotInsert.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+    const GPRReg word = granuleBit;
+    jit.or64(granuleBit, place);
+    jit.store64(place, heldBits);
+    jit.sub64(TrustedImm32(1), granuleBit);
+    jit.and64(granuleBit, place);
+    jit.countPopulation64(place, place, CCallHelpers::fpTempRegister);
+    jit.getEffectiveAddress(BaseIndex(extension, place, CCallHelpers::TimesEight, offsetOfFirstExtensionSlot), place);
+    Label moves = jit.label();
+    jit.load64(Address(last, -static_cast<int32_t>(sizeof(uint64_t))), word);
+    jit.store64(word, Address(last));
+    jit.subPtr(TrustedImm32(sizeof(uint64_t)), last);
+    jit.branchPtr(CCallHelpers::NotEqual, place, last).linkTo(moves, &jit);
+    jit.store64(TrustedImm32(0), Address(place));
+    isBehindAll.link(&jit);
+}
+
+void decodeExtension(StubAssembler& jit, GPRReg word, GPRReg result)
+{
+    jit.getEffectiveAddress(BaseIndex(cellCageBaseGPR, word, static_cast<CCallHelpers::Scale>(cell32Shift), offsetOfEmptyExtensionInCage), result);
 }
 
 void decodeStructureID(CCallHelpers& jit, GPRReg idAndResult)
@@ -242,55 +320,75 @@ void extractBits(StubAssembler& jit, GPRReg source, unsigned shift, unsigned wid
 void loadShapeWord(StubAssembler& jit, GPRReg cell, GPRReg result)
 {
     jit.load32(Address(cell, offsetOfShapeWord), result);
+    jit.or32(TrustedImm32(shapeWordIsUnmarked), result);
 }
 
-void branchUnlessShapeOfThisImage(StubAssembler& jit, GPRReg shapeWord, JumpList& otherwise)
+bool loadsShapeAsHalfword(StubAssembler& jit)
 {
-    const StubOptions& options = jit.options();
-    if (!options.sharesRealms)
-        return;
-    // The word is zero less the shape.
-    otherwise.append(jit.branch32(CCallHelpers::Below, shapeWord, TrustedImm32(static_cast<int32_t>(0 - options.lastShape))));
-    if (options.shapesBelow)
-        otherwise.append(jit.branch32(CCallHelpers::AboveOrEqual, shapeWord, TrustedImm32(static_cast<int32_t>(0 - options.shapesBelow))));
+    return isX86_64() && jit.bindingPolicy().shapesFitHalfword;
 }
 
-void branchUnlessClosureNumberOfThisImage(StubAssembler& jit, GPRReg number, JumpList& otherwise)
+int32_t offsetOfRowsByShapeIndex(StubAssembler& jit)
 {
-    const StubOptions& options = jit.options();
-    if (!options.sharesRealms)
-        return;
-    otherwise.append(jit.branch32(CCallHelpers::AboveOrEqual, number, TrustedImm32(static_cast<int32_t>(options.endOfClosureNumbers))));
-    if (options.closureNumbersBelow)
-        otherwise.append(jit.branch32(CCallHelpers::Below, number, TrustedImm32(static_cast<int32_t>(options.closureNumbersBelow))));
+    return loadsShapeAsHalfword(jit) ? -static_cast<int32_t>(sizeof(uint32_t) << 16) : 0;
 }
 
-void branchIfObjectOfOtherImage(StubAssembler& jit, GPRReg cell, JumpList& isOfOtherImage)
+void loadShapeWordAsIndex(StubAssembler& jit, GPRReg cell, GPRReg result)
 {
-    const StubOptions& options = jit.options();
-    if (!options.sharesRealms)
+    if (loadsShapeAsHalfword(jit)) {
+        jit.load16(Address(cell, offsetOfShapeWord), result);
         return;
-    isOfOtherImage.append(jit.branch32(CCallHelpers::Below, Address(cell, offsetOfShapeWord), TrustedImm32(static_cast<int32_t>(0 - options.lastShape))));
-    if (options.shapesBelow)
-        isOfOtherImage.append(jit.branch32(CCallHelpers::AboveOrEqual, Address(cell, offsetOfShapeWord), TrustedImm32(static_cast<int32_t>(0 - options.shapesBelow))));
+    }
+    jit.load32SignedExtendTo64(Address(cell, offsetOfShapeWord), result);
+    jit.or64(TrustedImm32(shapeWordIsUnmarked), result);
+}
+
+void loadShapeWordWithMark(StubAssembler& jit, GPRReg cell, GPRReg result)
+{
+    jit.load32(Address(cell, offsetOfShapeWord), result);
+}
+
+void setFlagThatFieldHasLeft(StubAssembler& jit, GPRReg cell, GPRReg scratch)
+{
+    const Address flagsOfCell(cell, JSCell::typeInfoFlagsOffset());
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.or8(TrustedImm32(TypeInfoPerCellBit), flagsOfCell);
+#else
+    jit.load8(flagsOfCell, scratch);
+    jit.or32(TrustedImm32(TypeInfoPerCellBit), scratch);
+    jit.store8(scratch, flagsOfCell);
+#endif
+}
+
+void setMarkOfCell(StubAssembler& jit, GPRReg cell, GPRReg scratch)
+{
+    const Address shapeWord(cell, offsetOfShapeWord);
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.and32(TrustedImm32(static_cast<int32_t>(~shapeWordIsUnmarked)), shapeWord);
+#else
+    jit.load32(shapeWord, scratch);
+    jit.and32(TrustedImm32(static_cast<int32_t>(~shapeWordIsUnmarked)), scratch);
+    jit.store32(scratch, shapeWord);
+#endif
+}
+
+Jump branchIfCellBearsMark(StubAssembler& jit, GPRReg cell)
+{
+    return jit.branchTest8(CCallHelpers::Zero, Address(cell, offsetOfByteWithMark), TrustedImm32(byteWithMarkIsUnmarked));
+}
+
+Jump branchUnlessCellBearsMark(StubAssembler& jit, GPRReg cell)
+{
+    return jit.branchTest8(CCallHelpers::NonZero, Address(cell, offsetOfByteWithMark), TrustedImm32(byteWithMarkIsUnmarked));
 }
 
 JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler& jit, GPRReg cell)
 {
     JumpList isNot;
     isNot.append(jit.branchIfNotType(cell, CompiledObjectType));
-    branchIfObjectOfOtherImage(jit, cell, isNot);
     return isNot;
-}
-
-Jump branchIfCompiledObjectOfThisImage(StubAssembler& jit, GPRReg cell)
-{
-    if (!jit.options().sharesRealms)
-        return jit.branchIfType(cell, CompiledObjectType);
-    JumpList isNot = branchIfNotCompiledObjectOfThisImage(jit, cell);
-    Jump is = jit.jump();
-    isNot.link(&jit);
-    return is;
 }
 
 void loadCellVM(StubAssembler& jit, GPRReg cellAndResult)
@@ -321,7 +419,11 @@ void branchIfHasNamesOrIsNotOfThisRealm(StubAssembler& jit, GPRReg structure, Ju
 
 Jump branchIfNotPristine(StubAssembler& jit, GPRReg cell)
 {
+#if CPU(ARM64)
+    return jit.branchTest32(CCallHelpers::Zero, Address(cell, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IsPristine << 8 * (JSCell::typeInfoFlagsOffset() - JSCell::indexingTypeAndMiscOffset())));
+#else
     return jit.branchTest8(CCallHelpers::Zero, Address(cell, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine));
+#endif
 }
 
 void loadPristineArrayKind(StubAssembler& jit, GPRReg array, GPRReg kind, unsigned mask)
@@ -350,6 +452,13 @@ Jump branchIfWatchpointSetIsNotWatched(StubAssembler& jit, Address set, GPRReg s
     return jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(InlineWatchpointSet::encodeState(IsWatched))));
 }
 
+void branchUnlessAccessorPair(CCallHelpers& jit, GPRReg word, JumpList& isNoPair)
+{
+    isNoPair.append(jit.branchTest64(CCallHelpers::Zero, word));
+    isNoPair.append(jit.branchIfNotCell(word));
+    isNoPair.append(jit.branch8(CCallHelpers::NotEqual, Address(word, JSCell::typeInfoTypeOffset()), TrustedImm32(GetterSetterType)));
+}
+
 Jump branchIfNotFunctionType(CCallHelpers& jit, GPRReg cell, GPRReg scratch)
 {
     static_assert(slimClosureTypes.first > functionTypes.last);
@@ -361,20 +470,6 @@ Jump branchIfNotFunctionType(CCallHelpers& jit, GPRReg cell, GPRReg scratch)
     Jump isNotFunction = jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(slimClosureTypes.last - slimClosureTypes.first));
     isFunction.link(&jit);
     return isNotFunction;
-}
-
-void bumpRuntimeCounter(StubAssembler& jit, RuntimeCounterID counter, GPRReg scratch)
-{
-    RELEASE_ASSERT(counter != RuntimeCounterID::None);
-    const Address word(instanceGPR, AOT_INSTANCE_OFFSET(runtime.counters) + CounterWords::offsetOfValue(counter));
-#if CPU(X86_64)
-    UNUSED_PARAM(scratch);
-    jit.add64(TrustedImm32(1), word);
-#else
-    jit.load64(word, scratch);
-    jit.add64(TrustedImm32(1), scratch);
-    jit.store64(scratch, word);
-#endif
 }
 
 } } // namespace JSC::AOT

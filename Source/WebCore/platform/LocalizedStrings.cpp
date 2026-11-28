@@ -27,6 +27,9 @@
 #include "config.h"
 #include "LocalizedStrings.h"
 
+#if ENABLE(MEDIA_SESSION) && ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+#include "CallToActionLabel.h"
+#endif
 #include "DateComponents.h"
 #include "IntSize.h"
 #include "NotImplemented.h"
@@ -1065,6 +1068,13 @@ String unknownFileSizeText()
     return WEB_UI_STRING_KEY("Unknown", "Unknown (filesize)", "Unknown filesize FTP directory listing item");
 }
 
+#if ENABLE(ATTACHMENT_ELEMENT)
+String attachmentDownloadingText()
+{
+    return WEB_UI_STRING_KEY("Downloading", "Downloading (attachment)", "Label shown in an attachment while its file is downloading");
+}
+#endif
+
 String htmlSelectMultipleItems(size_t count)
 {
     switch (count) {
@@ -1095,7 +1105,7 @@ String imageTitle(const String& filename, const IntSize& size)
 #elif PLATFORM(WIN)
     return WEB_UI_FORMAT_STRING("%s %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", filename.wideCharacters().span().data(), size.width(), size.height());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("%s %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", filename.utf8(), size.width(), size.height());
+    return WEB_UI_FORMAT_STRING("%s %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", makeUTF8CString(filename), size.width(), size.height());
 #else
     return makeStringByReplacingAll(WEB_UI_FORMAT_STRING("<filename> %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", size.width(), size.height()), "<filename>"_s, filename);
 #endif
@@ -1292,7 +1302,7 @@ String validationMessagePatternMismatchText(const String& title)
 #if PLATFORM(COCOA)
     return WEB_UI_FORMAT_CFSTRING("Match the requested format: %@", "Validation message for input form controls requiring a constrained value according to pattern followed by a website-provided description of the pattern", title.createCFString().get());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("Match the requested format: %s", "Validation message for input form controls requiring a constrained value according to pattern followed by a website-provided description of the pattern", title.utf8());
+    return WEB_UI_FORMAT_STRING("Match the requested format: %s", "Validation message for input form controls requiring a constrained value according to pattern followed by a website-provided description of the pattern", makeUTF8CString(title));
 #else
     UNUSED_PARAM(title);
     return validationMessagePatternMismatchText();
@@ -1318,7 +1328,7 @@ String validationMessageRangeUnderflowText(const String& minimum)
 #if PLATFORM(COCOA)
     return WEB_UI_FORMAT_CFSTRING("Value must be greater than or equal to %@", "Validation message for input form controls with value lower than allowed minimum", minimum.createCFString().get());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("Value must be greater than or equal to %s", "Validation message for input form controls with value lower than allowed minimum", minimum.utf8());
+    return WEB_UI_FORMAT_STRING("Value must be greater than or equal to %s", "Validation message for input form controls with value lower than allowed minimum", makeUTF8CString(minimum));
 #else
     UNUSED_PARAM(minimum);
     return WEB_UI_STRING("range underflow", "Validation message for input form controls with value lower than allowed minimum");
@@ -1330,7 +1340,7 @@ String validationMessageRangeOverflowText(const String& maximum)
 #if PLATFORM(COCOA)
     return WEB_UI_FORMAT_CFSTRING("Value must be less than or equal to %@", "Validation message for input form controls with value higher than allowed maximum", maximum.createCFString().get());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("Value must be less than or equal to %s", "Validation message for input form controls with value higher than allowed maximum", maximum.utf8());
+    return WEB_UI_FORMAT_STRING("Value must be less than or equal to %s", "Validation message for input form controls with value higher than allowed maximum", makeUTF8CString(maximum));
 #else
     UNUSED_PARAM(maximum);
     return WEB_UI_STRING("range overflow", "Validation message for input form controls with value higher than allowed maximum");
@@ -1376,7 +1386,7 @@ String textTrackAutomaticMenuItemText()
 
 String captionStylePreviewWithProfileName(const String& profileName)
 {
-    return WEB_UI_FORMAT_STRING("This is the %s subtitle style", "This is the %s subtitle style (Caption User Preferences)", profileName.utf8());
+    return WEB_UI_FORMAT_STRING("This is the %s subtitle style", "This is the %s subtitle style (Caption User Preferences)", makeUTF8CString(profileName));
 }
 
 String captionStylePreview()
@@ -1613,7 +1623,7 @@ String unacceptableTLSCertificate()
 }
 #endif
 
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 // On macOS, Touch ID prompt is not guaranteed to show on top of the UI client, and therefore additional
 // information is provided to help users to make decisions.
 String makeCredentialTouchIDPromptTitle(const String& bundleName, const String& domain)
@@ -1630,7 +1640,7 @@ String genericTouchIDPromptTitle()
 {
     return WEB_UI_STRING("Continue with Touch ID.", "Continue with Touch ID.");
 }
-#endif // ENABLE(WEB_AUTHN)
+#endif // ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 
 String pdfPasswordFormTitle()
 {
@@ -1651,6 +1661,22 @@ String contextMenuItemTagCopyLinkWithHighlight()
 {
     return WEB_UI_STRING("Copy Link with Highlight", "Copy link with highlight context menu item");
 }
+
+#if ENABLE(MEDIA_SESSION) && ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+String callToActionLabelTitle(CallToActionLabel label)
+{
+    switch (label) {
+    case CallToActionLabel::VisitWebsite:
+        return WEB_UI_STRING("Visit Website", "Title for the call to action button in Picture in Picture that visits a website");
+    case CallToActionLabel::Download:
+        return WEB_UI_STRING("Download", "Title for the call to action button in Picture in Picture that starts a download");
+    case CallToActionLabel::VisitAppStore:
+        return WEB_UI_STRING("Visit App Store", "Title for the call to action button in Picture in Picture that visits the App Store");
+    }
+    ASSERT_NOT_REACHED();
+    return { };
+}
+#endif
 
 #if ENABLE(LINEAR_MEDIA_PLAYER)
 String fullscreenControllerViewSpatial()

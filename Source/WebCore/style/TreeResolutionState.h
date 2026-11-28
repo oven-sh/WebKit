@@ -28,16 +28,14 @@
 #include "AnchorPositionEvaluator.h"
 #include <wtf/CheckedPtr.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // This state has lifetime of a single style resolution cycle, including any layout interleaving.
-struct TreeResolutionState : public CanMakeCheckedPtr<TreeResolutionState, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+struct TreeResolutionState : public CanMakeCheckedPtr<TreeResolutionState> {
     AnchorPositionedStates anchorPositionedStates;
 
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(TreeResolutionState);
     WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(TreeResolutionState);
 };
 
-}
 }

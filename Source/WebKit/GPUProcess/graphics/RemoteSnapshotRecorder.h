@@ -43,7 +43,7 @@ public:
     static Ref<RemoteSnapshotRecorder> create(RemoteSnapshotRecorderIdentifier, RemoteSnapshot&, RemoteRenderingBackend&);
     ~RemoteSnapshotRecorder();
     void stopListeningForIPC();
-    Ref<RemoteSnapshot> LEGACY_NODELETE snapshot() const;
+    NODELETE Ref<RemoteSnapshot> snapshot() const;
     Ref<const WebCore::DisplayList::DisplayList> takeDisplayList() { return m_recorder->takeDisplayList(); }
 
 private:
@@ -55,10 +55,12 @@ private:
 
     // Messages.
     void drawSnapshotFrame(WebCore::FrameIdentifier);
+    void drawPDFPage(WebCore::RenderingResourceIdentifier documentIdentifier, RefPtr<WebCore::SharedBuffer>&&, unsigned pageIndex, const WebCore::FloatRect& pageRect, std::optional<WebCore::RenderingResourceIdentifier> fallbackImageIdentifier);
 
     const Ref<RemoteSnapshot> m_snapshot;
     const Ref<WebCore::DisplayList::RecorderImpl> m_recorder;
     const RemoteSnapshotRecorderIdentifier m_identifier;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::SharedPDFDocument>> m_pdfDocuments;
 };
 
 } // namespace WebKit

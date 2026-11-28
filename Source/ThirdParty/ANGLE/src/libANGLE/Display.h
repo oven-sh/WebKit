@@ -15,6 +15,7 @@
 #include <atomic>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "common/SimpleMutex.h"
@@ -28,7 +29,6 @@
 #include "libANGLE/Debug.h"
 #include "libANGLE/Error.h"
 #include "libANGLE/HandleAllocator.h"
-#include "libANGLE/LoggingAnnotator.h"
 #include "libANGLE/MemoryProgramCache.h"
 #include "libANGLE/MemoryShaderCache.h"
 #include "libANGLE/Observer.h"
@@ -70,19 +70,14 @@ class ThreadSafeDisplay;
 
 template <typename DisplayT>
 class ScopedDisplayRefT;
-using ScopedDisplayRef      = ScopedDisplayRefT<Display>;
-using ScopedConstDisplayRef = ScopedDisplayRefT<const Display>;
-// Only the non-const instantiation is needed: every holder of a ThreadSafeDisplay reference (the
-// generated EGL entry points and ScopedSyncRef) uses it to create, look up or destroy sync
-// objects, all of which mutate the display's SyncSet.
+using ScopedDisplayRef           = ScopedDisplayRefT<Display>;
 using ScopedThreadSafeDisplayRef = ScopedDisplayRefT<ThreadSafeDisplay>;
 
 class ScopedDisplayMutexLock;
 
 template <typename DisplayT>
 class ScopedDisplayLockAndRefT;
-using ScopedDisplayLockAndRef      = ScopedDisplayLockAndRefT<Display>;
-using ScopedConstDisplayLockAndRef = ScopedDisplayLockAndRefT<const Display>;
+using ScopedDisplayLockAndRef = ScopedDisplayLockAndRefT<Display>;
 
 using ThreadSet = angle::HashSet<Thread *>;
 
@@ -168,11 +163,11 @@ class SyncSet final : angle::NonCopyable
                      const AttributeMap &attribs,
                      Sync **outSync);
 
-    // The returned ScopedSyncRef holds a reference to the display and releases the sync through it
-    // when it goes out of scope, so a mutable display is required here.
+    // The returned ScopedSyncRef releases the sync through the display when it goes out of scope,
+    // so a mutable display is required here.
     ScopedSyncRef getSync(ThreadSafeDisplay *display, SyncID syncID) const;
 
-    void destroySync(const ThreadSafeDisplay *display, SyncID syncID);
+    Sync *removeSync(SyncID syncID);
     void releaseSync(const ThreadSafeDisplay *display, Sync *sync);
 
     void invalidateAllSyncs();
@@ -194,13 +189,46 @@ class SyncSet final : angle::NonCopyable
     gl::HandleAllocator mHandleAllocator;
 };
 
+class ScratchBuffers final : angle::NonCopyable
+{
+  public:
+    ScratchBuffers()  = default;
+    ~ScratchBuffers() = default;
+
+    angle::ScratchBuffer requestScratchBuffer();
+    void returnScratchBuffer(angle::ScratchBuffer scratchBuffer);
+    void tick();
+
+  private:
+    angle::SimpleMutex mMutex;
+    std::vector<angle::ScratchBuffer> mScratchBuffers;
+};
+
+// These track the display references that the current thread holds, in builds with assertions, to
+// check that a thread holds at most one (see ThreadSafeDisplay::addRef()).
+#if defined(ANGLE_ENABLE_ASSERTS)
+void AssertCurrentThreadNotHoldingDisplayRefCount();
+void AssertCurrentThreadHoldingOneDisplayRefCount();
+void IncrementCurrentThreadDisplayRefCount();
+void DecrementCurrentThreadDisplayRefCount();
+#else
+inline void AssertCurrentThreadNotHoldingDisplayRefCount() {}
+inline void AssertCurrentThreadHoldingOneDisplayRefCount() {}
+inline void IncrementCurrentThreadDisplayRefCount() {}
+inline void DecrementCurrentThreadDisplayRefCount() {}
+#endif
+
 // Access to this class is thread safe, i.e. can be called from multiple threads without holding the
 // display's mutex lock.
 class ThreadSafeDisplay : public LabeledObject, public angle::NonCopyable
 {
   public:
     ThreadSafeDisplay(EGLNativeDisplayType displayId)
-        : mState(displayId), mThreadSafeImpl(nullptr), mRefCount(0)
+        : mState(displayId),
+          mThreadSafeImpl(nullptr),
+          mTerminatedByApi(false),
+          mPendingInternalCleanup(false),
+          mRefCount(0)
     {}
     ~ThreadSafeDisplay() override = default;
 
@@ -211,6 +239,7 @@ class ThreadSafeDisplay : public LabeledObject, public angle::NonCopyable
     bool isDeviceLost() const;
 
     const DisplayExtensions &getExtensions() const { return mDisplayExtensions; }
+    const angle::FrontendFeatures &getFrontendFeatures() const { return mFrontendFeatures; }
 
     // Note that Display::getImplementation() hides this one and returns the rx::DisplayImpl
     // instead, so the impl that is retrieved depends on the static type of the display.
@@ -220,34 +249,114 @@ class ThreadSafeDisplay : public LabeledObject, public angle::NonCopyable
                      EGLenum type,
                      const AttributeMap &attribs,
                      Sync **outSync);
-    void destroySync(Sync *sync);
+    Sync *removeSync(egl::SyncID syncID);
     void releaseSync(Sync *sync);
 
     ScopedSyncRef getSync(egl::SyncID syncID) const;
     ScopedSyncMap getSyncsForCapture() const { return mSyncSet.getSyncsForCapture(); }
     bool isValidSync(SyncID sync) const;
 
-  protected:
-    [[nodiscard]] bool addRefIfNotTerminating() const
+    ScopedSurfaceRef getSurfaceRef(egl::SurfaceID surfaceID) const;
+    ScopedSurfaceLockAndRef getSurface(egl::SurfaceID surfaceID) const;
+    Error destroySurface(Surface *surface);
+
+    bool isValidContext(gl::ContextID contextID) const;
+
+    // Looks up a context and references it, so that it stays alive, and in the context map, even
+    // if another thread destroys it, while the returned ScopedContextRef does.  The EGL entry
+    // points that take a context handle hold one until they return, and pass the context on
+    // instead of its handle.  eglDestroyContext() hands its reference over to destroyContext().
+    ScopedContextRef getContextRef(gl::ContextID contextID) const;
+    // Drops a reference to a context, see ~ScopedContextRef().  If it was the last one to a
+    // destroyed context, this frees the context on the calling thread (see destroyContextImpl()).
+    Error releaseContextRef(gl::Context *context);
+
+    angle::ScratchBuffer requestScratchBuffer() { return mScratchBuffers.requestScratchBuffer(); }
+    void returnScratchBuffer(angle::ScratchBuffer scratchBuffer)
     {
+        mScratchBuffers.returnScratchBuffer(std::move(scratchBuffer));
+    }
+
+    angle::ScratchBuffer requestZeroFilledBuffer()
+    {
+        return mZeroFilledBuffers.requestScratchBuffer();
+    }
+    void returnZeroFilledBuffer(angle::ScratchBuffer zeroFilledBuffer)
+    {
+        mZeroFilledBuffers.returnScratchBuffer(std::move(zeroFilledBuffer));
+    }
+
+    // Locks the ContextMutexes of |previousContext| and |context|, and calls makeCurrentLocked().
+    Error makeCurrent(Thread *thread,
+                      gl::Context *previousContext,
+                      Surface *drawSurface,
+                      Surface *readSurface,
+                      gl::Context *context);
+    // The caller must lock the ContextMutexes of |previousContext| and |context| with a
+    // ScopedContextMutexesLock, which keeps them alive if |previousContext| is freed.  It must also
+    // hold a reference to |context|, see ScopedContextRef.
+    Error makeCurrentLocked(Thread *thread,
+                            gl::Context *previousContext,
+                            Surface *drawSurface,
+                            Surface *readSurface,
+                            gl::Context *context);
+
+    // After eglTerminate(), makeCurrent() schedules an internal cleanup of the display whenever the
+    // current context changes.  The cleanup invalidates the contexts that are no longer current,
+    // and terminates the display once none are left.  Entry points that lock the display run it
+    // before unlocking it (see Display::onUnlockMutex()), and eglMakeCurrent() runs it in an
+    // unlocked tail call.
+    bool hasPendingInternalCleanup() const
+    {
+        return mPendingInternalCleanup.load(std::memory_order_acquire);
+    }
+    // Runs the internal cleanup if it is still pending.  This locks the display and waits until no
+    // other thread references it, so the calling thread must not hold a reference to the display,
+    // nor any of its surface or context locks.
+    void runPendingInternalCleanup() const;
+
+    Error destroySurfaceImpl(Surface *surface);
+
+    // Frees a destroyed context, which ContextMap::releaseRef() removed from the context map.  The
+    // caller must lock its ContextMutex, and keep the mutex alive.
+    Error destroyContextImpl(gl::Context *context);
+
+  protected:
+    void addRef() const
+    {
+        // Calling addRef() a second time on a thread that already holds a display reference is
+        // forbidden: if another thread enters terminate() in between, it will set kTerminatingBit
+        // and block in waitUntilUnreferenced(1) waiting for this thread's first reference to be
+        // released, while this second addRef() spins waiting for kTerminatingBit to clear,
+        // resulting in a deadlock. Code that runs while the current thread already holds a
+        // reference must rely on that reference instead.
+        AssertCurrentThreadNotHoldingDisplayRefCount();
+
         // std::memory_order_relaxed might be sufficient here, but std::memory_order_acquire is used
         // for safety since there is no performance difference.
         uint32_t count = mRefCount.load(std::memory_order_acquire);
-        while (!(count & kTerminatingBit))
+        for (;;)
         {
+            while ((count & kTerminatingBit) != 0)
+            {
+                std::this_thread::yield();
+                count = mRefCount.load(std::memory_order_acquire);
+            }
             if (mRefCount.compare_exchange_weak(count, count + 1, std::memory_order_acquire,
                                                 std::memory_order_acquire))
             {
-                return true;
+                IncrementCurrentThreadDisplayRefCount();
+                return;
             }
         }
-        return false;
     }
     void releaseRef() const
     {
+        DecrementCurrentThreadDisplayRefCount();
         uint32_t prev = mRefCount.fetch_sub(1, std::memory_order_release);
         ASSERT((prev & kRefCountMask) > 0);
     }
+
     bool isTerminating() const;
 
     // Returns whether the display has been initialized, disregarding whether it is currently being
@@ -273,8 +382,15 @@ class ThreadSafeDisplay : public LabeledObject, public angle::NonCopyable
     rx::ThreadSafeDisplayImpl *mThreadSafeImpl;
 
     DisplayExtensions mDisplayExtensions;
+    angle::FrontendFeatures mFrontendFeatures;
 
     SyncSet mSyncSet;
+
+    ScratchBuffers mScratchBuffers;
+    ScratchBuffers mZeroFilledBuffers;
+
+    std::atomic<bool> mTerminatedByApi;
+    mutable std::atomic<bool> mPendingInternalCleanup;
 
     // Only these ScopedDisplay classes could directly access the RefCount.
     template <typename DisplayT>
@@ -325,6 +441,14 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
     std::vector<const Config *> getConfigs(const AttributeMap &attribs) const;
     std::vector<const Config *> chooseConfig(const AttributeMap &attribs) const;
 
+    // eglCreatePlatformWindowSurface and its EXT variant take the native window as a void * whose
+    // interpretation is platform specific: the EGL/X11 platform extension specifies a pointer to
+    // an X11 Window, while EGLNativeWindowType for X11 is the Window (XID) itself.  For the other
+    // window systems the void * is already the EGLNativeWindowType value.
+    // https://www.khronos.org/registry/EGL/extensions/KHR/EGL_KHR_platform_x11.txt
+    EGLNativeWindowType getNativeWindowForCreatePlatformWindowSurface(
+        const void *nativeWindow) const;
+
     Error createWindowSurface(const Config *configuration,
                               EGLNativeWindowType window,
                               const AttributeMap &attribs,
@@ -355,20 +479,12 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
                         const AttributeMap &attribs,
                         gl::Context **outContext);
 
-    Error makeCurrent(Thread *thread,
-                      gl::Context *previousContext,
-                      Surface *drawSurface,
-                      Surface *readSurface,
-                      gl::Context *context);
-
-    Error destroySurface(Surface *surface);
     void destroyImage(Image *image);
     void destroyStream(Stream *stream);
-    Error destroyContext(Thread *thread, gl::Context *context);
+    // Drops a reference to |context| that the caller hands over (see ScopedContextRef::release()).
+    Error destroyContext(gl::Context *context);
 
     bool isValidConfig(const Config *config) const;
-    bool isValidContext(gl::ContextID contextID) const;
-    bool isValidSurface(SurfaceID surfaceID) const;
     bool isValidImage(ImageID imageID) const;
     bool isValidStream(const Stream *stream) const;
     bool isValidNativeWindow(EGLNativeWindowType window) const;
@@ -409,6 +525,10 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
     const std::string &getVendorString() const;
     const std::string &getVersionString() const;
     const std::string &getClientAPIString() const;
+    const std::string &getRendererString() const;
+
+    // Builds the string returned by glGetString(GL_RENDERER).
+    std::string generateRendererString(bool includeFullVersion) const;
 
     std::string getBackendRendererDescription() const;
     std::string getBackendVendorString() const;
@@ -438,7 +558,6 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
 
     const DisplayState &getState() const { return mState; }
 
-    const angle::FrontendFeatures &getFrontendFeatures() { return mFrontendFeatures; }
     void overrideFrontendFeatures(const std::vector<std::string> &featureNames, bool enabled);
 
     const angle::FeatureList &getFeatures() const { return mFeatures; }
@@ -447,12 +566,6 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
 
     EGLAttrib queryAttrib(const EGLint attribute);
 
-    angle::ScratchBuffer requestScratchBuffer();
-    void returnScratchBuffer(angle::ScratchBuffer scratchBuffer);
-
-    angle::ScratchBuffer requestZeroFilledBuffer();
-    void returnZeroFilledBuffer(angle::ScratchBuffer zeroFilledBuffer);
-
     egl::Error handleGPUSwitch();
     egl::Error forceGPUSwitch(EGLint gpuIDHigh, EGLint gpuIDLow);
 
@@ -460,10 +573,6 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
 
     void lockVulkanQueue();
     void unlockVulkanQueue();
-
-    // Installs LoggingAnnotator as the global DebugAnnotator, for back-ends that do not implement
-    // their own DebugAnnotator.
-    void setGlobalDebugAnnotator() { gl::InitializeDebugAnnotations(&mAnnotator); }
 
     bool supportsDmaBufFormat(EGLint format) const;
     Error queryDmaBufFormats(EGLint max_formats, EGLint *formats, EGLint *num_formats);
@@ -490,11 +599,7 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
 
     angle::ImageLoadContext getImageLoadContext() const;
 
-    const gl::Context *getContext(gl::ContextID contextID) const;
-    ScopedSurfaceRef getSurfaceRef(egl::SurfaceID surfaceID) const;
-    ScopedSurfaceLockAndRef getSurface(egl::SurfaceID surfaceID) const;
     const egl::Image *getImage(egl::ImageID imageID) const;
-    gl::Context *getContext(gl::ContextID contextID);
     egl::Image *getImage(egl::ImageID imageID);
 
     const ImageMap &getImagesForCapture() const { return mImageMap; }
@@ -510,31 +615,27 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
     static angle::UnlockedTailCall *GetCurrentThreadUnlockedTailCall();
     static Error *GetCurrentThreadErrorScratchSpace();
 
+    void releaseDisplayShareGroupResources(const gl::Context &context);
+
   private:
+    friend class ThreadSafeDisplay;
+
     Display(EGLenum platform, EGLNativeDisplayType displayId, Device *eglDevice);
 
     void setAttributes(const AttributeMap &attribMap) { mAttributeMap = attribMap; }
     void setupDisplayPlatform(rx::DisplayImpl *impl);
 
-    Error releaseContext(gl::Context *context, Thread *thread);
-    Error releaseContextImpl(std::unique_ptr<gl::Context> &&context);
-    std::unique_ptr<gl::Context> eraseContextImpl(gl::Context *context, ContextMap *contexts);
-
     void initDisplayExtensions();
     void initVendorString();
     void initVersionString();
     void initClientAPIString();
+    void initRendererString();
     void initializeFrontendFeatures();
-
-    angle::ScratchBuffer requestScratchBufferImpl(std::vector<angle::ScratchBuffer> *bufferVector);
-    void returnScratchBufferImpl(angle::ScratchBuffer scratchBuffer,
-                                 std::vector<angle::ScratchBuffer> *bufferVector);
 
     Error destroyInvalidEglObjects();
 
     void destroyImageImpl(Image *image, ImageMap *images);
     void destroyStreamImpl(Stream *stream, StreamSet *streams);
-    Error destroySurfaceImpl(Surface *surface, SurfaceMap *surfaces);
 
     void initFromDevice(Device *device, const AttributeMap &attribMap);
     bool initFromNativeDisplay(const AttributeMap &attribMap, const EGLAttrib nativePlatformType);
@@ -551,10 +652,8 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
     ImageMap mImageMap;
     StreamSet mStreamSet;
 
-    ContextMap mInvalidContextMap;
     ImageMap mInvalidImageMap;
     StreamSet mInvalidStreamSet;
-    SurfaceMap mInvalidSurfaceMap;
 
     Caps mCaps;
 
@@ -563,11 +662,11 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
     std::string mVendorString;
     std::string mVersionString;
     std::string mClientAPIString;
+    std::string mRendererString;
 
     Device *mDevice;
     Surface *mSurface;
     EGLenum mPlatform;
-    angle::LoggingAnnotator mAnnotator;
 
     // mManagersMutex protects mTextureManager and mSemaphoreManager
     ContextMutex *mManagersMutex;
@@ -581,18 +680,8 @@ class Display final : public angle::ObserverInterface, public ThreadSafeDisplay
     size_t mGlobalSemaphoreShareGroupUsers;
 
     gl::HandleAllocator mImageHandleAllocator;
-    gl::HandleAllocator mSurfaceHandleAllocator;
-
-    angle::FrontendFeatures mFrontendFeatures;
 
     angle::FeatureList mFeatures;
-
-    angle::SimpleMutex mScratchBufferMutex;
-    std::vector<angle::ScratchBuffer> mScratchBuffers;
-    std::vector<angle::ScratchBuffer> mZeroFilledBuffers;
-
-    bool mTerminatedByApi;
-    bool mPendingInternalCleanup;
 
     void onUnlockMutex();
 
@@ -607,118 +696,25 @@ template <typename DisplayT>
 class [[nodiscard]] ScopedDisplayRefT final
 {
   public:
-    ScopedDisplayRefT() : mDisplay(nullptr), mHoldingRef(false) {}
-    explicit ScopedDisplayRefT(DisplayT &display)
-        : mDisplay(&display), mHoldingRef(display.addRefIfNotTerminating())
-    {}
+    ScopedDisplayRefT() : mDisplay(nullptr) {}
+    explicit ScopedDisplayRefT(DisplayT &display) : mDisplay(&display) { mDisplay->addRef(); }
     ~ScopedDisplayRefT()
     {
-        if (mHoldingRef)
+        if (mDisplay != nullptr)
         {
             mDisplay->releaseRef();
         }
     }
 
-    ScopedDisplayRefT(const ScopedDisplayRefT &other)
-        : mDisplay(other.mDisplay),
-          mHoldingRef(other.mHoldingRef && other.mDisplay->addRefIfNotTerminating())
-    {}
-
-    template <typename OtherDisplayT,
-              std::enable_if_t<std::is_convertible_v<OtherDisplayT *, DisplayT *>, bool> = true>
-    ScopedDisplayRefT(const ScopedDisplayRefT<OtherDisplayT> &other)
-        : mDisplay(other.mDisplay),
-          mHoldingRef(other.mHoldingRef && other.mDisplay->addRefIfNotTerminating())
-    {}
-
-    ScopedDisplayRefT &operator=(const ScopedDisplayRefT &other)
-    {
-        if (this != &other)
-        {
-            if (mHoldingRef)
-            {
-                mDisplay->releaseRef();
-            }
-            mDisplay    = other.mDisplay;
-            mHoldingRef = other.mHoldingRef && other.mDisplay->addRefIfNotTerminating();
-        }
-        return *this;
-    }
-
-    template <typename OtherDisplayT,
-              std::enable_if_t<std::is_convertible_v<OtherDisplayT *, DisplayT *>, bool> = true>
-    ScopedDisplayRefT &operator=(const ScopedDisplayRefT<OtherDisplayT> &other)
-    {
-        if (static_cast<const void *>(this) != static_cast<const void *>(&other))
-        {
-            if (mHoldingRef)
-            {
-                mDisplay->releaseRef();
-            }
-            mDisplay    = other.mDisplay;
-            mHoldingRef = other.mHoldingRef && other.mDisplay->addRefIfNotTerminating();
-        }
-        return *this;
-    }
-
-    ScopedDisplayRefT(ScopedDisplayRefT &&other) noexcept
-        : mDisplay(other.mDisplay), mHoldingRef(other.mHoldingRef)
-    {
-        other.mDisplay    = nullptr;
-        other.mHoldingRef = false;
-    }
-
-    template <typename OtherDisplayT,
-              std::enable_if_t<std::is_convertible_v<OtherDisplayT *, DisplayT *>, bool> = true>
-    ScopedDisplayRefT(ScopedDisplayRefT<OtherDisplayT> &&other) noexcept
-        : mDisplay(other.mDisplay), mHoldingRef(other.mHoldingRef)
-    {
-        other.mDisplay    = nullptr;
-        other.mHoldingRef = false;
-    }
-
-    ScopedDisplayRefT &operator=(ScopedDisplayRefT &&other) noexcept
-    {
-        if (this != &other)
-        {
-            if (mHoldingRef)
-            {
-                mDisplay->releaseRef();
-            }
-            mDisplay          = other.mDisplay;
-            mHoldingRef       = other.mHoldingRef;
-            other.mDisplay    = nullptr;
-            other.mHoldingRef = false;
-        }
-        return *this;
-    }
-
-    template <typename OtherDisplayT,
-              std::enable_if_t<std::is_convertible_v<OtherDisplayT *, DisplayT *>, bool> = true>
-    ScopedDisplayRefT &operator=(ScopedDisplayRefT<OtherDisplayT> &&other) noexcept
-    {
-        if (static_cast<const void *>(this) != static_cast<const void *>(&other))
-        {
-            if (mHoldingRef)
-            {
-                mDisplay->releaseRef();
-            }
-            mDisplay          = other.mDisplay;
-            mHoldingRef       = other.mHoldingRef;
-            other.mDisplay    = nullptr;
-            other.mHoldingRef = false;
-        }
-        return *this;
-    }
+    ScopedDisplayRefT(const ScopedDisplayRefT &)            = delete;
+    ScopedDisplayRefT &operator=(const ScopedDisplayRefT &) = delete;
+    ScopedDisplayRefT(ScopedDisplayRefT &&)                 = delete;
+    ScopedDisplayRefT &operator=(ScopedDisplayRefT &&)      = delete;
 
     DisplayT *get() const { return mDisplay; }
 
   private:
-    template <typename OtherDisplayT>
-    friend class ScopedDisplayRefT;
-
     DisplayT *mDisplay;
-    bool mHoldingRef;
 };
 
 class [[nodiscard]] ScopedDisplayMutexLock final
@@ -730,8 +726,8 @@ class [[nodiscard]] ScopedDisplayMutexLock final
     ScopedDisplayMutexLock(const ScopedDisplayMutexLock &)            = delete;
     ScopedDisplayMutexLock &operator=(const ScopedDisplayMutexLock &) = delete;
 
-    ScopedDisplayMutexLock(ScopedDisplayMutexLock &&) noexcept            = default;
-    ScopedDisplayMutexLock &operator=(ScopedDisplayMutexLock &&) noexcept = default;
+    ScopedDisplayMutexLock(ScopedDisplayMutexLock &&)            = delete;
+    ScopedDisplayMutexLock &operator=(ScopedDisplayMutexLock &&) = delete;
 
   private:
     std::unique_lock<angle::SimpleMutex> mLock;
@@ -751,45 +747,21 @@ class [[nodiscard]] ScopedDisplayLockAndRefT final
     explicit ScopedDisplayLockAndRefT(DisplayT &display) : mLock(display), mDisplay(display) {}
     ~ScopedDisplayLockAndRefT()
     {
-        if constexpr (!std::is_const_v<DisplayT>)
+        if (mDisplay.get() != nullptr)
         {
-            if (mDisplay.get() != nullptr)
-            {
-                mDisplay.get()->onUnlockMutex();
-            }
+            mDisplay.get()->onUnlockMutex();
         }
     }
 
     ScopedDisplayLockAndRefT(const ScopedDisplayLockAndRefT &)            = delete;
     ScopedDisplayLockAndRefT &operator=(const ScopedDisplayLockAndRefT &) = delete;
 
-    ScopedDisplayLockAndRefT(ScopedDisplayLockAndRefT &&other) noexcept            = default;
-    ScopedDisplayLockAndRefT &operator=(ScopedDisplayLockAndRefT &&other) noexcept = default;
-
-    template <typename OtherDisplayT,
-              std::enable_if_t<std::is_convertible_v<OtherDisplayT *, DisplayT *>, bool> = true>
-    ScopedDisplayLockAndRefT(ScopedDisplayLockAndRefT<OtherDisplayT> &&other) noexcept
-        : mLock(std::move(other.mLock)), mDisplay(std::move(other.mDisplay))
-    {}
-
-    template <typename OtherDisplayT,
-              std::enable_if_t<std::is_convertible_v<OtherDisplayT *, DisplayT *>, bool> = true>
-    ScopedDisplayLockAndRefT &operator=(ScopedDisplayLockAndRefT<OtherDisplayT> &&other) noexcept
-    {
-        if (static_cast<const void *>(this) != static_cast<const void *>(&other))
-        {
-            mLock    = std::move(other.mLock);
-            mDisplay = std::move(other.mDisplay);
-        }
-        return *this;
-    }
+    ScopedDisplayLockAndRefT(ScopedDisplayLockAndRefT &&)            = delete;
+    ScopedDisplayLockAndRefT &operator=(ScopedDisplayLockAndRefT &&) = delete;
 
     DisplayT *get() const { return mDisplay.get(); }
 
   private:
-    template <typename OtherDisplayT>
-    friend class ScopedDisplayLockAndRefT;
-
     // mLock must be declared before mDisplay to ensure mDisplayMutex is locked before mRefCount
     // is incremented on construction, and mRefCount is decremented before mDisplayMutex is
     // unlocked on destruction.

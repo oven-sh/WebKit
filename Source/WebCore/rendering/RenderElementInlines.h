@@ -30,22 +30,11 @@
 
 namespace WebCore {
 
-inline UsedStyle RenderObject::usedStyle() const
-{
-    if (isRenderText())
-        return m_parent->usedStyle();
-    return downcast<RenderElement>(*this).usedStyle();
-}
-
+inline UsedStyle RenderObject::usedStyle() const { return UsedStyle { *this }; }
 inline UsedStyle RenderObject::firstLineUsedStyle() const
 {
-    if (isRenderText())
-        return m_parent->firstLineUsedStyle();
-    return downcast<RenderElement>(*this).firstLineUsedStyle();
+    return UsedStyle { *this, layoutBox().firstLineStyle() };
 }
-
-inline UsedStyle RenderElement::usedStyle() const { return UsedStyle { *this }; }
-inline UsedStyle RenderElement::firstLineUsedStyle() const { return UsedStyle { *this, firstLineStyle() }; }
 inline Overflow RenderElement::effectiveOverflowBlockDirection() const { return writingMode().isHorizontal() ? effectiveOverflowY() : effectiveOverflowX(); }
 inline Overflow RenderElement::effectiveOverflowInlineDirection() const { return writingMode().isHorizontal() ? effectiveOverflowX() : effectiveOverflowY(); }
 inline Element* RenderElement::element() const { return downcast<Element>(RenderObject::node()); }
@@ -91,7 +80,6 @@ inline bool RenderElement::isAnonymousBlock() const
 #if ENABLE(MATHML)
         && !isRenderMathMLBlock()
 #endif
-        && !isRenderListOutsideMarker()
         && !isRenderFragmentedFlow()
         && !isRenderMultiColumnSet()
         && !isRenderView()
@@ -111,9 +99,9 @@ inline bool RenderElement::isBlockBox() const
 
 inline bool RenderElement::hasPotentiallyScrollableOverflow() const
 {
-    // We only need to test one overflow dimension since 'visible' and 'clip' always get accompanied
-    // with 'clip' or 'visible' in the other dimension (see Style::Adjuster::adjust).
-    return hasNonVisibleOverflow() && style().overflowX() != Overflow::Clip && style().overflowX() != Overflow::Visible;
+    // 'visible' is only ever paired with 'visible' or 'clip' (see Style::Adjuster::adjust), but 'clip'
+    // may be paired with a scrollable value in the other axis (a single-axis scroll container).
+    return hasNonVisibleOverflow() && (isScrollableOverflow(style().overflowX()) || isScrollableOverflow(style().overflowY()));
 }
 
 inline bool RenderElement::isBeforeContent() const

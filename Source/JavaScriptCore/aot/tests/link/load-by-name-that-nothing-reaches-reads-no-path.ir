@@ -1,0 +1,24 @@
+# code is made for what Link has reached and for nothing else: a load by name in a function that nothing reaches reads no path
+# main.js: function never(name) { return require(name); }
+# with every mechanism withheld Link leaves reach and claims nothing else (function-that-nothing-enters.ir), and no code is made for the function then either: the same holds
+# RUN: summary f1 mechanisms=all
+# CHECK: may-read-path-of-any-module
+# RUN(LINK): link functions layouts mechanisms=all
+# LINK: function f1 unreached
+# LINK: path-unread m0
+# RUN(NONE): link functions layouts mechanisms=none
+# NONE: function f1 unreached
+# NONE: path-unread m0
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="never" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = RequireDynamic v0 referrer=m0
+    Return v1
+}

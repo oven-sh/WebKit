@@ -1,0 +1,17 @@
+# a tag is valid however it is cased. The facts keep the text as written, and the driver looks for data under its canonical form
+# (1).toLocaleString("EN-us");
+# RUN: locales
+# CHECK: locale constant "EN-us" NumberPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="EN-us"
+    v2 = PropGet v0 key="toLocaleString"
+    v3 = Call v2, v0, v1 calleeKey="toLocaleString"
+    Return v3
+}

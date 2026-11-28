@@ -1,0 +1,12 @@
+# closed operations are never withheld: with every mechanism on, an operation of whose operands nothing is known or guessed has the very form that it has with all of them withheld
+# RUN: walk f1 mechanisms=all
+# CHECK: mechanisms all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[o]]: {{*}}@JSValue {{*}}, [[n]]: {{*}}@JSValue {{*}})
+# CHECK: [[x]]: {{*}}@JSValue = PropGet [[o]] key="x"
+# CHECK: @JSValue = Add [[x]], [[n]] form=Generic
+# RUN(NOTHING): walk f1 mechanisms=all
+# NOTHING-NOT: TypeTest
+# NOTHING-NOT: ShapeTest
+# NOTHING-NOT: GetSlot
+# PROGRAM-OF: every-operation-is-copied.ir

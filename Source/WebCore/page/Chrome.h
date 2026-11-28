@@ -149,7 +149,7 @@ public:
     RefPtr<ShapeDetection::FaceDetector> createFaceDetector(const ShapeDetection::FaceDetectorOptions&) const;
     RefPtr<ShapeDetection::TextDetector> createTextDetector() const;
 
-    PlatformDisplayID LEGACY_NODELETE displayID() const override;
+    NODELETE PlatformDisplayID displayID() const override;
 #if HAVE(IOSURFACE)
     bool useIOSurfaceWebKitBehavior() const override;
 #endif
@@ -242,8 +242,6 @@ public:
     // FIXME: Can we come up with a better name for this setter?
     void setDispatchViewportDataDidChangeSuppressed(bool dispatchViewportDataDidChangeSuppressed) { m_isDispatchViewportDataDidChangeSuppressed = dispatchViewportDataDidChangeSuppressed; }
 #endif
-
-    void didReceiveDocType(LocalFrame&);
 
     void registerPopupOpeningObserver(PopupOpeningObserver&);
     void unregisterPopupOpeningObserver(PopupOpeningObserver&);

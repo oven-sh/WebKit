@@ -1,0 +1,92 @@
+# function render(nodes, limit) { let width = 0, html = ""; for (const node of nodes) { switch (node.kind) { case "text": try { width += node.value.length; } catch (e) { width += 1; } html += node.value; break; } if (width > limit) return "too wide"; } return html; }
+# On the early way out nobody reads the text, so its builder is thrown away. No name of the text is alive there; the name that was bound last is a parameter of the block behind the `try`, which the way past the `case` does not come through. The builder that the text began in stands in front of the loop.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[builder]]: {{*}} = StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: = StringBuilderDiscard [[builder]]
+layout L0 module=m0 position=371 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=340 fields=[{key="kind" declared={type=anything}}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+# layout L906 kind=Closure
+module m0 path="/$bunfs/root/render.js" displayPath="render.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 32, 60, 90, 115, 134, 204, 232, 247, 253, 295, 299, 314, 316, 457] quotedSources=[{position=62 start=139 end=152}, {position=102 start=152 end=161}, {position=157 start=170 end=180}, {position=162 start=170 end=187}, {position=220 start=195 end=205}, {position=316 end=15}, {position=327 end=139}, {position=332 start=16 end=92}, {position=410 start=94 end=138}] quotedSourceText="globalThis.sink(render([{ kind: \x22text\x22, value: \x22ab\x22 }, { kind: \x22br\x22 }, { kind: \x22text\x22 }], 9), render([{ kind: \x22text\x22, value: \x22abcd\x22 }], 1))node of nodesnode.kindwidth += node.value.lengthhtml += node.value"} functionSource="function render(nodes, limit) {\x0a  let width = 0, html = \x22\x22;\x0a  for (const node of nodes) {\x0a    switch (node.kind) {\x0a      case \x22text\x22:\x0a        try { width += node.value.length; } catch (e) { width += 1; }\x0a        html += node.value;\x0a        break;\x0a    }\x0a    if (width > limit) return \x22too wide\x22;\x0a  }\x0a  return html;\x0a}\x0aglobalThis.sink(render([{ kind: \x22text\x22, value: \x22ab\x22 }, { kind: \x22br\x22 }, { kind: \x22text\x22 }], 9), render([{ kind: \x22text\x22, value: \x22abcd\x22 }], 1));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @316
+    v3 = PropGet v2 key="globalThis" [isFreeName] @316
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @316
+    v5 = PropGet v4 key="sink" @316
+    v6 = Data data=d0 @339
+    v7 = Integer integer=9 @406
+    v8 = Call v1, -, v6, v7 calleeName="render" @332
+    v9 = Data data=d1 @417
+    v10 = Integer integer=1 @452
+    v11 = Call v1, -, v9, v10 calleeName="render" @410
+    v12 = Call v5, v4, v8, v11 calleeKey="sink" calleeName="globalThis.sink" @327
+    v13 = Undefined @316
+    Return v13 @316
+}
+function f1 name="render" module=m0 sourceRange={end=315} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L1> flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L1>, v1: anything):
+    v2 = Integer @46
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @46
+    v4 = String string="" @56
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @56
+    v6 = IteratorOpen v0 @62
+    Jump -> next b1(v3, v5) @62
+  b1(v7, v8):
+    LoopHint @62
+    v10 = IteratorResume v6 @62
+    v11 = ResultAt v10 @62
+    v12 = ResultAt v10 index=1 @62
+    Branch v11 -> taken b2(), notTaken b3() @62
+  b2():
+    Return v8 @308
+  b3():
+    Jump -> next b4() @62
+  b4() handler=b14():
+    v13 = Convert v12 declared={type=undefined|null|L1 flags=[IsExpected]} @62
+    v14 = PropGet v13 key="kind" @102
+    SwitchString v14 strings=["text"] -> case b5(| 0), otherwise b10(v7, v8) @126
+  b5(v15) handler=b14():
+    v16 = NarrowByField v13, v15 key="kind" @126
+    Jump -> next b6() @142
+  b6() handler=b8(v7):
+    v17 = PropGet v16 key="value" @157
+    v18 = PropGet v17 key="length" @162
+    v19 = Add v7, v18 @157
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @148
+    Jump -> next b7() @148
+  b7() handler=b8(v20):
+    Jump -> next b9(v20) @148
+  b8(v21) role=CatchHandler handler=b14():
+    v22 = CatchValue @188
+    v23 = Integer integer=1 @199
+    v24 = Add v21, v23 @199
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @190
+    Jump -> next b9(v25) @190
+  b9(v26) handler=b14():
+    v27 = PropGet v16 key="value" @220
+    v28 = Add v8, v27 @220
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]} @212
+    Jump -> next b10(v26, v29) @212
+  b10(v30, v31) handler=b14():
+    v32 = Greater v30, v1 @269
+    Branch v32 -> taken b11(), notTaken b13() @269
+  b11() handler=b14():
+    v33 = String string="too wide" @283
+    Jump -> next b12(v33) @283
+  b12(v34):
+    IteratorClose v6 @62
+    Return v34 @62
+  b13() handler=b14():
+    Jump -> next b1(v30, v31) @283
+  b14() role=IterationCleanup subject=v6:
+    v36 = CatchException @62
+    IteratorClose v6 completion=Throw @62
+    Rethrow v36 @62
+}
+data d0 root=Array{contents=anything elements=[Object{layout=L1 members=[{key="kind" value=String{value="text"}}, {key="value" value=String{value="ab"}}]}, Object{layout=L0 members=[{key="kind" value=String{value="br"}}]}, Object{layout=L0 members=[{key="kind" value=String{value="text"}}]}]} module=m0
+data d1 root=Array{contents=anything elements=[Object{layout=L1 members=[{key="kind" value=String{value="text"}}, {key="value" value=String{value="abcd"}}]}]} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]

@@ -56,6 +56,7 @@
 #include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/MediaProducer.h>
+#include <WebCore/NetworkInterception.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/RegistrableDomain.h>
@@ -113,6 +114,7 @@ struct RemotePageParameters {
     FrameTreeCreationParameters frameTreeParameters;
     std::optional<WebsitePoliciesData> websitePoliciesData;
     Ref<WebCore::DocumentSyncData> topDocumentSyncData;
+    double pageScaleFactor { 1 };
 };
 
 struct WebPageCreationParameters {
@@ -121,9 +123,6 @@ struct WebPageCreationParameters {
     OptionSet<WebCore::ActivityState> activityState { };
     
     WebPreferencesStore store { };
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType drawingAreaType { };
-#endif
     DrawingAreaIdentifier drawingAreaIdentifier;
     WebPageProxyIdentifier webPageProxyIdentifier;
     WebPageGroupData pageGroupData;
@@ -148,6 +147,7 @@ struct WebPageCreationParameters {
     bool alwaysShowsVerticalScroller { false };
 
     bool suppressScrollbarAnimations { false };
+    std::optional<WebCore::ScrollbarStyle> scrollbarStyleOverride { };
 
     WebCore::Pagination::Mode paginationMode { WebCore::Pagination::Mode::Unpaginated };
     bool paginationBehavesLikeColumns { false };
@@ -181,6 +181,8 @@ struct WebPageCreationParameters {
     bool mayStartMediaWhenInWindow { false };
     bool mediaPlaybackIsSuspended { false };
     bool areActiveDOMObjectsAndAnimationsSuspended { false };
+    bool shouldSuppressHDR { false };
+    bool isTakingSnapshotsForApplicationSuspension { false };
 
     WebCore::IntSize minimumSizeForAutoLayout { };
     WebCore::IntSize sizeToContentAutoSizeMaximumSize { };
@@ -199,6 +201,7 @@ struct WebPageCreationParameters {
     Vector<String> mimeTypesWithCustomContentProviders { };
 
     bool controlledByAutomation { false };
+    Inspector::NetworkInterception networkInterception { };
     bool isProcessSwap { false };
 
     bool useDarkAppearance { false };
@@ -229,6 +232,7 @@ struct WebPageCreationParameters {
     WebCore::FloatSize overrideAvailableScreenSize { };
     float textAutosizingWidth { 0 };
     WebCore::IntDegrees deviceOrientation { 0 };
+    WebCore::FloatBoxExtent unobscuredSafeAreaInsets { };
     HardwareKeyboardState hardwareKeyboardState { };
     bool canShowWhileLocked { false };
     bool isCapturingScreen { false };
@@ -243,9 +247,6 @@ struct WebPageCreationParameters {
     Vector<String> additionalSupportedImageTypes { };
     Vector<SandboxExtension::Handle> gpuIOKitExtensionHandles { };
     Vector<SandboxExtension::Handle> gpuMachExtensionHandles { };
-#endif
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    SandboxExtension::Handle renderServerMachExtensionHandle { };
 #endif
 #if HAVE(STATIC_FONT_REGISTRY) && !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     Vector<SandboxExtension::Handle> fontMachExtensionHandles { };
@@ -307,7 +308,9 @@ struct WebPageCreationParameters {
     bool shouldCaptureAudioInUIProcess { false };
     bool shouldCaptureVideoInUIProcess { false };
     bool shouldCaptureDisplayInUIProcess { false };
+#if !PLATFORM(COCOA)
     bool shouldRenderDOMInGPUProcess { false };
+#endif
 #if ENABLE(APP_BOUND_DOMAINS)
     bool limitsNavigationsToAppBoundDomains { false };
 #endif
@@ -397,6 +400,9 @@ struct WebPageCreationParameters {
     bool shouldForceSiteIsolationAlwaysOnForTesting { false };
     bool shouldEnableNetworkInstrumentation { false };
     bool shouldEnablePageInstrumentation { false };
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    std::optional<bool> imageAnimationEnabledOverride { };
+#endif
 };
 
 } // namespace WebKit

@@ -33,16 +33,16 @@ enum class CSSValueID : uint16_t;
 
 class CSSBackgroundRepeatValue final : public CSSValue {
 public:
-    static Ref<CSSBackgroundRepeatValue> LEGACY_NODELETE create(CSSValueID repeatXValue, CSSValueID repeatYValue);
+    NODELETE static Ref<CSSBackgroundRepeatValue> create(CSSValueID repeatXValue, CSSValueID repeatYValue);
 
     String customCSSText(const CSS::SerializationContext&) const;
-    bool LEGACY_NODELETE equals(const CSSBackgroundRepeatValue&) const;
+    NODELETE bool equals(const CSSBackgroundRepeatValue&) const;
 
     CSSValueID xValue() const { return m_xValue; }
     CSSValueID yValue() const { return m_yValue; }
 
 private:
-    CSSBackgroundRepeatValue(CSSValueID repeatXValue, CSSValueID repeatYValue);
+    NODELETE CSSBackgroundRepeatValue(CSSValueID repeatXValue, CSSValueID repeatYValue);
 
     CSSValueID m_xValue;
     CSSValueID m_yValue;

@@ -1,0 +1,35 @@
+# main.cjs: require("./helper.cjs"); Bun.main = globalThis.path; print(require.main)        helper.cjs: module.exports = 1
+# The list of what the program replaces lacks Bun.main: the front end has decided `require.main === module` and `import.meta.main` in the code.
+# The run time has to refuse the store, or the code would answer for one file and `require.main` for another. It takes the store where the image has the flag.
+# The other half, a list that has the member, names it by a token of one host's table: closed-world/flags in AOTClosedWorldTests.cpp
+# RUN: image
+# CHECK: flags
+# CHECK-NOT: SetsMainModulePath
+# RUN(NONE): image mechanisms=none
+# NONE: flags
+# NONE-NOT: SetsMainModulePath
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="path" [isFreeName]
+    v5 = Builtin builtin=Bun
+    PropSet v5, v4 key="main"
+    v7 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v8 = PropGet v7 key="main"
+    v9 = PropGet v3 key="print" [isFreeName]
+    v10 = Call v9, -, v8
+    Return
+}
+function f1 name="helper" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+}

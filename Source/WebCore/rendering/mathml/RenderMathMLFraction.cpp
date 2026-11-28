@@ -47,7 +47,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLFraction);
 
-RenderMathMLFraction::RenderMathMLFraction(MathMLFractionElement& element, Style::ComputedStyle&& style)
+RenderMathMLFraction::RenderMathMLFraction(MathMLFractionElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLRow(Type::MathMLFraction, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLFraction());
@@ -192,28 +192,18 @@ MathMLFractionElement& RenderMathMLFraction::element() const
     return downcast<MathMLFractionElement>(nodeForNonAnonymous());
 }
 
-void RenderMathMLFraction::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMathMLFraction::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    if (!isValid()) {
-        RenderMathMLRow::computeIntrinsicLogicalWidthContributions();
-        return;
-    }
+    if (!isValid())
+        return RenderMathMLRow::computeIntrinsicLogicalWidthContributions();
 
     CheckedRef numerator = this->numerator();
     CheckedRef denominator = this->denominator();
     LayoutUnit numeratorWidth = numerator->maxContentLogicalWidthContribution() + marginIntrinsicLogicalWidthForChild(numerator);
     LayoutUnit denominatorWidth = denominator->maxContentLogicalWidthContribution() + marginIntrinsicLogicalWidthForChild(denominator);
-    m_maxContentLogicalWidthContribution = std::max(numeratorWidth, denominatorWidth);
-    m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
-    adjustContentLogicalWidthsForBorderAndPadding();
-
-    clearContentLogicalWidthsInvalidation();
+    return intrinsicLogicalWidthContributionsForMathContent(std::max(numeratorWidth, denominatorWidth));
 }
 
 LayoutUnit RenderMathMLFraction::horizontalOffset(RenderBox& child, MathMLFractionElement::FractionAlignment align) const
@@ -222,11 +212,9 @@ LayoutUnit RenderMathMLFraction::horizontalOffset(RenderBox& child, MathMLFracti
     LayoutUnit childMarginBoxInlineSize = child.marginStart(child.writingMode()) + child.logicalWidth() + child.marginEnd(child.writingMode());
     switch (align) {
     case MathMLFractionElement::FractionAlignment::Right:
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return LayoutUnit(contentBoxInlineSize - childMarginBoxInlineSize);
+        return LayoutUnit(contentBoxInlineSize - childMarginBoxInlineSize);
     case MathMLFractionElement::FractionAlignment::Center:
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return LayoutUnit((contentBoxInlineSize - childMarginBoxInlineSize) / 2);
+        return LayoutUnit((contentBoxInlineSize - childMarginBoxInlineSize) / 2);
     case MathMLFractionElement::FractionAlignment::Left:
         return 0_lu;
     }

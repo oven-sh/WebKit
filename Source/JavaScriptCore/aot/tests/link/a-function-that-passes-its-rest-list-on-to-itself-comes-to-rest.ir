@@ -1,0 +1,27 @@
+# Each turn takes the first argument off and passes the rest on to the same function, so what was written at the second and third place comes to the first, and at last nothing is left and the parameter is `undefined`. The places only go down, so the flow comes to rest.
+#   function each(first, ...rest) { return each(...rest); }  each(1, "x", true);
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK-NEXT: parameter 0 expected=undefined|true|i32|string proven=undefined|true|int[0, 2147483647]|string
+
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    v3 = String string="x"
+    v4 = Boolean boolean=true
+    v5 = Call v0, -, v2, v3, v4 calleeName="each"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="each" module=m0 flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = GetModuleVariable variable=g0
+    v3 = CallList v2, -, v1 calleeName="each"
+    Return v3
+}

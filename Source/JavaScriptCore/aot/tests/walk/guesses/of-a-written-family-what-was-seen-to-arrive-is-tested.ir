@@ -1,0 +1,36 @@
+# the parameter is written as a family of two, and the one caller in sight passes an Identifier. What both say is expected: one shape is tested for, not the family. Whatever else unseen code brings goes by name
+# function at(node: Identifier | Literal) { return node.pos; }  at(identifier); sink(at, literal);
+# the read goes off the parameter itself, as the front end writes it: what was seen to arrive is asked of an entry parameter, and a Convert in between would hide it
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="pos" receivers=[L1]
+# RUN(ANSWER): run-in-shell globalThis.sink = (at, literal) => { print(at(literal)); print(at({ pos: 9 })); };
+# ANSWER: 4
+# ANSWER-NEXT: 9
+# ANSWER-NEXT: exited with 0
+
+layout L0 name="Node" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Identifier" module=m0 fields=[{key="pos" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Literal" module=m0 fields=[{key="pos" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=3
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Integer integer=4
+    v7 = NewObject -, v6 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    v9 = Call v2, -, v5 calleeName="at"
+    v10 = Call v1, -, v2, v8 calleeName="sink"
+    Return v10
+}
+function f1 name="at" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L2}] results=[{type=anything}] {
+  b0(v0: L1|L2):
+    v1 = PropGet v0 key="pos"
+    Return v1
+}

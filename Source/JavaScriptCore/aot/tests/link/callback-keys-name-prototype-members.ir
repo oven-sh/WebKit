@@ -1,0 +1,130 @@
+# function D() { this.a = 1; }  [["x", "first"], ["y", "second"]].forEach(function (g) { D.prototype[g[1]] = function () { return 1; }; });
+# The callback is called with the rows of the list alone, for nobody else has the list or the callback: the store is one under each of the two names.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known
+# CHECK: layout L0 {{*}}changes=[]
+# A callback that is called with something else too, a row that others read first, and a list that others have.
+# CHECK: layout L1 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L2 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L3 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="D" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="E" module=m0 constructor=f4 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="G" module=m0 constructor=f6 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L3 kind=Instance name="H" module=m0 constructor=f8 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="row" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = String string="x"
+    v3 = String string="first"
+    v4 = NewArray v2, v3 contents=anything
+    v5 = String string="second"
+    v6 = NewArray v2, v5 contents=anything
+    v7 = NewArray v4, v6 contents=anything
+    v8 = PropGet v7 key="forEach"
+    v9 = NewClosure v1 function=f2
+    v10 = Call v8, v7, v9 calleeKey="forEach"
+    v11 = Construct v0
+    v12 = PropGet v11 key="a"
+    v13 = PropGet v11 key="first"
+    v14 = PropGet v11 key="second"
+    v15 = NewClosure function=f4
+    v16 = PropGet v15 key="prototype"
+    v17 = NewArray v3, v5 contents=anything
+    v18 = PropGet v17 key="forEach"
+    v19 = NewClosure v16 function=f5
+    v20 = Call v18, v17, v19 calleeKey="forEach"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="key"
+    v23 = Call v19, -, v22 calleeName="callback"
+    v24 = Construct v15
+    v25 = PropGet v24 key="a"
+    v26 = NewClosure function=f6
+    v27 = PropGet v26 key="prototype"
+    v28 = NewArray v2, v3 contents=anything
+    v29 = NewArray v28 contents=anything
+    v30 = PropGet v29 key="forEach"
+    v31 = NewClosure v27 function=f7
+    v32 = Call v30, v29, v31 calleeKey="forEach"
+    v33 = Construct v26
+    v34 = PropGet v33 key="a"
+    v35 = NewClosure function=f8
+    v36 = PropGet v35 key="prototype"
+    v37 = NewArray v3, v5 contents=anything
+    PropSet v21, v37 key="list"
+    v39 = PropGet v37 key="forEach"
+    v40 = NewClosure v36 function=f9
+    v41 = Call v39, v37, v40 calleeKey="forEach"
+    v42 = Construct v35
+    v43 = PropGet v42 key="a"
+    Return v43
+}
+function f1 name="D" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = ElemGet v1, v2
+    v4 = NewClosure function=f3
+    ElemSet v0, v3, v4
+    v6 = Undefined
+    Return v6
+}
+function f3 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="E" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f5 module=m0 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}
+function f6 name="G" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f7 module=m0 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v1 variable=g0
+    v3 = Integer integer=1
+    v4 = ElemGet v1, v3
+    ElemSet v0, v4, v3
+    v6 = Undefined
+    Return v6
+}
+function f8 name="H" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] constructedClass=L3 {
+  b0(v0: L3):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f9 module=m0 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}

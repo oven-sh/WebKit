@@ -1,0 +1,36 @@
+# closed, a call of a method reads the method itself, so the read and the call are one operation, as they are in the source. One does not pay for a test of a class outside a loop. Two do
+# function once(list: number[], x) { list.push(x); }   function both(list: number[], x) { const n = list.length; list.push(x); return n; }
+# The guard at the entry is withheld: with it the class is proven in the whole body.
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet {{*}}key="push"
+# CHECK-NEXT: = Call
+# RUN(BOTH): walk f2 mechanisms=all-ParameterGuards
+# BOTH-LABEL: code f2:Body
+# BOTH: = TypeTest {{*}}testedType=Array
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="once" module=m0 length=2 thisType={type=anything} parameters=[{type=Array<number>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push" calleeName="list.push"
+    Return v3
+}
+function f2 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=Array<number>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: anything):
+    v2 = PropGet v0 key="length"
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1 calleeKey="push" calleeName="list.push"
+    Return v2
+}

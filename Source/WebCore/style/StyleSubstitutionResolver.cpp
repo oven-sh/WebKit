@@ -71,7 +71,6 @@
 #include <wtf/IndexedRange.h>
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
-#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 namespace Style {
@@ -98,7 +97,7 @@ static bool containsURLTokens(std::span<const CSSParserToken> tokens)
 // A comma-containing value can be passed as a single free-form-production argument by wrapping it in
 // curly braces. The braces are syntactic and the argument is the block's contents.
 // https://drafts.csswg.org/css-values-5/#component-function-commas
-static CSSParserTokenRange LEGACY_NODELETE unwrapArgumentBraces(CSSParserTokenRange argument)
+NODELETE static CSSParserTokenRange unwrapArgumentBraces(CSSParserTokenRange argument)
 {
     auto range = argument;
     range.consumeWhitespace();
@@ -124,10 +123,11 @@ SubstitutionResolver::SubstitutionResolver(Builder& builder, const CSSRegistered
 {
 }
 
-RefPtr<const CustomProperty> SubstitutionResolver::propertyValueForVariableName(const AtomString& variableName, CSSValueID functionId)
+RefPtr<const CustomProperty> SubstitutionResolver::propertyValueForVariableName(const AtomString& variableName, CSSValueID functionId, std::span<const unsigned> envIndices)
 {
     if (functionId == CSSValueID::Env)
-        return protect(m_styleBuilder.state().document().styleScope())->environmentVariables().valueForName(variableName);
+        return protect(m_styleBuilder.state().document().styleScope())->environmentVariables().valueForName(variableName, envIndices);
+    ASSERT(envIndices.empty());
 
     // Every parameter of the function whose arguments are being resolved shadows the calling element's
     // custom property of the same name, resolved or not, so a default can reference an earlier
@@ -212,31 +212,19 @@ bool SubstitutionResolver::substituteVarFunction(CSSParserTokenRange range, Vect
 bool SubstitutionResolver::substituteEnvFunction(CSSParserTokenRange range, Vector<CSSParserToken>& tokens, const CSSParserContext& context)
 {
     // https://drafts.csswg.org/css-env-1/#env-function
+    // env() = env( <custom-ident> <integer [0,∞]>*, <declaration-value>? )
     // FIXME: env()'s argument grammar is env( <declaration-value>, <declaration-value>? ) like var()'s,
     // so the name argument should be substituted and only then parsed as <custom-ident> <integer>*.
-    // Only a literal <ident> name is supported here, the same limitation as the unsupported indices.
-    // Special logic for viewport-segment-* with indices exists, but that should be made generic for
-    // any <custom-ident> to support env( <custom-ident> <integer [0,∞]>*, <declaration-value>? ).
-    // https://bugs.webkit.org/show_bug.cgi?id=327437
+    // Only a literal <ident> name and literal <integer> indices are supported here.
 
     range.consumeWhitespace();
     if (range.peek().type() != IdentToken)
         return false;
     auto name = range.consumeIncludingWhitespace().value().toAtomString();
 
-    // viewport-segment-* env() variables are looked up with composite names of the form
-    // "viewport-segment-<prop> <col> <row>" — consume the two integer indices here.
-    if (context.viewportSegmentsAPIEnabled && name.startsWith("viewport-segment-"_s)) {
-        if (range.peek().type() == NumberToken) {
-            int col = static_cast<int>(range.consumeIncludingWhitespace().numericValue());
-            if (range.peek().type() == NumberToken) {
-                int row = static_cast<int>(range.consumeIncludingWhitespace().numericValue());
-                // FIXME: Rather than constructing a string which needs to be reparsed, the logic
-                // should be updated to pass in an index vector and name.
-                name = makeAtomString(name, ' ', col, ' ', row);
-            }
-        }
-    }
+    auto indices = CSSSubstitutionParser::consumeEnvVariableIndices(range);
+    if (!indices)
+        return false;
 
     std::optional<CSSParserTokenRange> fallbackRange;
     if (!range.atEnd()) {
@@ -247,15 +235,19 @@ bool SubstitutionResolver::substituteEnvFunction(CSSParserTokenRange range, Vect
         fallbackRange = range;
     }
 
-    return substituteNamedValueOrFallback(name, fallbackRange, CSSValueID::Env, tokens, context);
+    return substituteNamedValueOrFallback(name, fallbackRange, CSSValueID::Env, tokens, context, *indices);
 }
 
-bool SubstitutionResolver::substituteNamedValueOrFallback(const std::optional<AtomString>& name, const std::optional<CSSParserTokenRange>& fallbackRange, CSSValueID functionId, Vector<CSSParserToken>& tokens, const CSSParserContext& context)
+bool SubstitutionResolver::substituteNamedValueOrFallback(const std::optional<AtomString>& name, const std::optional<CSSParserTokenRange>& fallbackRange, CSSValueID functionId, Vector<CSSParserToken>& tokens, const CSSParserContext& context, std::span<const unsigned> envIndices)
 {
     ASSERT(functionId == CSSValueID::Var || functionId == CSSValueID::Env);
+    ASSERT(functionId == CSSValueID::Env || envIndices.empty());
 
     // A name that failed to parse leaves the reference guaranteed-invalid, which still permits the fallback.
-    RefPtr property = name ? propertyValueForVariableName(*name, functionId) : nullptr;
+    RefPtr property = name ? propertyValueForVariableName(*name, functionId, envIndices) : nullptr;
+
+    if (functionId == CSSValueID::Var && name)
+        m_varSubstitutions.append({ *name, property });
 
     if (property && !property->isGuaranteedInvalid()) {
         if (property->tokens().size() > maxSubstitutionTokens)
@@ -1237,61 +1229,50 @@ std::optional<Vector<CSSParserToken>> SubstitutionResolver::substituteTokenRange
     Vector<CSSParserToken> tokens;
     bool success = true;
 
+    // Substitutes the function at the front of the range. Returns { } if it is not a substitution function.
+    auto substituteFunction = [&](const CSSParserToken& token) -> std::optional<bool> {
+        switch (token.functionId()) {
+        case CSSValueID::Var:
+            return substituteVarFunction(range.consumeBlock(), tokens, context);
+        case CSSValueID::Env:
+            return substituteEnvFunction(range.consumeBlock(), tokens, context);
+        case CSSValueID::Inherit:
+            if (!context.cssInheritFunctionEnabled)
+                return { };
+            return substituteInheritFunction(range.consumeBlock(), tokens, context);
+        case CSSValueID::Attr: {
+            auto startIndex = tokens.size();
+            if (!substituteAttrFunction(range.consumeBlock(), tokens, context))
+                return false;
+            propagateAttrTaint(IsAttrTainted::Yes, std::span(tokens).subspan(startIndex));
+            return true;
+        }
+        case CSSValueID::If:
+            return substituteIfFunction(range.consumeBlock(), tokens, context);
+        case CSSValueID::InternalAutoBase:
+            return substituteInternalAutoBaseFunction(range.consumeBlock(), tokens, context);
+        case CSSValueID::RandomItem:
+            return substituteRandomItemFunction(range.consumeBlock(), tokens, context);
+        case CSSValueID::Ident:
+            return substituteIdentFunction(range.consumeBlock(), tokens, context);
+        default:
+            break;
+        }
+        if (token.value() == "-internal-first-valid"_s)
+            return substituteFirstValid(range.consumeBlock(), tokens, context);
+        // <dashed-function>
+        if (isCustomPropertyName(token.value()))
+            return substituteDashedFunction(token.value(), range.consumeBlock(), tokens);
+        return { };
+    };
+
     while (!range.atEnd()) {
         auto token = range.peek();
         if (token.type() == FunctionToken) {
-            auto functionId = token.functionId();
-            if (functionId == CSSValueID::Var) {
-                if (!substituteVarFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::Env) {
-                if (!substituteEnvFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::Inherit && context.cssInheritFunctionEnabled) {
-                if (!substituteInheritFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::Attr) {
-                auto startIndex = tokens.size();
-                if (substituteAttrFunction(range.consumeBlock(), tokens, context))
-                    propagateAttrTaint(IsAttrTainted::Yes, std::span(tokens).subspan(startIndex));
-                else
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::If) {
-                if (!substituteIfFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::InternalAutoBase) {
-                if (!substituteInternalAutoBaseFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (token.value() == "-internal-first-valid"_s) {
-                if (!substituteFirstValid(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::RandomItem) {
-                if (!substituteRandomItemFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (functionId == CSSValueID::Ident) {
-                if (!substituteIdentFunction(range.consumeBlock(), tokens, context))
-                    success = false;
-                continue;
-            }
-            if (isCustomPropertyName(token.value())) {
-                // <dashed-function>
-                if (!substituteDashedFunction(token.value(), range.consumeBlock(), tokens))
+            if (auto substituted = substituteFunction(token)) {
+                if (token.functionId() != CSSValueID::Var)
+                    m_didSubstituteFunctionOtherThanVar = true;
+                if (!*substituted)
                     success = false;
                 continue;
             }
@@ -1359,6 +1340,8 @@ RefPtr<CSSVariableData> SubstitutionResolver::substitute(const CSSSubstitutionVa
     m_hasTaintedURL = false;
     m_randomItemAutoIndex = 0;
     m_substitutionValue = &value;
+    m_varSubstitutions.clear();
+    m_didSubstituteFunctionOtherThanVar = false;
 
     if (auto data = trySimpleSubstitution(value)) {
         propagateAttrTaint(data->isAttrTainted(), data->tokens());
@@ -1379,9 +1362,52 @@ RefPtr<CSSVariableData> SubstitutionResolver::substitute(const CSSSubstitutionVa
     return data;
 }
 
+// A fallback used for a registered property is checked against the registration, which the cached
+// substitution doesn't record. Values are shared between documents, so the registration may differ.
+// FIXME: Key cached substitutions on a registry version so that these can be reused too.
+bool SubstitutionResolver::canReuseVarSubstitution(const AtomString& name, const CustomProperty* property)
+{
+    if (property && !property->isGuaranteedInvalid())
+        return true;
+    return !protect(m_styleBuilder.state())->registeredProperty(name);
+}
+
+RefPtr<CSSVariableData> SubstitutionResolver::tryCachedVarSubstitution(const CSSSubstitutionValue& value)
+{
+    auto& cached = value.m_cache.varSubstitution;
+    if (!cached)
+        return nullptr;
+
+    for (auto& [name, property] : cached->customProperties) {
+        RefPtr current = propertyValueForVariableName(name, CSSValueID::Var);
+        if (!arePointingToEqualData(current, property) || !canReuseVarSubstitution(name, current.get()))
+            return nullptr;
+    }
+
+    m_isAttrTainted = cached->result->isAttrTainted();
+    m_hasTaintedURL = cached->hasTaintedURL;
+    return cached->result.ptr();
+}
+
+RefPtr<CSSVariableData> SubstitutionResolver::substituteUsingCache(const CSSSubstitutionValue& value)
+{
+    // A simple reference takes a single lookup anyway. In a custom function, var() can resolve against
+    // the calling context.
+    if (value.m_simpleReference || m_styleBuilder.state().callingContextBuilder())
+        return substitute(value);
+
+    if (auto data = tryCachedVarSubstitution(value))
+        return data;
+
+    auto data = substitute(value);
+    if (data && !m_didSubstituteFunctionOtherThanVar)
+        value.m_cache.varSubstitution = CSSSubstitutionValue::Cache::VarSubstitution { WTF::move(m_varSubstitutions), *data, m_hasTaintedURL };
+    return data;
+}
+
 RefPtr<CSSValue> SubstitutionResolver::substituteAndParse(const CSSSubstitutionValue& substitutionValue, CSSPropertyID propertyID)
 {
-    auto data = substitute(substitutionValue);
+    auto data = substituteUsingCache(substitutionValue);
     if (!data)
         return nullptr;
 
@@ -1408,7 +1434,7 @@ RefPtr<CSSValue> SubstitutionResolver::substituteAndParseShorthand(const CSSShor
 
     auto& substitutionValue = substitution.shorthandValue();
 
-    auto data = substitute(substitutionValue);
+    auto data = substituteUsingCache(substitutionValue);
     if (!data)
         return nullptr;
 

@@ -25,15 +25,22 @@
 
 #pragma once
 
-#if ENABLE(WEB_AUDIO)
-
+#include <CoreAudio/CoreAudioTypes.h>
 #include <WebCore/AudioStreamDescription.h>
+#include <WebCore/MediaChannelLayout.h>
+
+typedef struct OpaqueAudioConverter* AudioConverterRef;
 
 namespace WebCore {
 class AudioBus;
 
 WEBCORE_EXPORT AudioStreamBasicDescription audioStreamBasicDescriptionForAudioBus(AudioBus&);
 WEBCORE_EXPORT Vector<uint8_t> createESDescriptor(std::span<const uint8_t> audioSpecificConfig);
-}
 
-#endif
+// Configures the converter so that its output channels follow https://webaudio.github.io/web-audio-api/#ChannelOrdering,
+// and returns the layout of the converter's output channels. The channels are left in their coded order if they are
+// already in that order, or if they have no speaker position.
+// Returns std::nullopt when the layout is unknown, or for mono and stereo.
+WEBCORE_EXPORT std::optional<MediaChannelLayout> setWebAudioChannelOrderIfNeeded(AudioConverterRef, AudioChannelLayoutTag, uint32_t numberOfChannels);
+
+}

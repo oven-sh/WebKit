@@ -62,10 +62,7 @@ struct stat;
 
 OBJC_CLASS NSString;
 
-
-namespace WTF {
-
-namespace FileSystemImpl {
+namespace WTF::FileSystemImpl {
 
 class FileHandle;
 class MappedFileData;
@@ -106,7 +103,7 @@ WTF_EXPORT_PRIVATE bool moveFile(const String& oldPath, const String& newPath);
 WTF_EXPORT_PRIVATE std::optional<uint64_t> fileSize(const String&); // Follows symlinks.
 WTF_EXPORT_PRIVATE std::optional<uint64_t> directorySize(const String&);
 WTF_EXPORT_PRIVATE std::optional<WallTime> fileModificationTime(const String&);
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE fileIDsAreEqual(std::optional<PlatformFileID>, std::optional<PlatformFileID>);
+NODELETE WTF_EXPORT_PRIVATE bool fileIDsAreEqual(std::optional<PlatformFileID>, std::optional<PlatformFileID>);
 WTF_EXPORT_PRIVATE bool updateFileModificationTime(const String& path); // Sets modification time to now.
 WTF_EXPORT_PRIVATE std::optional<WallTime> fileCreationTime(const String&); // Not all platforms store file creation time.
 WTF_EXPORT_PRIVATE bool isHiddenFile(const String&);
@@ -116,6 +113,7 @@ WTF_EXPORT_PRIVATE String lastComponentOfPathIgnoringTrailingSlash(const String&
 WTF_EXPORT_PRIVATE void removeTrailingSlash(String& path);
 WTF_EXPORT_PRIVATE bool makeAllDirectories(const String& path);
 WTF_EXPORT_PRIVATE String pathFileName(const String&);
+WTF_EXPORT_PRIVATE StringView pathExtension(StringView path LIFETIME_BOUND);
 WTF_EXPORT_PRIVATE String parentPath(const String&);
 WTF_EXPORT_PRIVATE String lexicallyNormal(const String&);
 WTF_EXPORT_PRIVATE bool isAncestor(const String& first, const String& second);
@@ -174,6 +172,10 @@ WTF_EXPORT_PRIVATE String decodeFromFilename(const String&);
 
 WTF_EXPORT_PRIVATE bool filesHaveSameVolume(const String&, const String&);
 
+#if USE(GLIB) || PLATFORM(COCOA)
+WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
+#endif
+
 #if USE(CF)
 WTF_EXPORT_PRIVATE RetainPtr<CFURLRef> pathAsURL(const String&);
 #endif
@@ -188,7 +190,6 @@ WTF_EXPORT_PRIVATE String filenameForDisplay(const String&);
 WTF_EXPORT_PRIVATE UTF8CString currentExecutablePath();
 WTF_EXPORT_PRIVATE String userCacheDirectory();
 WTF_EXPORT_PRIVATE String userDataDirectory();
-WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
 #if ENABLE(DEVELOPER_MODE)
 WTF_EXPORT_PRIVATE UTF8CString webkitTopLevelDirectory();
 #endif
@@ -238,7 +239,16 @@ WTF_EXPORT_PRIVATE MappedFileData mapToFile(const String& path, size_t bytesSize
 WTF_EXPORT_PRIVATE MappedFileData createMappedFileData(const String&, size_t, FileHandle* = nullptr);
 WTF_EXPORT_PRIVATE void finalizeMappedFileData(MappedFileData&, size_t);
 
-} // namespace FileSystemImpl
-} // namespace WTF
+// Purely lexical: unlike isAncestor(), "." and ".." components are not resolved.
+inline bool pathIsSameOrDescendantOf(StringView path, StringView ancestor)
+{
+    if (ancestor.length() > 1 && ancestor.endsWith('/'))
+        ancestor = ancestor.left(ancestor.length() - 1);
+    if (ancestor.isEmpty() || !path.startsWith(ancestor))
+        return false;
+    return path.length() == ancestor.length() || ancestor.endsWith('/') || path[ancestor.length()] == '/';
+}
+
+} // namespace WTF::FileSystemImpl
 
 namespace FileSystem = WTF::FileSystemImpl;

@@ -35,34 +35,6 @@
 
 namespace WebCore {
 
-static int makeSureRotationIsBetween0And360(int rotation)
-{
-    return ((rotation % 360) + 360) % 360;
-}
-
-// https://w3c.github.io/webcodecs/#videoframe-parse-rotation
-VideoFrameRotation parseVideoFrameRotation(double rotation)
-{
-    ASSERT(std::isfinite(rotation));
-
-    int rotation360 = static_cast<int>(std::floor(std::fmod(rotation, 360)));
-    if (rotation360 < 0)
-        rotation360 += 360;
-    return static_cast<VideoFrameRotation>(makeSureRotationIsBetween0And360(((rotation360 + 45) / 90) * 90));
-}
-
-// https://w3c.github.io/webcodecs/#videoframe-add-rotations
-VideoFrame::Rotation addVideoFrameRotations(VideoFrame::Rotation baseRotation, bool baseFlip, VideoFrame::Rotation rotation)
-{
-    int combinedRotation = static_cast<int>(baseRotation) + (baseFlip ? - static_cast<int>(rotation) : static_cast<int>(rotation));
-    return static_cast<VideoFrame::Rotation>(makeSureRotationIsBetween0And360(combinedRotation));
-}
-
-VideoFrame::Rotation combineVideoFrameRotations(const VideoFrame& frame, double initRotation)
-{
-    return addVideoFrameRotations(frame.rotation(), frame.isMirrored(), parseVideoFrameRotation(initRotation));
-}
-
 // https://w3c.github.io/webcodecs/#valid-videoframebufferinit
 bool isValidVideoFrameBufferInit(const WebCodecsVideoFrame::BufferInit& init)
 {
@@ -89,7 +61,7 @@ bool isValidVideoFrameBufferInit(const WebCodecsVideoFrame::BufferInit& init)
     return true;
 }
 
-static bool LEGACY_NODELETE isMultiple(double value, unsigned factor)
+NODELETE static bool isMultiple(double value, unsigned factor)
 {
      return !(static_cast<unsigned>(value) % factor);
 }
@@ -102,15 +74,23 @@ bool verifyRectOffsetAlignment(VideoPixelFormat format, const DOMRectInit& rect)
     case VideoPixelFormat::I420P10:
     case VideoPixelFormat::I420P12:
     case VideoPixelFormat::I420A:
+    case VideoPixelFormat::I420AP10:
+    case VideoPixelFormat::I420AP12:
     case VideoPixelFormat::NV12:
         return isMultiple(rect.x, 2) && isMultiple(rect.y, 2);
     case VideoPixelFormat::I422:
     case VideoPixelFormat::I422P10:
     case VideoPixelFormat::I422P12:
+    case VideoPixelFormat::I422A:
+    case VideoPixelFormat::I422AP10:
+    case VideoPixelFormat::I422AP12:
         return isMultiple(rect.x, 2);
     case VideoPixelFormat::I444:
     case VideoPixelFormat::I444P10:
     case VideoPixelFormat::I444P12:
+    case VideoPixelFormat::I444A:
+    case VideoPixelFormat::I444AP10:
+    case VideoPixelFormat::I444AP12:
     case VideoPixelFormat::RGBA:
     case VideoPixelFormat::RGBX:
     case VideoPixelFormat::BGRA:
@@ -154,6 +134,14 @@ size_t videoPixelFormatToPlaneCount(VideoPixelFormat format)
     case VideoPixelFormat::I422P12:
         return 3;
     case VideoPixelFormat::I420A:
+    case VideoPixelFormat::I420AP10:
+    case VideoPixelFormat::I420AP12:
+    case VideoPixelFormat::I422A:
+    case VideoPixelFormat::I422AP10:
+    case VideoPixelFormat::I422AP12:
+    case VideoPixelFormat::I444A:
+    case VideoPixelFormat::I444AP10:
+    case VideoPixelFormat::I444AP12:
         return 4;
     case VideoPixelFormat::NV12:
         return 2;
@@ -171,19 +159,27 @@ size_t videoPixelFormatToSampleByteSizePerPlane(VideoPixelFormat format)
     return isHighBitDepthVideoPixelFormat(format) ? 2 : 1;
 }
 
-static inline size_t LEGACY_NODELETE sampleCountPerPixel(VideoPixelFormat format, size_t planeNumber)
+NODELETE static inline size_t sampleCountPerPixel(VideoPixelFormat format, size_t planeNumber)
 {
     switch (format) {
     case VideoPixelFormat::I420:
     case VideoPixelFormat::I420P10:
     case VideoPixelFormat::I420P12:
     case VideoPixelFormat::I420A:
+    case VideoPixelFormat::I420AP10:
+    case VideoPixelFormat::I420AP12:
     case VideoPixelFormat::I444:
     case VideoPixelFormat::I444P10:
     case VideoPixelFormat::I444P12:
+    case VideoPixelFormat::I444A:
+    case VideoPixelFormat::I444AP10:
+    case VideoPixelFormat::I444AP12:
     case VideoPixelFormat::I422:
     case VideoPixelFormat::I422P10:
     case VideoPixelFormat::I422P12:
+    case VideoPixelFormat::I422A:
+    case VideoPixelFormat::I422AP10:
+    case VideoPixelFormat::I422AP12:
         return 1;
     case VideoPixelFormat::NV12:
         return planeNumber ? 2 : 1;
@@ -196,7 +192,7 @@ static inline size_t LEGACY_NODELETE sampleCountPerPixel(VideoPixelFormat format
     return 1;
 }
 
-static bool LEGACY_NODELETE isChromaPlane(VideoPixelFormat format, size_t planeNumber)
+NODELETE static bool isChromaPlane(VideoPixelFormat format, size_t planeNumber)
 {
     if (format == VideoPixelFormat::NV12)
         return planeNumber == 1;
@@ -210,14 +206,22 @@ size_t videoPixelFormatToHorizontalSubSampling(VideoPixelFormat format, size_t p
     case VideoPixelFormat::I420P10:
     case VideoPixelFormat::I420P12:
     case VideoPixelFormat::I420A:
+    case VideoPixelFormat::I420AP10:
+    case VideoPixelFormat::I420AP12:
     case VideoPixelFormat::I422:
     case VideoPixelFormat::I422P10:
     case VideoPixelFormat::I422P12:
+    case VideoPixelFormat::I422A:
+    case VideoPixelFormat::I422AP10:
+    case VideoPixelFormat::I422AP12:
     case VideoPixelFormat::NV12:
         return isChromaPlane(format, planeNumber) ? 2 : 1;
     case VideoPixelFormat::I444:
     case VideoPixelFormat::I444P10:
     case VideoPixelFormat::I444P12:
+    case VideoPixelFormat::I444A:
+    case VideoPixelFormat::I444AP10:
+    case VideoPixelFormat::I444AP12:
     case VideoPixelFormat::RGBA:
     case VideoPixelFormat::RGBX:
     case VideoPixelFormat::BGRA:
@@ -234,14 +238,22 @@ size_t videoPixelFormatToVerticalSubSampling(VideoPixelFormat format, size_t pla
     case VideoPixelFormat::I420P10:
     case VideoPixelFormat::I420P12:
     case VideoPixelFormat::I420A:
+    case VideoPixelFormat::I420AP10:
+    case VideoPixelFormat::I420AP12:
     case VideoPixelFormat::NV12:
         return isChromaPlane(format, planeNumber) ? 2 : 1;
     case VideoPixelFormat::I422:
     case VideoPixelFormat::I422P10:
     case VideoPixelFormat::I422P12:
+    case VideoPixelFormat::I422A:
+    case VideoPixelFormat::I422AP10:
+    case VideoPixelFormat::I422AP12:
     case VideoPixelFormat::I444:
     case VideoPixelFormat::I444P10:
     case VideoPixelFormat::I444P12:
+    case VideoPixelFormat::I444A:
+    case VideoPixelFormat::I444AP10:
+    case VideoPixelFormat::I444AP12:
     case VideoPixelFormat::RGBA:
     case VideoPixelFormat::RGBX:
     case VideoPixelFormat::BGRA:
@@ -264,10 +276,8 @@ ExceptionOr<CombinedPlaneLayout> computeLayoutAndAllocationSize(const DOMRectIni
         return Exception { ExceptionCode::TypeError, "layout size is invalid"_s };
 
     size_t minAllocationSize = 0;
-    Vector<ComputedPlaneLayout> computedLayouts;
-    computedLayouts.reserveInitialCapacity(planeCount);
-    Vector<size_t> endOffsets;
-    endOffsets.reserveInitialCapacity(planeCount);
+    Vector<ComputedPlaneLayout> computedLayouts(ReserveCapacityTag { }, planeCount);
+    Vector<size_t> endOffsets(ReserveCapacityTag { }, planeCount);
     for (size_t i = 0; i < planeCount; ++i) {
         size_t pixelSampleCount = sampleCountPerPixel(format, i);
 
@@ -370,13 +380,23 @@ VideoColorSpaceInit videoFramePickColorSpace(const std::optional<VideoColorSpace
         return *overrideColorSpace;
 
     if (isRGBVideoPixelFormat(format))
-        return { .primaries = PlatformVideoColorPrimaries::Bt709, .transfer = PlatformVideoTransferCharacteristics::Iec6196621, .matrix = PlatformVideoMatrixCoefficients::Rgb, .fullRange = true };
+        return {
+            .primaries = PlatformVideoColorPrimaries::Bt709,
+            .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
+            .matrix = PlatformVideoMatrixCoefficients::Rgb,
+            .fullRange = true
+        };
 
-    return { .primaries = PlatformVideoColorPrimaries::Bt709, .transfer = PlatformVideoTransferCharacteristics::Bt709, .matrix = PlatformVideoMatrixCoefficients::Bt709, .fullRange = false };
+    return {
+        .primaries = PlatformVideoColorPrimaries::Bt709,
+        .transfer = PlatformVideoTransferCharacteristics::Bt709,
+        .matrix = PlatformVideoMatrixCoefficients::Bt709,
+        .fullRange = false
+    };
 }
 
 // https://w3c.github.io/webcodecs/#validate-videoframeinit
-static bool LEGACY_NODELETE isNegativeOrNonFinite(double value)
+NODELETE static bool isNegativeOrNonFinite(double value)
 {
     return value < 0 || !std::isfinite(value);
 }

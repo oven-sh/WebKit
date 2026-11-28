@@ -739,6 +739,7 @@ Context::Context(egl::Display *display,
       mProgramPipelineObserverBinding(this, kProgramPipelineSubjectIndex),
       mFrameCapture(new angle::FrameCapture),
       mRefCount(0),
+      mIsCurrentOnAnyThread(false),
       mIsDestroyed(false),
       mDestroyedManagers(false)
 {
@@ -932,7 +933,7 @@ void Context::initializeDefaultResources()
     mTilingDirtyObjects |= kTilingDirtyObjectsBase;
 }
 
-egl::Error Context::onDestroy(const egl::Display *display)
+egl::Error Context::onDestroy(const egl::ThreadSafeDisplay *display)
 {
     if (!mHasBeenCurrent)
     {
@@ -945,11 +946,13 @@ egl::Error Context::onDestroy(const egl::Display *display)
 
     mState.ensureNoPendingLink(this);
 
-    // eglDestoryContext() must have been called for this Context and there must not be any Threads
+    // eglDestroyContext() must have been called for this Context and there must not be any thread
     // that still have it current.
-    ASSERT(mIsDestroyed == true && mRefCount == 0);
+    ASSERT(mIsDestroyed == true && !isCurrentOnAnyThread());
+    // No other references should exist for this context.
+    ASSERT(mRefCount == 0);
 
-    ANGLE_TRY(unMakeCurrent(display));
+    ANGLE_TRY(unMakeCurrent());
 
     // Dump frame capture if enabled.
     getShareGroup()->getFrameCaptureShared()->onDestroyContext(this);
@@ -1073,11 +1076,12 @@ EGLLabelKHR Context::getLabel() const
     return mLabel;
 }
 
-egl::Error Context::makeCurrent(egl::Display *display,
+// Make sure this function only uses ThreadSafeDisplay since caller will not take display lock.
+egl::Error Context::makeCurrent(egl::ThreadSafeDisplay *display,
                                 egl::Surface *drawSurface,
                                 egl::Surface *readSurface)
 {
-    mDisplay = display;
+    mDisplay = static_cast<egl::Display *>(display);
 
     EGLint width  = 0;
     EGLint height = 0;
@@ -1127,8 +1131,10 @@ egl::Error Context::makeCurrent(egl::Display *display,
     return egl::NoError();
 }
 
-egl::Error Context::unMakeCurrent(const egl::Display *display)
+// Make sure this function only uses ThreadSafeDisplay since caller will not take display lock.
+egl::Error Context::unMakeCurrent()
 {
+    egl::ThreadSafeDisplay *display = mDisplay;
     ANGLE_TRY(angle::ResultToEGL(mImplementation->onUnMakeCurrent(this)));
 
     ANGLE_TRY(unsetDefaultFramebuffer());
@@ -1137,11 +1143,11 @@ egl::Error Context::unMakeCurrent(const egl::Display *display)
     // this one is not current.
     if (mScratchBuffer.valid())
     {
-        mDisplay->returnScratchBuffer(mScratchBuffer.release());
+        display->returnScratchBuffer(mScratchBuffer.release());
     }
     if (mZeroFilledBuffer.valid())
     {
-        mDisplay->returnZeroFilledBuffer(mZeroFilledBuffer.release());
+        display->returnZeroFilledBuffer(mZeroFilledBuffer.release());
     }
 
     return egl::NoError();
@@ -3668,40 +3674,7 @@ const char *Context::makeStaticString(const std::string &str)
 
 void Context::initRendererString()
 {
-    std::ostringstream frontendRendererString;
-
-    constexpr char kRendererString[]        = "ANGLE_GL_RENDERER";
-    constexpr char kAndroidRendererString[] = "debug.angle.gl_renderer";
-
-    std::string overrideRenderer =
-        angle::GetEnvironmentVarOrAndroidProperty(kRendererString, kAndroidRendererString);
-    if (!overrideRenderer.empty())
-    {
-        frontendRendererString << overrideRenderer;
-    }
-    else
-    {
-        std::string vendorString(mDisplay->getBackendVendorString());
-        std::string rendererString(mDisplay->getBackendRendererDescription());
-        std::string versionString(mDisplay->getBackendVersionString(!isWebGL()));
-        // Commas are used as a separator in ANGLE's renderer string, so remove commas from each
-        // element.
-        vendorString.erase(std::remove(vendorString.begin(), vendorString.end(), ','),
-                           vendorString.end());
-        rendererString.erase(std::remove(rendererString.begin(), rendererString.end(), ','),
-                             rendererString.end());
-        versionString.erase(std::remove(versionString.begin(), versionString.end(), ','),
-                            versionString.end());
-        frontendRendererString << "ANGLE (";
-        frontendRendererString << vendorString;
-        frontendRendererString << ", ";
-        frontendRendererString << rendererString;
-        frontendRendererString << ", ";
-        frontendRendererString << versionString;
-        frontendRendererString << ")";
-    }
-
-    mRendererString = makeStaticString(frontendRendererString.str());
+    mRendererString = makeStaticString(mDisplay->generateRendererString(!isWebGL()));
 }
 
 void Context::initVendorString()
@@ -4955,7 +4928,7 @@ angle::Result Context::prepareForClearBuffer(GLenum buffer, GLint drawbuffer)
     return syncStateForClear();
 }
 
-ANGLE_INLINE angle::Result Context::prepareForCopyImage()
+angle::Result Context::prepareForCopyImage()
 {
     ANGLE_TRY(syncDirtyObjects(mCopyImageDirtyObjects, Command::CopyImage));
     return syncDirtyBits(mCopyImageDirtyBits, kCopyImageExtendedDirtyBits, Command::CopyImage);
@@ -4992,7 +4965,13 @@ angle::Result Context::prepareForInvalidate(GLenum target)
     {
         effectiveTarget = GL_DRAW_FRAMEBUFFER;
     }
-    ANGLE_TRY(mState.syncDirtyObject(this, effectiveTarget, Command::Invalidate));
+    // Sync only the framebuffer, not its attachments: invalidation does not need initialized
+    // attachments. The attachments that still need initialization stay dirty, and the next command
+    // that uses them initializes them.
+    state::DirtyObjects dirtyObjects;
+    dirtyObjects.set(effectiveTarget == GL_READ_FRAMEBUFFER ? state::DIRTY_OBJECT_READ_FRAMEBUFFER
+                                                            : state::DIRTY_OBJECT_DRAW_FRAMEBUFFER);
+    ANGLE_TRY(syncDirtyObjects(dirtyObjects, Command::Invalidate));
     const state::DirtyBits dirtyBits                 = effectiveTarget == GL_READ_FRAMEBUFFER
                                                            ? kReadInvalidateDirtyBits
                                                            : kDrawInvalidateDirtyBits;

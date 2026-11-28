@@ -35,13 +35,13 @@ namespace WebCore {
 class HeaderFieldTokenizer {
 
 public:
-    explicit HeaderFieldTokenizer(const String&);
+    NODELETE explicit HeaderFieldTokenizer(const String&);
 
     // Try to parse a separator character, a token or either a token or a quoted
     // string from the |header_field| input. Return |true| on success. Return
     // |false| if the separator character, the token or the quoted string is
     // missing or invalid.
-    bool LEGACY_NODELETE consume(char16_t);
+    NODELETE bool consume(char16_t);
     String consumeToken();
     String consumeTokenOrQuotedString();
 
@@ -49,13 +49,13 @@ public:
     // the Vector parameter are found.
     // Because we potentially have to iterate through the entire Vector for each
     // character of the base string, the Vector should be small (< 3 members).
-    void LEGACY_NODELETE consumeBeforeAnyCharMatch(const Vector<char16_t>&);
+    NODELETE void consumeBeforeAnyCharMatch(const Vector<char16_t>&);
 
     bool isConsumed() const { return m_index >= m_input.length(); }
 
 private:
     String consumeQuotedString();
-    void LEGACY_NODELETE skipSpaces();
+    NODELETE void skipSpaces();
 
     unsigned m_index = 0;
     const String m_input;

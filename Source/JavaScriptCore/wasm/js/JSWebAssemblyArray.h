@@ -88,7 +88,7 @@ public:
     inline void set(VM&, uint32_t index, v128_t value);
 
     void fill(VM&, uint32_t, uint64_t, uint32_t);
-    void LEGACY_NODELETE fill(VM&, uint32_t, v128_t, uint32_t);
+    NODELETE void fill(VM&, uint32_t, v128_t, uint32_t);
     void copy(VM&, JSWebAssemblyArray&, uint32_t, uint32_t, uint32_t);
 
 #if ASSERT_ENABLED
@@ -122,11 +122,16 @@ public:
 
     static constexpr ptrdiff_t offsetPastShapeWord = 16;
 
+    static constexpr ptrdiff_t paddingOverShapeWordInCompiledProcess(size_t elementSize)
+    {
+        return std::max<ptrdiff_t>(offsetPastShapeWord - alignedOffsetOfData(elementSize), 0);
+    }
+
     static ptrdiff_t paddingOverShapeWord(size_t elementSize)
     {
 #if ENABLE(AOT)
         if (alignedOffsetOfData(elementSize) < offsetPastShapeWord && Options::runsCompiledImage()) [[unlikely]]
-            return offsetPastShapeWord - alignedOffsetOfData(elementSize);
+            return paddingOverShapeWordInCompiledProcess(elementSize);
 #else
         UNUSED_PARAM(elementSize);
 #endif

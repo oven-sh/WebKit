@@ -1,0 +1,5 @@
+
+PASS AccentColor mirrors accent-color while animating
+FAIL Animated AccentColor updates when accent-color changes assert_equals: expected "rgb(4, 5, 6)" but got "rgb(1, 2, 3)"
+FAIL Animated AccentColorText updates when accent-color changes assert_equals: expected "rgb(255, 255, 255)" but got "rgb(0, 0, 0)"
+

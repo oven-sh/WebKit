@@ -26,12 +26,14 @@
 #include "HTMLInputElement.h"
 #include "HTMLTextFormControlElement.h"
 #include "HitTestResult.h"
+#include "Page.h"
 #include "PlatformRenderTheme.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderFlexibleBox.h"
+#include "RenderObjectInlines.h"
 #include "RenderText.h"
 #include "RenderTextControlSingleLine.h"
 #include "RenderTheme.h"
@@ -47,7 +49,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTextControl);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTextControlInnerContainer);
 
-RenderTextControl::RenderTextControl(Type type, HTMLTextFormControlElement& element, Style::ComputedStyle&& style)
+RenderTextControl::RenderTextControl(Type type, HTMLTextFormControlElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(type, element, WTF::move(style), BlockFlowFlag::IsTextControl)
 {
     ASSERT(isRenderTextControl());
@@ -55,7 +57,7 @@ RenderTextControl::RenderTextControl(Type type, HTMLTextFormControlElement& elem
 
 RenderTextControl::~RenderTextControl() = default;
 
-HTMLTextFormControlElement& LEGACY_NODELETE RenderTextControl::textFormControlElement() const
+NODELETE HTMLTextFormControlElement& RenderTextControl::textFormControlElement() const
 {
     return downcast<HTMLTextFormControlElement>(nodeForNonAnonymous());
 }
@@ -72,13 +74,13 @@ void RenderTextControl::styleDidChange(Style::Difference diff, const Style::Comp
     if (!innerText)
         return;
     Ref formControlElement = textFormControlElement();
-    RenderTextControlInnerBlock* innerTextRenderer = innerText->renderer();
+    CheckedPtr innerTextRenderer = innerText->renderer();
     if (innerTextRenderer && oldStyle) {
         // FIXME: The height property of the inner text block style may be mutated by RenderTextControlSingleLine::layout.
         // See if the original has changed before setting it and triggering a layout.
-        auto newInnerTextStyle = formControlElement->createInnerTextStyle(style());
+        auto newInnerTextStyle = formControlElement->createInnerTextStyle(protect(style()));
         auto oldInnerTextStyle = formControlElement->createInnerTextStyle(*oldStyle);
-        if (newInnerTextStyle != oldInnerTextStyle)
+        if (newInnerTextStyle.get() != oldInnerTextStyle.get())
             innerTextRenderer->setStyle(WTF::move(newInnerTextStyle));
         else if (diff == Style::DifferenceResult::RepaintIfText || diff == Style::DifferenceResult::Repaint) {
             // Repaint is expected to be propagated down to the shadow tree when non-inherited style property changes
@@ -92,7 +94,7 @@ void RenderTextControl::styleDidChange(Style::Difference diff, const Style::Comp
 int RenderTextControl::scrollbarThickness() const
 {
     // FIXME: We should get the size of the scrollbar from the RenderTheme instead.
-    return ScrollbarTheme::theme().scrollbarThickness(Style::toPlatform(this->style().scrollbarWidth()), OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize);
+    return ScrollbarTheme::theme().scrollbarThickness(protect(page())->scrollbarStyle(), Style::toPlatform(this->style().scrollbarWidth()), OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize);
 }
 
 RenderBox::LogicalExtentComputedValues RenderTextControl::computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const
@@ -119,7 +121,7 @@ RenderBox::LogicalExtentComputedValues RenderTextControl::computeLogicalHeight(L
         return logicalHeightExtent;
     }
 
-    if (RenderBox* innerTextBox = innerText->renderBox()) {
+    if (CheckedPtr innerTextBox = innerText->renderBox()) {
         LayoutUnit nonContentHeight = innerTextBox->borderAndPaddingLogicalHeight() + innerTextBox->marginLogicalHeight();
         logicalHeight = computeControlLogicalHeight(innerTextBox->lineHeight(), nonContentHeight);
 
@@ -158,15 +160,16 @@ void RenderTextControl::hitInnerTextElement(HitTestResult& result, const LayoutP
 
 float RenderTextControl::getAverageCharWidth()
 {
+    CheckedRef style = this->style();
+    CheckedRef font = style->fontCascade();
     float width;
-    if (style().fontCascade().fastAverageCharWidthIfAvailable(width))
+    if (font->fastAverageCharWidthIfAvailable(width))
         return width;
 
     const char16_t ch = '0';
     const String str = span(ch);
-    const FontCascade& font = style().fontCascade();
-    TextRun textRun = constructTextRun(str, style(), ExpansionBehavior::allowRightOnly());
-    return font.width(textRun);
+    TextRun textRun = constructTextRun(str, style, ExpansionBehavior::allowRightOnly());
+    return font->width(textRun);
 }
 
 float RenderTextControl::scaleEmToUnits(int x) const
@@ -180,9 +183,10 @@ std::pair<LayoutUnit, LayoutUnit> RenderTextControl::computeIntrinsicLogicalWidt
 {
     if (style().fieldSizing() == FieldSizing::Content) {
         auto [minLogicalWidth, maxLogicalWidth] = RenderBlockFlow::computeIntrinsicLogicalWidths();
-        RefPtr placeholder = textFormControlElement().placeholderElement();
+        Ref formControlElement = textFormControlElement();
+        RefPtr placeholder = formControlElement->placeholderElement();
         CheckedPtr placeholderBox = placeholder ? placeholder->renderBox() : nullptr;
-        if (RefPtr input = placeholderBox ? dynamicDowncast<HTMLInputElement>(textFormControlElement()) : nullptr) {
+        if (RefPtr input = placeholderBox ? dynamicDowncast<HTMLInputElement>(formControlElement) : nullptr) {
             auto decoration = LayoutUnit::fromFloatCeil(input->decorationWidth(maxLogicalWidth));
             minLogicalWidth = std::max(minLogicalWidth, placeholderBox->minContentLogicalWidthContribution() + decoration);
             maxLogicalWidth = std::max(maxLogicalWidth, placeholderBox->maxContentLogicalWidthContribution() + decoration);
@@ -198,7 +202,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderTextControl::computeIntrinsicLogicalWidt
     // Use average character width. Matches IE.
     auto minLogicalWidth = LayoutUnit { };
     auto maxLogicalWidth = preferredContentLogicalWidth(const_cast<RenderTextControl*>(this)->getAverageCharWidth());
-    maxLogicalWidth = RenderTheme::singleton().adjustedMaximumLogicalWidthForControl(style(), protect(textFormControlElement()), maxLogicalWidth);
+    maxLogicalWidth = RenderTheme::singleton().adjustedMaximumLogicalWidthForControl(protect(style()), protect(textFormControlElement()), maxLogicalWidth);
 
     auto& logicalWidth = style().logicalWidth();
     if (logicalWidth.isCalculated())
@@ -209,26 +213,17 @@ std::pair<LayoutUnit, LayoutUnit> RenderTextControl::computeIntrinsicLogicalWidt
     return { minLogicalWidth, maxLogicalWidth };
 }
 
-void RenderTextControl::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderTextControl::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
-    if (style().fieldSizing() == FieldSizing::Content) {
-        RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
-        return;
-    }
-
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
+    if (style().fieldSizing() == FieldSizing::Content)
+        return RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
 
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositiveOrZero()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(style().logicalWidth(), LayoutUnit { fixedLogicalWidth->resolveZoom(style().usedZoomForLength()) }, 0_lu);
+        return { logicalWidth, logicalWidth };
+    }
+    return computeIntrinsicLogicalWidths();
 }
 
 void RenderTextControl::layoutExcludedChildren(RelayoutChildren relayoutChildren)
@@ -248,7 +243,7 @@ void RenderTextControl::layoutExcludedChildren(RelayoutChildren relayoutChildren
     if (style().fieldSizing() == FieldSizing::Content) {
         // In order to take placeholder height into account while computing the size of the input box, we need to
         // layout the placeholder too (which is how excluded content normally works).
-        placeholderRenderer->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        placeholderRenderer->setChildNeedsLayout(MarkingBehavior::OnlyThis);
         placeholderRenderer->layoutIfNeeded();
     }
 
@@ -256,7 +251,7 @@ void RenderTextControl::layoutExcludedChildren(RelayoutChildren relayoutChildren
         // The markParents arguments should be false because this function is
         // called from layout() of the parent and the placeholder layout doesn't
         // affect the parent layout.
-        placeholderRenderer->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        placeholderRenderer->setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 }
 
@@ -270,12 +265,12 @@ bool RenderTextControl::canScroll() const
 int RenderTextControl::innerLineHeight() const
 {
     if (auto innerTextElement = this->innerTextElement(); innerTextElement && innerTextElement->renderer())
-        return innerTextElement->renderer()->style().usedLineHeight();
-    return style().usedLineHeight();
+        return protect(innerTextElement->renderer()->style())->usedLineHeight();
+    return protect(style())->usedLineHeight();
 }
 #endif
 
-RenderTextControlInnerContainer::RenderTextControlInnerContainer(Element& element, Style::ComputedStyle&& style)
+RenderTextControlInnerContainer::RenderTextControlInnerContainer(Element& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderFlexibleBox(Type::TextControlInnerContainer, element, WTF::move(style))
 {
 

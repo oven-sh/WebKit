@@ -1,0 +1,8 @@
+# the same functions with folding withheld: what is written twice is built twice, and each operator converts its own operand
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Unbox
+# RUN(TWICE): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# TWICE-LABEL: code f2:Body
+# TWICE-COUNT-2: = Mul
+# PROGRAM-OF: equal-operation-and-equal-conversion-are-built-once-in-a-block.ir

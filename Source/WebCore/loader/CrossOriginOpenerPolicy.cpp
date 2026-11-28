@@ -168,17 +168,28 @@ static bool checkIfEnforcingReportOnlyCOOPWouldRequireBrowsingContextGroupSwitch
     return false;
 }
 
-static std::pair<Ref<SecurityOrigin>, CrossOriginOpenerPolicy> computeResponseOriginAndCOOP(const ResourceResponse& response, const std::optional<NavigationRequester>& requester, ContentSecurityPolicy* responseCSP)
+// Non-initial empty documents (about:blank) should inherit their cross-origin-opener-policy from the navigation's initiator top level document,
+// if the initiator and its top level document are same-origin, or default (unsafe-none) otherwise.
+// https://github.com/whatwg/html/issues/6913
+CrossOriginOpenerPolicy crossOriginOpenerPolicyForEmptyDocument(const NavigationRequester& requester)
 {
-    // Non-initial empty documents (about:blank) should inherit their cross-origin-opener-policy from the navigation's initiator top level document,
-    // if the initiator and its top level document are same-origin, or default (unsafe-none) otherwise.
-    // https://github.com/whatwg/html/issues/6913
-    if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(response.url()) && requester)
-        return { requester->securityOrigin, Ref { requester->securityOrigin }->isSameOriginAs(requester->topOrigin) ? requester->policyContainer.crossOriginOpenerPolicy : CrossOriginOpenerPolicy { } };
+    if (!protect(requester.securityOrigin)->isSameOriginAs(requester.topOrigin))
+        return { };
+    return requester.policyContainer.crossOriginOpenerPolicy;
+}
 
-    // If the HTTP response contains a CSP header, it may set sandbox flags, which would cause the origin to become opaque.
-    auto responseOrigin = responseCSP && !responseCSP->sandboxFlags().isEmpty() ? SecurityOrigin::createOpaque() : SecurityOrigin::create(response.url());
-    return { WTF::move(responseOrigin), obtainCrossOriginOpenerPolicy(response) };
+static std::pair<Ref<SecurityOrigin>, CrossOriginOpenerPolicy> computeResponseOriginAndCOOP(const ResourceResponse& response, const std::optional<NavigationRequester>& requester, ContentSecurityPolicy* responseCSP, CredentiallessSupport credentiallessSupport)
+{
+    // FIXME: The flags should include the frame's, and only the sandboxed origin flag should make the origin opaque.
+    SandboxFlags sandboxFlags;
+    if (responseCSP && !responseCSP->sandboxFlags().isEmpty())
+        sandboxFlags.add(SandboxFlag::Origin);
+    Ref responseOrigin = SecurityPolicy::determineOrigin(response.url(), sandboxFlags, requester ? requester->securityOrigin.ptr() : nullptr);
+
+    if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(response.url()) && requester)
+        return { WTF::move(responseOrigin), crossOriginOpenerPolicyForEmptyDocument(*requester) };
+
+    return { WTF::move(responseOrigin), obtainCrossOriginOpenerPolicy(response, credentiallessSupport) };
 }
 
 // https://html.spec.whatwg.org/multipage/origin.html#coop-enforce
@@ -219,12 +230,12 @@ bool isRecognizedCrossOriginOpenerPolicyToken(StringView token)
 }
 
 // https://html.spec.whatwg.org/multipage/origin.html#obtain-coop
-CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& response)
+CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& response, CredentiallessSupport credentiallessSupport)
 {
     std::optional<CrossOriginEmbedderPolicy> coep;
-    auto ensureCOEP = [&coep, &response]() -> CrossOriginEmbedderPolicy& {
+    auto ensureCOEP = [&coep, &response, credentiallessSupport] -> CrossOriginEmbedderPolicy& {
         if (!coep)
-            coep = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, nullptr);
+            coep = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, credentiallessSupport, nullptr);
         return *coep;
     };
     auto parseCOOP = [&response, &ensureCOEP](HTTPHeaderName headerName, auto& value, auto& reportingEndpoint) {
@@ -238,7 +249,7 @@ CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& re
 
         if (policyString->string() == coopSameOriginToken) {
             auto& coep = ensureCOEP();
-            if (coep.value == CrossOriginEmbedderPolicyValue::RequireCORP || (headerName == HTTPHeaderName::CrossOriginOpenerPolicyReportOnly && coep.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP))
+            if (isCompatibleWithCrossOriginIsolation(coep.value) || (headerName == HTTPHeaderName::CrossOriginOpenerPolicyReportOnly && isCompatibleWithCrossOriginIsolation(coep.reportOnlyValue)))
                 value = CrossOriginOpenerPolicyValue::SameOriginPlusCOEP;
             else
                 value = CrossOriginOpenerPolicyValue::SameOrigin;
@@ -287,9 +298,9 @@ void CrossOriginOpenerPolicy::addPolicyHeadersTo(ResourceResponse& response) con
 }
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#process-a-navigate-fetch (Step 13.5.6)
-std::optional<CrossOriginOpenerPolicyEnforcementResult> doCrossOriginOpenerHandlingOfResponse(ReportingClient& reportingClient, const ResourceResponse& response, const std::optional<NavigationRequester>& requester, ContentSecurityPolicy* responseCSP, SandboxFlags effectiveSandboxFlags, const String& referrer, bool isDisplayingInitialEmptyDocument, const CrossOriginOpenerPolicyEnforcementResult& currentCoopEnforcementResult)
+std::optional<CrossOriginOpenerPolicyEnforcementResult> doCrossOriginOpenerHandlingOfResponse(ReportingClient& reportingClient, const ResourceResponse& response, const std::optional<NavigationRequester>& requester, ContentSecurityPolicy* responseCSP, SandboxFlags effectiveSandboxFlags, const String& referrer, bool isDisplayingInitialEmptyDocument, const CrossOriginOpenerPolicyEnforcementResult& currentCoopEnforcementResult, CredentiallessSupport credentiallessSupport)
 {
-    auto [responseOrigin, responseCOOP] = computeResponseOriginAndCOOP(response, requester, responseCSP);
+    auto [responseOrigin, responseCOOP] = computeResponseOriginAndCOOP(response, requester, responseCSP, credentiallessSupport);
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#process-a-navigate-fetch (Step 13.5.6.2)
     // If sandboxFlags is not empty and responseCOOP's value is not "unsafe-none", then set response to an appropriate network error and break.

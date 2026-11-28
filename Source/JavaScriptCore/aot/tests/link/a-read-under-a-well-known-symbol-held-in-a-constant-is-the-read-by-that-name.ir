@@ -1,0 +1,22 @@
+# const steps = Symbol.iterator;  typeof Array.prototype[steps];
+# The key is a value, and that value is a constant that the table lists as a well-known symbol. The read goes by that name, for the look and for Link alike, as Array.prototype[Symbol.iterator] written out does:
+# one member is read and the holder stays in sight. Taken for a key that nobody knows, the read would ask for every member of Array.prototype, and each one written in JavaScript would be compiled.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link accesses mechanisms=all
+# CHECK: access f0 v2 under @@iterator
+# CHECK: read f0 v2 proven=undefined|builtin(ArrayPrototypeValues)
+# RUN(LACKED): lacked
+# LACKED-NOT: lacked
+# RUN(LOOK): features mechanisms=all
+# LOOK-NOT: feature
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SymbolIterator
+    v1 = Builtin builtin=ArrayPrototype
+    v2 = ElemGet v1, v0
+    v3 = TypeOf v2
+    Return v3
+}

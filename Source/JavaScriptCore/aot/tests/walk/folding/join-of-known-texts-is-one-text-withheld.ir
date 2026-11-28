@@ -1,0 +1,12 @@
+# the same functions with folding withheld: the template is joined when the program runs, and the row lists each part as it is written
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = Strcat
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: string=made
+# RUN(ROW): walk f3 mechanisms=none+TypedOperations
+# ROW-LABEL: code f3:Body
+# ROW: = Strcat
+# RUN(ROWNEVER): walk f3 mechanisms=none+TypedOperations
+# ROWNEVER-NOT: string=made "x1y"
+# PROGRAM-OF: join-of-known-texts-is-one-text.ir

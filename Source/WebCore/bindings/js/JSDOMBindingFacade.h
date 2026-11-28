@@ -78,8 +78,8 @@ WEBCORE_EXPORT JSC::JSObject* constructEmptyObject(JSC::JSGlobalObject*, JSC::JS
 WEBCORE_EXPORT JSC::JSObject* constructEmptyObject(JSC::JSGlobalObject*, JSC::Structure*);
 
 WEBCORE_EXPORT JSC::PropertyOffset structureGet(JSC::Structure*, JSC::VM&, JSC::PropertyName);
-WEBCORE_EXPORT JSC::JSValue LEGACY_NODELETE storedPrototype(JSC::Structure*, const JSC::JSObject*);
-WEBCORE_EXPORT JSC::JSObject* LEGACY_NODELETE storedPrototypeObject(JSC::Structure*);
+NODELETE WEBCORE_EXPORT JSC::JSValue storedPrototype(JSC::Structure*, const JSC::JSObject*);
+NODELETE WEBCORE_EXPORT JSC::JSObject* storedPrototypeObject(JSC::Structure*);
 
 // Reconcile a prototype property against its runtime-enable condition after the prototype has already
 // been created. See ScriptController::reevaluateQuirkDependentProperties(). Both return whether they
@@ -108,5 +108,15 @@ WEBCORE_EXPORT JSC::JSArray* constructArray(JSC::JSGlobalObject&, size_t, NOESCA
 WEBCORE_EXPORT JSC::JSValue freezeObject(JSC::JSGlobalObject&, JSC::JSObject*);
 
 WEBCORE_EXPORT JSC::JSBoundFunction* createBoundFunction(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* target, JSC::JSValue boundThis, JSC::ArgList, double length, ASCIILiteral sourceName);
+
+bool fillInternalBuiltinResultObjects(JSC::JSGlobalObject&, JSC::JSValue, std::span<JSC::Strong<JSC::JSObject>>);
+template<unsigned expectedLength>
+std::optional<std::array<JSC::Strong<JSC::JSObject>, expectedLength>> getInternalBuiltinResultObjects(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    std::array<JSC::Strong<JSC::JSObject>, expectedLength> result;
+    if (!fillInternalBuiltinResultObjects(globalObject, value, result)) [[unlikely]]
+        return { };
+    return result;
+}
 
 } // namespace WebCore

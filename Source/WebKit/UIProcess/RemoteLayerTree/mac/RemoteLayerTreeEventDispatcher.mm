@@ -33,9 +33,11 @@
 #import "Logging.h"
 #import "NativeWebWheelEvent.h"
 #import "RemoteLayerTreeDrawingAreaProxyMac.h"
+#import "RemoteLayerTreeHost.h"
 #import "RemoteLayerTreeNode.h"
 #import "RemoteScrollingCoordinatorProxyMac.h"
 #import "RemoteScrollingTree.h"
+#import "WKWebView.h"
 #import "WebEventConversion.h"
 #import "WebPageProxy.h"
 #import "WebProcessPool.h"
@@ -46,6 +48,7 @@
 #import <WebCore/ScrollingNodeID.h>
 #import <WebCore/ScrollingThread.h>
 #import <WebCore/WheelEventDeltaFilter.h>
+#import <wtf/Borrow.h>
 #import <wtf/SystemTracing.h>
 #import <wtf/TZoneMallocInlines.h>
 
@@ -135,7 +138,7 @@ RemoteLayerTreeEventDispatcher::~RemoteLayerTreeEventDispatcher()
 // This must be called to break the cycle between RemoteLayerTreeEventDispatcherDisplayLinkClient and this.
 void RemoteLayerTreeEventDispatcher::invalidate()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     protect(m_displayLinkClient)->invalidate();
 
@@ -150,6 +153,17 @@ void RemoteLayerTreeEventDispatcher::invalidate()
         Locker locker { m_scrollingTreeLock };
         m_scrollingTree = nullptr;
     }
+
+#if ENABLE(THREADED_ANIMATIONS)
+    {
+        // The layer tree is torn down after this without holding any lock, so wait for any in-flight
+        // scrolling thread animation update, which may walk the layer tree and look up its nodes, and
+        // make sure later ones no longer reach any of its layers.
+        Locker locker { m_animationLock };
+        m_animatedLayers.clear();
+        m_rootLayer = nullptr;
+    }
+#endif
 
     // m_delayedRenderingUpdateDetectionTimer is created on the scrolling thread and fires on the
     // scrolling thread's run loop, so it must be destroyed there to avoid racing with an in-flight
@@ -229,7 +243,7 @@ void RemoteLayerTreeEventDispatcher::cacheWheelEventScrollingAccelerationCurve(c
 
 void RemoteLayerTreeEventDispatcher::willHandleWheelEvent(Ref<WebWheelEvent>&& wheelEvent)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     
     m_wheelEventActivityHysteresis.impulse();
     m_wheelEventsBeingProcessed.append(WTF::move(wheelEvent));
@@ -274,6 +288,9 @@ void RemoteLayerTreeEventDispatcher::scrollingThreadHandleWheelEvent(const WebWh
     auto platformWheelEvent = platform(webWheelEvent);
     auto processingSteps = determineWheelEventProcessing(platformWheelEvent, rubberBandableEdges);
 
+    // Do this before the event is handled here or in the web process, so that it stops springs whichever scroller handles it.
+    scrollingTree->stopSpringAnimationsForWheelEvent(platformWheelEvent);
+
     bool needSynchronousScrolling = processingSteps.contains(WheelEventProcessingSteps::SynchronousScrolling);
     if (needSynchronousScrolling) {
         scrollingTree->willSendEventForDefaultHandling(platformWheelEvent);
@@ -303,7 +320,7 @@ void RemoteLayerTreeEventDispatcher::scrollingThreadHandleWheelEvent(const WebWh
 
 void RemoteLayerTreeEventDispatcher::continueWheelEventHandling(WheelEventHandlingResult handlingResult)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     RefPtr scrollingCoordinator = m_scrollingCoordinator;
     if (!scrollingCoordinator)
         return;
@@ -329,7 +346,7 @@ OptionSet<WheelEventProcessingSteps> RemoteLayerTreeEventDispatcher::determineWh
 
 WheelEventHandlingResult RemoteLayerTreeEventDispatcher::internalHandleWheelEvent(const PlatformWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps)
 {
-    ASSERT(ScrollingThread::isCurrentThread());
+    RELEASE_ASSERT(ScrollingThread::isCurrentThread());
     ASSERT(processingSteps.contains(WheelEventProcessingSteps::AsyncScrolling));
 
     auto scrollingTree = this->scrollingTree();
@@ -342,7 +359,7 @@ WheelEventHandlingResult RemoteLayerTreeEventDispatcher::internalHandleWheelEven
     return scrollingTree->handleWheelEvent(filteredEvent, processingSteps);
 }
 
-void RemoteLayerTreeEventDispatcher::wheelEventHandlingCompleted(const PlatformWheelEvent& wheelEvent, std::optional<ScrollingNodeID> scrollingNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
+void RemoteLayerTreeEventDispatcher::wheelEventHandlingCompleted(const PlatformWheelEvent& wheelEvent, std::optional<FrameIdentifier> defaultHandlingFrameID, std::optional<ScrollingNodeID> scrollingNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
 {
     ASSERT(isMainRunLoop());
 
@@ -351,12 +368,12 @@ void RemoteLayerTreeEventDispatcher::wheelEventHandlingCompleted(const PlatformW
     if (auto scrollingTree = this->scrollingTree())
         scrollingTree->receivedEventAfterDefaultHandling(wheelEvent, gestureState);
 
-    ScrollingThread::dispatch([protectedThis = Ref { *this }, wheelEvent, scrollingNodeID, gestureState, wasHandled] {
+    ScrollingThread::dispatch([protectedThis = Ref { *this }, wheelEvent, defaultHandlingFrameID, scrollingNodeID, gestureState, wasHandled] {
         auto scrollingTree = protectedThis->scrollingTree();
         if (!scrollingTree)
             return;
 
-        auto result = scrollingTree->handleWheelEventAfterDefaultHandling(wheelEvent, scrollingNodeID, gestureState);
+        auto result = scrollingTree->handleWheelEventAfterDefaultHandling(wheelEvent, defaultHandlingFrameID, scrollingNodeID, gestureState, wasHandled);
         RunLoop::mainSingleton().dispatch([protectedThis, wasHandled, result]() {
             if (RefPtr scrollingCoordinator = protectedThis->m_scrollingCoordinator)
                 protect(scrollingCoordinator->webPageProxy())->wheelEventHandlingCompleted(wasHandled || result.wasHandled);
@@ -386,7 +403,7 @@ RemoteLayerTreeDrawingAreaProxyMac& RemoteLayerTreeEventDispatcher::drawingAreaM
 
 DisplayLink* RemoteLayerTreeEventDispatcher::displayLink() const
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     if (!m_scrollingCoordinator)
         return nullptr;
@@ -396,7 +413,7 @@ DisplayLink* RemoteLayerTreeEventDispatcher::displayLink() const
 
 DisplayLink* RemoteLayerTreeEventDispatcher::existingDisplayLink() const
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     if (!m_scrollingCoordinator)
         return nullptr;
@@ -431,7 +448,7 @@ void RemoteLayerTreeEventDispatcher::startOrStopDisplayLinkOnMainThread()
 #if ENABLE(THREADED_ANIMATIONS)
         {
             Locker lock { m_animationLock };
-            if (m_monotonicTimelineRegistry && !m_monotonicTimelineRegistry->isEmpty())
+            if (m_monotonicTimelineRegistry && !m_monotonicTimelineRegistry->isEmpty() && m_animationVisibility.hasVisibleMonotonicAnimations())
                 return true;
         }
 #endif
@@ -538,11 +555,19 @@ void RemoteLayerTreeEventDispatcher::didRefreshDisplay(PlatformDisplayID display
 
 void RemoteLayerTreeEventDispatcher::updateLayerPositionsAndAnimations()
 {
-    if (auto scrollingTree = this->scrollingTree())
+    auto scrollingTree = this->scrollingTree();
+    if (scrollingTree)
         scrollingTree->tryToApplyLayerPositions();
 
 #if ENABLE(THREADED_ANIMATIONS)
-    updateAnimations();
+    {
+        // Determining whether animated content may be visible walks the layer tree which the
+        // main thread only changes while holding this lock that it acquires before m_animationLock.
+        std::optional<ScrollingTree::HitTestLocker> hitTestLocker;
+        if (scrollingTree)
+            hitTestLocker.emplace(*scrollingTree);
+        updateAnimations();
+    }
 #endif
 
     // Because we call -[CAPresentationModifier setUpdatesAsynchronously:NO] on the
@@ -575,8 +600,9 @@ void RemoteLayerTreeEventDispatcher::delayedRenderingUpdateDetectionTimerFired()
 void RemoteLayerTreeEventDispatcher::waitForRenderingUpdateCompletionOrTimeout()
 {
     ASSERT(ScrollingThread::isCurrentThread());
-    ASSERT(m_scrollingTreeLock.isLocked());
+    RELEASE_ASSERT(m_scrollingTreeLock.isLocked());
 
+    m_needsMainThreadFlush = m_delayedRenderingUpdateDetectionTimer && m_delayedRenderingUpdateDetectionTimer->isActive();
     if (m_delayedRenderingUpdateDetectionTimer)
         m_delayedRenderingUpdateDetectionTimer->stop();
 
@@ -602,6 +628,7 @@ void RemoteLayerTreeEventDispatcher::waitForRenderingUpdateCompletionOrTimeout()
 
     if (!becameIdle) {
         m_state = SynchronizationState::Desynchronized;
+        m_needsMainThreadFlush = false;
         // At this point we know the main thread is taking too long in the rendering update,
         // so we give up trying to sync with the main thread and update layers here on the scrolling thread.
         // Dispatch to allow for the scrolling thread to handle any outstanding wheel events before we commit layers.
@@ -679,11 +706,12 @@ void RemoteLayerTreeEventDispatcher::renderingUpdateComplete()
 {
     ASSERT(isMainRunLoop());
 
+    bool appliedAnimatedValues = false;
 #if ENABLE(THREADED_ANIMATIONS)
     // We only want to update scroll-driven animations in this situation
     // as time-based animations will always be udpated from the scrolling
     // following a call to didRefreshDisplay().
-    updateAnimations(AnimationStacksToUpdate::ProgressBasedOnly);
+    appliedAnimatedValues = updateAnimations(AnimationStacksToUpdate::ProgressBasedOnly);
 #endif
 
     Locker locker { m_scrollingTreeLock };
@@ -691,7 +719,23 @@ void RemoteLayerTreeEventDispatcher::renderingUpdateComplete()
     if (m_state == SynchronizationState::InRenderingUpdate)
         m_stateCondition.notifyOne();
 
+    if (appliedAnimatedValues)
+        m_needsMainThreadFlush = true;
+
     m_state = SynchronizationState::Idle;
+}
+
+void RemoteLayerTreeEventDispatcher::flushMainThreadTransactionIfNeeded()
+{
+    ASSERT(isMainRunLoop());
+
+    {
+        Locker locker { m_scrollingTreeLock };
+        if (!std::exchange(m_needsMainThreadFlush, false))
+            return;
+    }
+
+    [CATransaction flush];
 }
 
 #if ENABLE(THREADED_ANIMATIONS)
@@ -704,6 +748,7 @@ void RemoteLayerTreeEventDispatcher::lockForAnimationChanges()
 void RemoteLayerTreeEventDispatcher::unlockForAnimationChanges()
 {
     ASSERT(isMainRunLoop());
+    m_animationVisibility.setNeedsUpdate();
     m_animationLock.unlock();
     startOrStopDisplayLink();
 }
@@ -715,6 +760,9 @@ void RemoteLayerTreeEventDispatcher::animationsWereAddedToNode(RemoteLayerTreeNo
     auto animationStack = node.takeAnimationStack();
     ASSERT(animationStack);
     m_animationStacks.set(node.layerID(), animationStack.releaseNonNull());
+    m_animatedLayers.set(node.layerID(), node.layer());
+    if (RefPtr scrollingCoordinator = m_scrollingCoordinator)
+        m_rootLayer = scrollingCoordinator->layerTreeHost()->rootLayer();
 }
 
 void RemoteLayerTreeEventDispatcher::animationsWereRemovedFromNode(RemoteLayerTreeNode& node)
@@ -723,6 +771,63 @@ void RemoteLayerTreeEventDispatcher::animationsWereRemovedFromNode(RemoteLayerTr
     assertIsHeld(m_animationLock);
     if (auto animationStack = m_animationStacks.take(node.layerID()))
         animationStack->clear(protect(node.layer()).get());
+    m_animatedLayers.remove(node.layerID());
+    m_animationVisibility.remove(node.layerID());
+}
+
+void RemoteLayerTreeEventDispatcher::updateAnimatedContentVisibilityAfterCommit()
+{
+    ASSERT(isMainRunLoop());
+    bool hadTimeBasedAnimationsThatMayBeVisible;
+    bool hasTimeBasedAnimationsThatMayBeVisible;
+
+    {
+        Locker lock { m_animationLock };
+        // Scrolling tree layer positions were just applied, so visibility must be determined again
+        // even if the scrolling thread already did so since the layer tree transaction was committed.
+        m_animationVisibility.setNeedsUpdate();
+        hadTimeBasedAnimationsThatMayBeVisible = m_animationVisibility.hasVisibleMonotonicAnimations();
+        updateAnimatedContentVisibilityIfNeeded(ApplyEffectsToAnimationsThatBecameVisible::Yes);
+        hasTimeBasedAnimationsThatMayBeVisible = m_animationVisibility.hasVisibleMonotonicAnimations();
+    }
+
+    if (hadTimeBasedAnimationsThatMayBeVisible != hasTimeBasedAnimationsThatMayBeVisible)
+        startOrStopDisplayLinkOnMainThread();
+}
+
+bool RemoteLayerTreeEventDispatcher::hasVisibleMonotonicAnimations()
+{
+    Locker lock { m_animationLock };
+    ASSERT_IMPLIES(m_animationVisibility.hasVisibleMonotonicAnimations(), m_monotonicTimelineRegistry && !m_monotonicTimelineRegistry->isEmpty());
+    return m_animationVisibility.hasVisibleMonotonicAnimations();
+}
+
+bool RemoteLayerTreeEventDispatcher::updateAnimatedContentVisibilityIfNeeded(ApplyEffectsToAnimationsThatBecameVisible applyEffectsToAnimationsThatBecameVisible)
+{
+    if (!m_animationVisibility.needsUpdate())
+        return false;
+
+    Vector<RemoteAnimationVisibility::AnimatedLayer> animatedLayers;
+    animatedLayers.reserveInitialCapacity(m_animationStacks.size());
+    for (auto& [layerID, animationStack] : m_animationStacks) {
+        RetainPtr layer = m_animatedLayers.get(layerID);
+        animatedLayers.append({ layerID, RemoteLayerTreeNode::forCALayer(layer.get()), animationStack });
+    }
+
+    auto animatedLayersThatBecameVisible = m_animationVisibility.update(m_rootLayer.get(), animatedLayers, [&](auto& node) -> RefPtr<const RemoteAnimationStack> {
+        assertIsHeld(m_animationLock);
+        return m_animationStacks.get(node.layerID());
+    });
+
+    if (applyEffectsToAnimationsThatBecameVisible == ApplyEffectsToAnimationsThatBecameVisible::Yes && !animatedLayersThatBecameVisible.isEmpty() && m_monotonicTimelineRegistry) {
+        m_monotonicTimelineRegistry->advanceCurrentTime(MonotonicTime::now());
+        for (auto& animatedLayer : borrow(animatedLayersThatBecameVisible)) {
+            Ref animationStack = const_cast<RemoteAnimationStack&>(animatedLayer.animationStack.get());
+            animationStack->applyEffects();
+        }
+    }
+
+    return true;
 }
 
 void RemoteLayerTreeEventDispatcher::updateTimelinesRegistration(WebCore::ProcessIdentifier processIdentifier, const WebCore::AcceleratedTimelinesUpdate& timelinesUpdate, MonotonicTime now)
@@ -765,7 +870,7 @@ RefPtr<const RemoteAnimationTimeline> RemoteLayerTreeEventDispatcher::timeline(c
     return nullptr;
 }
 
-void RemoteLayerTreeEventDispatcher::updateAnimations(AnimationStacksToUpdate animationStacksToUpdate)
+bool RemoteLayerTreeEventDispatcher::updateAnimations(AnimationStacksToUpdate animationStacksToUpdate)
 {
     ASSERT(isMainRunLoop() || ScrollingThread::isCurrentThread());
     Locker lock { m_animationLock };
@@ -778,11 +883,24 @@ void RemoteLayerTreeEventDispatcher::updateAnimations(AnimationStacksToUpdate an
     if (m_monotonicTimelineRegistry && animationStacksToUpdate == AnimationStacksToUpdate::All)
         m_monotonicTimelineRegistry->advanceCurrentTime(MonotonicTime::now());
 
+    if (animationStacksToUpdate == AnimationStacksToUpdate::All) {
+        if (auto scrollingTree = this->scrollingTree(); scrollingTree && scrollingTree->hasRecentActivity())
+            m_animationVisibility.setNeedsUpdate();
+        bool hadTimeBasedAnimationsThatMayBeVisible = m_animationVisibility.hasVisibleMonotonicAnimations();
+        if (updateAnimatedContentVisibilityIfNeeded(ApplyEffectsToAnimationsThatBecameVisible::No) && hadTimeBasedAnimationsThatMayBeVisible != m_animationVisibility.hasVisibleMonotonicAnimations())
+            startOrStopDisplayLink();
+    }
+
+    bool appliedEffects = false;
     auto animationStacks = std::exchange(m_animationStacks, { });
     for (auto [layerID, currentAnimationStack] : animationStacks) {
         Ref animationStack = currentAnimationStack;
-        if (animationStacksToUpdate == AnimationStacksToUpdate::All || animationStack->hasProgressBasedAnimations())
-            animationStack->applyEffects();
+        bool shouldApplyEffects = animationStack->hasProgressBasedAnimations()
+            || (animationStacksToUpdate == AnimationStacksToUpdate::All && m_animationVisibility.mayBeVisible(layerID));
+        if (shouldApplyEffects) {
+            if (animationStack->applyEffects() == RemoteAnimationStack::ValuesChanged::Yes)
+                appliedEffects = true;
+        }
 
         // We can clear the effect stack if it's empty, but the previous
         // call to applyEffects() is important so that the base values
@@ -790,6 +908,8 @@ void RemoteLayerTreeEventDispatcher::updateAnimations(AnimationStacksToUpdate an
         if (!animationStack->isEmpty())
             m_animationStacks.set(layerID, WTF::move(animationStack));
     }
+
+    return appliedEffects;
 }
 
 RefPtr<const RemoteAnimationStack> RemoteLayerTreeEventDispatcher::animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
@@ -870,6 +990,14 @@ void RemoteLayerTreeEventDispatcher::endMomentumSignpostInterval()
     }
 }
 
+void RemoteLayerTreeEventDispatcher::endMomentumSignpostIntervalBecauseMomentumIsIgnored()
+{
+    if (m_momentumIntervalIsActive) {
+        WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES; reason=momentumIgnored;");
+        m_momentumIntervalIsActive = false;
+    }
+}
+
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
 void RemoteLayerTreeEventDispatcher::handleSyntheticWheelEvent(PageIdentifier pageID, const WebWheelEvent& event, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
 {
@@ -894,7 +1022,13 @@ void RemoteLayerTreeEventDispatcher::handleSyntheticWheelEvent(PageIdentifier pa
     if (!processingSteps.contains(WheelEventProcessingSteps::AsyncScrolling))
         return;
 
+    if (scrollingTree && scrollingTree->scrollingPerformanceTestingEnabled())
+        scrollingTree->setIsIgnoringMomentumScrollsDuringRubberBand(false);
+
     internalHandleWheelEvent(platformWheelEvent, processingSteps);
+
+    if (scrollingTree && scrollingTree->scrollingPerformanceTestingEnabled() && scrollingTree->isIgnoringMomentumScrollsDuringRubberBand())
+        endMomentumSignpostIntervalBecauseMomentumIsIgnored();
 }
 
 void RemoteLayerTreeEventDispatcher::didStartRubberbanding()
@@ -917,14 +1051,6 @@ void RemoteLayerTreeEventDispatcher::stopDisplayDidRefreshCallbacks(PlatformDisp
     assertIsHeld(m_momentumEventDispatcherLock);
     if (m_momentumEventDispatcher)
         startOrStopDisplayLink();
-}
-
-void RemoteLayerTreeEventDispatcher::didEndSyntheticMomentumScrolling()
-{
-    RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }] {
-        if (RefPtr scrollingCoordinator = protectedThis->m_scrollingCoordinator)
-            protect(scrollingCoordinator->webPageProxy())->didEndSyntheticMomentumScrolling();
-    });
 }
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)

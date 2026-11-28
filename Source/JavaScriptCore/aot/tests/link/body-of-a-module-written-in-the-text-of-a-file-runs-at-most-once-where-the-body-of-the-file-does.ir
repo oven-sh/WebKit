@@ -1,0 +1,77 @@
+# The callback of a bundler's wrapper that runs it once is the body of a module of its own, written in the text of a file: `function f1 module=m0`, the body of m1. The body of the file makes the wrapper: where the loader enters that body at most once, it enters the callback at most once, and so whatever the callback alone calls once.
+# main.js: var load = wrap(() => { once() });  load();  function once() { return 1 }
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}runs-once
+# CHECK: function f1 {{*}}runs-once
+# CHECK: function f2 {{*}}runs-once
+# The marks of a test run lie on the record of the file alone, never on the record of a module written in it: a file that runs again makes its wrappers again; so does a file that a mock may stand for, and a CommonJS file that may be evicted, which is loaded again
+# RUN(AGAIN): link functions mechanisms=all
+# AGAIN-NOT: function f3 {{*}}runs-once
+# AGAIN-NOT: function f4 {{*}}runs-once
+# AGAIN-NOT: function f5 {{*}}runs-once
+# AGAIN-NOT: function f6 {{*}}runs-once
+# AGAIN-NOT: function f7 {{*}}runs-once
+# AGAIN-NOT: function f8 {{*}}runs-once
+
+variable g0 name="once" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="exports" module=m6 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 completes=true}, {target=m4 completes=true}, {target=m6 kind=Require completes=true}]
+module m1 path="#1" displayPath="main.js" kind=CommonJs requireResult=ModuleExports body=f1
+module m2 path="again.js" displayPath="again.js" flags=[MayBeEvicted, MayBeReevaluated] body=f3 requests=[{target=m3 kind=Require completes=true}]
+module m3 path="#3" displayPath="again.js" kind=CommonJs requireResult=ModuleExports body=f4
+module m4 path="mocked.js" displayPath="mocked.js" flags=[MayBeMocked, MayBeEvicted] body=f5 requests=[{target=m5 kind=Require completes=true}]
+module m5 path="#5" displayPath="mocked.js" kind=CommonJs requireResult=ModuleExports body=f6
+module m6 path="/required.cjs" displayPath="required.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f7 exportsVariable=g1 requests=[{target=m7 kind=Require completes=true}]
+module m7 path="#7" displayPath="required.cjs" kind=CommonJs requireResult=ModuleExports body=f8
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    EvaluateModule module=m6 referrer=m0 [isBare]
+    v2 = Undefined
+    Return v2
+}
+function f1 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="once"
+    Return v1
+}
+function f2 name="once" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m3 referrer=m2 [isBare]
+    v1 = Undefined
+    Return v1
+}
+function f4 module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f5 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m5 referrer=m4 [isBare]
+    v1 = Undefined
+    Return v1
+}
+function f6 module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="required" module=m6 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m7 referrer=m6 [isBare]
+    v1 = Undefined
+    Return v1
+}
+function f8 module=m6 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

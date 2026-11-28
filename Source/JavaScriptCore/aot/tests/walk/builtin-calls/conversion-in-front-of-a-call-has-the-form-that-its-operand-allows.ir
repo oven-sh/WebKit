@@ -1,0 +1,46 @@
+# `/a+b/.test(x)`: the row converts what it is passed in front of all else. Nothing is known of x, which is nearly always a string: it is handed on behind a look in line.
+# The form that takes anything asks the run time at every call, whatever comes.
+# function any(x) { return /a+b/.test(x); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[text]]: string @Cell = ToString v0 form=MayBeString
+# CHECK: = RegExpMatchLiteral [[text]]
+# What may be undefined or a string: function perhaps(x) { return /a+b/.test(typeof x === "string" ? x : undefined); }
+# RUN(NULLABLE): walk f2 mechanisms=all
+# NULLABLE-LABEL: code f2:Body
+# NULLABLE: = ToString {{*}}form=NullableString
+# NULLABLE-NOT: form=Generic
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="any" module=m0 position=1 sourceRange={start=1 end=40} length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="a+b" @10
+    v2 = PropGet v1 key="test" @11
+    v3 = Call v2, v1, v0 calleeKey="test" calleeName="test" @12
+    Return v3 @13
+}
+function f2 name="perhaps" module=m0 position=50 sourceRange={start=50 end=90} length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string @51
+    Branch v1 -> taken b1(| 0), notTaken b2() @51
+  b1(v2):
+    Jump -> next b3(v2) @52
+  b2():
+    v3 = Undefined @53
+    Jump -> next b3(v3) @53
+  b3(v4):
+    v5 = NewRegExp pattern="a+b" @60
+    v6 = PropGet v5 key="test" @61
+    v7 = Call v6, v5, v4 calleeKey="test" calleeName="test" @62
+    Return v7 @63
+}

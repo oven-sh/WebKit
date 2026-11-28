@@ -1,5 +1,4 @@
 # a module requests a target once in each phase and of each kind
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: DuplicateListEntry 2
 

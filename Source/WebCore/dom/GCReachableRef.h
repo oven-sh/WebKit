@@ -50,7 +50,7 @@ public:
     }
 
 private:
-    WEBCORE_EXPORT static HashCountedSet<EventTarget*>& LEGACY_NODELETE map();
+    NODELETE WEBCORE_EXPORT static HashCountedSet<EventTarget*>& map();
 };
 
 template <typename T>
@@ -63,6 +63,12 @@ public:
         : m_ptr(&object)
     {
         GCReachableRefMap::add(object);
+    }
+
+    GCReachableRef(Ref<T>&& object)
+        : m_ptr(WTF::move(object))
+    {
+        SUPPRESS_UNCOUNTED_ARG GCReachableRefMap::add(*m_ptr);
     }
 
     ~GCReachableRef()

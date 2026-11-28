@@ -70,7 +70,6 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderLineBreak.h"
 #include "RenderListItem.h"
-#include "RenderListOutsideMarker.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
@@ -93,6 +92,7 @@
 #include "ScrollAnchoringController.h"
 #include "SelectionGeometry.h"
 #include "Settings.h"
+#include "StyleDocumentScope.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleResolver.h"
 #include "StyleTransformResolver.h"
@@ -152,7 +152,6 @@ struct SameSizeAsRenderObject : public CanMakeSingleThreadWeakPtr<SameSizeAsRend
     SingleThreadPackedWeakPtr<RenderObject> m_next;
     uint8_t m_type;
     uint8_t m_typeSpecificFlags;
-    CheckedPtr<Layout::Box> layoutBox;
     void* cachedResourceClient;
 };
 
@@ -182,25 +181,7 @@ RenderObject::RenderObject(Type type, Node& node, OptionSet<TypeFlag> typeFlags,
 
 RenderObject::~RenderObject()
 {
-    clearLayoutBox();
     ASSERT(!hasRareData());
-}
-
-void RenderObject::setLayoutBox(Layout::Box& box)
-{
-    m_layoutBox = &box;
-    m_layoutBox->setRendererForIntegration(this);
-}
-
-void RenderObject::clearLayoutBox()
-{
-    if (!m_layoutBox)
-        return;
-
-    ASSERT(m_layoutBox->rendererForIntegration() == this);
-
-    m_layoutBox->setRendererForIntegration(nullptr);
-    m_layoutBox = nullptr;
 }
 
 RenderTheme& RenderObject::theme() const
@@ -569,14 +550,12 @@ void RenderObject::clearNeedsLayout(HadSkippedLayout hadSkippedLayout)
 
     if (hasLayer())
         downcast<RenderLayerModelObject>(*this).layer()->setSelfAndChildrenNeedPositionUpdate();
-    m_stateBitfields.clearFlag(StateFlag::NeedsLayout);
-    setOutOfFlowChildNeedsLayoutBit(false);
-    setNeedsSimplifiedNormalFlowLayoutBit(false);
-    setNormalChildNeedsLayoutBit(false);
-    setOutOfFlowChildNeedsStaticPositionLayoutBit(false);
-    setNeedsOutOfFlowMovementLayoutBit(false);
+    m_stateBitfields.clearFlags(needsLayoutStateFlags);
 #if ASSERT_ENABLED
     auto checkIfOutOfFlowDescendantsNeedLayout = [&](auto& renderBlock) {
+        // Style-interleaved layout doesn't lay out the content of query containers with unresolved descendants (see RenderBlock::layout()).
+        if (document().styleScope().isQueryContainerWithUnresolvedDescendants(dynamicDowncast<Element>(node())))
+            return;
         if (auto* outOfFlowDescendants = renderBlock.outOfFlowBoxes()) {
             for (auto& renderer : *outOfFlowDescendants)
                 ASSERT(!renderer.needsLayout());
@@ -585,6 +564,18 @@ void RenderObject::clearNeedsLayout(HadSkippedLayout hadSkippedLayout)
     if (auto* renderBlock = dynamicDowncast<RenderBlock>(*this))
         checkIfOutOfFlowDescendantsNeedLayout(*renderBlock);
 #endif // ASSERT_ENABLED
+}
+
+auto RenderObject::needsLayoutState() const -> NeedsLayoutState
+{
+    return NeedsLayoutState { m_stateBitfields.flags() & needsLayoutStateFlags };
+}
+
+void RenderObject::restoreNeedsLayoutState(NeedsLayoutState state)
+{
+    if (state.m_flags.contains(StateFlag::NeedsLayout) && !selfNeedsLayout() && hasLayer())
+        setLayerNeedsFullRepaint();
+    m_stateBitfields.addFlags(state.m_flags);
 }
 
 void RenderObject::scheduleLayout(RenderElement* layoutRoot)
@@ -660,9 +651,9 @@ RenderElement* RenderObject::markContainingBlocksForLayout(RenderElement* layout
     return { };
 }
 
-void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, const RenderBlock* ancestorUpdateBoundary)
+void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, const RenderBoxModelObject* ancestorUpdateBoundary)
 {
-    ASSERT_IMPLIES(ancestorUpdateBoundary, markParents == MarkingBehavior::MarkContainingBlockChain);
+    ASSERT_IMPLIES(ancestorUpdateBoundary, markParents == MarkingBehavior::ContainingBlockChain);
 
     if (hasInvalidContentLogicalWidths() && (!hasRareData() || !rareData().contentLogicalWidthsInvalidationIsMarkOnlyThis)) {
         // Both this and our ancestor chain are already marked dirty.
@@ -675,7 +666,7 @@ void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, c
         return;
     }
 
-    if (markParents == MarkingBehavior::MarkOnlyThis) {
+    if (markParents == MarkingBehavior::OnlyThis) {
         ensureRareData().contentLogicalWidthsInvalidationIsMarkOnlyThis = true;
         return;
     }
@@ -685,7 +676,7 @@ void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, c
         ensureRareData().contentLogicalWidthsInvalidationIsMarkOnlyThis = false;
 }
 
-void RenderObject::invalidateContainerContentLogicalWidths(const RenderBlock* ancestorUpdateBoundary)
+void RenderObject::invalidateContainerContentLogicalWidths(const RenderBoxModelObject* ancestorUpdateBoundary)
 {
     // In order to avoid pathological behavior when inlines are deeply nested, we do include them
     // in the chain that we mark dirty (even though they're kind of irrelevant).
@@ -748,33 +739,30 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
         return containingBlockForObjectInFlow();
     }
 
+    // The containing block of an out-of-flow box is established by its nearest ancestor that can contain it, which maps to its nearest
+    // non-anonymous block (e.g. a relatively positioned inline box forwards its absolutely positioned descendants to its nearest non-anonymous
+    // containing block).
+    auto containingBlockForOutOfFlowBox = [](RenderElement* ancestor) -> RenderBlock* {
+        if (!ancestor)
+            return nullptr;
+        return ancestor->nearestNonAnonymousContainingBlockIncludingSelf();
+    };
+
     if (positionType == PositionType::Absolute) {
-        auto containingBlockForAbsolutePosition = [&] {
-            if (renderer.isInlineBox() && renderer.style().position() == PositionType::Relative) {
-                // A relatively positioned inline box forwards its absolute positioned descendants to
-                // its nearest non-anonymous containing block (to avoid having positioned objects list in inline boxes).
-                return renderer.parent() ? renderer.parent()->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
-            }
-            CheckedPtr ancestor = renderer.parent();
-            while (ancestor && !ancestor->canContainAbsolutelyPositionedObjects())
-                ancestor = ancestor->parent();
-            // Make sure we only return non-anonymous RenderBlock as containing block.
-            return ancestor ? ancestor->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
-        };
-        return containingBlockForAbsolutePosition();
+        CheckedPtr ancestor = renderer.parent();
+        while (ancestor && !ancestor->canContainAbsolutelyPositionedObjects())
+            ancestor = ancestor->parent();
+        return containingBlockForOutOfFlowBox(ancestor.get());
     }
 
     if (positionType == PositionType::Fixed) {
-        auto containingBlockForFixedPosition = [&] () -> RenderBlock* {
-            CheckedPtr ancestor = renderer.parent();
-            while (ancestor && !ancestor->canContainFixedPositionObjects()) {
-                if (isInTopLayerOrBackdrop(ancestor->style(), ancestor->element()))
-                    return &renderer.view();
-                ancestor = ancestor->parent();
-            }
-            return ancestor ? ancestor->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
-        };
-        return containingBlockForFixedPosition();
+        CheckedPtr ancestor = renderer.parent();
+        while (ancestor && !ancestor->canContainFixedPositionObjects()) {
+            if (isInTopLayerOrBackdrop(ancestor->style(), ancestor->element()))
+                return &renderer.view();
+            ancestor = ancestor->parent();
+        }
+        return containingBlockForOutOfFlowBox(ancestor.get());
     }
 
     ASSERT_NOT_REACHED();
@@ -862,7 +850,7 @@ void RenderObject::absoluteFocusRingQuads(Vector<FloatQuad>& quads)
     // implicitly assumes that. This doesn't work correctly with transformed
     // descendants.
     FloatPoint absolutePoint = localToAbsolute();
-    auto rects = OutlinePainter::collectFocusRingRects(*elementRenderer, flooredLayoutPoint(absolutePoint), nullptr);
+    auto rects = Paint::OutlinePainter::collectFocusRingRects(*elementRenderer, flooredLayoutPoint(absolutePoint), nullptr);
     float deviceScaleFactor = document().deviceScaleFactor();
     for (auto rect : rects) {
         rect.moveBy(LayoutPoint(-absolutePoint));
@@ -962,8 +950,7 @@ void RenderObject::propagateRepaintToParentWithOutlineAutoIfNeeded(const RenderL
         if (!repaintRectNeedsConverting)
             repaintContainer.repaintRectangle(adjustedRepaintRect);
         else if (CheckedPtr rendererWithOutline = dynamicDowncast<RenderLayerModelObject>(*originalRenderer)) {
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST adjustedRepaintRect = LayoutRect(repaintContainer.localToContainerQuad(FloatRect(adjustedRepaintRect), rendererWithOutline.get()).boundingBox());
+            adjustedRepaintRect = LayoutRect(repaintContainer.localToContainerQuad(FloatRect(adjustedRepaintRect), rendererWithOutline.get()).boundingBox());
             rendererWithOutline->repaintRectangle(adjustedRepaintRect);
         }
         return;
@@ -1031,7 +1018,7 @@ void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerMo
     }
 }
 
-static inline bool LEGACY_NODELETE fullRepaintIsScheduled(const RenderObject& renderer)
+NODELETE static inline bool fullRepaintIsScheduled(const RenderObject& renderer)
 {
     if (!renderer.view().usesCompositing() && !renderer.document().ownerElement())
         return false;
@@ -1364,7 +1351,7 @@ void RenderObject::showRenderTreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     root->outputRenderSubTreeAndMark(stream, this, 1);
-    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(stream.release()));
 }
 
 void RenderObject::showSubtreeForThis() const
@@ -1372,7 +1359,7 @@ void RenderObject::showSubtreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     outputRenderSubTreeAndMark(stream, this, 1);
-    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(stream.release()));
 }
 
 void RenderObject::showLineTreeForThis() const
@@ -1384,7 +1371,7 @@ void RenderObject::showLineTreeForThis() const
     outputRenderTreeLegend(stream);
     outputRenderObject(stream, false, 1);
     blockFlow->outputLineTree(stream, 2);
-    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(stream.release()));
 }
 
 static const RenderFragmentedFlow* enclosingFragmentedFlowFromRenderer(const RenderObject* renderer)
@@ -1401,7 +1388,7 @@ static const RenderFragmentedFlow* enclosingFragmentedFlowFromRenderer(const Ren
     return nullptr;
 }
 
-void RenderObject::outputRegionsInformation(TextStream& stream) const
+void RenderObject::outputFragmentInformation(TextStream& stream) const
 {
     if (CheckedPtr renderFlagmentedFlow = dynamicDowncast<RenderFragmentedFlow>(*this)) {
         auto fragmentContainers = renderFlagmentedFlow->renderFragmentContainerList();
@@ -1420,7 +1407,7 @@ void RenderObject::outputRegionsInformation(TextStream& stream) const
     CheckedPtr fragmentedFlow = enclosingFragmentedFlowFromRenderer(this);
 
     if (!fragmentedFlow) {
-        // Only the boxes have region range information.
+        // Only boxes have fragment range information.
         // Try to get the flow thread containing block information
         // from the containing block of this box.
         if (is<RenderBox>(*this))
@@ -1542,7 +1529,6 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     }
 
     stream << " renderer (" << this << ")";
-    stream << " layout box (" << layoutBox() << ")";
 
     if (node())
         stream << " node (" << node() << ")";
@@ -1584,7 +1570,7 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     if (auto* multicolSet = dynamicDowncast<RenderMultiColumnSet>(*this))
         stream << " (column count " << multicolSet->computedColumnCount() << ", size " << multicolSet->computedColumnWidth() << "x" << multicolSet->computedColumnHeight() << ", gap " << multicolSet->columnGap() << ")";
 
-    outputRegionsInformation(stream);
+    outputFragmentInformation(stream);
 
     if (needsLayout()) {
         stream << " layout->";
@@ -1671,7 +1657,7 @@ void RenderObject::mapLocalToContainer(const RenderLayerModelObject* ancestorCon
     if (auto* parentAsBox = dynamicDowncast<RenderBox>(*parent)) {
         if (mode.contains(MapCoordinatesMode::ApplyContainerFlip)) {
             if (parentAsBox->writingMode().isBlockFlipped())
-                transformState.move(parentAsBox->flipForWritingMode(LayoutPoint(transformState.mappedPoint())) - centerPoint);
+                transformState.move(parentAsBox->blockStartRelativeToPhysical(LayoutPoint(transformState.mappedPoint())) - centerPoint);
             mode.remove(MapCoordinatesMode::ApplyContainerFlip);
         }
         transformState.move(-toLayoutSize(parentAsBox->scrollPosition()));
@@ -1709,9 +1695,7 @@ void RenderObject::getTransformFromContainer(const LayoutSize& offsetInContainer
     if (hasLayer() && (layer = downcast<RenderLayerModelObject>(*this).layer()) && layer->transform())
         transform.multiply(layer->currentTransform());
     else if (document().settings().layerBasedSVGEngineEnabled() && isSVGLayerAwareRenderer()) {
-        // Non-layered SVG elements: use the cached local transform. localTransform() is virtual,
-        // returning m_localTransform for RenderSVGModelObject and RenderSVGText, identity otherwise.
-        if (auto svgTransform = localTransform(); !svgTransform.isIdentity())
+        if (auto svgTransform = downcast<RenderLayerModelObject>(*this).nominalTransform(); !svgTransform.isIdentity())
             transform.multiply(TransformationMatrix(svgTransform));
     }
 
@@ -1916,8 +1900,9 @@ bool RenderObject::setCapturedInViewTransition(bool captured)
 
     CheckedPtr<RenderLayer> layerToInvalidate;
     if (isDocumentElementRenderer()) {
-        layerToInvalidate = view().layer();
-        view().compositor().setRootElementCapturedInViewTransition(captured);
+        CheckedRef renderView = view();
+        layerToInvalidate = renderView->layer();
+        protect(renderView->compositor())->setRootElementCapturedInViewTransition(captured);
     } else if (hasLayer())
         layerToInvalidate = downcast<RenderLayerModelObject>(*this).layer();
 
@@ -2050,8 +2035,8 @@ Node* RenderObject::nodeForHitTest() const
     auto* node = this->node();
     // If we hit the anonymous renderers inside generated content we should
     // actually hit the generated content so walk up to the PseudoElement.
-    // A marker has no element of its own, so hitting its content is hitting the list item.
-    if (!node && parent() && (parent()->isBeforeOrAfterContent() || parent()->style().isListMarkerStyle())) {
+    // A marker has no element of its own, so hitting it or its content is hitting the list item.
+    if (!node && (isOutsideListMarker() || (parent() && (parent()->isBeforeOrAfterContent() || parent()->style().isListMarkerStyle())))) {
         for (auto* renderer = parent(); renderer && !node; renderer = renderer->parent())
             node = renderer->element();
     }
@@ -2114,10 +2099,10 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(int offset, Affini
         if (!node->hasEditableStyle()) {
             // If it can be found, we prefer a visually equivalent position that is editable. 
             Position position = makeDeprecatedLegacyPosition(node.get(), convertOffsetInTextFragmentToNodeOffset(*this, offset));
-            Position candidate = position.downstream(CanCrossEditingBoundary);
+            Position candidate = position.downstream(EditingBoundaryCrossingRule::CanCross);
             if (protect(candidate.deprecatedNode())->hasEditableStyle())
                 return PositionWithAffinity(candidate, affinity);
-            candidate = position.upstream(CanCrossEditingBoundary);
+            candidate = position.upstream(EditingBoundaryCrossingRule::CanCross);
             if (protect(candidate.deprecatedNode())->hasEditableStyle())
                 return PositionWithAffinity(candidate, affinity);
         }
@@ -2172,7 +2157,7 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(const Position& po
 
 CursorDirective RenderObject::getCursor(const LayoutPoint&, Cursor&) const
 {
-    return CursorDirective::SetCursorBasedOnStyle;
+    return CursorDirective::SetBasedOnStyle;
 }
 
 bool RenderObject::useDarkAppearance() const
@@ -2328,7 +2313,7 @@ bool RenderObject::hasEmptyVisibleRectRespectingParentFrames() const
             .options = { VisibleRectContext::Option::UseEdgeInclusiveIntersection, VisibleRectContext::Option::ApplyCompositedClips },
         };
         CheckedRef box = renderer.enclosingBoxModelObject();
-        auto clippedBounds = box->computeVisibleRectsInContainer({ box->borderBoundingBox() }, &box->view(), context, { });
+        auto clippedBounds = box->computeVisibleRectsInContainer({ box->borderBoundingBox() }, protect(box->view()).ptr(), context, { });
         return !clippedBounds || clippedBounds->clippedOverflowRect.isEmpty();
     };
 
@@ -2347,9 +2332,9 @@ Vector<FloatQuad> RenderObject::absoluteTextQuads(const SimpleRange& range, Opti
         CheckedPtr renderer = node->renderer();
         if (!renderer)
             continue;
-        if (auto* lineBreakRenderer = dynamicDowncast<RenderLineBreak>(*renderer); lineBreakRenderer && lineBreakRenderer->isBR())
+        if (CheckedPtr lineBreakRenderer = dynamicDowncast<RenderLineBreak>(*renderer); lineBreakRenderer && lineBreakRenderer->isBR())
             lineBreakRenderer->absoluteQuads(quads);
-        else if (auto* renderText = dynamicDowncast<RenderText>(*renderer)) {
+        else if (CheckedPtr renderText = dynamicDowncast<RenderText>(*renderer)) {
             auto offsetRange = characterDataOffsetRange(range, downcast<CharacterData>(node.get()));
             quads.appendVector(renderText->absoluteQuadsForRange(offsetRange.start, offsetRange.end, behavior));
         }
@@ -2420,7 +2405,7 @@ Vector<IntRect> RenderObject::absoluteTextRects(const SimpleRange& range, Option
     Vector<LayoutRect> rects;
     for (Ref node : intersectingNodes(range)) {
         CheckedPtr renderer = node->renderer();
-        if (auto* lineBreakRenderer = dynamicDowncast<RenderLineBreak>(renderer.get()); lineBreakRenderer && lineBreakRenderer->isBR())
+        if (CheckedPtr lineBreakRenderer = dynamicDowncast<RenderLineBreak>(renderer); lineBreakRenderer && lineBreakRenderer->isBR())
             lineBreakRenderer->boundingRects(rects, flooredLayoutPoint(renderer->localToAbsolute()));
         else if (RefPtr textNode = dynamicDowncast<Text>(node)) {
             for (auto& rect : absoluteRectsForRangeInText(range, *textNode, behavior))
@@ -2475,7 +2460,7 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
                         continue;
                     auto snappedBounds = snapRectToDevicePixels(*rootClippedBounds, node->document().deviceScaleFactor());
                     if (space == CoordinateSpace::Client)
-                        protect(node->document())->convertAbsoluteToClientRect(snappedBounds, renderer->style());
+                        protect(node->document())->convertAbsoluteToClientRect(snappedBounds, protect(renderer->style()));
                     rects.append(snappedBounds);
                     continue;
                 }
@@ -2483,14 +2468,14 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
                 Vector<FloatQuad> elementQuads;
                 renderer->absoluteQuads(elementQuads);
                 if (space == CoordinateSpace::Client)
-                    protect(node->document())->convertAbsoluteToClientQuads(elementQuads, renderer->style());
+                    protect(node->document())->convertAbsoluteToClientQuads(elementQuads, protect(renderer->style()));
                 rects.appendVector(boundingBoxes(elementQuads));
             }
         } else if (RefPtr textNode = dynamicDowncast<Text>(node)) {
             if (CheckedPtr renderer = textNode->renderer()) {
                 auto clippedRects = absoluteRectsForRangeInText(range, *textNode, behavior);
                 if (space == CoordinateSpace::Client)
-                    protect(node->document())->convertAbsoluteToClientRects(clippedRects, renderer->style());
+                    protect(node->document())->convertAbsoluteToClientRects(clippedRects, protect(renderer->style()));
                 rects.appendVector(clippedRects);
             }
         }
@@ -2572,7 +2557,7 @@ PointerEvents RenderObject::usedPointerEvents() const
     return style().usedPointerEvents();
 }
 
-static bool LEGACY_NODELETE intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
+NODELETE static bool intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
 {
     if (endA <= startA || endB <= startB)
         return false;
@@ -2668,7 +2653,7 @@ static void makeBidiSelectionVisuallyContiguousIfNeeded(const SelectionEndpointD
     UNUSED_PARAM(range);
     UNUSED_PARAM(geometries);
 #else
-    if (!protect(range.startContainer().document())->editor().shouldDrawVisuallyContiguousBidiSelection())
+    if (!protect(protect(range.startContainer().document())->editor())->shouldDrawVisuallyContiguousBidiSelection())
         return;
 
     FloatPoint selectionStartTop;
@@ -2787,7 +2772,7 @@ static void adjustTextDirectionForCoalescedGeometries(const SelectionEndpointDir
     }
 }
 
-static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
+NODELETE static bool shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
 {
     if (!currentRenderer)
         return false;
@@ -2801,7 +2786,7 @@ static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObje
     return false;
 }
 
-static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
+NODELETE static bool hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
 {
     for (auto* current = descendant; current; current = current->parent()) {
         if (current->isOutOfFlowPositioned())
@@ -2814,7 +2799,7 @@ static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject*
     return false;
 }
 
-static bool LEGACY_NODELETE shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
+NODELETE static bool shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
 {
     if (!previousRenderer || !stayWithin)
         return false;
@@ -3234,13 +3219,6 @@ bool RenderObject::CachedImageListener::allowsAnimation() const
     return true;
 }
 
-bool RenderObject::CachedImageListener::useSystemDarkAppearance() const
-{
-    if (CheckedPtr renderer = m_renderer.get())
-        return renderer->useSystemDarkAppearance();
-    return false;
-}
-
 bool RenderObject::CachedImageListener::canDestroyDecodedData() const
 {
     if (CheckedPtr renderer = m_renderer.get())
@@ -3286,15 +3264,11 @@ VisibleInViewportState RenderObject::imageFrameAvailable(CachedImage& image, Ima
     return VisibleInViewportState::No;
 }
 
-bool RenderObject::isExcludedMarker() const
+bool RenderObject::isOutsideListMarker() const
 {
-    // An excluded list marker is the direct child of its list item, never wrapped in an anonymous block, and no part of in-flow layout.
-    auto* marker = dynamicDowncast<RenderListOutsideMarker>(*this);
-    if (!marker)
-        return false;
-    if (!document().settings().listMarkerPositionedPostLayoutEnabled())
-        return false;
-    return parent() && parent() == marker->listItem();
+    // An inside marker is an inline box, so a block with the ::marker style can only be an outside one.
+    CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*this);
+    return blockFlow && blockFlow->style().isListMarkerStyle();
 }
 
 #if ENABLE(TREE_DEBUGGING)
@@ -3306,7 +3280,7 @@ void printPaintOrderTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        SAFE_WTFLOGALWAYS("%s", document->url().string().utf8());
+        SAFE_WTFLOGALWAYS("%s", makeUTF8CString(document->url().string()));
         showPaintOrderTree(document->renderView());
     }
 }
@@ -3318,7 +3292,7 @@ void printRenderTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        SAFE_WTFLOGALWAYS("%s", document->url().string().utf8());
+        SAFE_WTFLOGALWAYS("%s", makeUTF8CString(document->url().string()));
         showRenderTree(document->renderView());
     }
 }
@@ -3330,7 +3304,7 @@ void printLayerTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        SAFE_WTFLOGALWAYS("%s", document->url().string().utf8());
+        SAFE_WTFLOGALWAYS("%s", makeUTF8CString(document->url().string()));
         showLayerTree(document->renderView());
     }
 }
@@ -3353,9 +3327,9 @@ void printAccessibilityTreeForLiveDocuments()
             continue;
         if (document->frame()) {
             if (document->frame()->isRootFrame())
-                SAFE_WTFLOGALWAYS("\nPID %d: Accessibility tree for root document %p %s", getpid(), document.ptr(), document->url().string().utf8());
+                SAFE_WTFLOGALWAYS("\nPID %d: Accessibility tree for root document %p %s", getpid(), document.ptr(), makeUTF8CString(document->url().string()));
             else
-                SAFE_WTFLOGALWAYS("\nPID %d: Accessibility tree for non-root document %p %s", getpid(), document.ptr(), document->url().string().utf8());
+                SAFE_WTFLOGALWAYS("\nPID %d: Accessibility tree for non-root document %p %s", getpid(), document.ptr(), makeUTF8CString(document->url().string()));
             dumpAccessibilityTreeToStderr(document.get());
         }
     }
@@ -3367,7 +3341,7 @@ void printGraphicsLayerTreeForLiveDocuments()
         if (!document->renderView())
             continue;
         if (document->frame() && document->frame()->isRootFrame()) {
-            SAFE_WTFLOGALWAYS("Graphics layer tree for root document %p %s", document.ptr(), document->url().string().utf8());
+            SAFE_WTFLOGALWAYS("Graphics layer tree for root document %p %s", document.ptr(), makeUTF8CString(document->url().string()));
             showGraphicsLayerTreeForCompositor(protect(document->renderView())->compositor());
         }
     }

@@ -46,9 +46,10 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerNavigator);
 
-WorkerNavigator::WorkerNavigator(ScriptExecutionContext& context, const String& userAgent, bool isOnline)
+WorkerNavigator::WorkerNavigator(ScriptExecutionContext& context, const String& userAgent, const String& platform, bool isOnline)
     : NavigatorBase(&context)
     , m_userAgent(userAgent)
+    , m_platform(platform)
     , m_isOnline(isOnline)
 {
 }
@@ -60,24 +61,44 @@ const String& WorkerNavigator::userAgent() const
     return m_userAgent;
 }
 
+String WorkerNavigator::platform() const
+{
+    if (!m_platform.isEmpty())
+        return m_platform;
+    return NavigatorBase::platform();
+}
+
 bool WorkerNavigator::onLine() const
 {
     return m_isOnline;
 }
+
+#if HAVE(WEBGPU_IMPLEMENTATION)
+// Used both for the first backing of navigator.gpu and for each one that replaces a lost backing.
+static RefPtr<WebGPUIntegration> createGPUForWebGPU(WorkerGlobalScope& context)
+{
+    auto* graphicsClient = context.graphicsClient();
+    if (!graphicsClient)
+        return nullptr;
+    return graphicsClient->createGPUForWebGPU();
+}
+#endif
 
 GPU* WorkerNavigator::gpu()
 {
 #if HAVE(WEBGPU_IMPLEMENTATION)
     if (!m_gpuForWebGPU) {
         Ref context = downcast<WorkerGlobalScope>(*this->scriptExecutionContext());
-        if (!context->graphicsClient())
-            return nullptr;
-
-        RefPtr gpu = context->graphicsClient()->createGPUForWebGPU();
+        RefPtr gpu = createGPUForWebGPU(context);
         if (!gpu)
             return nullptr;
 
-        lazyInitialize(m_gpuForWebGPU, GPU::create(*gpu));
+        lazyInitialize(m_gpuForWebGPU, GPU::create(*gpu, [weakContext = WeakPtr<ScriptExecutionContext> { context.get() }] -> RefPtr<WebGPUIntegration> {
+            RefPtr context = downcast<WorkerGlobalScope>(weakContext);
+            if (!context)
+                return nullptr;
+            return createGPUForWebGPU(*context);
+        }));
     }
 
     return m_gpuForWebGPU.get();

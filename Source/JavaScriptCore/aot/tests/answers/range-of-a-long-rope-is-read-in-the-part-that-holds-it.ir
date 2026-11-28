@@ -1,0 +1,445 @@
+# Ropes of two and three parts, of both widths, with substrings, and deeper than the walk goes. A long text is not copied for a range that is one small rope, or empty.
+# -- source: main.js
+# let seed = JSON.parse("7");
+# function below(n) { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return (seed >>> 8) % n; }
+# function part() {
+#   const units = below(4) ? "ab12/" : "ab1ሴ/", n = [1, 2, 7, 40, 300][below(5)];
+#   let text = ""; for (let i = 0; i < n; i++) text += units[below(5)];
+#   text = JSON.parse(JSON.stringify(text));
+#   return n > 20 && !below(3) ? text.slice(below(n >> 1), n - 1) : text;
+# }
+# function rope(depth) {
+#   if (!depth) return part();
+#   const form = below(3);
+#   return form === 0 ? rope(depth - 1) + part() : form === 1 ? part() + rope(depth - 1) : `${part()}${rope(depth - 1)}${part()}`;
+# }
+# function look(s, at) {
+#   if (typeof s !== "string") return 0;
+#   at |= 0;
+#   return (s.startsWith("a") ? 1 : 0) + (s.endsWith("/") ? 2 : 0) + (s.slice(at, at + 2) === "ab" ? 4 : 0) + (s.slice(at, at + 1) === "ሴ" ? 8 : 0) + (Number(s.slice(at, at + 2)) | 0);
+# }
+# let sum = 0;
+# for (let i = 0; i < 40000; i++) { const s = rope(below(12)); sum = (Math.imul(sum, 31) + look(s, below(s.length), below(6))) | 0; }
+# print(sum);
+# function last(s) { return typeof s === "string" && s.slice(-2) === "42" ? 1 : 0; }
+# function number(s, from, to) { return typeof s === "string" ? Number(s.slice(from | 0, to | 0)) : 0; }
+# const body = JSON.parse(JSON.stringify("x".repeat(8000000))), four = JSON.parse('"4"'), two = JSON.parse('"2"');
+# let found = 0;
+# for (let i = 0; i < 300000; i++) {
+#   found += last(body + (four + two));
+#   let deep = four + body; for (let level = 0; level < 10; level++) deep += two;
+#   found += number(deep, below(1), below(1));
+# }
+# print(found);
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# CHECK: -1029568727
+# CHECK-NEXT: 300000
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(STUB): bytes f0:Body f4:Body mechanisms=all
+# STUB: RopeCharactersAroundRange
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+expectedresult x0 type=string flags=[IsMadeByParser]
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=7}, Number{value=40}, Number{value=300}]} module=m0
+variable g0 name="below" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="part" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable] place=2
+variable g2 name="rope" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable] place=3
+variable g3 name="seed" module=m0 declared={type=number|absent flags=[IsExpected]} place=7
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f5 @0
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f6 @0
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=JSON @34
+    v7 = PropGet v6 key="parse" @34
+    v8 = Convert v7 declared={type=builtin(JSONParse) flags=[IsExpected]} @34
+    v9 = String string="7" @45
+    v10 = Call v8, v6, v9 calleeKey="parse" calleeName="JSON.parse" @39
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @34
+    PutModuleVariable v11 variable=g3 @27
+    v13 = Integer @922
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @922
+    v15 = Integer @938
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @938
+    Jump -> next b1(v14, v16) @934
+  b1(v17, v18):
+    LoopHint @934
+    v20 = Integer integer=40000 @945
+    v21 = Less v18, v20 @941
+    Branch v21 -> taken b2(), notTaken b3() @941
+  b2():
+    v22 = GetModuleVariable variable=g2 @969
+    v23 = GetModuleVariable variable=g0 @974
+    v24 = Integer integer=12 @980
+    v25 = Call v23, -, v24 calleeName="below" @974
+    v26 = Call v22, -, v25 calleeName="rope" @969
+    v27 = Builtin builtin=Math @993
+    v28 = Builtin builtin=MathImul @993
+    v29 = Integer integer=31 @1008
+    v30 = Call v28, v27, v17, v29 calleeName="Math.imul" @998
+    v31 = GetModuleVariable variable=g0 @1022
+    v32 = PropGet v26 key="length" @1028
+    v33 = Call v31, -, v32 calleeName="below" @1022
+    v34 = GetModuleVariable variable=g0 @1039
+    v35 = Integer integer=6 @1045
+    v36 = Call v34, -, v35 calleeName="below" @1039
+    v37 = Call v1, -, v26, v33, v36 calleeName="look" @1014
+    v38 = Add v30, v37 @993
+    v39 = Integer @1052
+    v40 = BitOr v38, v39 @992
+    v41 = Convert v40 declared={type=number flags=[IsExpected]} @986
+    v42 = Increment v18 @952
+    v43 = Convert v42 declared={type=number flags=[IsExpected]} @952
+    Jump -> next b1(v41, v43) @952
+  b3():
+    v44 = Builtin builtin=GlobalThis @1057
+    v45 = PropGet v44 key="print" [isFreeName] @1057
+    v46 = Call v45, -, v17 calleeName="print" @1057
+    v47 = Builtin builtin=JSON @1268
+    v48 = PropGet v47 key="parse" @1268
+    v49 = Convert v48 declared={type=builtin(JSONParse) flags=[IsExpected]} @1268
+    v50 = Builtin builtin=JSON @1279
+    v51 = PropGet v50 key="stringify" @1279
+    v52 = Convert v51 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1279
+    v53 = String string="x" @1294
+    v54 = PropGet v53 key="repeat" @1294
+    v55 = Integer integer=8000000 @1305
+    v56 = Call v54, v53, v55 calleeKey="repeat" calleeName="repeat" @1298
+    v57 = Call v52, v50, v56 calleeKey="stringify" calleeName="JSON.stringify" @1284
+    v58 = Call v49, v47, v57 calleeKey="parse" calleeName="JSON.parse" @1273
+    v59 = Builtin builtin=JSON @1324
+    v60 = PropGet v59 key="parse" @1324
+    v61 = Convert v60 declared={type=builtin(JSONParse) flags=[IsExpected]} @1324
+    v62 = String string="\"4\"" @1335
+    v63 = Call v61, v59, v62 calleeKey="parse" calleeName="JSON.parse" @1329
+    v64 = Builtin builtin=JSON @1349
+    v65 = PropGet v64 key="parse" @1349
+    v66 = Convert v65 declared={type=builtin(JSONParse) flags=[IsExpected]} @1349
+    v67 = String string="\"2\"" @1360
+    v68 = Call v66, v64, v67 calleeKey="parse" calleeName="JSON.parse" @1354
+    v69 = Integer @1380
+    v70 = Convert v69 declared={type=number flags=[IsExpected]} @1380
+    v71 = Integer @1396
+    v72 = Convert v71 declared={type=number flags=[IsExpected]} @1396
+    Jump -> next b4(v70, v72) @1392
+  b4(v73, v74):
+    LoopHint @1392
+    v76 = Integer integer=300000 @1403
+    v77 = Less v74, v76 @1399
+    Branch v77 -> taken b5(), notTaken b9() @1399
+  b5():
+    v78 = Add v63, v68 @1442
+    v79 = Add v58, v78 @1434
+    v80 = Call v3, -, v79 calleeName="last" @1429
+    v81 = Add v73, v80 @1429
+    v82 = Convert v81 declared={type=number flags=[IsExpected]} @1420
+    v83 = Add v63, v58 @1469
+    v84 = Convert v83 declared={type=undefined|null|string flags=[IsExpected]} @1469
+    v85 = Integer @1499
+    v86 = Convert v85 declared={type=number flags=[IsExpected]} @1499
+    Jump -> next b6(v84, v86) @1491
+  b6(v87, v88):
+    LoopHint @1491
+    v90 = Integer integer=10 @1510
+    v91 = Less v88, v90 @1502
+    Branch v91 -> taken b7(), notTaken b8() @1502
+  b7():
+    v92 = Add v87, v68 @1531
+    v93 = Convert v92 declared={type=undefined|null|string flags=[IsExpected]} @1523
+    v94 = Increment v88 @1514
+    v95 = Convert v94 declared={type=number flags=[IsExpected]} @1514
+    Jump -> next b6(v93, v95) @1514
+  b8():
+    v96 = GetModuleVariable variable=g0 @1560
+    v97 = Integer integer=1 @1566
+    v98 = Call v96, -, v97 calleeName="below" @1560
+    v99 = GetModuleVariable variable=g0 @1570
+    v100 = Integer integer=1 @1576
+    v101 = Call v99, -, v100 calleeName="below" @1570
+    v102 = Call v5, -, v87, v98, v101 calleeName="number" @1547
+    v103 = Add v82, v102 @1547
+    v104 = Convert v103 declared={type=number flags=[IsExpected]} @1538
+    v105 = Increment v74 @1411
+    v106 = Convert v105 declared={type=number flags=[IsExpected]} @1411
+    Jump -> next b4(v104, v106) @1411
+  b9():
+    v107 = Builtin builtin=GlobalThis @1583
+    v108 = PropGet v107 key="print" [isFreeName] @1583
+    v109 = Call v108, -, v73 calleeName="print" @1583
+    v110 = Undefined @1583
+    Return v110 @1583
+}
+function f1 name="below" module=m0 position=51 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @71
+    v2 = CheckInitialized v1 name="seed" @71
+    v3 = Builtin builtin=Math @79
+    v4 = Builtin builtin=MathImul @79
+    v5 = GetModuleVariable variable=g3 @89
+    v6 = CheckInitialized v5 name="seed" @89
+    v7 = Integer integer=1103515245 @95
+    v8 = Call v4, v3, v6, v7 calleeName="Math.imul" @84
+    v9 = Integer integer=12345 @109
+    v10 = Add v8, v9 @79
+    v11 = Integer integer=2147483647 @118
+    v12 = BitAnd v10, v11 @78
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @71
+    PutModuleVariable v13 variable=g3 @71
+    v15 = GetModuleVariable variable=g3 @138
+    v16 = CheckInitialized v15 name="seed" @138
+    v17 = Integer integer=8 @147
+    v18 = URShift v16, v17 @138
+    v19 = Mod v18, v0 @137
+    Return v19 @137
+}
+function f2 name="part" module=m0 position=157 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @191
+    v1 = Integer integer=4 @197
+    v2 = Call v0, -, v1 calleeName="below" @191
+    v3 = ToBoolean v2 @191
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @191
+  b1(v4):
+    v5 = String string="ab12/" @202
+    Jump -> next b3(v5) @202
+  b2(v6):
+    v7 = String string="ab1\u{1234}/" @212
+    Jump -> next b3(v7) @212
+  b3(v8):
+    v9 = Data data=d0 @227
+    v10 = GetModuleVariable variable=g0 @246
+    v11 = Integer integer=5 @252
+    v12 = Call v10, -, v11 calleeName="below" @246
+    v13 = ElemGet v9, v12 @227
+    v14 = String string="" @270
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @270
+    v16 = Integer @287
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @287
+    Jump -> next b4(v15, v17) @283
+  b4(v18, v19):
+    LoopHint @283
+    v21 = Less v19, v13 @290
+    Branch v21 -> taken b5(), notTaken b6() @290
+  b5():
+    v22 = GetModuleVariable variable=g0 @316
+    v23 = Integer integer=5 @322
+    v24 = Call v22, -, v23 calleeName="below" @316
+    v25 = ElemGet v8, v24 @310
+    v26 = Add v18, v25 @310
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @302
+    v28 = Increment v19 @297
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @297
+    Jump -> next b4(v27, v29) @297
+  b6():
+    v30 = Builtin builtin=JSON @336
+    v31 = PropGet v30 key="parse" @336
+    v32 = Convert v31 declared={type=builtin(JSONParse) flags=[IsExpected]} @336
+    v33 = Builtin builtin=JSON @347
+    v34 = PropGet v33 key="stringify" @347
+    v35 = Convert v34 declared={type=builtin(JSONStringify) flags=[IsExpected]} @347
+    v36 = Call v35, v33, v18 calleeKey="stringify" calleeName="JSON.stringify" @352
+    v37 = Call v32, v30, v36 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0 @341
+    v38 = Convert v37 declared={type=undefined|null|string flags=[IsExpected]} @329
+    v39 = Integer integer=20 @383
+    v40 = Greater v13, v39 @379
+    Branch v40 -> taken b7(), notTaken b10() @379
+  b7():
+    v41 = GetModuleVariable variable=g0 @390
+    v42 = Integer integer=3 @396
+    v43 = Call v41, -, v42 calleeName="below" @390
+    v44 = ToBoolean v43 @390
+    Branch v44 -> taken b8(| 0), notTaken b9(| 0) @390
+  b8(v45):
+    Jump -> next b10() @390
+  b9(v46):
+    v47 = PropGet v38 key="slice" @401
+    v48 = GetModuleVariable variable=g0 @412
+    v49 = Integer integer=1 @423
+    v50 = RShift v13, v49 @418
+    v51 = Call v48, -, v50 calleeName="below" @412
+    v52 = Integer integer=1 @431
+    v53 = Sub v13, v52 @427
+    v54 = Call v47, v38, v51, v53 calleeKey="slice" calleeName="text.slice" @406
+    ReturnCall v54 @406
+  b10():
+    Return v38 @436
+}
+function f3 name="rope" module=m0 position=444 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToBoolean v0 @474
+    Branch v1 -> taken b1(| 0), notTaken b7(| 0) @474
+  b1(v2):
+    v3 = NarrowByTest v0, v2 @474
+    v4 = GetModuleVariable variable=g0 @511
+    v5 = Integer integer=3 @517
+    v6 = Call v4, -, v5 calleeName="below" @511
+    v7 = Integer @539
+    v8 = StrictEq v6, v7 @530
+    Branch v8 -> taken b2(), notTaken b3() @530
+  b2():
+    v9 = GetModuleVariable variable=g2 @543
+    v10 = Integer integer=1 @556
+    v11 = Sub v3, v10 @548
+    v12 = Call v9, -, v11 calleeName="rope" @543
+    v13 = GetModuleVariable variable=g1 @561
+    v14 = Call v13 calleeName="part" @561
+    v15 = Add v12, v14 @543
+    Jump -> next b6(v15) @543
+  b3():
+    v16 = Integer integer=1 @579
+    v17 = StrictEq v6, v16 @570
+    Branch v17 -> taken b4(), notTaken b5() @570
+  b4():
+    v18 = GetModuleVariable variable=g1 @583
+    v19 = Call v18 calleeName="part" @583
+    v20 = GetModuleVariable variable=g2 @592
+    v21 = Integer integer=1 @605
+    v22 = Sub v3, v21 @597
+    v23 = Call v20, -, v22 calleeName="rope" @592
+    v24 = Add v19, v23 @583
+    Jump -> next b6(v24) @583
+  b5():
+    v25 = GetModuleVariable variable=g1 @613
+    v26 = Call v25 calleeName="part" @613
+    v27 = ToString v26 @613
+    v28 = GetModuleVariable variable=g2 @622
+    v29 = Integer integer=1 @635
+    v30 = Sub v3, v29 @627
+    v31 = Call v28, -, v30 calleeName="rope" @622
+    v32 = ToString v31 @622
+    v33 = GetModuleVariable variable=g1 @640
+    v34 = Call v33 calleeName="part" @640
+    v35 = ToString v34 @640
+    v36 = Strcat v27, v32, v35 @610
+    Jump -> next b6(v36) @610
+  b6(v37):
+    Return v37 @610
+  b7(v38):
+    v39 = GetModuleVariable variable=g1 @488
+    v40 = Call v39 calleeName="part" @488
+    ReturnCall v40 @488
+}
+function f4 name="look" module=m0 position=652 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = TypeTest v0 testedType=string @681
+    Branch v2 -> taken b1(| 0), notTaken b14(| 0) @681
+  b1(v3):
+    v4 = NarrowByTest v0, v3 @681
+    v5 = Integer @722
+    v6 = BitOr v1, v5 @722
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @716
+    v8 = PropGet v4 key="startsWith" @735
+    v9 = String string="a" @748
+    v10 = Call v8, v4, v9 calleeKey="startsWith" calleeName="s.startsWith" @737
+    v11 = ToBoolean v10 @735
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @735
+  b2(v12):
+    v13 = Integer integer=1 @755
+    Jump -> next b4(v13) @755
+  b3(v14):
+    v15 = Integer @759
+    Jump -> next b4(v15) @759
+  b4(v16):
+    v17 = PropGet v4 key="endsWith" @765
+    v18 = String string="/" @776
+    v19 = Call v17, v4, v18 calleeKey="endsWith" calleeName="s.endsWith" @767
+    v20 = ToBoolean v19 @765
+    Branch v20 -> taken b5(| 0), notTaken b6(| 0) @765
+  b5(v21):
+    v22 = Integer integer=2 @783
+    Jump -> next b7(v22) @783
+  b6(v23):
+    v24 = Integer @787
+    Jump -> next b7(v24) @787
+  b7(v25):
+    v26 = Add v16, v25 @734
+    v27 = PropGet v4 key="slice" @793
+    v28 = Integer integer=2 @810
+    v29 = Add v7, v28 @805
+    v30 = Call v27, v4, v7, v29 calleeKey="slice" calleeName="s.slice" @795
+    v31 = String string="ab" @817
+    v32 = StrictEq v30, v31 @793
+    Branch v32 -> taken b8(), notTaken b9() @793
+  b8():
+    v33 = Integer integer=4 @824
+    Jump -> next b10(v33) @824
+  b9():
+    v34 = Integer @828
+    Jump -> next b10(v34) @828
+  b10(v35):
+    v36 = Add v26, v35 @734
+    v37 = PropGet v4 key="slice" @834
+    v38 = Integer integer=1 @851
+    v39 = Add v7, v38 @846
+    v40 = Call v37, v4, v7, v39 calleeKey="slice" calleeName="s.slice" @836
+    v41 = String string="\u{1234}" @858
+    v42 = StrictEq v40, v41 @834
+    Branch v42 -> taken b11(), notTaken b12() @834
+  b11():
+    v43 = Integer integer=8 @866
+    Jump -> next b13(v43) @866
+  b12():
+    v44 = Integer @870
+    Jump -> next b13(v44) @870
+  b13(v45):
+    v46 = Add v36, v45 @734
+    v47 = Builtin builtin=Number @876
+    v48 = PropGet v4 key="slice" @883
+    v49 = Integer integer=2 @900
+    v50 = Add v7, v49 @895
+    v51 = Call v48, v4, v7, v50 calleeKey="slice" calleeName="s.slice" @885
+    v52 = Call v47, -, v51 calleeName="Number" @876
+    v53 = Integer @906
+    v54 = BitOr v52, v53 @876
+    v55 = Add v46, v54 @734
+    Return v55 @734
+  b14(v56):
+    v57 = Integer @711
+    Return v57 @711
+}
+function f5 name="last" module=m0 position=1069 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = TypeTest v0 testedType=string @1095
+    Branch v1 -> taken b1(| 0), notTaken b3() @1095
+  b1(v2):
+    v3 = NarrowByTest v0, v2 @1095
+    v4 = PropGet v3 key="slice" @1120
+    v5 = Integer integer=-2 @1128
+    v6 = Call v4, v3, v5 calleeKey="slice" calleeName="s.slice" @1122
+    v7 = String string="42" @1136
+    v8 = StrictEq v6, v7 @1120
+    Branch v8 -> taken b2(), notTaken b3() @1120
+  b2():
+    v9 = Integer integer=1 @1143
+    Jump -> next b4(v9) @1143
+  b3():
+    v10 = Integer @1147
+    Jump -> next b4(v10) @1147
+  b4(v11):
+    Return v11 @1147
+}
+function f6 name="number" module=m0 position=1152 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: i32, v2: i32):
+    v3 = TypeTest v0 testedType=string @1190
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @1190
+  b1(v4):
+    v5 = NarrowByTest v0, v4 @1190
+    v6 = Builtin builtin=Number @1214
+    v7 = PropGet v5 key="slice" @1221
+    v8 = Integer @1236
+    v9 = BitOr v1, v8 @1229
+    v10 = Integer @1244
+    v11 = BitOr v2, v10 @1239
+    v12 = Call v7, v5, v9, v11 calleeKey="slice" calleeName="s.slice" @1223
+    v13 = Call v6, -, v12 calleeName="Number" @1214
+    ReturnCall v13 @1214
+  b2(v14):
+    v15 = Integer @1250
+    Return v15 @1250
+}

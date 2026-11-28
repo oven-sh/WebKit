@@ -84,14 +84,11 @@ const formatterCreation = (className: string, optionNames: readonly string[]) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// What native code makes of a Date, of a wrapper or of an array depends on what that holds.
 const readByFormatting = [hostSettings, "InternalFields", "Elements", "ArrayStorage", "TypedArrayElements", "TypedArrayStorage", "NamedProperties", "ObjectFields", "ShapeWords", "PrototypeLinks"];
 
-// A receiver that has the prototype object above it and is no formatter may hold one, under a symbol: what `Intl.DateTimeFormat.call(object)` has put there.
 const mayHoldFormatter = b.runs("PrototypeChain", b.named());
 
 const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedInLine: readonly b.FunctionField[] = []) => [
-  // The formatter makes the function at the first read and keeps it. The function holds the formatter.
   {
     getter: b.instance("BoundFunction"),
     capability: "heap",
@@ -105,7 +102,6 @@ const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedI
     throws: true,
     runsOnlyOperandCode: true,
     uses: { this: [b.retained, mayHoldFormatter] },
-    // A custom accessor of a static table: it has no function object, and a read of it leaves no frame of a getter in a stack trace.
     implementation: b.generic,
     call: [
       {
@@ -128,7 +124,6 @@ const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedI
         reads: readByFormatting,
         implementation: b.generic,
       },
-      // Any other receiver. The getter looks for a formatter in it, and the function takes no locale: it uses the locale of that formatter.
       {
         this: b.any,
         args: { [parameter]: b.any.optional },
@@ -144,7 +139,6 @@ const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedI
   },
 ] satisfies readonly b.GetterField[];
 
-// A pristine date finds the built-in @@toPrimitive and valueOf, which answer its time.
 const pristineDateFormatted = {
   args: { date: b.instance("Date").pristine("Names") },
   returns: b.string,
@@ -162,7 +156,6 @@ const formatterClass = (
   optionNames: readonly string[],
   format: readonly b.GetterField[],
 ) => {
-  // An operand is converted to a primitive. An object of Temporal among the dates is only looked at.
   const method = (operands: readonly string[], returns: b.TableType) =>
     ({
       this: b.any,
@@ -219,7 +212,6 @@ const formatterClass = (
       },
     },
   });
-  // The prototype object keeps what lies above it, so that a formatter can be tested for its names. A program may still replace its members: flow sees the write, and nothing rests on the member then.
   const membersThatProgramsMayReplace = ["format", "formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions"];
   return [
     ...declaredClass,
@@ -240,7 +232,6 @@ const temporalDateToLocaleString = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-// Without options, and without a locale or with a well-formed one, there is nothing to refuse and nothing to ask.
 const numberToLocaleString = (receiver: b.TableType) =>
   [
     {
@@ -286,7 +277,6 @@ export default b.declarations(
         returns: newStringArray,
         capability: "heap",
         throws: true,
-        // For "collation" ICU opens the collation data of every locale and lists the keys it finds there.
         uses: { key: [b.readAsLocale] },
         usesFeature: ["IntlOther", { feature: "IntlCollation", when: b.whenOperand("key", "collation") }],
         implementation: b.hostCall,

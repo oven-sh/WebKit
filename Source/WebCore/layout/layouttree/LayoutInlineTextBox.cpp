@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,23 +26,52 @@
 #include "config.h"
 #include "LayoutInlineTextBox.h"
 
-#include "RenderObject.h"
+#include "RenderStyleConstants.h"
 #include "StyleComputedStyle.h"
-#include <wtf/TZoneMallocInlines.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineTextBox);
-
-InlineTextBox::InlineTextBox(String content, bool isCombined, EnumSet<ContentCharacteristic> contentCharacteristicSet, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle)
-: Box({ NodeType::Text, IsAnonymous::Yes }, WTF::move(style), WTF::move(firstLineStyle), Box::InlineTextBoxFlag)
-    , m_content(content)
-    , m_isCombined(isCombined)
-    , m_contentCharacteristicSet(contentCharacteristicSet)
+// Combined text is rare.
+static HashMap<const InlineTextBox*, std::unique_ptr<InlineTextBox::CombinedText>>& combinedTextMap()
 {
+    static NeverDestroyed<HashMap<const InlineTextBox*, std::unique_ptr<InlineTextBox::CombinedText>>> map;
+    return map;
+}
+
+static_assert(std::to_underlying(InlineTextBox::ContentCharacteristic::HighestEnumValue) < 6, "Content characteristics must fit in Box::m_textContentCharacteristics");
+static_assert(std::to_underlying(SynthesizedGlyph::PickerDown) + 1 < 4, "Content glyph must fit in Box::m_textContentGlyph");
+
+InlineTextBox::InlineTextBox(const Style::ComputedStyle& style, std::optional<SynthesizedGlyph> contentGlyph)
+    : Box(style, { NodeType::Text, IsAnonymous::Yes }, Box::InlineTextBoxFlag)
+{
+    m_textContentGlyph = contentGlyph ? std::to_underlying(*contentGlyph) + 1 : 0;
+}
+
+InlineTextBox::~InlineTextBox()
+{
+    if (m_isCombinedText)
+        combinedTextMap().remove(this);
+}
+
+const InlineTextBox::CombinedText& InlineTextBox::combinedText() const
+{
+    ASSERT(m_isCombinedText);
+    return *combinedTextMap().get(this);
+}
+
+void InlineTextBox::setCombinedText(std::unique_ptr<CombinedText>&& combinedText)
+{
+    if (combinedText) {
+        m_isCombinedText = true;
+        combinedTextMap().set(this, WTF::move(combinedText));
+        return;
+    }
+    if (!m_isCombinedText)
+        return;
+    m_isCombinedText = false;
+    combinedTextMap().remove(this);
 }
 
 }
-}
-

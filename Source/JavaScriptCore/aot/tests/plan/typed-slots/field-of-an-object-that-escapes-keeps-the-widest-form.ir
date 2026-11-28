@@ -1,0 +1,26 @@
+# the program stores numbers alone, but the object is handed to unknown code, which may store anything: not every writer is known, so the slot keeps the form that holds any value.
+# In a boxed slot no number is held: it is held to nothing.
+# const o = { x: 1.5 }; sink(o)
+# RUN: plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "x" JSValue Inline
+# CHECK-NOT: type=
+# CHECK: extra-properties
+# RUN(LINK): link fields mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# LINK: field L0.0 "x"
+# LINK-NOT: writers-known
+
+layout L0 module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="x"
+    v3 = FinishObject v1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3
+    Return v6
+}

@@ -85,7 +85,7 @@ public:
     }
 
 private:
-    static bool LEGACY_NODELETE foldPurifyNaN(Edge& edge)
+    NODELETE static bool foldPurifyNaN(Edge& edge)
     {
         if (edge->op() == PurifyNaN) {
             edge = edge->child1();
@@ -94,7 +94,7 @@ private:
         return false;
     }
 
-    static bool LEGACY_NODELETE foldPurifyNaNOnBinary(Node* node)
+    NODELETE static bool foldPurifyNaNOnBinary(Node* node)
     {
         bool result = false;
         if (node->isBinaryUseKind(DoubleRepUse)) {
@@ -104,7 +104,7 @@ private:
         return result;
     }
 
-    static bool LEGACY_NODELETE foldPurifyNaNOnUnary(Node* node)
+    NODELETE static bool foldPurifyNaNOnUnary(Node* node)
     {
         if (node->child1().useKind() == DoubleRepUse)
             return foldPurifyNaN(node->child1());
@@ -168,6 +168,7 @@ private:
         case ArithFloor:
         case ArithCeil:
         case ArithTrunc:
+        case ArithSign:
         case ArithSqrt:
         case ArithUnary: {
             if (foldPurifyNaNOnUnary(m_node))
@@ -800,12 +801,10 @@ private:
                 }
             }
             if (m_node->arrayMode().type() == Array::String) {
-                bool changed = false;
                 while (m_node->child1()->op() == ResolveRope) {
-                    m_node->child1() = m_node->child1()->child1();
-                    changed = true;
+                    m_node->child1().setNode(m_node->child1()->child1().node());
+                    m_changed = true;
                 }
-                m_changed = changed;
                 break;
             }
             break;
@@ -1923,6 +1922,17 @@ private:
         case Construct:
         case TailCallInlinedCaller:
         case TailCall: {
+            if (m_node->op() != Construct) {
+                while (true) {
+                    Node* boundFunction = m_graph.varArgChild(m_node, 0).node();
+                    if (!boundFunction->hasNumberOfBoundArguments() || boundFunction->numberOfBoundArguments())
+                        break;
+                    m_graph.varArgChild(m_node, 0) = Edge(m_graph.child(boundFunction, 0).node());
+                    m_graph.varArgChild(m_node, 1) = Edge(m_graph.child(boundFunction, 1).node());
+                    m_changed = true;
+                }
+            }
+
             ExecutableBase* executable = nullptr;
             Edge callee = m_graph.varArgChild(m_node, 0);
             CallVariant callVariant;

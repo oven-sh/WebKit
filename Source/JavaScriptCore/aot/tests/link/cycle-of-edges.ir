@@ -1,0 +1,36 @@
+# If a cycle of edges kept the worklist going, Link would never end. If the two functions did not share a cycle of the order, one of them would be walked before a caller of it, and would take what had been left so far for all that arrives
+# function ping(n) { return pong(n); }  function pong(n) { return ping(n); }  ping("a")
+# `ping` hands its parameter to `pong`, which hands it back. Each node goes on the worklist only when its type has climbed, so both get the one type that enters and the flow ends. Whoever names the two from outside has the lower rank.
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}cycle=[[outer]] rank=0
+# CHECK: function f1 callers-known one-callee {{*}}cycle=[[inner]] rank=1
+# CHECK-NEXT: parameter 0 {{*}}proven=string
+# CHECK: referrers f0, f2
+# CHECK: function f2 callers-known one-callee {{*}}cycle=[[inner]] rank=1
+# CHECK-NEXT: parameter 0 {{*}}proven=string
+# CHECK: referrers f1
+
+variable g0 name="ping" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="pong" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="a"
+    v2 = Call v0, -, v1 calleeName="ping"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="ping" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="pong"
+    Return v2
+}
+function f2 name="pong" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="ping"
+    Return v2
+}

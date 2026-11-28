@@ -164,7 +164,7 @@ public:
     RefPtr<CSSValue> inlineStylePropertyForElement(Element&, CSSPropertyID);
 
     Node* cacheAncestorsOfStartToBeConverted(const Position&, const Position&);
-    bool LEGACY_NODELETE isAncestorsOfStartToBeConverted(Node& node) const { return m_ancestorsUnderCommonAncestor.contains(&node); }
+    NODELETE bool isAncestorsOfStartToBeConverted(Node& node) const { return m_ancestorsUnderCommonAncestor.contains(&node); }
 
 private:
     HashMap<Element*, std::unique_ptr<WebCore::Style::Extractor>> m_computedStyles;
@@ -185,7 +185,7 @@ static std::optional<bool> presentationIntentHTMLInterchangeEnabledForTesting;
 
 // In a web content process, which uses CFPREFS_DIRECT_MODE, this only sees the default in the global domain, not in the
 // app's own domain, and sees changes to it only once the UI process forwards them, which it does while a WKPreferenceObserver is running.
-static bool presentationIntentHTMLInterchangeEnabled()
+bool WebCore::presentationIntentHTMLInterchangeEnabled()
 {
     if (presentationIntentHTMLInterchangeEnabledForTesting)
         return *presentationIntentHTMLInterchangeEnabledForTesting;
@@ -411,7 +411,8 @@ static PlatformFont *_fontForNameAndSize(NSString *fontName, CGFloat size, NSMut
 #if PLATFORM(IOS_FAMILY)
                 NSString *faceName = [fontName substringFromIndex:(dividingRange.location + dividingRange.length)];
                 NSArray *familyMemberFaceNames = [PlatformFontClass fontNamesForFamilyName:familyName];
-                for (NSString *familyMemberFaceName in familyMemberFaceNames) {
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL NSString *familyMemberFaceName in familyMemberFaceNames) {
                     if ([familyMemberFaceName compare:faceName options:NSCaseInsensitiveSearch] == NSOrderedSame) {
                         font = [PlatformFontClass fontWithName:familyMemberFaceName size:size];
                         break;
@@ -424,7 +425,7 @@ static PlatformFont *_fontForNameAndSize(NSString *fontName, CGFloat size, NSMut
                 NSString *faceName = [fontName substringFromIndex:(dividingRange.location + dividingRange.length)];
                 NSArray *familyMemberArrays = [fontManager availableMembersOfFontFamily:familyName];
                 NSEnumerator *familyMemberArraysEnum = [familyMemberArrays objectEnumerator];
-                while ((familyMemberArray = [familyMemberArraysEnum nextObject])) {
+                while ((familyMemberArray = checked_objc_cast<NSArray>([familyMemberArraysEnum nextObject]))) {
                     NSString *familyMemberFaceName = [familyMemberArray objectAtIndex:1];
                     if ([familyMemberFaceName compare:faceName options:NSCaseInsensitiveSearch] == NSOrderedSame) {
                         NSFontTraitMask traits = [[familyMemberArray objectAtIndex:3] integerValue];
@@ -1048,14 +1049,14 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
     }
 
     if (blockElement) {
-        Element& coreBlockElement = *blockElement;
+        Ref coreBlockElement = *blockElement;
         RetainPtr<NSMutableParagraphStyle> paragraphStyle = adoptNS([defaultParagraphStyle() mutableCopy]);
         unsigned heading = 0;
         if (RefPtr headingElement = dynamicDowncast<HTMLHeadingElement>(coreBlockElement))
             heading = headingElement->level();
-        else if (!m_readsAllPresentationIntents && coreBlockElement.hasTagName(blockquoteTag) && _topPresentationIntent)
+        else if (!m_readsAllPresentationIntents && coreBlockElement->hasTagName(blockquoteTag) && _topPresentationIntent)
             [attrs setObject:_topPresentationIntent.get() forKey:NSPresentationIntentAttributeName];
-        bool isParagraph = coreBlockElement.hasTagName(pTag) || coreBlockElement.hasTagName(liTag) || heading || coreBlockElement.hasTagName(blockquoteTag);
+        bool isParagraph = coreBlockElement->hasTagName(pTag) || coreBlockElement->hasTagName(liTag) || heading || coreBlockElement->hasTagName(blockquoteTag);
 
         String textAlign = _caches->propertyValueForNode(coreBlockElement, CSSPropertyID::TextAlign);
         if (textAlign.length()) {
@@ -1665,30 +1666,6 @@ void HTMLConverter::_exitBlockquote()
         _topPresentationIntent = [_topPresentationIntent parentIntent];
 }
 
-static NSInlinePresentationIntent inlinePresentationIntentForElement(const Element&);
-
-static bool isCodeElement(const Element& element)
-{
-    return inlinePresentationIntentForElement(element) & NSInlinePresentationIntentCode;
-}
-
-// Whether the element's only child element is code, ignoring whitespace-only text, as in the CommonMark form <pre><code>.
-static bool containsOnlyCodeElement(const Element& element)
-{
-    bool foundCodeElement = false;
-    for (RefPtr child = element.firstChild(); child; child = child->nextSibling()) {
-        if (RefPtr text = dynamicDowncast<Text>(*child)) {
-            if (!text->containsOnlyASCIIWhitespace())
-                return false;
-        } else if (RefPtr childElement = dynamicDowncast<Element>(*child)) {
-            if (foundCodeElement || !isCodeElement(*childElement))
-                return false;
-            foundCodeElement = true;
-        }
-    }
-    return foundCodeElement;
-}
-
 static std::optional<NSPresentationIntentKind> presentationIntentKindForElement(const Element& element)
 {
     using namespace ElementNames;
@@ -1740,7 +1717,7 @@ static std::optional<NSPresentationIntentKind> presentationIntentKindForElement(
         return NSPresentationIntentKindBlockQuote;
     case HTML::pre:
         // Other preformatted text holds phrasing content like a paragraph does, but isn't necessarily code.
-        if (containsOnlyCodeElement(element))
+        if (codeElementOfCodeBlock(element))
             return NSPresentationIntentKindCodeBlock;
         return NSPresentationIntentKindParagraph;
     case HTML::hr:
@@ -1829,8 +1806,8 @@ static String languageHintForCodeBlockElement(const Element& element)
         return languageHint;
 
     // <pre><code class="language-x"> is the CommonMark form.
-    if (RefPtr child = ElementTraversal::firstChild(element); child && isCodeElement(*child))
-        return languageHintFromClassAttribute(*child);
+    if (RefPtr codeElement = codeElementOfCodeBlock(element))
+        return languageHintFromClassAttribute(*codeElement);
     return { };
 }
 
@@ -1868,6 +1845,43 @@ RetainPtr<NSPresentationIntent> HTMLConverter::_createPresentationIntentForEleme
 
     ASSERT_NOT_REACHED();
     return nil;
+}
+
+static std::optional<BlockPresentationIntent> blockPresentationIntentForElement(const Element& element)
+{
+    using Kind = BlockPresentationIntent::Kind;
+
+    auto kind = presentationIntentKindForElement(element);
+    if (!kind)
+        return std::nullopt;
+
+    switch (*kind) {
+    case NSPresentationIntentKindParagraph:
+        return BlockPresentationIntent { Kind::Paragraph };
+    case NSPresentationIntentKindHeader:
+        return BlockPresentationIntent { Kind::Header, static_cast<uint8_t>(headerLevelForElement(element)) };
+    case NSPresentationIntentKindOrderedList:
+        return BlockPresentationIntent { Kind::OrderedList };
+    case NSPresentationIntentKindUnorderedList:
+        return BlockPresentationIntent { Kind::UnorderedList };
+    case NSPresentationIntentKindListItem:
+        return BlockPresentationIntent { Kind::ListItem, 0, static_cast<int>(listItemOrdinalForElement(element)) };
+    case NSPresentationIntentKindCodeBlock:
+        return BlockPresentationIntent { Kind::CodeBlock, 0, 0, languageHintForCodeBlockElement(element) };
+    case NSPresentationIntentKindBlockQuote:
+        return BlockPresentationIntent { Kind::BlockQuote };
+    case NSPresentationIntentKindThematicBreak:
+        return BlockPresentationIntent { Kind::ThematicBreak };
+    case NSPresentationIntentKindTable:
+    case NSPresentationIntentKindTableHeaderRow:
+    case NSPresentationIntentKindTableRow:
+    case NSPresentationIntentKindTableCell:
+        // presentationIntentKindForElement() does not return table kinds.
+        break;
+    }
+
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
 }
 
 // An element's intent is its own intent nested inside its parent's, or its parent's if the element has none.
@@ -1992,12 +2006,12 @@ void HTMLConverter::_addTableForElement(Element *tableElement)
 
     if (tableElement) {
         ASSERT(tableElement);
-        Element& coreTableElement = *tableElement;
+        Ref coreTableElement = *tableElement;
 
-        RetainPtr cellSpacing = coreTableElement.getAttribute(cellspacingAttr).createNSString();
+        RetainPtr cellSpacing = coreTableElement->getAttribute(cellspacingAttr).createNSString();
         if (cellSpacing && [cellSpacing length] > 0 && ![cellSpacing hasSuffix:@"%"])
             cellSpacingVal = [cellSpacing floatValue];
-        RetainPtr cellPadding = coreTableElement.getAttribute(cellpaddingAttr).createNSString();
+        RetainPtr cellPadding = coreTableElement->getAttribute(cellpaddingAttr).createNSString();
         if (cellPadding && [cellPadding length] > 0 && ![cellPadding hasSuffix:@"%"])
             cellPaddingVal = [cellPadding floatValue];
 
@@ -2165,7 +2179,7 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
             if (url)
                 retval = !_addAttachmentForElement(element, url.get(), isBlockLevel, NO);
         }
-    } else if (auto* frameElement = dynamicDowncast<HTMLFrameElementBase>(element)) {
+    } else if (RefPtr frameElement = dynamicDowncast<HTMLFrameElementBase>(element)) {
         if (RefPtr contentDocument = frameElement->contentDocument()) {
             _traverseNode(*contentDocument, depth + 1, true /* embedded */);
             retval = NO;
@@ -2270,14 +2284,14 @@ void HTMLConverter::_addMarkersToList(NSTextList *list, NSRange range, NSPresent
         return;
     if (NSMaxRange(range) > textLength)
         range.length = textLength - range.location;
-    paragraphStyle = [_attrStr attribute:NSParagraphStyleAttributeName atIndex:range.location effectiveRange:NULL];
+    paragraphStyle = dynamic_objc_cast<NSParagraphStyle>([_attrStr attribute:NSParagraphStyleAttributeName atIndex:range.location effectiveRange:NULL]);
     if (paragraphStyle) {
         textLists = [paragraphStyle textLists];
         listIndex = [textLists indexOfObject:list];
         if (textLists && listIndex != NSNotFound) {
             for (NSUInteger idx = range.location; idx < NSMaxRange(range);) {
                 paragraphRange = [string paragraphRangeForRange:NSMakeRange(idx, 0)];
-                paragraphStyle = [_attrStr attribute:NSParagraphStyleAttributeName atIndex:idx effectiveRange:&styleRange];
+                paragraphStyle = dynamic_objc_cast<NSParagraphStyle>([_attrStr attribute:NSParagraphStyleAttributeName atIndex:idx effectiveRange:&styleRange]);
                 if ([[paragraphStyle textLists] count] == listIndex + 1) {
                     if (m_readsAllPresentationIntents) {
                         // Each block in a list item is its own paragraph, but only the item's first paragraph gets a marker.
@@ -2326,8 +2340,8 @@ void HTMLConverter::_addMarkersToList(NSTextList *list, NSRange range, NSPresent
                         else
                             break;
                     }
-                    [newStyle addTabStop:adoptNS([[PlatformNSTextTab alloc] initWithType:NSLeftTabStopType location:markerLocation]).get()];
-                    [newStyle addTabStop:adoptNS([[PlatformNSTextTab alloc] initWithTextAlignment:NSTextAlignmentNatural location:listLocation options:@{ }]).get()];
+                    [newStyle addTabStop:checked_objc_cast<NSTextTab>(adoptNS([[PlatformNSTextTab alloc] initWithType:NSLeftTabStopType location:markerLocation]))];
+                    [newStyle addTabStop:checked_objc_cast<NSTextTab>(adoptNS([[PlatformNSTextTab alloc] initWithTextAlignment:NSTextAlignmentNatural location:listLocation options:@{ }]))];
                     [_attrStr addAttribute:NSParagraphStyleAttributeName value:newStyle.get() range:paragraphRange];
 
                     idx = NSMaxRange(paragraphRange);
@@ -2390,7 +2404,7 @@ void HTMLConverter::_exitElement(Element& element, NSInteger depth, NSUInteger s
             rowArray = [NSMutableArray array];
             count = [previousRowArray count];
             for (i = 0; i < count; i++) {
-                block = [previousRowArray objectAtIndex:i];
+                block = checked_objc_cast<NSTextTableBlock>([previousRowArray objectAtIndex:i]);
                 if ([block startingColumn] + [block columnSpan] > static_cast<NSInteger>(numberOfColumns))
                     numberOfColumns = [block startingColumn] + [block columnSpan];
 
@@ -2400,7 +2414,7 @@ void HTMLConverter::_exitElement(Element& element, NSInteger depth, NSUInteger s
             count = [rowArray count];
             openColumn = 0;
             for (i = 0; i < count; i++) {
-                block = [rowArray objectAtIndex:i];
+                block = checked_objc_cast<NSTextTableBlock>([rowArray objectAtIndex:i]);
                 if (openColumn >= [block startingColumn] && openColumn < [block startingColumn] + [block columnSpan]) openColumn = [block startingColumn] + [block columnSpan];
             }
         } while (openColumn >= static_cast<NSInteger>(numberOfColumns));
@@ -2728,6 +2742,34 @@ AttributedString attributedString(const SimpleRange& range, IgnoreUserSelectNone
 void setPresentationIntentHTMLInterchangeEnabledForTesting(std::optional<bool> enabled)
 {
     presentationIntentHTMLInterchangeEnabledForTesting = enabled;
+}
+
+Vector<BlockPresentationIntent> blockPresentationIntentsAtPosition(const Position& position)
+{
+    if (!presentationIntentHTMLInterchangeEnabled())
+        return { };
+
+    RefPtr container = position.containerNode();
+    if (!container)
+        return { };
+
+    // The editable root and the blocks around it hold the content being edited rather than being part of it, and
+    // applying a block intent cannot change them, so even <h1 contenteditable> reports no intent of its own.
+    RefPtr editableRoot = highestEditableRoot(position);
+    if (!editableRoot)
+        return { };
+
+    RefPtr element = dynamicDowncast<Element>(*container);
+    if (!element)
+        element = container->parentElement();
+
+    Vector<BlockPresentationIntent> intents;
+    for (; element && element != editableRoot; element = element->parentElement()) {
+        if (auto intent = blockPresentationIntentForElement(*element))
+            intents.append(WTF::move(*intent));
+    }
+    intents.reverse();
+    return intents;
 }
 
 }

@@ -64,6 +64,15 @@ JSWebAssemblyMemory::JSWebAssemblyMemory(VM& vm, Structure* structure)
 {
 }
 
+// A wrapper reports only the bytes that nothing has reported yet.
+JSArrayBuffer* JSWebAssemblyMemory::createBufferWrapper(VM& vm, JSGlobalObject* globalObject)
+{
+    size_t size = m_buffer->byteLength();
+    size_t bytesAlreadyReported = std::min(m_reportedBytes, size);
+    m_reportedBytes = size;
+    return JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(m_buffer->sharingMode()), m_buffer.get(), bytesAlreadyReported);
+}
+
 void JSWebAssemblyMemory::associateArrayBuffer(JSGlobalObject* globalObject, bool shouldBeFixedLength)
 {
     ASSERT(!m_buffer);
@@ -95,7 +104,7 @@ void JSWebAssemblyMemory::associateArrayBuffer(JSGlobalObject* globalObject, boo
     }
     m_buffer->makeWasmMemory();
 
-    auto* arrayBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(m_buffer->sharingMode()), m_buffer.get());
+    auto* arrayBuffer = createBufferWrapper(vm, globalObject);
     if (m_buffer->isResizableNonShared())
         arrayBuffer->setAssociatedWasmMemoryWrapper(vm, this);
     if (m_memory->sharingMode() == MemorySharingMode::Shared) {
@@ -165,7 +174,7 @@ JSArrayBuffer* JSWebAssemblyMemory::buffer(JSGlobalObject* globalObject)
             m_buffer->makeShared();
     }
 
-    auto* arrayBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(m_buffer->sharingMode()), m_buffer.get());
+    auto* arrayBuffer = createBufferWrapper(vm, globalObject);
     if (m_memory->sharingMode() == MemorySharingMode::Shared) {
         objectConstructorFreeze(globalObject, arrayBuffer);
         RETURN_IF_EXCEPTION(throwScope, { });
@@ -203,6 +212,11 @@ JSArrayBuffer* JSWebAssemblyMemory::toResizableBuffer(JSGlobalObject* globalObje
     ASSERT(Options::useWasmMemoryToBufferAPIs());
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (!m_memory->maximum()) [[unlikely]] {
+        throwTypeError(globalObject, throwScope, "WebAssembly.Memory.prototype.toResizableBuffer requires a memory with a maximum"_s);
+        return { };
+    }
 
     if (!m_buffer) {
         associateArrayBuffer(globalObject, false);
@@ -285,7 +299,7 @@ void JSWebAssemblyMemory::growSuccessCallback(VM& vm, PageCount oldPageCount, Pa
             if (m_buffer->isFixedLength())
                 disassociateArrayBuffer(vm);
             else if (!m_buffer->isShared())
-                m_buffer->refreshAfterWasmMemoryGrow(m_memory.ptr());
+                m_buffer->refreshAfterWasmMemoryGrow();
         } else {
             // historical behavior before the SAB feature:
             // clear out the old array buffer because it might now be pointing to stale memory.
@@ -296,6 +310,7 @@ void JSWebAssemblyMemory::growSuccessCallback(VM& vm, PageCount oldPageCount, Pa
         }
     }
 
+    m_reportedBytes += newPageCount.bytes() - oldPageCount.bytes();
     vm.heap.reportExtraMemoryAllocated(this, newPageCount.bytes() - oldPageCount.bytes());
 }
 

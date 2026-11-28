@@ -30,6 +30,7 @@
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
+#include "ImageDrawDescriptor.h"
 #include "LayoutRepainter.h"
 #include "LegacyRenderSVGResource.h"
 #include "PointerEventsHitRules.h"
@@ -44,7 +45,7 @@
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "SVGVisitedRendererTracking.h"
-#include "StyleImageDrawingExtras.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -52,7 +53,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGImage);
 
-LegacyRenderSVGImage::LegacyRenderSVGImage(SVGImageElement& element, Style::ComputedStyle&& style)
+LegacyRenderSVGImage::LegacyRenderSVGImage(SVGImageElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : LegacyRenderSVGModelObject(Type::LegacySVGImage, element, WTF::move(style), SVGModelObjectFlag::UsesBoundaryCaching)
     , m_imageResource(makeUniqueRef<RenderImageResource>())
 {
@@ -86,7 +87,7 @@ SVGImageElement& LegacyRenderSVGImage::imageElement() const
 
 FloatRect LegacyRenderSVGImage::calculateObjectBoundingBox() const
 {
-    return calculateSVGImageObjectBoundingBox(imageElement(), style(), imageResource().cachedImage());
+    return calculateSVGImageObjectBoundingBox(protect(imageElement()), protect(style()), protect(imageResource().cachedImage()));
 }
 
 bool LegacyRenderSVGImage::updateImageViewport()
@@ -145,7 +146,7 @@ void LegacyRenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint&)
         if (usedStyle().visibility() == UsedVisibility::Hidden || m_objectBoundingBox.isEmpty())
             return;
 
-        paintInfo.eventRegionContext()->unite(FloatRoundedRect(strokeBoundingBox()), *this, style(), false);
+        protect(paintInfo.eventRegionContext())->unite(FloatRoundedRect(strokeBoundingBox()), *this, protect(style()), false);
         return;
     }
 
@@ -172,7 +173,7 @@ void LegacyRenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint&)
         }
     }
 
-    if (style().hasOutline())
+    if (protect(style())->hasOutline())
         paintOutline(childPaintInfo, IntRect(boundingBox));
 }
 
@@ -187,11 +188,11 @@ void LegacyRenderSVGImage::paintForeground(PaintInfo& paintInfo)
     auto srcRect = placement.source;
 
     auto& context = paintInfo.context();
-    auto options = calculateSVGImageDrawingOptions(*styleImage, *this, context, placement.imageRenderingRectangle.size(), destRect.size(), paintInfo.paintBehavior);
-    styleImage->draw(context, *this, ConcreteObjectSize::fixed(placement.imageRenderingRectangle.size()), destRect, srcRect, options);
+    auto descriptor = calculateSVGImageDrawDescriptor(*styleImage, *this, context, placement.imageRenderingRectangle.size(), destRect.size(), paintInfo.paintBehavior);
+    styleImage->draw(context, *this, descriptor, destRect, srcRect);
 
     if (RefPtr cachedImage = imageResource().cachedImage(); cachedImage && !context.paintingDisabled())
-        protect(document())->didPaintImage(imageElement(), cachedImage, destRect);
+        protect(document())->didPaintImage(protect(imageElement()), cachedImage, destRect);
 }
 
 void LegacyRenderSVGImage::invalidateBufferedForeground()
@@ -231,6 +232,13 @@ bool LegacyRenderSVGImage::nodeAtFloatPoint(const HitTestRequest& request, HitTe
     return false;
 }
 
+void LegacyRenderSVGImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    LegacyRenderSVGModelObject::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
+}
+
 void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)
 {
     if (!parent())
@@ -255,7 +263,7 @@ void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)
 
     if (RefPtr image = imageResource().cachedImage(); image && image->currentFrameIsComplete()) {
         if (auto styleable = Styleable::fromRenderer(*this))
-            protect(document())->didLoadImage(protect(styleable->element).get(), image);
+            protect(document())->didLoadImage(styleable->element, image);
     }
 }
 

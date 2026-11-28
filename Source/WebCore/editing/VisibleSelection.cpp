@@ -329,7 +329,7 @@ void VisibleSelection::adjustSelectionRespectingGranularity(TextGranularity gran
                     // The paragraph break after the last paragraph in the last cell of a block table ends
                     // at the start of the paragraph after the table.
                     if (isBlock(*table))
-                        end = end.next(CannotCrossEditingBoundary);
+                        end = end.next(EditingBoundaryCrossingRule::CannotCross);
                     else
                         end = wordEnd;
                 }
@@ -382,7 +382,7 @@ void VisibleSelection::adjustSelectionRespectingGranularity(TextGranularity gran
                 // The paragraph break after the last paragraph in the last cell of a block table ends
                 // at the start of the paragraph after the table, not at the position just after the table.
                 if (isBlock(*table))
-                    end = end.next(CannotCrossEditingBoundary);
+                    end = end.next(EditingBoundaryCrossingRule::CannotCross);
                 // There is no parargraph break after the last paragraph in the last cell of an inline table.
                 else
                     end = visibleParagraphEnd;
@@ -746,12 +746,12 @@ void VisibleSelection::debugPosition() const
     if (!m_start.anchorNode())
         SAFE_FPRINTF(stderr, "pos:   null");
     else if (m_start == m_end) {
-        SAFE_FPRINTF(stderr, "pos:   %s ", m_start.anchorNode()->nodeName().utf8());
+        SAFE_FPRINTF(stderr, "pos:   %s ", makeUTF8CString(m_start.anchorNode()->nodeName()));
         m_start.showAnchorTypeAndOffset();
     } else {
-        SAFE_FPRINTF(stderr, "start: %s ", m_start.anchorNode()->nodeName().utf8());
+        SAFE_FPRINTF(stderr, "start: %s ", makeUTF8CString(m_start.anchorNode()->nodeName()));
         m_start.showAnchorTypeAndOffset();
-        SAFE_FPRINTF(stderr, "end:   %s ", m_end.anchorNode()->nodeName().utf8());
+        SAFE_FPRINTF(stderr, "end:   %s ", makeUTF8CString(m_end.anchorNode()->nodeName()));
         m_end.showAnchorTypeAndOffset();
     }
 

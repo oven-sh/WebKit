@@ -56,11 +56,11 @@ public:
         return adoptRef(*new GPUBuffer(WTF::move(backing), bufferSize, usage, mappedAtCreation, WTF::move(label), device));
     }
 
-    String LEGACY_NODELETE label() const;
+    NODELETE String label() const;
     void setLabel(String&&);
 
     using MapAsyncPromise = DOMPromiseDeferred<void>;
-    void mapAsync(GPUMapModeFlags, GPUSize64 offset, std::optional<GPUSize64> sizeForMap, MapAsyncPromise&&);
+    void mapAsync(ScriptExecutionContext&, GPUMapModeFlags, GPUSize64 offset, std::optional<GPUSize64> sizeForMap, MapAsyncPromise&&);
     ExceptionOr<Ref<JSC::ArrayBuffer>> getMappedRange(GPUSize64 offset, std::optional<GPUSize64> rangeSize);
     void unmap(ScriptExecutionContext&);
 
@@ -69,7 +69,7 @@ public:
     ::WebGPU::Buffer& backing() { return m_backing; }
     const ::WebGPU::Buffer& backing() const { return m_backing; }
 
-    GPUDevice* LEGACY_NODELETE device() const;
+    NODELETE GPUDevice* device() const;
 
     GPUSize64 size() const { return static_cast<GPUSize64>(m_bufferSize); }
     GPUBufferUsageFlags usage() const { return m_usage; }
@@ -104,7 +104,7 @@ private:
     WeakPtr<GPUDevice, WeakPtrImplWithEventTargetData> m_device;
     using MappedRanges = WTF::RangeSet<WTF::Range<size_t>>;
     MappedRanges m_mappedRanges;
-    HashSet<size_t, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_mappedPoints;
+    HashSet<size_t> m_mappedPoints;
     bool m_destroyed { false };
     bool m_mappedAtCreation { false };
     std::atomic<size_t> m_memoryCost { 0 }; // Atomic, accessed from arbitrary thread by GC.

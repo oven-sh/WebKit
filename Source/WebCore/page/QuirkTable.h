@@ -57,6 +57,10 @@ struct QuirkTable {
 
 enum class QuirkTableParseErrorKind : uint8_t {
     InvalidDocument,
+    InvalidConstant,
+    InvalidConstantName,
+    UnknownConstant,
+    NamespaceReference,
     InvalidRow,
     InvalidBehavior,
     UnknownField,
@@ -103,5 +107,10 @@ WEBCORE_EXPORT String loadQuirkTableJSON();
 WEBCORE_EXPORT const QuirkTable& quirkTable();
 
 WEBCORE_EXPORT void setQuirkTable(QuirkTable&&);
+
+struct QuirkTableOverride {
+    WEBCORE_EXPORT static void install(QuirkTable&&);
+    WEBCORE_EXPORT static void restore();
+};
 
 } // namespace WebCore

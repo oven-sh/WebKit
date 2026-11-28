@@ -1,0 +1,78 @@
+# let kept = null;
+# function drop(n) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n > 0) kept = 5; return work; }
+# print(drop(0), kept === null);
+# print(drop(1), kept);
+# The fault is written in the IR's records: the variable is declared to hold null, as a type that the front end has established, so Link believes it: `variable g0 proven=null`. The body stores 5.
+# An entry check that can never pass is a contradiction between the walk and Link that the build itself can see. In a user's build it is a crash with a named error at run time, and it ends its block.
+# See a-door-that-can-never-pass-in-an-arm-that-link-calls-dead-stops-no-build.ir (Bun's test/aot/from-source):
+# in a correct program, a value computed from one that a test has narrowed to nothing reaches such an entry check.
+# A constant has no source that a narrowing can empty, and a variable, a capture or a slot of a scope has no receiver that a narrowing can empty.
+# There an entry check that can never pass is an edge that Link has lost.
+# A build that verifies fails at it, and no run is needed to find out.
+# OPTIONS: check=Validate
+# DIAGNOSTIC: StoredTypeMismatch
+# RUN: walk f1 mechanisms=all-Inlining
+
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=null flags=[IsFromCompiler]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Null @11
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @11
+    PutModuleVariable v3 variable=g0 @4
+    v5 = Builtin builtin=GlobalThis @137
+    v6 = PropGet v5 key="print" [isFreeName] @137
+    v7 = Integer @148
+    v8 = Call v1, -, v7 calleeName="drop" @143
+    v9 = GetModuleVariable variable=g0 @152
+    v10 = CheckInitialized v9 name="kept" @152
+    v11 = TypeTest v10 testedType=null @152
+    v12 = Call v6, -, v8, v11 calleeName="print" @137
+    v13 = Builtin builtin=GlobalThis @168
+    v14 = PropGet v13 key="print" [isFreeName] @168
+    v15 = Integer integer=1 @179
+    v16 = Call v1, -, v15 calleeName="drop" @174
+    v17 = GetModuleVariable variable=g0 @183
+    v18 = CheckInitialized v17 name="kept" @183
+    v19 = Call v14, -, v16, v18 calleeName="print" @168
+    v20 = Undefined @168
+    Return v20 @168
+}
+function f1 name="drop" module=m0 position=17 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @47
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @47
+    v3 = Integer @63
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @63
+    Jump -> next b1(v2, v4) @59
+  b1(v5, v6):
+    LoopHint @59
+    v8 = Integer integer=2 @70
+    v9 = Less v6, v8 @70
+    Branch v9 -> taken b2(), notTaken b3() @70
+  b2():
+    v10 = Add v5, v6 @93
+    v11 = Integer @98
+    v12 = BitOr v10, v11 @98
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @78
+    v14 = Increment v6 @73
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @73
+    Jump -> next b1(v13, v15) @73
+  b3():
+    v16 = Integer @109
+    v17 = Greater v0, v16 @109
+    Branch v17 -> taken b4(), notTaken b5() @109
+  b4():
+    v18 = GetModuleVariable variable=g0 @112
+    v19 = CheckInitialized v18 name="kept" @112
+    v20 = Integer integer=5 @119
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @112
+    PutModuleVariable v21 variable=g0 @112
+    Jump -> next b5() @112
+  b5():
+    Return v5 @129
+}

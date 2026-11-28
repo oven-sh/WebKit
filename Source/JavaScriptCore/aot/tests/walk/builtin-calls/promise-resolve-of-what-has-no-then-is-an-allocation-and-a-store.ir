@@ -1,0 +1,100 @@
+# Promise.resolve of a value without a `then`, on Promise itself, makes a promise of the realm and stores the value: nothing is called, nothing is looked up and nothing can miss
+# function wrap() { return Promise.resolve(1); }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewPromise
+# CHECK: FulfillFreshPromise
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = Call
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = NewPromise
+# ALL: FulfillFreshPromise
+# what may be a thenable or a promise keeps the form of the call, which asks at run time
+# function wrapAny(v) { return Promise.resolve(v); }
+# RUN(ANY): walk f2 mechanisms=all
+# ANY-NOT: FulfillFreshPromise
+# another receiver makes the promise itself
+# function wrapFor(C) { return Promise.resolve.call(C, 1); }
+# RUN(OTHER): walk f3 mechanisms=all
+# OTHER-NOT: FulfillFreshPromise
+# a promise that this code has made, and that is as it was made, is handed back as it is
+# function wrapTwice() { return Promise.resolve(Promise.resolve(1)); }
+# RUN(SAME): walk f4 mechanisms=all
+# SAME-LABEL: code f4:Body
+# SAME: = NewPromise
+# SAME-NOT: = NewPromise
+# SAME: Return
+# a record that is no promise and has a `then` is asked
+# function wrapThenable(f) { return Promise.resolve({ then: f }); }
+# RUN(THENABLE): walk f5 mechanisms=all
+# THENABLE-NOT: FulfillFreshPromise
+# another built-in on the same receiver is none of this
+# function refuse() { return Promise.reject(1); }
+# RUN(REJECT): walk f6 mechanisms=all
+# REJECT-NOT: FulfillFreshPromise
+
+layout L0 module=m0 fields=[{key="then" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="wrap" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="resolve" calleeName="Promise.resolve"
+    Return v3
+}
+function f2 name="wrapAny" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    v2 = Builtin builtin=PromiseResolve
+    v3 = Call v2, v1, v0 calleeKey="resolve" calleeName="Promise.resolve"
+    Return v3
+}
+function f3 name="wrapFor" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2
+    Return v3
+}
+function f4 name="wrapTwice" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="resolve" calleeName="Promise.resolve"
+    v4 = Call v1, v0, v3 calleeKey="resolve" calleeName="Promise.resolve"
+    Return v4
+}
+function f5 name="wrapThenable" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Promise
+    v4 = Builtin builtin=PromiseResolve
+    v5 = Call v4, v3, v2 calleeKey="resolve" calleeName="Promise.resolve"
+    Return v5
+}
+function f6 name="refuse" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseReject
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="reject" calleeName="Promise.reject"
+    Return v3
+}

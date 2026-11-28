@@ -25,10 +25,12 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "Texture.h"
 #import "TextureView.h"
-
-#import "WebGPUCppConversions.h"
 #import <WebGPU/WebGPU.h>
 #import <wtf/Ref.h>
 
@@ -86,6 +88,11 @@ public:
     void setCommandEncoder(CommandEncoder& encoder)
     {
         m_view ? protect(m_view)->setCommandEncoder(encoder) : protect(m_texture)->setCommandEncoder(encoder);
+    }
+
+    void setProvisionallyCleared(const CommandEncoder& encoder)
+    {
+        m_view ? protect(m_view)->setProvisionallyCleared(encoder) : protect(m_texture)->setProvisionallyCleared(encoder);
     }
 
     id<MTLRasterizationRateMap> rasterizationMapForSlice(uint32_t slice)

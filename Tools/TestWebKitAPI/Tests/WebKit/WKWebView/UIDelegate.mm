@@ -40,6 +40,7 @@
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/Utilities.h"
 #import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
+#import <WebKit/WKContentWorldPrivate.h>
 #import <WebKit/WKContext.h>
 #import <WebKit/WKContextPrivateMac.h>
 #import <WebKit/WKGeolocationManager.h>
@@ -935,9 +936,11 @@ TEST(WebKit, PrintFrame)
     [webView loadHTMLString:@"<head><title>test_title</title></head><body onload='setTimeout(function() { print() });'>hello world!</body>" baseURL:[NSURL URLWithString:@"http://example.com/"]];
     TestWebKitAPI::Util::run(&done);
 
-    NSPrintOperation *operation = [webView _printOperationWithPrintInfo:[NSPrintInfo sharedPrintInfo]];
-    EXPECT_TRUE(operation.canSpawnSeparateThread);
-    EXPECT_STREQ(operation.jobTitle.UTF8String, "test_title");
+    RetainPtr letterPrintInfo = adoptNS([[NSPrintInfo sharedPrintInfo] copy]);
+    [letterPrintInfo setPaperName:@"Letter"];
+    RetainPtr operation = [webView _printOperationWithPrintInfo:letterPrintInfo];
+    EXPECT_TRUE([operation canSpawnSeparateThread]);
+    EXPECT_STREQ([operation jobTitle].UTF8String, "test_title");
 
     [operation runOperationModalForWindow:[webView hostWindow] delegate:nil didRunSelector:nil contextInfo:nil];
     TestWebKitAPI::Util::run(&headerHeightCalled);
@@ -1191,8 +1194,6 @@ TEST(WebKit, MouseMoveOverElementWithClosedWebView)
     TestWebKitAPI::Util::run(&done);
 }
 
-static bool readyForClick;
-
 @interface AutoFillDelegate : NSObject <WKUIDelegatePrivate>
 @end
 
@@ -1205,18 +1206,11 @@ static bool readyForClick;
     ASSERT_STREQ([(NSString*)userInfo UTF8String], "user data string");
 }
 
-- (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler
-{
-    completionHandler();
-    ASSERT_STREQ(message.UTF8String, "ready for click!");
-    readyForClick = true;
-}
-
 @end
 
 TEST(WebKit, ClickAutoFillButton)
 {
-    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"ClickAutoFillButton" configureJSCForTesting:YES];
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
 
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
     RetainPtr delegate = adoptNS([[AutoFillDelegate alloc] init]);
@@ -1224,7 +1218,13 @@ TEST(WebKit, ClickAutoFillButton)
 
     [webView synchronouslyLoadHTMLString:@""];
 
-    TestWebKitAPI::Util::run(&readyForClick);
+    RetainPtr worldConfiguration = adoptNS([_WKContentWorldConfiguration new]);
+    [worldConfiguration setAllowAutofill:YES];
+    [worldConfiguration setAllowElementUserInfo:YES];
+    RetainPtr autofillWorld = [WKContentWorld _worldWithConfiguration:worldConfiguration.get()];
+
+    NSString *script = @"const inputElement = document.createElement('input'); document.body.appendChild(inputElement); inputElement.autofilled = true; inputElement.autofillButtonType = 'contacts'; inputElement.setUserInfo('user data string');";
+    [webView objectByEvaluatingJavaScript:script inFrame:nil inContentWorld:autofillWorld.get()];
 
     RetainPtr<NSDictionary> jsRect = [webView objectByEvaluatingJavaScript:@"internals.shadowRoot(document.querySelector('input')).querySelector('[useragentpart=\\'-webkit-contacts-auto-fill-button\\']').getBoundingClientRect().toJSON()"];
     NSRect rect = NSMakeRect([jsRect.get()[@"left"] floatValue], [jsRect.get()[@"top"] floatValue], [jsRect.get()[@"width"] floatValue], [jsRect.get()[@"height"] floatValue]);
@@ -1234,29 +1234,6 @@ TEST(WebKit, ClickAutoFillButton)
 
     TestWebKitAPI::Util::run(&done);
 }
-
-static bool readytoResign;
-
-@interface DidResignInputElementStrongPasswordAppearanceDelegate : NSObject <WKUIDelegatePrivate>
-@end
-
-@implementation DidResignInputElementStrongPasswordAppearanceDelegate
-
-- (void)_webView:(WKWebView *)webView didResignInputElementStrongPasswordAppearanceWithUserInfo:(id <NSSecureCoding>)userInfo
-{
-    done = true;
-    ASSERT_TRUE([(id<NSObject>)userInfo isKindOfClass:[NSString class]]);
-    ASSERT_STREQ([(NSString*)userInfo UTF8String], "user data string");
-}
-
-- (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler
-{
-    completionHandler();
-    ASSERT_STREQ(message.UTF8String, "ready to resign!");
-    readytoResign = true;
-}
-
-@end
 
 @interface InjectedBundleNodeHandleIsTextFieldDelegate : NSObject <WKUIDelegatePrivate>
 @end
@@ -1712,17 +1689,6 @@ TEST(WebKit, DidNotHandleWheelEvent)
 }
 
 @end
-
-#if HAVE(MOUSE_DEVICE_OBSERVATION)
-
-@interface WKMouseDeviceObserver
-+ (WKMouseDeviceObserver *)sharedInstance;
-- (void)start;
-- (void)stop;
-- (void)_setHasMouseDeviceForTesting:(BOOL)hasMouseDevice;
-@end
-
-#endif
 
 class PointerLockTests : public testing::Test {
 public:

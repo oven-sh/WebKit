@@ -48,10 +48,22 @@ const String FileMonitorTestData("This is a test"_s);
 const String FileMonitorRevisedData("This is some changed text for the test"_s);
 const String FileMonitorSecondRevisedData("This is some changed text for the test"_s);
 
+static bool observedFileModification = false;
+static bool observedFileDeletion = false;
+static bool didFinish = false;
+
+static void resetTestState()
+{
+    observedFileModification = false;
+    observedFileDeletion = false;
+    didFinish = false;
+}
+
 class FileMonitorTest : public testing::Test {
 public:
     void SetUp() override
     {
+        resetTestState();
         WTF::initializeMainThread();
         
         // create temp file
@@ -60,13 +72,14 @@ public:
         auto handle = WTF::move(result.second);
         ASSERT_TRUE(!!handle);
 
-        auto rc = handle.write(byteCast<uint8_t>(FileMonitorTestData.utf8().span()));
+        auto rc = handle.write(byteCast<uint8_t>(makeUTF8CString(FileMonitorTestData).span()));
         ASSERT_TRUE(!!rc);
     }
     
     void TearDown() override
     {
         FileSystem::deleteFile(m_tempFilePath);
+        resetTestState();
     }
     
     const String& tempFilePath() { return m_tempFilePath; }
@@ -74,10 +87,6 @@ public:
 private:
     String m_tempFilePath;
 };
-    
-static bool observedFileModification = false;
-static bool observedFileDeletion = false;
-static bool didFinish = false;
     
 static void handleFileModification()
 {
@@ -89,13 +98,6 @@ static void handleFileDeletion()
 {
     observedFileDeletion = true;
     didFinish = true;
-}
-    
-static void resetTestState()
-{
-    observedFileModification = false;
-    observedFileDeletion = false;
-    didFinish = false;
 }
 
 static String createCommand(const String& path, const String& payload)
@@ -141,7 +143,7 @@ TEST_F(FileMonitorTest, DetectChange)
         EXPECT_EQ(FileMonitorTestData, fileContents);
 
         auto command = createCommand(tempFilePath(), FileMonitorRevisedData);
-        auto rc = system(command.utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(command).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -154,8 +156,6 @@ TEST_F(FileMonitorTest, DetectChange)
 
     String revisedFileContents = readContentsOfFile(tempFilePath());
     EXPECT_EQ(FileMonitorRevisedData, revisedFileContents);
-
-    resetTestState();
 }
 
 TEST_F(FileMonitorTest, DetectMultipleChanges)
@@ -183,7 +183,7 @@ TEST_F(FileMonitorTest, DetectMultipleChanges)
         EXPECT_EQ(FileMonitorTestData, fileContents);
 
         auto firstCommand = createCommand(tempFilePath(), FileMonitorRevisedData);
-        auto rc = system(firstCommand.utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(firstCommand).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -201,7 +201,7 @@ TEST_F(FileMonitorTest, DetectMultipleChanges)
 
     testQueue->dispatch([this] () mutable {
         auto secondCommand = createCommand(tempFilePath(), FileMonitorSecondRevisedData);
-        auto rc = system(secondCommand.utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(secondCommand).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -214,8 +214,6 @@ TEST_F(FileMonitorTest, DetectMultipleChanges)
 
     String secondRevisedfileContents = readContentsOfFile(tempFilePath());
     EXPECT_EQ(FileMonitorSecondRevisedData, secondRevisedfileContents);
-
-    resetTestState();
 }
 
 TEST_F(FileMonitorTest, DetectDeletion)
@@ -239,7 +237,7 @@ TEST_F(FileMonitorTest, DetectDeletion)
     });
 
     testQueue->dispatch([this] () mutable {
-        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(makeString("rm -f "_s, tempFilePath())).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -249,8 +247,6 @@ TEST_F(FileMonitorTest, DetectDeletion)
 
     EXPECT_FALSE(observedFileModification);
     EXPECT_TRUE(observedFileDeletion);
-
-    resetTestState();
 }
 
 TEST_F(FileMonitorTest, DetectChangeAndThenDelete)
@@ -278,7 +274,7 @@ TEST_F(FileMonitorTest, DetectChangeAndThenDelete)
         EXPECT_EQ(FileMonitorTestData, fileContents);
 
         auto firstCommand = createCommand(tempFilePath(), FileMonitorRevisedData);
-        auto rc = system(firstCommand.utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(firstCommand).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -292,7 +288,7 @@ TEST_F(FileMonitorTest, DetectChangeAndThenDelete)
     resetTestState();
 
     testQueue->dispatch([this] () mutable {
-        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(makeString("rm -f "_s, tempFilePath())).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -302,8 +298,6 @@ TEST_F(FileMonitorTest, DetectChangeAndThenDelete)
 
     EXPECT_FALSE(observedFileModification);
     EXPECT_TRUE(observedFileDeletion);
-
-    resetTestState();
 }
 
 TEST_F(FileMonitorTest, DetectDeleteButNotSubsequentChange)
@@ -327,7 +321,7 @@ TEST_F(FileMonitorTest, DetectDeleteButNotSubsequentChange)
     });
 
     testQueue->dispatch([this] () mutable {
-        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().legacyCStringPointer());
+        auto rc = system(makeUTF8CString(makeString("rm -f "_s, tempFilePath())).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -346,11 +340,11 @@ TEST_F(FileMonitorTest, DetectDeleteButNotSubsequentChange)
         auto handle = FileSystem::openFile(tempFilePath(), FileSystem::FileOpenMode::Truncate);
         ASSERT_FALSE(!handle);
 
-        auto rc = handle.write(byteCast<uint8_t>(FileMonitorTestData.utf8().span()));
+        auto rc = handle.write(byteCast<uint8_t>(makeUTF8CString(FileMonitorTestData).span()));
         ASSERT_TRUE(!!rc);
 
         auto firstCommand = createCommand(tempFilePath(), FileMonitorRevisedData);
-        rc = system(firstCommand.utf8().legacyCStringPointer());
+        rc = system(makeUTF8CString(firstCommand).legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -368,8 +362,6 @@ TEST_F(FileMonitorTest, DetectDeleteButNotSubsequentChange)
 
     EXPECT_FALSE(observedFileModification);
     EXPECT_FALSE(observedFileDeletion);
-
-    resetTestState();
 }
 
 }

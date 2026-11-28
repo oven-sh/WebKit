@@ -70,10 +70,10 @@ class DragImageLoader final : public CachedImageClient, public RefCounted<DragIm
     WTF_MAKE_TZONE_ALLOCATED(DragImageLoader);
     WTF_MAKE_NONCOPYABLE(DragImageLoader);
 public:
-    static Ref<DragImageLoader> LEGACY_NODELETE create(DataTransfer&, const Document&);
+    NODELETE static Ref<DragImageLoader> create(DataTransfer&, const Document&);
     void startLoading(CachedResourceHandle<CachedImage>&);
     void stopLoading(CachedResourceHandle<CachedImage>&);
-    void LEGACY_NODELETE moveToDataTransfer(DataTransfer&);
+    NODELETE void moveToDataTransfer(DataTransfer&);
 
     // CachedResourceClient.
     void ref() const final { RefCounted::ref(); }
@@ -351,6 +351,8 @@ void DataTransfer::setDataFromItemList(Document& document, const String& type, c
 void DataTransfer::updateFileList(ScriptExecutionContext* context)
 {
     ASSERT(canWriteData());
+    if (!m_fileList)
+        return;
 
     m_fileList->m_files = filesFromPasteboardAndItemList(context);
 }
@@ -489,7 +491,7 @@ struct PasteboardFileTypeReader final : PasteboardFileReader {
 
 bool DataTransfer::hasFileOfType(const String& type)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(canReadTypes());
+    RELEASE_ASSERT(canReadTypes());
     PasteboardFileTypeReader reader;
     m_pasteboard->read(reader);
     return reader.types.contains(type);
@@ -497,7 +499,7 @@ bool DataTransfer::hasFileOfType(const String& type)
 
 bool DataTransfer::hasStringOfType(Document& document, const String& type)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(canReadTypes());
+    RELEASE_ASSERT(canReadTypes());
 
     return !type.isNull() && types(document).contains(type);
 }
@@ -652,7 +654,7 @@ std::pair<DragImage, IntPoint> DataTransfer::createDragImage(const Document* doc
         // FIXME; Sizing images for DataTransfer is not fully specified. See https://github.com/whatwg/html/issues/13099.
 
         Ref image = *protect(m_dragImage)->image();
-        RefPtr nativeImage = image->currentNativeImage(DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()));
+        RefPtr nativeImage = image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()) });
         if (!nativeImage)
             return { };
 

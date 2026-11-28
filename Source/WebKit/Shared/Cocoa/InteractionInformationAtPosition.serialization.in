@@ -47,6 +47,7 @@ struct WebKit::InteractionInformationAtPosition {
     bool isCustomSlider;
     bool hasDirectionalResizeCursor;
     bool isInResizeControl;
+    bool isHoverActivatedByClick;
     bool isOverVideo;
     bool isNearMarkedText;
 #if PLATFORM(IOS_FAMILY)
@@ -83,7 +84,7 @@ struct WebKit::InteractionInformationAtPosition {
 #endif
     bool shouldTreatLongClickAsSecondaryClickQuirk;
     WebCore::FloatPoint adjustedPointForNodeRespondingToClickEvents;
-    std::optional<WebCore::IntPoint> automationAdjustedInteractionLocation;
+    std::optional<WebCore::IntPoint> nearbySliderInteractionLocation;
     URL url;
     URL imageURL;
     URL modelURL;

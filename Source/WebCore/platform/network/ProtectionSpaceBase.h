@@ -78,12 +78,12 @@ public:
     const String& host() const LIFETIME_BOUND { return m_host; }
     int port() const { return m_port; }
     ServerType serverType() const { return m_serverType; }
-    WEBCORE_EXPORT bool LEGACY_NODELETE isProxy() const;
+    NODELETE WEBCORE_EXPORT bool isProxy() const;
     const String& realm() const LIFETIME_BOUND { return m_realm; }
     AuthenticationScheme authenticationScheme() const { return m_authenticationScheme; }
     
-    WEBCORE_EXPORT bool LEGACY_NODELETE receivesCredentialSecurely() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE isPasswordBased() const;
+    NODELETE WEBCORE_EXPORT bool receivesCredentialSecurely() const;
+    NODELETE WEBCORE_EXPORT bool isPasswordBased() const;
 
     bool encodingRequiresPlatformData() const { return false; }
 
@@ -91,7 +91,7 @@ public:
 
 protected:
     ProtectionSpaceBase() = default;
-    WEBCORE_EXPORT ProtectionSpaceBase(const String& host, int port, ServerType, const String& realm, AuthenticationScheme);
+    NODELETE WEBCORE_EXPORT ProtectionSpaceBase(const String& host, int port, ServerType, const String& realm, AuthenticationScheme);
 
     // Hash table deleted values, which are only constructed and never copied or destroyed.
     ProtectionSpaceBase(WTF::HashTableDeletedValueType) : m_isHashTableDeletedValue(true) { }

@@ -42,6 +42,10 @@
 #import <WebKit/WKWebExtensionWindowConfiguration.h>
 #import <WebKit/WebKit.h>
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/TestWebExtensionsDelegateAdditionsPrefix.h>)
+#import <WebKitAdditions/TestWebExtensionsDelegateAdditionsPrefix.h>
+#endif
+
 NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 
 NS_SWIFT_UI_ACTOR
@@ -64,6 +68,8 @@ NS_SWIFT_UI_ACTOR
 
 @property (nonatomic, copy, nullable) void (^sendMessage)(id message, NSString * _Nullable applicationIdentifier, void (^)(id _Nullable replyMessage, NSError * _Nullable));
 @property (nonatomic, copy, nullable) void (^connectUsingMessagePort)(WKWebExtensionMessagePort *);
+// Like connectUsingMessagePort, but passes the completion handler to the block, so the test can do asynchronous work before completing the connection. Takes precedence over connectUsingMessagePort.
+@property (nonatomic, copy, nullable) void (^connectUsingMessagePortWithCompletionHandler)(WKWebExtensionMessagePort *, void (^)(NSError * _Nullable));
 
 @property (nonatomic, copy, nullable) void (^didUpdateAction)(WKWebExtensionAction *);
 @property (nonatomic, copy, nullable) void (^presentPopupForAction)(WKWebExtensionAction *);
@@ -82,14 +88,14 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, copy, nullable) void (^clearNotification)(_WKWebExtensionNotification *);
 @property (nonatomic, copy, nullable) BOOL (^mayPresentNotifications)(void);
 
-@property (nonatomic, copy, nullable) void (^createBookmarkWithParentIdentifier)(NSString * _Nullable parentId, NSNumber * _Nullable index, NSString * _Nullable url, NSString *title, void (^)(NSObject<_WKWebExtensionBookmark> * _Nullable, NSError * _Nullable));
-@property (nonatomic, copy, nullable) void (^bookmarksForExtensionContext)(void (^)(NSArray<NSObject<_WKWebExtensionBookmark> *> * _Nullable, NSError * _Nullable));
-@property (nonatomic, copy, nullable) void (^removeBookmarkWithIdentifier)(NSString *bookmarkId, BOOL removeFolderWithChildren, void (^completionHandler)(NSError * _Nullable));
-@property (nonatomic, copy, nullable) void (^updateBookmarkWithIdentifier)(NSString *bookmarkId, NSString * _Nullable title, NSString * _Nullable url, void (^)(NSObject<_WKWebExtensionBookmark> * _Nullable, NSError * _Nullable));
-@property (nonatomic, copy, nullable) void (^moveBookmarkWithIdentifier)(NSString *bookmarkId, NSString * _Nullable parentId, NSNumber * _Nullable index, void (^)(NSObject<_WKWebExtensionBookmark> * _Nullable, NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^bookmarksForExtensionContext)(void (^)(NSArray<id<_WKWebExtensionBookmark>> * _Nullable, NSError * _Nullable));
 @end
 
 NS_HEADER_AUDIT_END(nullability, sendability)
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/TestWebExtensionsDelegateAdditions.h>)
+#include <WebKitAdditions/TestWebExtensionsDelegateAdditions.h>
+#endif
 
 #endif // __OBJC__
 

@@ -1,0 +1,31 @@
+# let x = a; do { r = b(x); const p = new Promise; x = put(p, 0, a); door(x); } while (r === null); return a;
+# v6 is a store into an object of the unit's own that also gives a value, and the door v7 asks that value. Such a store may wait under its object; a door that waited under it would be forgotten there:
+# v6 comes back when v4 is found to read what went round, and the door would not. A door waits only under what the sweep drops for want of a reader: this one stays.
+# RUN: sweep-code
+# CHECK: v6: anything @JSValue = PutInternalField v5, v0
+# CHECK-NEXT: v7 @Void = CheckProof v6
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Jump -> next b1(v0)
+#   b1(v3: anything @JSValue) isInLoop=true isLoopHead=true:
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     v6: anything @JSValue = PutInternalField v5, v0 index=0 traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v7 @Void = CheckProof v6 checkedType=undefined typeWithoutProof=anything source=Field [goesWithItsValue]
+#     v8: boolean @Boolean = TypeTest v4 testedType=null
+#     Branch v8 -> taken b1(v6), notTaken b2()
+#   b2():
+#     Return v0
+# }
+# -- end of code

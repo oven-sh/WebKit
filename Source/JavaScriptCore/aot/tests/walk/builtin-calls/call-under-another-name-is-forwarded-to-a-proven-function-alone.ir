@@ -1,0 +1,62 @@
+# `holder.kept = Function.prototype.call; holder.kept(undefined, 1)`: the row of `call` forwards the call to its receiver. Plain Bun compiles `f.call(..)` to a call of `f`, and where `f` is no function its error
+# quotes the site. Under another name it is the built-in that finds that its receiver is no function, and its error quotes nothing: "Object is not a function".
+# So under another name the call is forwarded where the receiver is proven a function, and stays as it is written where it is not.
+# If it were forwarded, the error would say "holder.kept is not a function", and holder.kept is one.
+# function kept(holder) { return holder.kept(undefined, 1); }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call {{*}}calleeKey="kept"
+# function spelled(holder) { return holder.call(undefined, 1); }
+# RUN(SPELLED): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# SPELLED-LABEL: code f2:Body
+# SPELLED-NOT: calleeKey="call"
+# function proven() { const one = () => 1; return one.kept(undefined, 1); }
+# RUN(PROVEN): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# PROVEN-LABEL: code f3:Body
+# PROVEN-NOT: calleeKey="kept"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=FunctionPrototypeCall
+    v2 = Convert v1 declared={type=anything}
+    v3 = Undefined
+    v4 = Integer integer=1
+    v5 = Call v2, v0, v3, v4 calleeKey="kept" calleeName="holder.kept"
+    Return v5
+}
+function f2 name="spelled" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=FunctionPrototypeCall
+    v2 = Convert v1 declared={type=anything}
+    v3 = Undefined
+    v4 = Integer integer=1
+    v5 = Call v2, v0, v3, v4 calleeKey="call" calleeName="holder.call"
+    Return v5
+}
+function f3 name="proven" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Builtin builtin=FunctionPrototypeCall
+    v2 = Convert v1 declared={type=anything}
+    v3 = Undefined
+    v4 = Integer integer=1
+    v5 = Call v2, v0, v3, v4 calleeKey="kept" calleeName="one.kept"
+    Return v5
+}
+function f4 name="one" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

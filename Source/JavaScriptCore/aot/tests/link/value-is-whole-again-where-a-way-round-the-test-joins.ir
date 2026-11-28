@@ -1,0 +1,35 @@
+# If the name that a value goes by behind a test held on past the block that the failing side leads to as well, all() would be proven to take texts alone, and the number that comes round the test would be read as a text
+# function all(id) { return id; }  function pick(id) { if (typeof id === "string") note(); return all(id); }  pick("a");  pick(1);
+# The twin of tests-that-join-one-block-add-up.ir. One of the two edges into the last block has cut nothing that the other has cut away: both kinds arrive.
+# RUN: link functions mechanisms=all
+# CHECK: function f2
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="a"
+    v2 = Call v0, -, v1 calleeName="pick"
+    v3 = Integer integer=1
+    v4 = Call v0, -, v3 calleeName="pick"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Jump -> next b3()
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = CallDirect v0 function=f2
+    Return v4
+}
+function f2 name="all" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -31,6 +31,7 @@
 #include <wtf/CheckedPtr.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
  
 namespace WebCore {
 
@@ -42,17 +43,16 @@ class ScrollingStateFrameScrollingNode;
 // will be informed and will schedule a timer that will clone the new state tree and send it over to
 // the scrolling thread, avoiding locking. 
 
-class ScrollingStateTree final : public CanMakeCheckedPtr<ScrollingStateTree, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+class ScrollingStateTree final : public CanMakeCheckedPtr<ScrollingStateTree> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ScrollingStateTree, WEBCORE_EXPORT);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ScrollingStateTree);
     friend class ScrollingStateNode;
 public:
-    WEBCORE_EXPORT static std::optional<ScrollingStateTree> createAfterReconstruction(bool, bool, RefPtr<ScrollingStateFrameScrollingNode>&&);
-    WEBCORE_EXPORT ScrollingStateTree(AsyncScrollingCoordinator* = nullptr);
-    WEBCORE_EXPORT ScrollingStateTree(ScrollingStateTree&&);
+    static UniqueRef<ScrollingStateTree> create(AsyncScrollingCoordinator* scrollingCoordinator = nullptr) { return UniqueRef { *new ScrollingStateTree(scrollingCoordinator) }; }
+    WEBCORE_EXPORT static std::optional<UniqueRef<ScrollingStateTree>> createAfterReconstruction(bool, bool, RefPtr<ScrollingStateFrameScrollingNode>&&);
     WEBCORE_EXPORT ~ScrollingStateTree();
 
-    WEBCORE_EXPORT RefPtr<ScrollingStateFrameScrollingNode> LEGACY_NODELETE rootStateNode() const;
+    NODELETE WEBCORE_EXPORT RefPtr<ScrollingStateFrameScrollingNode> rootStateNode() const;
     WEBCORE_EXPORT RefPtr<ScrollingStateNode> stateNodeForID(std::optional<ScrollingNodeID>) const;
 
     ScrollingNodeID createUnparentedNode(ScrollingNodeType, ScrollingNodeID);
@@ -67,7 +67,7 @@ public:
     // Copies the current tree state and clears the changed properties mask in the original.
     WEBCORE_EXPORT std::unique_ptr<ScrollingStateTree> commit(LayerRepresentation::Type preferredLayerRepresentation);
 
-    WEBCORE_EXPORT void LEGACY_NODELETE attachDeserializedNodes();
+    NODELETE WEBCORE_EXPORT void attachDeserializedNodes();
 
     WEBCORE_EXPORT void setHasChangedProperties(bool = true);
     bool hasChangedProperties() const { return m_hasChangedProperties; }
@@ -100,6 +100,7 @@ public:
     void setRootFrameIdentifier(std::optional<FrameIdentifier> frameID) { m_rootFrameIdentifier = frameID; }
 
 private:
+    WEBCORE_EXPORT explicit ScrollingStateTree(AsyncScrollingCoordinator*);
     ScrollingStateTree(bool hasNewRootStateNode, bool hasChangedProperties, RefPtr<ScrollingStateFrameScrollingNode>&&);
 
     void setRootStateNode(Ref<ScrollingStateFrameScrollingNode>&&);

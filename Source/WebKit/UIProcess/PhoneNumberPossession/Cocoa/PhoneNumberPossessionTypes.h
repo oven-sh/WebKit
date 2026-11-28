@@ -27,11 +27,17 @@
 
 #if ENABLE(PHONE_NUMBER_POSSESSION)
 
+#include <WebCore/MockPhoneNumberPossessionConfiguration.h>
 #include <WebCore/PhoneNumberPossessionRequest.h>
 #include <WebCore/PhoneNumberPossessionResponse.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/RefCountable.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
+
+#ifdef __OBJC__
+#import "WKPhoneNumberPossessionPlatformManaging.h"
+#endif
 
 namespace WebKit {
 
@@ -46,11 +52,22 @@ enum class PhoneNumberPossessionError : uint8_t {
 // so Swift gets the request in a box. Pass WebCore::PhoneNumberPossessionRequest instead once that's fixed.
 using RefCountedPhoneNumberPossessionRequest = WTF::RefCountable<WebCore::PhoneNumberPossessionRequest>;
 
+// FIXME: rdar://191033367 Swift 6.4 also can't read a request's BufferSources, since reading one copies it,
+// so Swift reads the challenge's bytes through this copy. Remove it once that's fixed.
+inline Vector<uint8_t> challengeBytes(const RefCountedPhoneNumberPossessionRequest& request)
+{
+    return (*request).challenge.span();
+}
+
 using PhoneNumberPossessionResult = std::expected<WebCore::PhoneNumberPossessionResponse, PhoneNumberPossessionError>;
 
 using PhoneNumberPossessionCanRequestCompletionHandler = WTF::RefCountable<CompletionHandler<void(bool)>>;
 using PhoneNumberPossessionRequestCompletionHandler = WTF::RefCountable<CompletionHandler<void(PhoneNumberPossessionResult)>>;
 using PhoneNumberPossessionCancelCompletionHandler = WTF::RefCountable<CompletionHandler<void()>>;
+
+#ifdef __OBJC__
+id<WKPhoneNumberPossessionPlatformManaging> _Nullable phoneNumberPossessionPlatformManager();
+#endif
 
 } // namespace WebKit
 

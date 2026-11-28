@@ -174,7 +174,7 @@ void FrameConsoleClient::addMessage(std::unique_ptr<Inspector::ConsoleMessage>&&
     }
 
 #if ENABLE(WEBDRIVER_BIDI)
-    AutomationInstrumentation::addMessageToConsole(consoleMessage);
+    AutomationInstrumentation::addMessageToConsole(frame->frameID(), consoleMessage);
 #endif
     InspectorInstrumentation::addMessageToConsole(frame.get(), WTF::move(consoleMessage));
 }
@@ -227,7 +227,7 @@ void FrameConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
         domGlobalObject->invokeScriptErrorCallbacks(messageText, url, lineNumber, columnNumber);
 
 #if ENABLE(WEBDRIVER_BIDI)
-    AutomationInstrumentation::addMessageToConsole(message);
+    AutomationInstrumentation::addMessageToConsole(m_frame->frameID(), message);
 #endif
 
     Ref frame = m_frame.get();
@@ -306,7 +306,7 @@ void FrameConsoleClient::timeStamp(JSC::JSGlobalObject*, Ref<ScriptArguments>&& 
     InspectorInstrumentation::consoleTimeStamp(frame.get(), WTF::move(arguments));
 }
 
-static JSC::JSObject* LEGACY_NODELETE objectArgumentAt(ScriptArguments& arguments, unsigned index)
+NODELETE static JSC::JSObject* objectArgumentAt(ScriptArguments& arguments, unsigned index)
 {
     return arguments.argumentCount() > index ? arguments.argumentAt(index).getObject() : nullptr;
 }
@@ -362,6 +362,11 @@ void FrameConsoleClient::recordEnd(JSC::JSGlobalObject* lexicalGlobalObject, Ref
     }
 }
 
+// Snapshots paint the frame's local root: the main frame without Site Isolation, and with it unless a frame
+// of another process is in between. So a DOMRect is in the page's coordinates from a same-site iframe, and in
+// the iframe's own coordinates from a cross-site one.
+// FIXME: <https://webkit.org/b/332050> Frames of other processes stay blank. Filling them in needs the
+// image to reach the frontend without passing through this process.
 void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Ref<ScriptArguments>&& arguments)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -389,7 +394,7 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
                                 snapshot = ImageBuffer::create(concreteObjectSize.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, /* scale */ 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
                                 if (!snapshot)
                                     return;
-                                image->draw(snapshot->context(), concreteObjectSize);
+                                image->draw(snapshot->context(), ImageDrawDescriptor { concreteObjectSize });
                             }
                         }
                     };
@@ -418,9 +423,10 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
 
                 if (dataURL.isEmpty()) {
                     if (!snapshot) {
-                        Ref frame = m_frame.get();
-                        if (RefPtr localMainFrame = frame->localMainFrame())
-                            snapshot = WebCore::snapshotNode(*localMainFrame, *node, { { }, PixelFormat::BGRA8, ColorSpace::SRGB() });
+                        if (RefPtr nodeFrame = node->document().frame()) {
+                            Ref rootFrame = nodeFrame->rootFrame();
+                            snapshot = WebCore::snapshotNode(rootFrame, *node, { { }, PixelFormat::BGRA8, ColorSpace::SRGB() });
+                        }
                     }
 
                     if (snapshot)
@@ -450,11 +456,9 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
         } else if (RefPtr rect = JSDOMRectReadOnly::toWrapped(vm, possibleTarget)) {
             target = possibleTarget;
             if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-                Ref frame = m_frame.get();
-                if (RefPtr localMainFrame = frame->localMainFrame()) {
-                    if (RefPtr snapshot = WebCore::snapshotFrameRect(*localMainFrame, enclosingIntRect(rect->toFloatRect()), { { }, PixelFormat::BGRA8, ColorSpace::SRGB() }))
-                        dataURL = encodeDataURL(WTF::move(snapshot), "image/png"_s);
-                }
+                Ref rootFrame = protect(m_frame)->rootFrame();
+                if (RefPtr snapshot = WebCore::snapshotFrameRect(rootFrame, enclosingIntRect(rect->toFloatRect()), { { }, PixelFormat::BGRA8, ColorSpace::SRGB() }))
+                    dataURL = encodeDataURL(WTF::move(snapshot), "image/png"_s);
             }
         } else {
             String base64;
@@ -467,13 +471,11 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
 
     if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
         if (!target) {
-            Ref frame = m_frame.get();
-            if (RefPtr localMainFrame = frame->localMainFrame()) {
-                // If no target is provided, capture an image of the viewport.
-                auto viewportRect = protect(localMainFrame->view())->unobscuredContentRect();
-                if (RefPtr snapshot = WebCore::snapshotFrameRect(*localMainFrame, viewportRect, { { }, PixelFormat::BGRA8, ColorSpace::SRGB() }))
-                    dataURL = encodeDataURL(WTF::move(snapshot), "image/png"_s);
-            }
+            // If no target is provided, capture an image of the viewport.
+            Ref rootFrame = protect(m_frame)->rootFrame();
+            auto viewportRect = protect(rootFrame->view())->unobscuredContentRect();
+            if (RefPtr snapshot = WebCore::snapshotFrameRect(rootFrame, viewportRect, { { }, PixelFormat::BGRA8, ColorSpace::SRGB() }))
+                dataURL = encodeDataURL(WTF::move(snapshot), "image/png"_s);
         }
 
         if (dataURL.isEmpty()) {
@@ -482,8 +484,7 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
         }
     }
 
-    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments;
-    adjustedArguments.reserveInitialCapacity(arguments->argumentCount() + !target);
+    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments(ReserveCapacityTag { }, arguments->argumentCount() + !target);
     adjustedArguments.append({ vm, target ? target : JSC::jsNontrivialString(vm, "Viewport"_s) });
     for (size_t i = (!target ? 0 : 1); i < arguments->argumentCount(); ++i)
         adjustedArguments.append({ vm, arguments->argumentAt(i) });

@@ -34,6 +34,7 @@
 #include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/PlatformCALayer.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/OptionSet.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -49,6 +50,7 @@ namespace WebKit {
 class GraphicsLayerCARemote;
 class PlatformCALayerRemote;
 class RemoteRenderingBackendProxy;
+enum class LayerChange : uint64_t;
 class WebFrame;
 class WebPage;
 
@@ -74,17 +76,29 @@ public:
     void graphicsLayerDidEnterContext(GraphicsLayerCARemote&);
     void graphicsLayerWillLeaveContext(GraphicsLayerCARemote&);
 
-    float LEGACY_NODELETE deviceScaleFactor() const;
+    NODELETE float deviceScaleFactor() const;
     
     std::optional<WebCore::ColorSpace> displayColorSpace() const;
 
-    std::optional<DrawingAreaIdentifier> LEGACY_NODELETE drawingAreaIdentifier() const;
+    NODELETE std::optional<DrawingAreaIdentifier> drawingAreaIdentifier() const;
 
-    WebCore::UseLosslessCompression LEGACY_NODELETE useIOSurfaceLosslessCompression() const;
+    NODELETE WebCore::UseLosslessCompression useIOSurfaceLosslessCompression() const;
 
     void buildTransaction(RemoteLayerTreeTransaction&, WebCore::PlatformCALayer& rootLayer, WebCore::FrameIdentifier);
 
     void layerPropertyChangedWhileBuildingTransaction(PlatformCALayerRemote&);
+
+    class FullStateEncodingScope {
+        WTF_MAKE_NONCOPYABLE(FullStateEncodingScope);
+    public:
+        explicit FullStateEncodingScope(RemoteLayerTreeContext&);
+        ~FullStateEncodingScope();
+
+        UniqueRef<RemoteLayerTreeTransaction> buildLayersTransaction(RemoteLayerTreeContext&) const;
+
+    private:
+        Vector<std::pair<Ref<PlatformCALayerRemote>, OptionSet<LayerChange>>> m_layers;
+    };
 
     // From the UI process
     void animationDidStart(WebCore::PlatformLayerIdentifier, const String& key, MonotonicTime startTime);
@@ -107,7 +121,7 @@ public:
     bool canShowWhileLocked() const;
 #endif
 
-    WebPage& LEGACY_NODELETE webPage() const;
+    NODELETE WebPage& webPage() const;
 
 private:
     explicit RemoteLayerTreeContext(WebPage&);

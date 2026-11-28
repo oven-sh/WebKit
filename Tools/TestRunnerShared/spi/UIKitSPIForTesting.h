@@ -138,6 +138,7 @@ WTF_EXTERN_C_END
 - (void)_handleHIDEvent:(IOHIDEventRef)event;
 - (void)_cancelAllTouches;
 - (CGFloat)statusBarHeight;
+- (void)setHardwareKeyboardLayoutName:(NSString *)layout forceRebuild:(BOOL)forceRebuild;
 @end
 
 @interface UIDevice ()
@@ -240,7 +241,8 @@ typedef NS_OPTIONS(NSInteger, UIWKDocumentRequestFlags) {
 @end
 
 typedef NS_ENUM(NSInteger, UIWKGestureType) {
-    UIWKGestureLoupe
+    UIWKGestureLoupe = 0,
+    UIWKGestureTapAndAHalf = 2,
 };
 
 @class RVItem;
@@ -514,24 +516,12 @@ typedef enum {
 @end
 #endif
 
-typedef NS_ENUM(NSUInteger, _UIClickInteractionEvent) {
-    _UIClickInteractionEventBegan = 0,
-    _UIClickInteractionEventClickedDown,
-    _UIClickInteractionEventClickedUp,
-    _UIClickInteractionEventEnded,
-};
-
-typedef NS_ENUM(NSUInteger, _UIClickInteractionShouldBeginResult) {
-    _UIClickInteractionShouldBeginResultBegin
-};
-
-@protocol _UIClickInteractionDriving;
-@protocol _UIClickInteractionDriverDelegate <NSObject>
-- (void)clickDriver:(id<_UIClickInteractionDriving>)driver shouldBegin:(void(^)(_UIClickInteractionShouldBeginResult))completion;
-- (void)clickDriver:(id<_UIClickInteractionDriving>)driver didPerformEvent:(_UIClickInteractionEvent)event;
-@end
-
 #endif // USE(APPLE_INTERNAL_SDK)
+
+WTF_EXTERN_C_BEGIN
+extern NSNotificationName const _UISceneWillBeginSystemSnapshotSequence;
+extern NSNotificationName const _UISceneDidCompleteSystemSnapshotSequence;
+WTF_EXTERN_C_END
 
 // Start of UIKit IPI
 

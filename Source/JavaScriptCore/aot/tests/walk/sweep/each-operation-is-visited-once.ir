@@ -1,0 +1,47 @@
+# let dead = t, live = t; const o = rest; o[0] = x; while (!live) { dead = !dead; live = !live; await x; } return x;
+# One way backward through b2, b3, b1, b0 comes by each of the seven operations once.
+# v8 goes round to v5, and v8 alone reads v5: nothing marks either, so the circle goes. v4 stores into v3, which nothing reads: it waits for v3 and goes with it.
+# v9 goes round to v6, which v7 reads in the head, in front of v9. So the way has passed v9 when v6 is found needed: v9 goes through the worklist, the one operation that is visited once more for being needed.
+# What is live at the await is worked out of what the way has noted, who reads what last in which block, and visits no operation again: 7 + 1.
+# v0 and v1 are read in the next turn: they are live at the head of the loop, so they live all through it. v6 is not live behind the await: v9 has read it, and the next turn brings another.
+# RUN: sweep-code
+# CHECK: b0(
+# CHECK: dropped v3, v4
+# CHECK: v2: boolean @Boolean = TypeTest
+# CHECK: b1(
+# CHECK: dropped v5
+# CHECK: v7: boolean @Boolean = LogicalNot v6
+# CHECK: b2()
+# CHECK: dropped v8
+# CHECK-NEXT: v9: boolean @Boolean = LogicalNot v6
+# CHECK-NEXT: v10: anything @JSValue = AwaitBySavingFrame
+# CHECK: live at v10 {{*}}v0, v1, v9]
+# CHECK: visits of operations: 8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0
+
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     v3: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v0 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b1(v2, v2)
+#   b1(v5: boolean @Boolean, v6: boolean @Boolean) isInLoop=true isLoopHead=true:
+#     v7: boolean @Boolean = LogicalNot v6
+#     Branch v7 -> taken b2(), notTaken b3()
+#   b2() isInLoop=true:
+#     v8: boolean @Boolean = LogicalNot v5
+#     v9: boolean @Boolean = LogicalNot v6
+#     v10: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b1(v8, v9)
+#   b3():
+#     Return v0
+# }
+# -- end of code

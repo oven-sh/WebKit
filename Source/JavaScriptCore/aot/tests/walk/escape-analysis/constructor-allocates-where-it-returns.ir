@@ -1,0 +1,77 @@
+# class Info { constructor(x) { this.hit = false; this.source = read(); this.x = x; } }: nothing but the constructor has the object until it returns, so it is allocated there with every field. `read` may run any code and runs before the allocation.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: NewObject
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: key="read"
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: layout=L0 fields=[0, 1, 2]
+# CHECK-NOT: PutSlotOrAdd
+# CHECK-NOT: IsSlotFilled
+# CHECK: Return
+
+layout L0 kind=Instance name="Info" module=m0 constructor=f1 fields=[{key="hit" declared={type=anything} flags=[IsRequired]}, {key="source" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Kept" module=m0 constructor=f2 fields=[{key="hit" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Info" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="Kept" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    PutModuleVariable v2 variable=g1
+    v4 = FinishClass v2 layout=L0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]}
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f2
+    v8 = NewClass v7 layout=L1
+    PutModuleVariable v8 variable=g3
+    v10 = FinishClass v8 layout=L1
+    v11 = Convert v10 declared={type=f2 flags=[IsFromCompiler]}
+    PutModuleVariable v11 variable=g2
+    v13 = Integer integer=1
+    v14 = Call v0, -, v13
+    Return v14
+}
+function f1 name="Info" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0}
+    v5 = Boolean
+    PropSet v4, v5 key="hit"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="read" [isFreeName]
+    v9 = Call v8, -
+    PropSet v4, v9 key="source"
+    PropSet v4, v1 key="x"
+    Return v4
+}
+function f2 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1}
+    v5 = Boolean
+    PropSet v4, v5 key="hit"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v4
+    PropSet v4, v1 key="x"
+    Return v4
+}
+function f3 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Info"
+    v3 = Construct v2, -, v0 calleeName="Info"
+    v4 = GetModuleVariable variable=g2
+    v5 = CheckInitialized v4 name="Kept"
+    v6 = Construct v5, -, v0 calleeName="Kept"
+    v7 = PropGet v3 key="x"
+    Return v7
+}

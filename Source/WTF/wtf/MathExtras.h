@@ -51,6 +51,34 @@
 #include <machine/ieee.h>
 #endif
 
+#if defined(__clang_analyzer__)
+// Forward declare standard functions with NODELETE for static analysis
+extern "C" {
+NODELETE double ceil(double);
+NODELETE float ceilf(float);
+NODELETE double floor(double);
+NODELETE float floorf(float);
+NODELETE double round(double);
+NODELETE float roundf(float);
+NODELETE long lround(double);
+NODELETE long lroundf(float);
+NODELETE double trunc(double);
+NODELETE float truncf(float);
+NODELETE double sqrt(double);
+NODELETE float sqrtf(float);
+NODELETE double sin(double);
+NODELETE float sinf(float);
+NODELETE double cos(double);
+NODELETE float cosf(float);
+NODELETE double atan2(double, double);
+NODELETE float atan2f(float, float);
+NODELETE double fmod(double, double);
+NODELETE float fmodf(float, float);
+NODELETE double pow(double, double);
+NODELETE float powf(float, float);
+}
+#endif
+
 constexpr double piOverTwoDouble = std::numbers::pi / 2;
 constexpr float piOverTwoFloat = static_cast<float>(piOverTwoDouble);
 
@@ -848,7 +876,7 @@ constexpr T roundDownToMultipleOf(T x)
 
 #define WTF_PROVEN_TRUE(x) (__builtin_constant_p(x) && (x))
 
-SUPPRESS_NODELETE ALWAYS_INLINE int32_t LEGACY_NODELETE truncateDoubleToInt32(double number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE int32_t truncateDoubleToInt32(double number)
 {
 #if CPU(X86_64)
     return _mm_cvttsd_si32(_mm_set_sd(number));
@@ -875,7 +903,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE int32_t LEGACY_NODELETE truncateDoubleToInt32(do
 #endif
 }
 
-SUPPRESS_NODELETE ALWAYS_INLINE int64_t LEGACY_NODELETE truncateDoubleToInt64(double number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE int64_t truncateDoubleToInt64(double number)
 {
 #if CPU(X86_64)
     return _mm_cvttsd_si64(_mm_set_sd(number));
@@ -897,7 +925,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE int64_t LEGACY_NODELETE truncateDoubleToInt64(do
 #endif
 }
 
-SUPPRESS_NODELETE ALWAYS_INLINE uint32_t LEGACY_NODELETE truncateDoubleToUint32(double number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE uint32_t truncateDoubleToUint32(double number)
 {
 #if CPU(X86_64)
     return static_cast<uint32_t>(_mm_cvttsd_si64(_mm_set_sd(number)));
@@ -919,7 +947,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE uint32_t LEGACY_NODELETE truncateDoubleToUint32(
 #endif
 }
 
-SUPPRESS_NODELETE ALWAYS_INLINE uint64_t LEGACY_NODELETE truncateDoubleToUint64(double number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE uint64_t truncateDoubleToUint64(double number)
 {
 #if CPU(X86_64)
     // Branchless conversion matching compiler codegen for static_cast<uint64_t>(double).
@@ -955,7 +983,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE uint64_t LEGACY_NODELETE truncateDoubleToUint64(
 
 // Float-to-integer truncation helpers.
 
-SUPPRESS_NODELETE ALWAYS_INLINE int32_t LEGACY_NODELETE truncateFloatToInt32(float number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE int32_t truncateFloatToInt32(float number)
 {
 #if CPU(X86_64)
     return _mm_cvttss_si32(_mm_set_ss(number));
@@ -977,7 +1005,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE int32_t LEGACY_NODELETE truncateFloatToInt32(flo
 #endif
 }
 
-SUPPRESS_NODELETE ALWAYS_INLINE int64_t LEGACY_NODELETE truncateFloatToInt64(float number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE int64_t truncateFloatToInt64(float number)
 {
 #if CPU(X86_64)
     return _mm_cvttss_si64(_mm_set_ss(number));
@@ -1004,7 +1032,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE int64_t LEGACY_NODELETE truncateFloatToInt64(flo
 #endif
 }
 
-SUPPRESS_NODELETE ALWAYS_INLINE uint32_t LEGACY_NODELETE truncateFloatToUint32(float number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE uint32_t truncateFloatToUint32(float number)
 {
 #if CPU(X86_64)
     return static_cast<uint32_t>(_mm_cvttss_si64(_mm_set_ss(number)));
@@ -1020,7 +1048,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE uint32_t LEGACY_NODELETE truncateFloatToUint32(f
 #endif
 }
 
-SUPPRESS_NODELETE ALWAYS_INLINE uint64_t LEGACY_NODELETE truncateFloatToUint64(float number)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE uint64_t truncateFloatToUint64(float number)
 {
 #if CPU(X86_64)
     // Branchless conversion matching compiler codegen for static_cast<uint64_t>(float).
@@ -1058,7 +1086,7 @@ SUPPRESS_NODELETE ALWAYS_INLINE uint64_t LEGACY_NODELETE truncateFloatToUint64(f
 // tryConvertToStrictInt32: Attempts to convert a double to int32_t, returning
 // std::nullopt if the value is not exactly representable as int32 (including
 // -0.0, NaN, Infinity, non-integer values, and out-of-range values).
-SUPPRESS_NODELETE ALWAYS_INLINE std::optional<int32_t> LEGACY_NODELETE tryConvertToStrictInt32(double value)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE std::optional<int32_t> tryConvertToStrictInt32(double value)
 {
 #if HAVE(FJCVTZS_INSTRUCTION)
     int32_t result;

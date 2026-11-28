@@ -1,0 +1,29 @@
+# if (Array.isArray(globalThis.given)) globalThis.seen = 1
+# The row of the built-in says that the call answers a boolean. The stub answers nothing else and checks what the native function answers: the code behind the call neither tests nor stops.
+# RUN: walk f0:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f0:Body
+# CHECK: boolean @JSValue = CallBuiltin
+# RUN(BYTES): bytes f0:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# BYTES-LABEL: unit f0:Body
+# BYTES: Call Stub CallBoxedBuiltin.ArrayIsArray
+# RUN(NEVER): bytes f0:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: operationAOTStopAtNativeResult
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given"
+    v2 = Builtin builtin=Array
+    v3 = Builtin builtin=ArrayIsArray
+    v4 = Call v3, v2, v1 calleeKey="isArray" calleeName="Array.isArray"
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    PropSet v0, v5 key="seen"
+    Jump -> next b2()
+  b2():
+    v7 = Undefined
+    Return v7
+}

@@ -1,5 +1,4 @@
 # an expected result lists object layouts
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: PayloadOutOfRange 1
 

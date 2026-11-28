@@ -1,0 +1,15 @@
+# `$findsDeclaredMember(object, "size")`: A GUESS THAT IS ONE OPERATION. If it opened arms like any other guess, six questions in a row would be six tests of one shape with a closed arm each, for an answer that is a boolean either way.
+# The walk stamps it with the layouts that are proven or expected of the object, where the records declare a member under the name above each of them, and the emitter asks shape, link and guard.
+# `missing`: no record declares it. Unstamped the operation answers false.
+# RUN: walk f4 mechanisms=all
+# CHECK: FindsDeclaredMember {{*}}key="size" conditions=[{layout=L3 key="size"}] receivers=[L3]
+# CHECK: FindsDeclaredMember {{*}}key="count" conditions=[{layout=L3 key="count"}] receivers=[L3]
+# CHECK: FindsDeclaredMember {{*}}key="first" conditions=[{layout=L3 key="first"}] receivers=[L3]
+# CHECK: FindsDeclaredMember {{*}}key="second" conditions=[{layout=L3 key="second"}] receivers=[L3]
+# CHECK: FindsDeclaredMember {{*}}key="third" conditions=[{layout=L3 key="third"}] receivers=[L3]
+# CHECK: FindsDeclaredMember {{*}}key="missing"
+# CHECK-NOT: receivers=
+# RUN(WITHHELD): walk f4 mechanisms=all-Guesses
+# WITHHELD: FindsDeclaredMember {{*}}key="size"
+# WITHHELD-NOT: receivers=
+# PROGRAM-OF: ../../answers/a-declared-member-is-found-while-the-guards-hold.ir

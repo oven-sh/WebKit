@@ -1,0 +1,58 @@
+# function make() { const first = host(); host(start); const limit = host(); var count = 0; return run;
+#                   function start() { return first; }  function run() { return limit + first + count; } }
+# The store into `first` stands above every point at which the scope leaves, and `run` leaves behind the store into `limit`. Both hang on the order of the body alone, and a read without a check hands the empty word on as a value.
+# So what a slot holds at first is part of what it holds, and each function over the scope asks: a check on `cells|absent` is a load that traps.
+# RUN(START): walk f1 mechanisms=none+TypedOperations+Folding
+# START-LABEL: code f1:
+# START-COUNT-1: CheckInitialized
+# RUN(LATE): walk f2 mechanisms=none+TypedOperations+Folding
+# LATE-LABEL: code f2:
+# LATE-COUNT-2: CheckInitialized
+# `var count = 0`: the allocation lists undefined, and it stays in the type of the slot.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: field L0.2 @"2" proven=undefined|int[0, 2147483647]
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} flags=[IsImmutable] variableName="first"}, {key=@"1" declared={type=anything|absent} flags=[IsImmutable] variableName="limit"}, {key=@"2" declared={type=anything} variableName="count"}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f3
+entry module=m0
+function f0 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0 layout=L0 fields=[2]
+    v2 = NewClosure v1 function=f1
+    v3 = NewClosure v1 function=f2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="host" [isFreeName]
+    v6 = Call v5 calleeName="host"
+    PutEnvironmentField v1, v6 layout=L0
+    v8 = Call v5, -, v2 calleeName="host"
+    v9 = Call v5 calleeName="host"
+    PutEnvironmentField v1, v9 layout=L0 field=1
+    v11 = Integer integer=0
+    PutEnvironmentField v1, v11 layout=L0 field=2
+    Return v3
+}
+function f1 name="start" module=m0 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="first"
+    Return v2
+}
+function f2 name="run" module=m0 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = CheckInitialized v1 name="limit"
+    v3 = GetEnvironmentField v0 layout=L0
+    v4 = CheckInitialized v3 name="first"
+    v5 = Add v2, v4
+    v6 = GetEnvironmentField v0 layout=L0 field=2
+    v7 = Add v5, v6
+    Return v7
+}
+function f3 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f0
+    v1 = Call v0 calleeName="make"
+    v2 = Call v1
+    Return v2
+}

@@ -63,6 +63,196 @@ namespace WTF {
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
 class RobinHoodHashTable;
 
+template<typename HashTable, typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits>
+class RobinHoodHashTableIterator;
+
+template<typename HashTable, typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits>
+class WTF_VIEW_TYPE RobinHoodHashTableConstIterator {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RobinHoodHashTableConstIterator);
+public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = Value;
+    using difference_type = ptrdiff_t;
+    using pointer = const value_type*;
+    using reference = const value_type&;
+
+private:
+    using HashTableType = HashTable;
+    typedef RobinHoodHashTableIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits> iterator;
+    typedef RobinHoodHashTableConstIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits> const_iterator;
+    typedef Value ValueType;
+    typedef const ValueType& ReferenceType;
+    typedef const ValueType* PointerType;
+
+    friend HashTableType;
+    friend iterator;
+
+    void skipEmptyBuckets()
+    {
+        while (m_position != m_endPosition && HashTableType::isEmptyOrDeletedOrWeakNullBucket(*m_position))
+            ++m_position;
+    }
+
+    RobinHoodHashTableConstIterator(const HashTableType* table, PointerType position, PointerType endPosition)
+        : m_position(position), m_endPosition(endPosition)
+    {
+        addIterator(table, this);
+        skipEmptyBuckets();
+    }
+
+    RobinHoodHashTableConstIterator(const HashTableType* table, PointerType position, PointerType endPosition, HashItemKnownGoodTag)
+        : m_position(position), m_endPosition(endPosition)
+    {
+        addIterator(table, this);
+    }
+
+public:
+    RobinHoodHashTableConstIterator()
+    {
+        addIterator(static_cast<const HashTableType*>(0), this);
+    }
+
+    // default copy, assignment and destructor are OK if CHECK_HASHTABLE_ITERATORS is 0
+
+#if CHECK_HASHTABLE_ITERATORS
+    ~RobinHoodHashTableConstIterator()
+    {
+        removeIterator(this);
+    }
+
+    RobinHoodHashTableConstIterator(const const_iterator& other)
+        : m_position(other.m_position), m_endPosition(other.m_endPosition)
+    {
+        addIterator(other.m_table, this);
+    }
+
+    const_iterator& operator=(const const_iterator& other)
+    {
+        m_position = other.m_position;
+        m_endPosition = other.m_endPosition;
+
+        removeIterator(this);
+        addIterator(other.m_table, this);
+
+        return *this;
+    }
+#endif
+
+    PointerType get() const
+    {
+        checkValidity();
+        return m_position;
+    }
+    ReferenceType operator*() const { return *get(); }
+    PointerType operator->() const { return get(); }
+
+    const_iterator& operator++()
+    {
+        checkValidity();
+        ASSERT_WITH_SECURITY_IMPLICATION(m_position != m_endPosition);
+        ++m_position;
+        skipEmptyBuckets();
+        return *this;
+    }
+
+    // postfix ++ intentionally omitted
+
+    // Comparison.
+    bool operator==(const const_iterator& other) const
+    {
+        checkValidity(other);
+        return m_position == other.m_position;
+    }
+    bool operator==(const iterator& other) const
+    {
+        return *this == static_cast<const_iterator>(other);
+    }
+
+private:
+    void checkValidity() const
+    {
+#if CHECK_HASHTABLE_ITERATORS
+        ASSERT(m_table);
+#endif
+    }
+
+#if CHECK_HASHTABLE_ITERATORS
+    void checkValidity(const const_iterator& other) const
+    {
+        ASSERT(m_table);
+        ASSERT_UNUSED(other, other.m_table);
+        ASSERT(m_table == other.m_table);
+    }
+#else
+    void checkValidity(const const_iterator&) const { }
+#endif
+
+    PointerType m_position { nullptr };
+    PointerType m_endPosition { nullptr };
+
+#if CHECK_HASHTABLE_ITERATORS
+public:
+    // Any modifications of the m_next or m_previous of an iterator that is in a linked list of a HashTable::m_iterator,
+    // should be guarded with m_table->m_mutex.
+    mutable const HashTableType* m_table;
+    mutable const_iterator* m_next;
+    mutable const_iterator* m_previous;
+#endif
+};
+
+template<typename HashTable, typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits>
+class WTF_VIEW_TYPE RobinHoodHashTableIterator {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RobinHoodHashTableIterator);
+public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = Value;
+    using difference_type = ptrdiff_t;
+    using pointer = value_type*;
+    using reference = value_type&;
+
+private:
+    using HashTableType = HashTable;
+    typedef RobinHoodHashTableIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits> iterator;
+    typedef RobinHoodHashTableConstIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits> const_iterator;
+    typedef Value ValueType;
+    typedef ValueType& ReferenceType;
+    typedef ValueType* PointerType;
+
+    friend HashTableType;
+
+    RobinHoodHashTableIterator(HashTableType* table, PointerType pos, PointerType end)
+        : m_iterator(table, pos, end)
+    {
+    }
+
+    RobinHoodHashTableIterator(HashTableType* table, PointerType pos, PointerType end, HashItemKnownGoodTag tag)
+        : m_iterator(table, pos, end, tag)
+    {
+    }
+
+public:
+    RobinHoodHashTableIterator() { }
+
+    // default copy, assignment and destructor are OK
+
+    PointerType get() const { return const_cast<PointerType>(m_iterator.get()); }
+    ReferenceType operator*() const { return *get(); }
+    PointerType operator->() const { return get(); }
+
+    iterator& operator++() { ++m_iterator; return *this; }
+
+    // postfix ++ intentionally omitted
+
+    // Comparison.
+    bool operator==(const iterator& other) const { return m_iterator == other.m_iterator; }
+    bool operator==(const const_iterator& other) const { return m_iterator == other; }
+
+    operator const_iterator() const { return m_iterator; }
+
+private:
+    const_iterator m_iterator;
+};
+
 // 95% load factor. This a bit regress "insertion" performance, while it keeps lookup performance sane.
 // RobinHoodHashTable can work with 95% load factor because of maintained probe distance.
 struct MemoryCompactLookupOnlyRobinHoodHashTableSizePolicy {
@@ -108,8 +298,8 @@ template<typename Key, typename Value, typename Extractor, typename HashFunction
 class RobinHoodHashTable {
 public:
     using HashTableType = RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>;
-    using iterator = HashTableIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits>;
-    using const_iterator = HashTableConstIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits>;
+    using iterator = RobinHoodHashTableIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits>;
+    using const_iterator = RobinHoodHashTableConstIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits>;
     using ValueTraits = Traits;
     using KeyType = Key;
     using ValueType = Value;
@@ -179,22 +369,22 @@ public:
         internalCheckTableConsistency();
     }
 
-    template<ShouldValidateKey shouldValidateKey> AddResult add(const ValueType& value) LIFETIME_BOUND { return add<IdentityTranslatorType, shouldValidateKey>(Extractor::extract(value), [&]() ALWAYS_INLINE_LAMBDA { return value; }); }
-    template<ShouldValidateKey shouldValidateKey> AddResult add(ValueType&& value) LIFETIME_BOUND { return add<IdentityTranslatorType, shouldValidateKey>(Extractor::extract(value), [&]() ALWAYS_INLINE_LAMBDA { return WTF::move(value); }); }
+    AddResult add(const ValueType& value) LIFETIME_BOUND { return add<IdentityTranslatorType>(Extractor::extract(value), [&] ALWAYS_INLINE_LAMBDA { return value; }); }
+    AddResult add(ValueType&& value) LIFETIME_BOUND { return add<IdentityTranslatorType>(Extractor::extract(value), [&] ALWAYS_INLINE_LAMBDA { return WTF::move(value); }); }
 
     // A special version of add() that finds the object by hashing and comparing
     // with some other type, to avoid the cost of type conversion if the object is already
     // in the table.
-    template<typename HashTranslator, ShouldValidateKey> AddResult add(auto&& key, NOESCAPE const std::invocable<> auto& functor) LIFETIME_BOUND;
-    template<typename HashTranslator, ShouldValidateKey> AddResult addPassingHashCode(auto&& key, NOESCAPE const std::invocable<> auto& functor) LIFETIME_BOUND;
+    template<typename HashTranslator> AddResult add(auto&& key, NOESCAPE const std::invocable<> auto& functor) LIFETIME_BOUND;
+    template<typename HashTranslator> AddResult addPassingHashCode(auto&& key, NOESCAPE const std::invocable<> auto& functor) LIFETIME_BOUND;
 
-    template<ShouldValidateKey shouldValidateKey> iterator find(const KeyType& key) LIFETIME_BOUND { return find<IdentityTranslatorType, shouldValidateKey>(key); }
-    template<ShouldValidateKey shouldValidateKey> const_iterator find(const KeyType& key) const LIFETIME_BOUND { return find<IdentityTranslatorType, shouldValidateKey>(key); }
-    template<ShouldValidateKey shouldValidateKey> bool contains(const KeyType& key) const { return contains<IdentityTranslatorType, shouldValidateKey>(key); }
+    iterator find(const KeyType& key) LIFETIME_BOUND { return find<IdentityTranslatorType>(key); }
+    const_iterator find(const KeyType& key) const LIFETIME_BOUND { return find<IdentityTranslatorType>(key); }
+    bool contains(const KeyType& key) const { return contains<IdentityTranslatorType>(key); }
 
-    template<typename HashTranslator, ShouldValidateKey, typename T> iterator find(const T&) LIFETIME_BOUND;
-    template<typename HashTranslator, ShouldValidateKey, typename T> const_iterator find(const T&) const LIFETIME_BOUND;
-    template<typename HashTranslator, ShouldValidateKey, typename T> bool contains(const T&) const;
+    template<typename HashTranslator, typename T> iterator find(const T&) LIFETIME_BOUND;
+    template<typename HashTranslator, typename T> const_iterator find(const T&) const LIFETIME_BOUND;
+    template<typename HashTranslator, typename T> bool contains(const T&) const;
 
     void remove(const KeyType&);
     void remove(iterator);
@@ -207,9 +397,19 @@ public:
     static bool isEmptyOrDeletedBucket(const ValueType& value) { return isEmptyBucket(value); }
     static bool isEmptyOrDeletedOrWeakNullBucket(const ValueType& value) { static_assert(!KeyTraits::hasIsWeakNullValueFunction); return isEmptyOrDeletedBucket(value); }
 
-    template<ShouldValidateKey shouldValidateKey> ValueType* lookup(const Key& key) { return lookup<IdentityTranslatorType, shouldValidateKey>(key); }
-    template<typename HashTranslator, ShouldValidateKey, typename T> ValueType* lookup(const T&);
-    template<typename HashTranslator, ShouldValidateKey, typename T> ValueType* inlineLookup(const T&);
+    static bool isValidKey(const Key& key)
+    {
+        if (KeyTraits::isDeletedValue(key))
+            return false;
+        if constexpr (HashFunctions::safeToCompareToEmptyOrDeleted)
+            return key != KeyTraits::emptyValue();
+        else
+            return !isHashTraitsEmptyValue<KeyTraits>(key);
+    }
+
+    ValueType* lookup(const Key& key) { return lookup<IdentityTranslatorType>(key); }
+    template<typename HashTranslator, typename T> ValueType* lookup(const T&);
+    template<typename HashTranslator, typename T> ValueType* inlineLookup(const T&);
 
 #if ASSERT_ENABLED
         void checkTableConsistency() const;
@@ -236,7 +436,7 @@ private:
 
     using LookupType = std::pair<ValueType*, bool>;
 
-    template<typename HashTranslator, ShouldValidateKey, typename T> void checkKey(const T&);
+    template<typename HashTranslator, typename T> void checkKey(const T&);
 
     void maintainProbeDistanceForAdd(ValueType&&, unsigned index, unsigned distance, unsigned size, unsigned sizeMask, unsigned tableHash);
 
@@ -314,12 +514,9 @@ public:
 };
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template<typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template<typename HashTranslator, typename T>
 void RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::checkKey(const T& key)
 {
-    if constexpr (!ASSERT_ENABLED && shouldValidateKey == ShouldValidateKey::No)
-        return;
-
     if (!HashFunctions::safeToCompareToEmptyOrDeleted)
         return;
     RELEASE_ASSERT(!HashTranslator::equal(KeyTraits::emptyValue(), key));
@@ -330,17 +527,17 @@ void RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits,
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template<typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template<typename HashTranslator, typename T>
 inline auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::lookup(const T& key) -> ValueType*
 {
-    return inlineLookup<HashTranslator, shouldValidateKey>(key);
+    return inlineLookup<HashTranslator>(key);
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template<typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template<typename HashTranslator, typename T>
 ALWAYS_INLINE auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::inlineLookup(const T& key) -> ValueType*
 {
-    checkKey<HashTranslator, shouldValidateKey>(key);
+    checkKey<HashTranslator>(key);
 
     ValueType* table = m_table;
     if (!table)
@@ -376,14 +573,17 @@ ALWAYS_INLINE auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Trai
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
 inline void RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::initializeBucket(ValueType& bucket)
 {
-    initializeHashTableBucket<Traits>(bucket);
+    if constexpr (Traits::emptyValueIsZero)
+        zeroBytes(bucket);
+    else
+        Traits::template constructEmptyValue<Traits>(bucket);
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template<typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template<typename HashTranslator, typename T>
 ALWAYS_INLINE auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::add(T&& key, NOESCAPE const std::invocable<> auto& functor) LIFETIME_BOUND -> AddResult
 {
-    checkKey<HashTranslator, shouldValidateKey>(key);
+    checkKey<HashTranslator>(key);
 
     invalidateIterators(this);
 
@@ -409,7 +609,8 @@ ALWAYS_INLINE auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Trai
         if (isEmptyBucket(*entry)) {
             if (distance >= probeDistanceThreshold)
                 m_willExpand = true;
-            HashTranslator::translate(*entry, std::forward<T>(key), functor);
+            entry->~ValueType();
+            HashTranslator::translate(static_cast<ValueType*>(entry), std::forward<T>(key), functor);
             break;
         }
 
@@ -422,8 +623,7 @@ ALWAYS_INLINE auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Trai
             // Start swapping existing entry to maintain probe-distance invariant.
             ValueType existingEntry = WTF::move(*entry);
             entry->~ValueType();
-            initializeBucket(*entry);
-            HashTranslator::translate(*entry, std::forward<T>(key), functor);
+            HashTranslator::translate(static_cast<ValueType*>(entry), std::forward<T>(key), functor);
             maintainProbeDistanceForAdd(WTF::move(existingEntry), index, entryDistance, size, sizeMask, tableHash);
             break;
         }
@@ -470,10 +670,10 @@ ALWAYS_INLINE void RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Trai
 
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template<typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template<typename HashTranslator, typename T>
 inline auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::addPassingHashCode(T&& key, NOESCAPE const std::invocable<> auto& functor) LIFETIME_BOUND -> AddResult
 {
-    checkKey<HashTranslator, shouldValidateKey>(key);
+    checkKey<HashTranslator>(key);
 
     invalidateIterators(this);
 
@@ -500,7 +700,8 @@ inline auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, Key
         if (isEmptyBucket(*entry)) {
             if (distance >= probeDistanceThreshold)
                 m_willExpand = true;
-            HashTranslator::translate(*entry, std::forward<T>(key), functor, originalHash);
+            entry->~ValueType();
+            HashTranslator::translate(static_cast<ValueType*>(entry), std::forward<T>(key), functor, originalHash);
             break;
         }
 
@@ -513,8 +714,7 @@ inline auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, Key
             // Start swapping existing entry to maintain probe-distance invariant.
             ValueType existingEntry = WTF::move(*entry);
             entry->~ValueType();
-            initializeBucket(*entry);
-            HashTranslator::translate(*entry, std::forward<T>(key), functor, originalHash);
+            HashTranslator::translate(static_cast<ValueType*>(entry), std::forward<T>(key), functor, originalHash);
             maintainProbeDistanceForAdd(WTF::move(existingEntry), index, entryDistance, size, sizeMask, tableHash);
             break;
         }
@@ -564,13 +764,13 @@ inline void RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, Key
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template <typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template <typename HashTranslator, typename T>
 auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::find(const T& key) LIFETIME_BOUND -> iterator
 {
     if (!m_table)
         return end();
 
-    ValueType* entry = lookup<HashTranslator, shouldValidateKey>(key);
+    ValueType* entry = lookup<HashTranslator>(key);
     if (!entry)
         return end();
 
@@ -578,13 +778,13 @@ auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits,
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template <typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template <typename HashTranslator, typename T>
 auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::find(const T& key) const LIFETIME_BOUND -> const_iterator
 {
     if (!m_table)
         return end();
 
-    ValueType* entry = const_cast<RobinHoodHashTable*>(this)->lookup<HashTranslator, shouldValidateKey>(key);
+    ValueType* entry = const_cast<RobinHoodHashTable*>(this)->lookup<HashTranslator>(key);
     if (!entry)
         return end();
 
@@ -592,13 +792,13 @@ auto RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits,
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>
-template <typename HashTranslator, ShouldValidateKey shouldValidateKey, typename T>
+template <typename HashTranslator, typename T>
 bool RobinHoodHashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, SizePolicy, Malloc>::contains(const T& key) const
 {
     if (!m_table)
         return false;
 
-    return const_cast<RobinHoodHashTable*>(this)->lookup<HashTranslator, shouldValidateKey>(key);
+    return const_cast<RobinHoodHashTable*>(this)->lookup<HashTranslator>(key);
 }
 
 template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename SizePolicy, typename Malloc>

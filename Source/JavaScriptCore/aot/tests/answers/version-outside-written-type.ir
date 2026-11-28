@@ -1,0 +1,46 @@
+# function show(paint: (part: unknown) => string, value: string | number | undefined) { return typeof value === "string" ? paint(value + "!") : paint(value); }
+# console.log(typeof item === "object" ? "object" : show(paint, item));
+# RUN(ANSWER): run-in-shell globalThis.paint = part => typeof part; globalThis.item = function () { };
+# ANSWER: function
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="paint" [isFreeName]
+    v3 = PropGet v1 key="item" [isFreeName]
+    v4 = TypeTest v3 testedType=function
+    Branch v4 -> taken b3(), notTaken b1()
+  b1():
+    v5 = TypeTest v3 testedType=null|object
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = String string="object"
+    Jump -> next b4(v6)
+  b3():
+    v7 = Call v0, -, v2, v3 calleeName="show" [isNeverInlined]
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = PropGet v1 key="console" [isFreeName]
+    v10 = PropGet v9 key="log"
+    v11 = Call v10, v9, v8 calleeKey="log" calleeName="console.log"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="show" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string flags=[OmitsNull]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|number|string):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Convert v1 declared={type=undefined|null|string} illTypedCause=Assertion
+    v4 = String string="!"
+    v5 = Add v3, v4
+    v6 = Call v0, -, v5 calleeName="paint"
+    Return v6
+  b2():
+    v7 = Convert v1 declared={type=undefined|number} illTypedCause=Assertion
+    v8 = Call v0, -, v7 calleeName="paint"
+    Return v8
+}

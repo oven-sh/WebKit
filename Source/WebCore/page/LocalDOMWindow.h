@@ -57,6 +57,9 @@ template <typename, ShouldStrongDestructorGrabLock> class Strong;
 namespace WebCore {
 
 class CloseWatcherManager;
+#if ENABLE(DOCUMENT_PIP)
+class DocumentPictureInPicture;
+#endif
 class JSDOMGlobalObject;
 class SecurityOriginData;
 class Viewport;
@@ -116,7 +119,7 @@ public:
     void suspendForBackForwardCache();
     void resumeFromBackForwardCache();
 
-    WEBCORE_EXPORT LocalFrame* LEGACY_NODELETE frame() const final;
+    NODELETE WEBCORE_EXPORT LocalFrame* frame() const final;
 
     RefPtr<WebCore::MediaQueryList> matchMedia(const String&);
 
@@ -130,11 +133,12 @@ public:
     bool allowPopUp(); // Call on first window, not target window.
     static bool allowPopUp(LocalFrame& firstFrame);
     static bool canShowModalDialog(const LocalFrame&);
-    WEBCORE_EXPORT void LEGACY_NODELETE setCanShowModalDialogOverride(bool);
+    NODELETE WEBCORE_EXPORT void setCanShowModalDialogOverride(bool);
 
     Screen& screen();
     WEBCORE_EXPORT History& history();
     Crypto& crypto() const;
+    Scheduler& scheduler() const;
     BarProp& locationbar();
     BarProp& menubar();
     BarProp& personalbar();
@@ -144,32 +148,32 @@ public:
     WEBCORE_EXPORT Navigator& navigator();
     Navigator* optionalNavigator() const { return m_navigator.get(); }
 
-    WEBCORE_EXPORT static void LEGACY_NODELETE overrideTransientActivationDurationForTesting(std::optional<Seconds>&&);
+    NODELETE WEBCORE_EXPORT static void overrideTransientActivationDurationForTesting(std::optional<Seconds>&&);
     // If forcedActivationToken is set, the activation was granted by the forced user gesture (e.g. evaluateJavaScript:)
     // with that token, and is taken back once that gesture ends.
     WEBCORE_EXPORT void updateActivation(MonotonicTime activationTime, std::optional<UserGestureTokenIdentifier> forcedActivationToken = std::nullopt);
     WEBCORE_EXPORT void consumeLastActivationIfNecessary();
     void consumeHistoryActionActivation() { m_hasHistoryActionActivation = false; }
-    MonotonicTime LEGACY_NODELETE lastActivationTimestamp() const;
+    NODELETE MonotonicTime lastActivationTimestamp() const;
     WEBCORE_EXPORT void revokeForcedActivation(UserGestureTokenIdentifier);
     void notifyActivated(UserGestureToken&);
     WEBCORE_EXPORT bool hasTransientActivation() const;
-    bool LEGACY_NODELETE hasStickyActivation() const;
+    NODELETE bool hasStickyActivation() const;
     WEBCORE_EXPORT bool consumeTransientActivation();
-    WEBCORE_EXPORT bool LEGACY_NODELETE hasHistoryActionActivation() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE consumeHistoryActionUserActivation();
-    WEBCORE_EXPORT static Seconds LEGACY_NODELETE transientActivationDuration();
+    NODELETE WEBCORE_EXPORT bool hasHistoryActionActivation() const;
+    NODELETE WEBCORE_EXPORT bool consumeHistoryActionUserActivation();
+    NODELETE WEBCORE_EXPORT static Seconds transientActivationDuration();
 
     struct ClickEventData {
         MonotonicTime time;
         OptionSet<PlatformEventModifier> modifiers;
     };
     void updateLastUserClickEvent(OptionSet<PlatformEventModifier>);
-    WEBCORE_EXPORT std::optional<ClickEventData> LEGACY_NODELETE consumeLastUserClickEvent();
+    NODELETE WEBCORE_EXPORT std::optional<ClickEventData> consumeLastUserClickEvent();
 
     DOMSelection* getSelection();
 
-    HTMLFrameOwnerElement* LEGACY_NODELETE frameElement() const;
+    NODELETE HTMLFrameOwnerElement* frameElement() const;
 
     WEBCORE_EXPORT void focus(bool allowFocus = false);
     void focus(LocalDOMWindow& incumbentWindow);
@@ -190,7 +194,7 @@ public:
 
     bool find(const String&, bool caseSensitive, bool backwards, bool wrap, bool wholeWord, bool searchInFrames, bool showDialog) const;
 
-    bool LEGACY_NODELETE offscreenBuffering() const;
+    NODELETE bool offscreenBuffering() const;
 
     int outerHeight() const;
     int outerWidth() const;
@@ -205,7 +209,7 @@ public:
 
     unsigned length() const;
 
-    AtomString LEGACY_NODELETE name() const;
+    NODELETE AtomString name() const;
     void setName(const AtomString&);
 
     String status() const;
@@ -218,7 +222,7 @@ public:
 
     // DOM Level 2 AbstractView Interface
 
-    WEBCORE_EXPORT Document* LEGACY_NODELETE document() const;
+    NODELETE WEBCORE_EXPORT Document* document() const;
 
     // CSSOM View Module
 
@@ -249,8 +253,8 @@ public:
     void moveBy(int x, int y) const;
     void moveTo(int x, int y) const;
 
-    void resizeBy(int x, int y) const;
-    void resizeTo(int width, int height) const;
+    ExceptionOr<void> resizeBy(int x, int y);
+    ExceptionOr<void> resizeTo(int width, int height);
 
     Viewport& viewport();
     VisualViewport& visualViewport();
@@ -290,10 +294,10 @@ public:
 
     void dispatchLoadEvent();
 
-    void LEGACY_NODELETE captureEvents();
-    void LEGACY_NODELETE releaseEvents();
+    NODELETE void captureEvents();
+    NODELETE void releaseEvents();
 
-    void finishedLoading();
+    void runPrintWhenLoadedSteps();
 
     // EventTiming API
     PerformanceEventTimingCandidate initializeEventTiming(Event&, EventType);
@@ -310,8 +314,7 @@ public:
     Storage* optionalSessionStorage() const { return m_sessionStorage.get(); }
     Storage* optionalLocalStorage() const { return m_localStorage.get(); }
 
-    CustomElementRegistry* customElementRegistry() { return m_customElementRegistry.get(); }
-    CustomElementRegistry& ensureCustomElementRegistry();
+    NODELETE CustomElementRegistry& customElementRegistry();
 
     ExceptionOr<Ref<NodeList>> collectMatchingElementsInFlatTree(Node&, const String& selectors);
     ExceptionOr<RefPtr<Element>> matchingElementInFlatTree(Node&, const String& selectors);
@@ -329,7 +332,7 @@ public:
 
     WEBCORE_EXPORT ReducedResolutionSeconds nowTimestamp() const;
     void freezeNowTimestamp();
-    void LEGACY_NODELETE unfreezeNowTimestamp();
+    NODELETE void unfreezeNowTimestamp();
     ReducedResolutionSeconds frozenNowTimestamp() const;
 
 #if PLATFORM(IOS_FAMILY)
@@ -363,12 +366,12 @@ public:
 #endif
 
     // Navigation API
-    WEBCORE_EXPORT Navigation& LEGACY_NODELETE navigation();
+    NODELETE WEBCORE_EXPORT Navigation& navigation();
 
     void willDetachDocumentFromFrame();
     void willDestroyCachedFrame();
 
-    JSDOMGlobalObject* LEGACY_NODELETE cachedMainWorldGlobalObject() const;
+    NODELETE JSDOMGlobalObject* cachedMainWorldGlobalObject() const;
     void setCachedMainWorldGlobalObject(JSDOMGlobalObject*);
 
     void enableSuddenTermination();
@@ -383,11 +386,16 @@ public:
     void setMayReuseForNavigation(bool mayReuseForNavigation) { m_mayReuseForNavigation = mayReuseForNavigation; }
     bool mayReuseForNavigation() const { return m_mayReuseForNavigation; }
 
-    Page* LEGACY_NODELETE page() const;
+    NODELETE Page* page() const;
 
     WEBCORE_EXPORT static void forEachWindowInterestedInStorageEvents(NOESCAPE const Function<void(LocalDOMWindow&)>&);
 
     CookieStore& cookieStore();
+
+#if ENABLE(DOCUMENT_PIP)
+    DocumentPictureInPicture& documentPictureInPicture();
+    DocumentPictureInPicture* documentPictureInPictureIfExists() const { return m_documentPictureInPicture.get(); }
+#endif
 
     CloseWatcherManager& closeWatcherManager();
 
@@ -395,16 +403,24 @@ public:
     PushManager& pushManager();
 #endif
 
+#if ENABLE(DOCUMENT_PIP)
+    void closePage() final;
+#endif
+
 private:
     explicit LocalDOMWindow(Document&);
 
-    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
+    void dispatchEventWithoutDebuggerDeferral(Event&, EventTarget*);
 
+    NODELETE ScriptExecutionContext* scriptExecutionContext() const final;
+
+#if !ENABLE(DOCUMENT_PIP)
     void closePage() final;
+#endif
     void eventListenersDidChange() final;
     void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, ReplaceIfNotCompletelyLoaded, SetLocationLocking, CanNavigateState) final;
 
-    bool LEGACY_NODELETE allowedToChangeWindowGeometry() const;
+    NODELETE bool allowedToChangeWindowGeometry() const;
 
     static ExceptionOr<RefPtr<Frame>> createWindow(const String& urlString, const AtomString& frameName, const WindowFeatures&, LocalDOMWindow& activeWindow, LocalFrame& firstFrame, LocalFrame& openerFrame, NOESCAPE const Function<void(LocalDOMWindow&)>& prepareDialogFunction = nullptr);
 
@@ -439,7 +455,7 @@ private:
     void getPushPermissionState(DOMPromiseDeferred<IDLEnumeration<PushPermissionState>>&&) final;
 #endif // ENABLE(DECLARATIVE_WEB_PUSH)
 
-    bool m_shouldPrintWhenFinishedLoading { false };
+    bool m_shouldPrintWhenLoaded { false };
     bool m_suspendedForDocumentSuspension { false };
     bool m_isSuspendingObservers { false };
     std::optional<bool> m_canShowModalDialogOverride;
@@ -447,21 +463,22 @@ private:
     WeakHashSet<LocalDOMWindowObserver> m_observers;
 
     mutable RefPtr<Crypto> m_crypto;
-    mutable RefPtr<History> m_history;
-    mutable RefPtr<BarProp> m_locationbar;
-    mutable RefPtr<StyleMedia> m_media;
-    mutable RefPtr<BarProp> m_menubar;
+    const RefPtr<History> m_history;
+    const RefPtr<BarProp> m_locationbar;
+    const RefPtr<StyleMedia> m_media;
+    const RefPtr<BarProp> m_menubar;
     mutable RefPtr<Navigator> m_navigator;
-    mutable RefPtr<BarProp> m_personalbar;
-    mutable RefPtr<Screen> m_screen;
-    mutable RefPtr<BarProp> m_scrollbars;
-    mutable RefPtr<DOMSelection> m_selection;
-    mutable RefPtr<BarProp> m_statusbar;
-    mutable RefPtr<BarProp> m_toolbar;
-    mutable RefPtr<Viewport> m_viewport;
-    mutable RefPtr<VisualViewport> m_visualViewport;
-    mutable RefPtr<Navigation> m_navigation;
-    mutable RefPtr<CloseWatcherManager> m_closeWatcherManager;
+    const RefPtr<BarProp> m_personalbar;
+    const RefPtr<Scheduler> m_scheduler;
+    const RefPtr<Screen> m_screen;
+    const RefPtr<BarProp> m_scrollbars;
+    const RefPtr<DOMSelection> m_selection;
+    const RefPtr<BarProp> m_statusbar;
+    const RefPtr<BarProp> m_toolbar;
+    const RefPtr<Viewport> m_viewport;
+    const RefPtr<VisualViewport> m_visualViewport;
+    const RefPtr<Navigation> m_navigation;
+    const RefPtr<CloseWatcherManager> m_closeWatcherManager;
 
     // Equivalent to the list of PerformanceEventTiming objects mentioned in https://www.w3.org/TR/event-timing/#sec-modifications-HTML :
     Vector<PerformanceEventTimingCandidate, 6> m_performanceEventTimingCandidates;
@@ -480,7 +497,7 @@ private:
         PerformanceEventTimingCandidate keyDown;
         std::optional<PerformanceEventTimingCandidate> keyPress { std::nullopt };
     };
-    HashMap<int64_t, PendingKeyDownState, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_pendingKeyDowns;
+    HashMap<int64_t, PendingKeyDownState> m_pendingKeyDowns;
 
     EventTimingInteractionID m_userInteractionValue;
     uint64_t m_interactionCount { 0 };
@@ -500,10 +517,8 @@ private:
     uint64_t m_gamepadEventListenerCount { 0 };
 #endif
 
-    mutable RefPtr<Storage> m_sessionStorage;
-    mutable RefPtr<Storage> m_localStorage;
-
-    RefPtr<CustomElementRegistry> m_customElementRegistry;
+    const RefPtr<Storage> m_sessionStorage;
+    const RefPtr<Storage> m_localStorage;
 
     mutable RefPtr<Performance> m_performance;
 
@@ -530,10 +545,13 @@ private:
     bool m_mayReuseForNavigation { true };
     bool m_isStopping { false };
 #if ENABLE(USER_MESSAGE_HANDLERS)
-    mutable RefPtr<WebKitNamespace> m_webkitNamespace;
+    const RefPtr<WebKitNamespace> m_webkitNamespace;
 #endif
 
     const RefPtr<CookieStore> m_cookieStore;
+#if ENABLE(DOCUMENT_PIP)
+    const RefPtr<DocumentPictureInPicture> m_documentPictureInPicture;
+#endif
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     const std::unique_ptr<PushManager> m_pushManager;

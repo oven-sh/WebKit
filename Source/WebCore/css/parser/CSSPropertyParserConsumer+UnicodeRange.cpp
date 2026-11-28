@@ -35,10 +35,9 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringParsingBuffer.h>
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
-static bool LEGACY_NODELETE consumeOptionalDelimiter(CSSParserTokenRange& range, char16_t value)
+NODELETE static bool consumeOptionalDelimiter(CSSParserTokenRange& range, char16_t value)
 {
     if (!(range.peek().type() == DelimiterToken && range.peek().delimiter() == value))
         return false;
@@ -46,7 +45,7 @@ static bool LEGACY_NODELETE consumeOptionalDelimiter(CSSParserTokenRange& range,
     return true;
 }
 
-static StringView LEGACY_NODELETE consumeIdentifier(CSSParserTokenRange& range)
+NODELETE static StringView consumeIdentifier(CSSParserTokenRange& range)
 {
     if (range.peek().type() != IdentToken)
         return { };
@@ -161,5 +160,4 @@ RefPtr<CSSValue> consumeUnicodeRangeToken(CSSParserTokenRange& range)
     return CSSUnicodeRangeValue::create(unicodeRange->start, unicodeRange->end);
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

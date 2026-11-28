@@ -72,6 +72,7 @@ WK_EXPORT bool WKPageGetPaginationLineGridEnabled(WKPageRef page);
 
 WK_EXPORT unsigned WKPageGetPageCount(WKPageRef page);
 
+// Paper sizes are in points.
 struct WKPrintInfo {
     float pageSetupScaleFactor;
     float availablePaperWidth;
@@ -79,11 +80,14 @@ struct WKPrintInfo {
 };
 typedef struct WKPrintInfo WKPrintInfo;
 
+// Page rects are in CSS px. Multiply them by resultPageScaleFactor to get points.
 typedef void (*WKPageComputePagesForPrintingFunction)(WKRect* pageRects, uint32_t pageCount, double resultPageScaleFactor, WKErrorRef error, void* functionContext);
 WK_EXPORT void WKPageComputePagesForPrinting(WKPageRef page, WKFrameRef frame, WKPrintInfo, WKPageComputePagesForPrintingFunction, void* context);
 
 typedef void (*WKPageDrawToPDFFunction)(WKDataRef data, WKErrorRef error, void* functionContext);
 WK_EXPORT void WKPageBeginPrinting(WKPageRef page, WKFrameRef frame, WKPrintInfo printInfo);
+// PDF pages are in points, at the size they print: the page rect times resultPageScaleFactor.
+// Draw them without scaling.
 WK_EXPORT void WKPageDrawPagesToPDF(WKPageRef page, WKFrameRef frame, WKPrintInfo printInfo, uint32_t first, uint32_t count, WKPageDrawToPDFFunction callback, void* context);
 WK_EXPORT void WKPageEndPrinting(WKPageRef page);
 
@@ -225,7 +229,11 @@ WK_EXPORT void WKPagePermissionChanged(WKStringRef permissionName, WKStringRef o
 
 WK_EXPORT void WKPageExecuteCommandForTesting(WKPageRef pageRef, WKStringRef command, WKStringRef value);
 WK_EXPORT bool WKPageIsEditingCommandEnabledForTesting(WKPageRef page, WKStringRef command);
+WK_EXPORT bool WKPageIsDisplayCaptureCapabilityActiveForTesting(WKPageRef page);
 typedef void (*WKPageGetStorageAreaMapCountForTestingFunction)(uint64_t count, void* functionContext);
+// Sizes are in whole CSS pixels.
+typedef void (*WKPageTakeCSSPageBoxesSnapshotForTestingFunction)(WKImageRef image, void* functionContext);
+WK_EXPORT void WKPageTakeCSSPageBoxesSnapshotForTesting(WKPageRef page, WKSize defaultPageBoxSize, double defaultPageMargin, void* context, WKPageTakeCSSPageBoxesSnapshotForTestingFunction callback);
 WK_EXPORT void WKPageGetStorageAreaMapCountForTesting(WKPageRef page, void* context, WKPageGetStorageAreaMapCountForTestingFunction callback);
 WK_EXPORT void WKPageSetPermissionLevelForTesting(WKPageRef page, WKStringRef origin, bool allowed);
 WK_EXPORT void WKPageResetStateBetweenTests(WKPageRef pageRef);
@@ -236,6 +244,7 @@ typedef void (*WKPageSetPageScaleFactorForTestingFunction)(void* functionContext
 WK_EXPORT void WKPageSetPageScaleFactorForTesting(WKPageRef page, float scaleFactor, WKPoint point, void* context, WKPageSetPageScaleFactorForTestingFunction completionHandler);
 typedef void (*WKPageClearBackForwardListForTestingFunction)(void* functionContext);
 WK_EXPORT void WKPageClearBackForwardListForTesting(WKPageRef page, void* context, WKPageClearBackForwardListForTestingFunction completionHandler);
+WK_EXPORT WKStringRef WKPageCopyBackForwardListDumpForTesting(WKPageRef page, WKStringRef directory);
 typedef void (*WKPageSetTracksRepaintsForTestingFunction)(void* functionContext);
 WK_EXPORT void WKPageSetTracksRepaintsForTesting(WKPageRef page, void* context, bool trackRepaints, WKPageSetTracksRepaintsForTestingFunction completionHandler);
 typedef void (*WKPageDisplayAndTrackRepaintsForTestingFunction)(void* functionContext);

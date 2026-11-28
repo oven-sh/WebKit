@@ -126,7 +126,7 @@ UTF8CString CodeBlock::inferredName() const
     if (m_ownerExecutable) {
         auto *provider = ownerExecutable()->source().provider();
         if (provider && !provider->sourceURL().isEmpty()) {
-            return provider->sourceURL().utf8();
+            return makeUTF8CString(provider->sourceURL());
         }
     }
 #endif
@@ -183,9 +183,9 @@ UTF8CString CodeBlock::sourceCodeForTools() const
         return ownerExecutable()->source().toUTF8();
 
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(ownerExecutable());
-    return executable->source().provider()->getRange(
+    return makeUTF8CString(executable->source().provider()->getRange(
         executable->functionStart(),
-        executable->parametersStartOffset() + executable->source().length()).utf8();
+        executable->parametersStartOffset() + executable->source().length()));
 }
 
 UTF8CString CodeBlock::sourceCodeOnOneLine() const
@@ -487,10 +487,15 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         }
     }
 
+#if ENABLE(AOT)
+    const bool runsCompiledImage = Options::runsCompiledImage();
+    Vector<const JSInstruction*, 32> variableResolutions;
+#endif
+
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
 #if ENABLE(AOT)
-        if (Options::runsCompiledImage())
+        if (runsCompiledImage)
             AOT::Interpreter::didLinkNewObject(metadata.m_objectAllocationProfile);
 #endif
     };
@@ -621,6 +626,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpAsyncIteratorOpen, callLinkInfo)
         LINK(OpAsyncIteratorNext, callLinkInfo)
         LINK(OpCallVarargs, callLinkInfo)
+        LINK(OpCallVarargsWithSpread, callLinkInfo)
         LINK(OpTailCallVarargs, callLinkInfo)
         LINK(OpConstructVarargs, callLinkInfo)
         LINK(OpSuperConstructVarargs, callLinkInfo)
@@ -653,6 +659,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 metadata.m_resolveType = ClosureVar;
                 metadata.m_localScopeDepth = bytecode.m_localScopeDepth + outerHops;
                 metadata.m_symbolTable.set(vm, this, symbolTableObject->symbolTable());
+#if ENABLE(AOT)
+                if (runsCompiledImage)
+                    variableResolutions.append(instruction.ptr());
+#endif
                 if (Options::validateBytecodeOptimizerStaticScopes()) [[unlikely]] {
                     ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, GlobalProperty, InitializationMode::NotInitialization);
                     RELEASE_ASSERT(op.type == ClosureVar, op.type, outerHops);
@@ -666,6 +676,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
+#if ENABLE(AOT)
+            if (runsCompiledImage && (op.type == ClosureVar || op.type == GlobalVar || op.type == GlobalLexicalVar))
+                variableResolutions.append(instruction.ptr());
+#endif
             if (op.type == ModuleVar)
                 metadata.m_moduleImportSlot = op.moduleImportSlot;
             else if (op.lexicalEnvironment)
@@ -875,8 +889,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK
 
 #if ENABLE(AOT)
-    if (Options::runsCompiledImage())
-        AOT::Interpreter::fuseReadsOfClosureVariables(*this);
+    if (!variableResolutions.isEmpty())
+        AOT::Interpreter::fuseVariableReads(*this, variableResolutions.span());
 #endif
 
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
@@ -2541,8 +2555,7 @@ ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedFo
 
     auto nextOffset = instructions().at(bytecodeIndex).next().offset();
     FastBitVector liveLocals = bytecodeLiveness.getLivenessInfoAtInstruction(this, BytecodeIndex(nextOffset));
-    Vector<VirtualRegister> liveOperands;
-    liveOperands.reserveInitialCapacity(liveLocals.bitCount());
+    Vector<VirtualRegister> liveOperands(ReserveCapacityTag { }, liveLocals.bitCount());
     liveLocals.forEachSetBit([&] (unsigned liveLocal) {
         liveOperands.append(virtualRegisterForLocal(liveLocal));
     });
@@ -2881,7 +2894,8 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
             jitData->invalidate();
         }
         if (!jitCode()->isUnlinked()) {
-            if (!jitCode()->dfgCommon()->invalidateLinkedCode()) {
+            ASSERT(reason != Profiler::JettisonDueToWeakReference || (vm.heap.currentThreadIsDoingGCWork() && !vm.heap.isMarked(this)));
+            if (!jitCode()->dfgCommon()->invalidateLinkedCode(reason)) {
                 // We've already been invalidated.
                 RELEASE_ASSERT(this != replacement() || (vm.heap.currentThreadIsDoingGCWork() && !vm.heap.isMarked(ownerExecutable())));
                 return;
@@ -3082,7 +3096,7 @@ double CodeBlock::optimizationThresholdScalingFactor() const
     return result;
 }
 
-static int32_t LEGACY_NODELETE clipThreshold(double threshold)
+NODELETE static int32_t clipThreshold(double threshold)
 {
     if (threshold < 1.0)
         return 1;
@@ -3388,7 +3402,7 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
         if (m_cachedIdentifierUids.size() != numberOfIdentifiers) {
             Locker locker(m_cachedIdentifierUidsLock);
             createRareDataIfNecessary();
-            UncheckedKeyHashSet<UniquedStringImpl*> cachedIdentifierUids;
+            HashSet<UniquedStringImpl*> cachedIdentifierUids;
             cachedIdentifierUids.reserveInitialCapacity(numberOfIdentifiers);
             for (unsigned index = 0; index < unlinkedIdentifiers; ++index) {
                 const Identifier& identifier = unlinkedCode->identifier(index);

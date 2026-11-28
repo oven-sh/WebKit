@@ -95,7 +95,7 @@ void InspectorTargetAgent::sendMessageFromTargetToFrontend(const String& targetI
     m_frontendDispatcher->dispatchMessageFromTarget(targetId, message);
 }
 
-static Protocol::Target::TargetInfo::Type LEGACY_NODELETE targetTypeToProtocolType(InspectorTargetType type)
+NODELETE static Protocol::Target::TargetInfo::Type targetTypeToProtocolType(InspectorTargetType type)
 {
     switch (type) {
     case InspectorTargetType::Page:
@@ -122,6 +122,8 @@ static Ref<Protocol::Target::TargetInfo> buildTargetInfoObject(const InspectorTa
         result->setIsProvisional(true);
     if (target.isPaused())
         result->setIsPaused(true);
+    if (auto processIdentifier = target.processIdentifier(); !processIdentifier.isEmpty())
+        result->setProcessIdentifier(processIdentifier);
     return result;
 }
 
@@ -159,6 +161,17 @@ void InspectorTargetAgent::didCommitProvisionalTarget(const String& oldTargetID,
         return;
 
     m_frontendDispatcher->didCommitProvisionalTarget(oldTargetID, committedTargetID);
+}
+
+void InspectorTargetAgent::debuggerPauseSessionChanged(const String& sessionID, bool isPaused, const Vector<String>& stoppingTargetIDs)
+{
+    if (!m_isConnected)
+        return;
+
+    auto targetIDs = JSON::ArrayOf<String>::create();
+    for (auto& targetID : stoppingTargetIDs)
+        targetIDs->addItem(targetID);
+    m_frontendDispatcher->debuggerPauseSessionChanged(sessionID, isPaused ? Protocol::Target::DebuggerPauseSessionState::Paused : Protocol::Target::DebuggerPauseSessionState::Closed, WTF::move(targetIDs));
 }
 
 FrontendChannel::ConnectionType InspectorTargetAgent::connectionType() const

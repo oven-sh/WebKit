@@ -1,0 +1,11 @@
+# An entry by value that has to ask what it is handed is a unit of its own and no function of its own: `sum` has a body and such an entry, and ImageFunctionsEmitted counts it once. UnitsCompiled counts both
+# library.js: export function sum(a, b) { return a + b }
+# main.js: import { sum } from "./library.js"; print(sum(given | 0, given | 0)); print([sum][given | 0](given | 0, given | 0))
+# LIBRARY: own
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(UNITS): units-with-code f2:GenericCallEntry mechanisms=all
+# UNITS: unit f2:GenericCallEntry {{*}} bytes
+# RUN: compile ImageFunctionsEmitted UnitsCompiled mechanisms=all
+# CHECK: statistic ImageFunctionsEmitted 2
+# CHECK: statistic UnitsCompiled 3
+# PROGRAM-OF: ../walk/typed-operations/what-arrives-by-value-is-asked-in-front-of-the-trap-where-proofs-are-checked.ir

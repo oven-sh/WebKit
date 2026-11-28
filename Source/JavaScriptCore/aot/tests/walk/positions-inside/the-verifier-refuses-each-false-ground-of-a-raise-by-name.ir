@@ -1,0 +1,56 @@
+# A raise of a list's length rests on a ground that shows `key < room`, and the raw store behind it rests on the raise. The walk of today lays right grounds alone, and one lying word leaves them out:
+# here each refusal that a raise or its store can meet is asked for by itself, over one written Code, with the grounds laid by hand.
+# RUN(RIGHT): verify-grounds access=v11 view=v0 position=v2 length=v6 below=v9 passed=v9 access=v12 view=v0 position=v2 length=v11 access=v13 view=v0 position=v2 length=v6 below=v9 passed=v9
+# RIGHT: verified
+# RUN(NOGROUND): verify-grounds access=v12 view=v0 position=v2 length=v11
+# NOGROUND: v11 (ExtendArrayLength): an access is taken to lie inside its view and names no ground
+# RUN(NOTPASSED): verify-grounds access=v11 view=v0 position=v2 length=v6 below=v10 passed=v10 access=v12 view=v0 position=v2 length=v11
+# NOTPASSED: v11 (ExtendArrayLength): a test that an access counts on is not passed on every path to it
+# RUN(FAILED): verify-grounds access=v11 view=v0 position=v2 length=v6 below=v9 failed=v9 access=v12 view=v0 position=v2 length=v11
+# FAILED: v11 (ExtendArrayLength): a test that an access counts on is not passed on every path to it
+# RUN(NOLENGTH): verify-grounds access=v11 view=v0 position=v2 below=v9 passed=v9 access=v12 view=v0 position=v2 length=v11
+# NOLENGTH: v11 (ExtendArrayLength): an access is taken to lie inside its view and names no length
+# RUN(OTHERHOLDER): verify-grounds access=v11 view=v1 position=v2 length=v6 below=v9 passed=v9 access=v12 view=v0 position=v2 length=v11
+# OTHERHOLDER: v11 (ExtendArrayLength): the grounds of an access speak of another holder or of another position
+# RUN(OTHERPOSITION): verify-grounds access=v11 view=v0 position=v3 length=v6 below=v9 passed=v9 access=v12 view=v0 position=v2 length=v11
+# OTHERPOSITION: v11 (ExtendArrayLength): the grounds of an access speak of another holder or of another position
+# RUN(OTHERROOM): verify-grounds access=v11 view=v0 position=v2 length=v7 below=v9 passed=v9 access=v12 view=v0 position=v2 length=v11
+# OTHERROOM: v11 (ExtendArrayLength): the length that an access counts on is not that of its view
+# RUN(NOTSHOWN): verify-grounds access=v11 view=v0 position=v2 length=v6 passed=v9 access=v12 view=v0 position=v2 length=v11
+# NOTSHOWN: v11 (ExtendArrayLength): the grounds of an access do not show that it lies inside its view
+# RUN(BARESTORE): verify-grounds access=v11 view=v0 position=v2 length=v6 below=v9 passed=v9
+# BARESTORE: v12 (PutDoubleIndex): an access is taken to lie inside its view and names no ground
+# RUN(STOREELSEWHERE): verify-grounds access=v11 view=v0 position=v2 length=v6 below=v9 passed=v9 access=v12 view=v0 position=v2 length=v13
+# STOREELSEWHERE: v12 (PutDoubleIndex): a store is taken to lie below a length that no raise in front of it has made
+# -- code
+# code f1:Body {
+#   constants:
+#     v5: undefined @JSValue = Undefined
+#   b0(v0: Array @Cell, v1: Array @Cell, v2: int[0, 2147483647] @Int32, v3: int[0, 2147483647] @Int32, v4: fractional @Double) entry=0:
+#     v6: int[0, 4294967295] @Int64 = GetArrayCapacity v0 traits=[mayTouchMemory]
+#     v7: int[0, 4294967295] @Int64 = GetArrayCapacity v1 traits=[mayTouchMemory]
+#     v8: int[0, 2147483647] @Int64 = WidenInteger v2
+#     v9: boolean @Boolean = Less v8, v6 form=Integers
+#     v10: boolean @Boolean = Less v8, v7 form=Integers
+#     Branch v9 -> taken b1(), notTaken b2()
+#   b1():
+#     v11 @Void = ExtendArrayLength v0, v2 traits=[mayWriteObservableState, mayTouchMemory]
+#     v12 @Void = PutDoubleIndex v0, v2, v4 [isInBounds] traits=[mayWriteObservableState, mayTouchMemory]
+#     v13 @Void = ExtendArrayLength v0, v2 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return v5
+#   b2():
+#     Return v5
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=5 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
+    Return v0
+}

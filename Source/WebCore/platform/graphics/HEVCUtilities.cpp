@@ -241,6 +241,23 @@ String createHEVCCodecParametersString(const HEVCParameters& parameters)
     return resultBuilder.toString();
 }
 
+bool isHEVCMain42210Profile(const HEVCParameters& parameters)
+{
+    constexpr uint8_t rangeExtensionsProfileIDC = 4;
+    if (parameters.generalProfileIDC != rangeExtensionsProfileIDC)
+        return false;
+
+    // ISO/IEC 23008-2 7.3.3: the general_max_*_constraint_flags follow general_frame_only_constraint_flag.
+    auto& flags = parameters.generalConstraintIndicatorFlags;
+    bool max10Bit = flags[0] & 0x04;
+    bool max422Chroma = flags[0] & 0x01;
+    bool max420Chroma = flags[1] & 0x80;
+    bool maxMonochrome = flags[1] & 0x40;
+    bool intra = flags[1] & 0x20;
+    bool onePictureOnly = flags[1] & 0x10;
+    return max10Bit && max422Chroma && !max420Chroma && !maxMonochrome && !intra && !onePictureOnly;
+}
+
 std::optional<HEVCParameters> parseHEVCDecoderConfigurationRecord(FourCC codecCode, const SharedBuffer& buffer)
 {
     // ISO/IEC 14496-15:2014
@@ -322,7 +339,7 @@ static std::optional<uint16_t> profileIDForAlphabeticDoViProfile(StringView prof
     return makeOptionalFromPointer(profilesMap.tryGet(profile));
 }
 
-static bool LEGACY_NODELETE isValidDoViProfileID(uint16_t profileID)
+NODELETE static bool isValidDoViProfileID(uint16_t profileID)
 {
     switch (profileID) {
     case 4:
@@ -336,7 +353,7 @@ static bool LEGACY_NODELETE isValidDoViProfileID(uint16_t profileID)
     }
 }
 
-static std::optional<uint16_t> LEGACY_NODELETE maximumLevelIDForDoViProfileID(uint16_t profileID)
+NODELETE static std::optional<uint16_t> maximumLevelIDForDoViProfileID(uint16_t profileID)
 {
     // See Section 4.1 of "Dolby Vision Profiles and Levels Version 1.3.2"
     switch (profileID) {
@@ -349,7 +366,7 @@ static std::optional<uint16_t> LEGACY_NODELETE maximumLevelIDForDoViProfileID(ui
     }
 }
 
-static bool LEGACY_NODELETE isValidProfileIDForCodec(uint16_t profileID, DoViParameters::Codec codec)
+NODELETE static bool isValidProfileIDForCodec(uint16_t profileID, DoViParameters::Codec codec)
 {
     if (profileID == 9)
         return codec == DoViParameters::Codec::AVC1 || codec == DoViParameters::Codec::AVC3;
@@ -568,7 +585,7 @@ std::optional<uint8_t> findHVCCMaxNumReorderPics(const HVCCParameterSets& parame
 namespace {
 
 // When n == 0, returns UINT32_MAX (matches libwebrtc's H265::Log2Ceiling(0) == -1).
-uint32_t LEGACY_NODELETE hevcLog2Ceiling(uint32_t value)
+NODELETE uint32_t hevcLog2Ceiling(uint32_t value)
 {
     if (!value)
         return std::numeric_limits<uint32_t>::max();
@@ -576,7 +593,7 @@ uint32_t LEGACY_NODELETE hevcLog2Ceiling(uint32_t value)
 }
 
 // From Table A.8 - General tier and level limits. |generalLevelIDC| is 30x the actual level.
-uint32_t LEGACY_NODELETE hevcGetMaxLumaPs(int generalLevelIDC)
+NODELETE uint32_t hevcGetMaxLumaPs(int generalLevelIDC)
 {
     if (generalLevelIDC <= 30)
         return 36864;
@@ -596,12 +613,12 @@ uint32_t LEGACY_NODELETE hevcGetMaxLumaPs(int generalLevelIDC)
 }
 
 // From A.4.2 - Profile-specific level limits for the video profiles (kProfileIdcMain..kProfileIdcHighThroughput is 1..5).
-size_t LEGACY_NODELETE hevcGetDpbMaxPicBuf(int generalProfileIDC)
+NODELETE size_t hevcGetDpbMaxPicBuf(int generalProfileIDC)
 {
     return (generalProfileIDC >= 1 && generalProfileIDC <= 5) ? 6 : 7;
 }
 
-bool LEGACY_NODELETE parsePredWeightTable(BitReader& reader, uint32_t chromaArrayType, uint32_t numRefIdxL0ActiveMinus1, bool isBSlice, uint32_t numRefIdxL1ActiveMinus1)
+NODELETE bool parsePredWeightTable(BitReader& reader, uint32_t chromaArrayType, uint32_t numRefIdxL0ActiveMinus1, bool isBSlice, uint32_t numRefIdxL1ActiveMinus1)
 {
     constexpr uint32_t maxRefIdxActive = 15;
     if (numRefIdxL0ActiveMinus1 >= maxRefIdxActive || (isBSlice && numRefIdxL1ActiveMinus1 >= maxRefIdxActive))

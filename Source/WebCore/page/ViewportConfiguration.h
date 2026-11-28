@@ -53,7 +53,7 @@ public:
         double maximumScale { 0 };
         bool allowsUserScaling { false };
         bool allowsShrinkToFit { false };
-        bool avoidsUnsafeArea { true };
+        ViewportFitEdges viewportFitEdges;
 
         bool widthIsSet { false };
         bool heightIsSet { false };
@@ -69,13 +69,13 @@ public:
 
     static constexpr double minimumShrinkToFitWidthWhenPreferringHorizontalScrolling = 820;
 
-    WEBCORE_EXPORT ViewportConfiguration();
+    NODELETE WEBCORE_EXPORT ViewportConfiguration();
 
     const Parameters& defaultConfiguration() const LIFETIME_BOUND { return m_defaultConfiguration; }
-    WEBCORE_EXPORT void LEGACY_NODELETE setDefaultConfiguration(const Parameters&);
+    NODELETE WEBCORE_EXPORT void setDefaultConfiguration(const Parameters&);
 
     const IntSize& contentsSize() const LIFETIME_BOUND { return m_contentSize; }
-    WEBCORE_EXPORT bool LEGACY_NODELETE setContentsSize(const IntSize&);
+    NODELETE WEBCORE_EXPORT bool setContentsSize(const IntSize&);
 
     const FloatSize& viewLayoutSize() const LIFETIME_BOUND { return m_viewLayoutSize; }
 
@@ -145,20 +145,20 @@ public:
     double maximumScaleIgnoringAlwaysScalable() const { return m_configuration.maximumScale; }
     WEBCORE_EXPORT bool allowsUserScaling() const;
     WEBCORE_EXPORT bool allowsUserScalingIgnoringAlwaysScalable() const;
-    bool avoidsUnsafeArea() const { return m_configuration.avoidsUnsafeArea; }
+    const ViewportFitEdges& viewportFitEdges() const LIFETIME_BOUND { return m_configuration.viewportFitEdges; }
 
     // Matches a width=device-width, initial-scale=1 viewport.
-    WEBCORE_EXPORT Parameters LEGACY_NODELETE nativeWebpageParameters();
-    static Parameters LEGACY_NODELETE nativeWebpageParametersWithoutShrinkToFit();
-    static Parameters LEGACY_NODELETE nativeWebpageParametersWithShrinkToFit();
+    NODELETE WEBCORE_EXPORT Parameters nativeWebpageParameters();
+    NODELETE static Parameters nativeWebpageParametersWithoutShrinkToFit();
+    NODELETE static Parameters nativeWebpageParametersWithShrinkToFit();
 #if ENABLE(PDF_PLUGIN)
     WEBCORE_EXPORT static Parameters pluginDocumentParameters();
 #endif
-    WEBCORE_EXPORT static Parameters LEGACY_NODELETE webpageParameters();
-    WEBCORE_EXPORT static Parameters LEGACY_NODELETE textDocumentParameters();
-    WEBCORE_EXPORT static Parameters LEGACY_NODELETE imageDocumentParameters();
-    WEBCORE_EXPORT static Parameters LEGACY_NODELETE xhtmlMobileParameters();
-    WEBCORE_EXPORT static Parameters LEGACY_NODELETE testingParameters();
+    NODELETE WEBCORE_EXPORT static Parameters webpageParameters();
+    NODELETE WEBCORE_EXPORT static Parameters textDocumentParameters();
+    NODELETE WEBCORE_EXPORT static Parameters imageDocumentParameters();
+    NODELETE WEBCORE_EXPORT static Parameters xhtmlMobileParameters();
+    NODELETE WEBCORE_EXPORT static Parameters testingParameters();
 
     String description() const;
 #if !LOG_DISABLED
@@ -166,17 +166,17 @@ public:
 #endif
 
 private:
-    void LEGACY_NODELETE updateConfiguration();
-    double LEGACY_NODELETE viewportArgumentsLength(double length) const;
+    NODELETE void updateConfiguration();
+    NODELETE double viewportArgumentsLength(double length) const;
     double initialScaleFromSize(double width, double height, bool shouldIgnoreScalingConstraints) const;
 
-    bool LEGACY_NODELETE shouldOverrideDeviceWidthAndShrinkToFit() const;
-    bool LEGACY_NODELETE shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
+    NODELETE bool shouldOverrideDeviceWidthAndShrinkToFit() const;
+    NODELETE bool shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
     bool shouldIgnoreScalingConstraints() const;
     bool shouldIgnoreVerticalScalingConstraints() const;
     bool shouldIgnoreHorizontalScalingConstraints() const;
-    void LEGACY_NODELETE updateDefaultConfiguration();
-    bool LEGACY_NODELETE canOverrideConfigurationParameters() const;
+    NODELETE void updateDefaultConfiguration();
+    NODELETE bool canOverrideConfigurationParameters() const;
 
     constexpr bool layoutSizeIsExplicitlyScaled() const
     {

@@ -1,0 +1,19 @@
+# the store tests its position against the length of ANOTHER view: whatever that one's length lets through is stored
+# RUN: verify-code
+# CHECK: the length that an access is held against is not that of its holder
+# -- code
+# code f0:Body {
+#   b0(v0: Uint32Array @Cell, v1: Uint32Array @Cell, v2: int[0, 100] @Int32, v3: anything @JSValue) entry=0:
+#     v4: int[0, 1073741824] @Int64 = GetTypedArrayLength v1 typedArrayType=7 traits=[mayTouchMemory]
+#     v5: opaque(ViewVector) @RawWord = GetTypedArrayVector v0 traits=[mayTouchMemory]
+#     v6 @Void = PutTypedArrayElement v0, v2, v2, v5, v4 typedArrayType=7 level=Proven [keyIsIntegral] traits=[mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stores" parameters=[{type=Uint32Array}, {type=Uint32Array}, {type=i32}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Uint32Array, v1: Uint32Array, v2: i32, v3: anything):
+    Return v3
+}
+entry module=m0

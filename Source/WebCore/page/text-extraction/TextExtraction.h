@@ -25,10 +25,14 @@
 
 #pragma once
 
+#include <WebCore/FloatSize.h>
+#include <WebCore/IntSize.h>
 #include <WebCore/TextExtractionTypes.h>
+#include <WebCore/ViewCoordinateSpaceRect.h>
 
 namespace WebCore {
 
+class ContainerNode;
 class Element;
 class FloatRect;
 class LocalFrame;
@@ -42,7 +46,7 @@ WEBCORE_EXPORT Result extractItem(Request&&, LocalFrame&);
 
 WEBCORE_EXPORT String shortenedURLString(const URL&);
 
-WEBCORE_EXPORT Vector<std::pair<String, FloatRect>> extractAllTextAndRects(Page&);
+WEBCORE_EXPORT Vector<std::pair<String, MainFrameViewFloatRect>> extractAllTextAndRects(Page&);
 
 WEBCORE_EXPORT void handleInteraction(Interaction&&, LocalFrame&, CompletionHandler<void(bool, String&&, Vector<String>&&, FloatRect)>&&);
 
@@ -61,9 +65,13 @@ struct RenderedText {
     String textWithReplacedContent;
     String textWithoutReplacedContent;
     bool hasLargeReplacedDescendant { false };
+    FloatSize elementSizeInDocument;
 };
 
 RenderedText extractRenderedText(Element&);
+
+Vector<IntSize> extractLargestReplacedContentSizes(ContainerNode&);
+bool isLargeReplacedContent(IntSize, FloatSize elementSizeInDocument);
 
 } // namespace TextExtraction
 } // namespace WebCore

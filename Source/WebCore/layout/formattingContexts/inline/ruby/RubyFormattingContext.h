@@ -31,8 +31,7 @@
 #include <WebCore/InlineLineRun.h>
 #include <wtf/Range.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineFormattingContext;
 class Line;
@@ -61,8 +60,8 @@ public:
     static void adjustAnnotationContentWithAlignmentOffset(std::span<InlineDisplay::Box>, InlineLayoutUnit alignmentOffset, InlineFormattingContext&);
 
     // Miscellaneous helpers
-    static bool LEGACY_NODELETE hasInterlinearAnnotation(const Box& rubyBaseLayoutBox);
-    static bool LEGACY_NODELETE hasInterCharacterAnnotation(const Box& rubyBaseLayoutBox);
+    NODELETE static bool hasInterlinearAnnotation(const Box& rubyBaseLayoutBox);
+    NODELETE static bool hasInterCharacterAnnotation(const Box& rubyBaseLayoutBox);
 
 private:
     using MaximumLayoutBoundsStretchMap = HashMap<const InlineLevelBox*, InlineLevelBox::AscentAndDescent>;
@@ -73,5 +72,4 @@ private:
     static InlineLayoutUnit overhangForAnnotationAfter(const Box& rubyBaseLayoutBox, WTF::Range<size_t> rubyBaseRange, std::span<InlineDisplay::Box>, InlineLayoutUnit lineLogicalHeight, InlineFormattingContext&);
 };
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

@@ -27,7 +27,7 @@ import struct Swift.String
 
 enum SwiftTestingABI {
     typealias EntryPoint =
-        @convention(thin) @Sendable (
+        @convention(thin) @Sendable @concurrent (
             _ configurationJSON: UnsafeRawBufferPointer?,
             _ recordHandler: @escaping @Sendable (_ recordJSON: UnsafeRawBufferPointer) -> Void
         ) async throws -> Bool
@@ -44,6 +44,7 @@ extension SwiftTestingABI {
         var skip: [String]? = nil
         var repetitions: Int? = nil
         var parallel: Bool? = nil
+        var eventStreamVersion: String? = nil
 
         init() {
         }

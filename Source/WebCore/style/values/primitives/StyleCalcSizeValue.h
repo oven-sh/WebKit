@@ -29,8 +29,7 @@
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // calc-size() as it appears in a computed value. The function survives to used value time because
 // that is when `size` resolves, and because the basis decides how the value behaves for everything
@@ -55,7 +54,7 @@ public:
         Ref<CalcSizeValue>
     >;
 
-    WEBCORE_EXPORT static Ref<CalcSizeValue> LEGACY_NODELETE create(Basis&&, Calculation::Tree&&, bool basisHasPercentage, bool hasPercentage);
+    NODELETE WEBCORE_EXPORT static Ref<CalcSizeValue> create(Basis&&, Calculation::Tree&&, bool basisHasPercentage, bool hasPercentage);
     WEBCORE_EXPORT ~CalcSizeValue();
 
     const Basis& basis() const LIFETIME_BOUND { return m_basis; }
@@ -65,12 +64,12 @@ public:
     bool basisHasPercentage() const { return m_basisHasPercentage; }
 
     // True if a percentage appears anywhere, including in a nested function's calculation.
-    bool LEGACY_NODELETE hasPercentage() const { return m_hasPercentage; }
+    NODELETE bool hasPercentage() const { return m_hasPercentage; }
     const Calculation::Tree& calculation() const LIFETIME_BOUND { return m_calculation; }
 
     // The keyword the value behaves as, or CSSValueID::Invalid for a <calc-sum> or `any` basis, which
     // behave as an ordinary length.
-    WEBCORE_EXPORT CSSValueID LEGACY_NODELETE basisKeyword() const;
+    NODELETE WEBCORE_EXPORT CSSValueID basisKeyword() const;
 
     WEBCORE_EXPORT Ref<CalcSizeValue> copy() const;
 
@@ -87,5 +86,4 @@ private:
 
 WTF::TextStream& operator<<(WTF::TextStream&, const CalcSizeValue&);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

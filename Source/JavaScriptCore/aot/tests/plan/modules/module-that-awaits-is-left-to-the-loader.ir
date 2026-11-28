@@ -1,0 +1,70 @@
+# If compiled code evaluated a module that awaits, or one that imports such a module, nobody would wait for the promise: what stands behind the `await` would run after its importers
+# main.js: import "./first.js"; import "./waits.js"; print("main")    waits.js: import "./below.js"; await 0; print("waits")    below.js: import "./deeper.js"; print("below")
+# The loader evaluates `waits` and all that imports it. Of what they import, a module that waits for nothing and imports something has a start, which the loader calls.
+# It calls the body of `first`, which imports nothing: there is no call to save.
+# RUN: plan module-starts
+# CHECK: module-start m3 body=f3: BeginOrReturn m3, CallBody f4, CallBody f3, Finish m3
+# CHECK-NOT: module-start
+# CHECK-NOT: module m0
+# CHECK: module m1 starts-itself
+# CHECK-NOT: module m2
+# CHECK: module m3 starts-itself
+# CHECK: module m4 starts-itself evaluated-by-code-alone
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: first
+# NONE-NEXT: deeper
+# NONE-NEXT: below
+# NONE-NEXT: waits
+# NONE-NEXT: main
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: first
+# ALL-NEXT: deeper
+# ALL-NEXT: below
+# ALL-NEXT: waits
+# ALL-NEXT: main
+# ALL-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/first.js" displayPath="first.js" body=f1
+module m2 path="/waits.js" displayPath="waits.js" flags=[HasTopLevelAwait] body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/below.js" displayPath="below.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/deeper.js" displayPath="deeper.js" body=f4
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="main"
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="first"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="waits" module=m2 kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = Await v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = String string="waits"
+    v5 = Call v3, -, v4
+    Return
+}
+function f3 name="below" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="below"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="deeper" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="deeper"
+    v3 = Call v1, -, v2
+    Return
+}

@@ -112,7 +112,7 @@ AVExperienceControllerFullscreenEnabled:
   condition: HAVE(AVEXPERIENCECONTROLLER)
   defaultValue:
     default: false
-    WebKit: true
+    WebKit: WebKit::defaultAVExperienceControllerFullscreenEnabled()
 
 AVFoundationEnabled:
   type: bool
@@ -172,6 +172,16 @@ AcceleratedFiltersEnabled:
   humanReadableDescription: "Accelerated CSS and SVG filter rendering"
   condition: USE(CORE_IMAGE)
   defaultValue: false
+
+AcceleratedImageBufferLimit:
+  type: uint32_t
+  status: embedder
+  humanReadableName: "Accelerated Image Buffer Limit"
+  humanReadableDescription: "Number of accelerated image buffers the GPU process holds before it allocates unaccelerated ones instead"
+  condition: ENABLE(GPU_PROCESS)
+  excludeFrom: [ WebKitLegacy ]
+  defaultValue: 10000
+  sharedPreferenceForWebProcess: true
 
 AccentColorEnabled:
   type: bool
@@ -502,6 +512,10 @@ ApplePayEnabled:
   defaultValue:
     "ENABLE(APPLE_PAY_REMOTE_UI)": true
     default: false
+    WebKit:
+      "PLATFORM(APPLETV)": WebKit::defaultApplePayEnabled()
+      "ENABLE(APPLE_PAY_REMOTE_UI)": true
+      default: false
   sharedPreferenceForWebProcess: true
   richJavaScript: true
 
@@ -603,6 +617,15 @@ AttachmentElementEnabled:
     WebKitLegacy: WebKit::defaultAttachmentElementEnabled()
   sharedPreferenceForWebProcess: true
 
+AttachmentInlineProgressEnabled:
+  type: bool
+  status: unstable
+  category: dom
+  humanReadableName: "Attachment inline download progress"
+  humanReadableDescription: "Use the inline download progress design for wide-layout attachments"
+  condition: ENABLE(ATTACHMENT_ELEMENT)
+  defaultValue: false
+
 AttachmentWideLayoutEnabled:
   type: bool
   status: embedder
@@ -610,6 +633,19 @@ AttachmentWideLayoutEnabled:
   humanReadableDescription: "Use horizontal wide-layout attachment style, requires Attachment Element"
   condition: ENABLE(ATTACHMENT_ELEMENT)
   defaultValue: false
+
+AudioContextSetSinkIdEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "AudioContext setSinkId"
+  humanReadableDescription: "Enable AudioContext.setSinkId() for audio output device selection"
+  condition: ENABLE(WEB_AUDIO)
+  defaultValue:
+    default: false
+    WebKit:
+      "USE(GSTREAMER)": true
+      default: false
 
 AudioControlsScaleWithPageZoom:
   type: bool
@@ -619,6 +655,15 @@ AudioControlsScaleWithPageZoom:
     "PLATFORM(VISION)": true
     "PLATFORM(IOS_FAMILY)": false
     default: true
+
+AudioDecodingInContentProcessEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Audio decoding in content process"
+  humanReadableDescription: "Decode audio in software in the content process and send the decoded samples to the GPU process"
+  defaultValue: false
+  sharedPreferenceForWebProcess: true
 
 AudioDescriptionsEnabled:
   type: bool
@@ -655,7 +700,7 @@ AutomaticallyAdjustsViewScaleUsingMinimumEffectiveDeviceWidth:
   defaultValue:
     default: false
     WebKit:
-      "ENABLE(FLEXIBLE_VIEW_SCALE_FACTOR)": true
+      "PLATFORM(APPLETV)": WebKit::defaultAutomaticallyAdjustsViewScaleUsingMinimumEffectiveDeviceWidth()
       default: false
 
 AutomaticallyForceEnableScrollingIfNeededToRevealUI:
@@ -804,6 +849,14 @@ CSS3DTransformBackfaceVisibilityInteroperabilityEnabled:
   humanReadableDescription: "Enable 3D transform behavior for backface-visibility that is specification-compliant but backwards incompatible"
   defaultValue: false
 
+CSSAlignmentBaselineOnInlineBoxesEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS alignment-baseline on inline boxes"
+  humanReadableDescription: "Enable CSS alignment-baseline on inline boxes"
+  defaultValue: false
+
 CSSAppearanceBaseEnabled:
   type: bool
   status: testable
@@ -835,6 +888,14 @@ CSSBorderRadiusSideShorthandsEnabled:
   humanReadableName: "CSS border-*-radius side shorthands"
   humanReadableDescription: "Enable support for the border-radius side shorthand physical & logical properties"
   defaultValue: true
+
+CSSBorderShapeEnabled:
+  type: bool
+  category: css
+  status: testable
+  humanReadableName: "CSS border-shape property"
+  humanReadableDescription: "Enable support for CSS border-shape property"
+  defaultValue: false
 
 CSSCalcMixEnabled:
   type: bool
@@ -924,6 +985,14 @@ CSSFieldSizingEnabled:
   humanReadableDescription: "Enable field-sizing CSS property"
   defaultValue: true
 
+CSSFitContentFunctionEnabled:
+  type: bool
+  status: preview
+  category: css
+  humanReadableName: "CSS fit-content() sizing function"
+  humanReadableDescription: "Enable support for CSS fit-content() in the sizing properties"
+  defaultValue: false
+
 CSSFlexWrapBalanceEnabled:
   type: bool
   status: testable
@@ -967,6 +1036,14 @@ CSSFontVariantEmojiEnabled:
     WebKit:
       "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
+
+CSSFreeformGradientsEnabled:
+  type: bool
+  status: unstable
+  category: css
+  humanReadableName: "CSS freeform gradients"
+  humanReadableDescription: "Enable support for CSS freeform gradients."
+  defaultValue: false
 
 CSSFunctionAtRuleEnabled:
   type: bool
@@ -1055,6 +1132,14 @@ CSSMathDepthEnabled:
   humanReadableName: "CSS math-depth"
   humanReadableDescription: "Enable support for math-depth from MathML Core."
   defaultValue: true
+
+CSSMeshGradientsEnabled:
+  type: bool
+  status: unstable
+  category: css
+  humanReadableName: "CSS mesh gradients"
+  humanReadableDescription: "Enable support for CSS mesh gradients."
+  defaultValue: false
 
 CSSModuleScriptsEnabled:
   type: bool
@@ -1199,6 +1284,14 @@ CSSSelectorJITCompilerEnabled:
   condition: ENABLE(CSS_SELECTOR_JIT)
   defaultValue: true
 
+CSSSingleAxisScrollContainersEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS single-axis scroll containers"
+  humanReadableDescription: "Allow overflow: clip in the other axis of a scroll container"
+  defaultValue: false
+
 CSSSizeShorthandEnabled:
   type: bool
   status: stable
@@ -1206,6 +1299,14 @@ CSSSizeShorthandEnabled:
   humanReadableName: "CSS size shorthands"
   humanReadableDescription: "Enable the size, min-size and max-size shorthands for the width, height, min-width, min-height, max-width and max-height properties"
   defaultValue: true
+
+CSSStretchFunctionEnabled:
+  type: bool
+  status: preview
+  category: css
+  humanReadableName: "CSS stretch() sizing function"
+  humanReadableDescription: "Enable support for CSS stretch() in the sizing properties"
+  defaultValue: false
 
 CSSSymbolsFunctionEnabled:
   type: bool
@@ -1319,18 +1420,10 @@ CSSTypedOMColorEnabled:
 
 CSSURLIntegrityModifierEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS URL Modifiers: integrity()"
   humanReadableDescription: "Enable support for CSS Values and Units Module Level 5 URL integrity() modifier"
-  defaultValue: false
-
-CSSURLModifiersEnabled:
-  type: bool
-  status: stable
-  category: css
-  humanReadableName: "CSS URL Modifiers"
-  humanReadableDescription: "Enable support for CSS Values and Units Module Level 5 URL modifiers"
   defaultValue: true
 
 CSSUnprefixedBackdropFilterEnabled:
@@ -1414,11 +1507,14 @@ CanvasColorSpaceEnabled:
 
 CanvasColorTypeEnabled:
   type: bool
-  status: testable
+  status: Supporthdr2dcanvas_feature_status
   category: dom
   humanReadableName: "Canvas Color Types and ImageData Pixel Formats"
   humanReadableDescription: "Allow different color types and pixel formats in 2D canvas"
-  defaultValue: false
+  defaultValue:
+    "ENABLE(HDR_2D_CANVAS_BY_DEFAULT)": true
+    default: false
+    WebKitLegacy: false
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
 
@@ -1481,6 +1577,16 @@ CaptureAudioInGPUProcessEnabled:
   condition: ENABLE(MEDIA_STREAM)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: WebKit::defaultCaptureAudioInGPUProcessEnabled()
+
+CaptureDevicePreviewInPromptEnabled:
+  type: bool
+  status: internal
+  category: media
+  humanReadableName: "Capture Device Preview In Permission Prompt"
+  humanReadableDescription: "Show a live camera preview, microphone level meter, and device menus in the getUserMedia permission prompt"
+  condition: ENABLE(MEDIA_STREAM)
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
 
 CaptureVideoInGPUProcessEnabled:
   type: bool
@@ -1570,7 +1676,9 @@ CompressionDictionaryEnabled:
   category: networking
   humanReadableName: "Compression Dictionary Transport"
   humanReadableDescription: "Enable compression dictionary transport"
-  defaultValue: false
+  defaultValue:
+    default: false
+    WebKit: defaultCompressionDictionaryEnabled()
   sharedPreferenceForWebProcess: true
 
 CompressionStreamEnabled:
@@ -1716,6 +1824,16 @@ CoreMathMLEnabled:
     WebKit:
       "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
+
+# FIXME: This has to require Local Network Access or Opaque Response Blocking before it can become stable.
+CrossOriginEmbedderPolicyCredentiallessEnabled:
+  type: bool
+  status: testable
+  category: security
+  humanReadableName: "Cross-Origin-Embedder-Policy: credentialless"
+  humanReadableDescription: "Support for credentialless Cross-Origin-Embedder-Policy and Document-Isolation-Policy values"
+  defaultValue: false
+  sharedPreferenceForWebProcess: true
 
 CrossOriginEmbedderPolicyEnabled:
   type: bool
@@ -1906,14 +2024,6 @@ DefaultTextEncodingName:
     WebKitLegacy: '"ISO-8859-1"_str'
     WebCore: '{ }'
 
-DeprecationReportingEnabled:
-  type: bool
-  status: testable
-  category: dom
-  humanReadableName: "Deprecation Reporting"
-  humanReadableDescription: "Enable Deprecation Reporting"
-  defaultValue: false
-
 DetachableMediaSourceEnabled:
   type: bool
   status: developer
@@ -2040,6 +2150,16 @@ DocumentIsolationPolicyEnabled:
   defaultValue: false
   sharedPreferenceForWebProcess: true
 
+DocumentPictureInPictureAPIEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Document Picture-in-Picture API"
+  humanReadableDescription: "Enable the Document Picture-in-Picture API"
+  condition: ENABLE(DOCUMENT_PIP)
+  defaultValue: false
+  sharedPreferenceForWebProcess: true
+
 # FIXME: This is on by default in WebKit2. Perhaps we should consider turning it on for WebKitLegacy as well.
 DownloadAttributeEnabled:
   type: bool
@@ -2142,7 +2262,10 @@ EnhancedSecurityEnabledByDefault:
   humanReadableDescription: "Enables Enhanced Security by default for WebViews that do not explicitly set it"
   webKitLegacyExposed: false
   excludeFrom: [ WebCore ]
-  defaultValue: false
+  defaultValue:
+    "PLATFORM(WATCHOS)": true
+    "PLATFORM(APPLETV)": true
+    default: false
 
 EnhancedSecurityEnabledByDefaultForSystemApps:
   type: bool
@@ -2396,6 +2519,14 @@ FasterClicksEnabled:
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: true
 
+FetchLaterAPIEnabled:
+  type: bool
+  status: stable
+  category: networking
+  humanReadableName: "fetchLater() API"
+  humanReadableDescription: "Enable the fetchLater() deferred fetch API"
+  defaultValue: true
+
 FetchUploadStreamsEnabled:
   type: bool
   status: stable
@@ -2576,6 +2707,14 @@ FullscreenRequirementForScreenOrientationLockingEnabled:
   humanReadableDescription: "Require being in Fullscreen to lock screen orientation"
   defaultValue: true
 
+FullscreenSafeAreaQuirkEnabled:
+  type: bool
+  status: internal
+  humanReadableName: "Fullscreen safe area quirk enabled"
+  humanReadableDescription: "Fullscreen safe area quirk enabled"
+  condition: PLATFORM(IOS)
+  defaultValue: false
+
 FullscreenSceneAspectRatioLockingEnabled:
   type: bool
   status: internal
@@ -2735,7 +2874,7 @@ HTMLEnhancedSelectEnabled:
 
 HTMLEnhancedSelectMultipleAndListBoxEnabled:
   type: bool
-  status: testable
+  status: preview
   category: dom
   humanReadableName: "Enhanced HTML select element for multiple and list box"
   humanReadableDescription: "Enable enhanced HTML select element for the multiple attribute and for list box rendering"
@@ -2743,20 +2882,14 @@ HTMLEnhancedSelectMultipleAndListBoxEnabled:
 
 HTMLEnhancedSelectMultipleDropdownBoxEnabled:
   type: bool
-  status: testable
+  status: stable
   category: dom
   condition: PLATFORM(MAC)
   humanReadableName: "Enhanced HTML select element for multiple dropdown box"
   humanReadableDescription: "Render a select element with the multiple attribute and a size of 1 as a dropdown box"
-  defaultValue: false
-
-HTMLEnhancedSelectMultipleSelectedContentEnabled:
-  type: bool
-  status: unstable
-  category: dom
-  humanReadableName: "Enhanced HTML select element selectedcontent for multiple"
-  humanReadableDescription: "Clone every option of a select element with the multiple attribute into its selectedcontent elements"
-  defaultValue: false
+  defaultValue:
+    default: true
+    WebKitLegacy: false
 
 HTMLEnhancedSelectParsingQuirkEnabled:
   type: bool
@@ -2772,7 +2905,7 @@ HTMLEnhancedSelectParsingQuirkEnabled:
 
 HTMLInCanvasEnabled:
   type: bool
-  status: unstable
+  status: testable
   category: dom
   webcoreOnChange: setNeedsRelayoutAllFrames
   humanReadableName: "HTML-in-Canvas"
@@ -2825,7 +2958,7 @@ HiddenPageCSSAnimationSuspensionEnabled:
   status: embedder
   webcoreOnChange: hiddenPageCSSAnimationSuspensionEnabledChanged
   defaultValue:
-    "PLATFORM(COCOA) || PLATFORM(GTK)": true
+    "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
     default: false
     WebKitLegacy: true
     WebCore: false
@@ -2846,7 +2979,7 @@ HiddenPageDOMTimerThrottlingEnabled:
   defaultValue:
     default: false
     WebKit:
-      "PLATFORM(COCOA) || PLATFORM(GTK)": true
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
 
 HiddenUntilFoundEnabled:
@@ -2963,6 +3096,15 @@ IPCTestingAPIEnabled:
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: false
 
+IgnoreAudioDecodingErrors:
+  type: bool
+  status: stable
+  category: media
+  humanReadableName: "Ignore audio decoding errors"
+  humanReadableDescription: "Keep playing when audio fails to decode"
+  defaultValue: true
+  sharedPreferenceForWebProcess: true
+
 IgnoreIframeEmbeddingProtectionsEnabled:
   type: bool
   status: internal
@@ -3010,6 +3152,17 @@ ImageControlsEnabled:
   humanReadableDescription: "Enable image controls"
   condition: ENABLE(SERVICE_CONTROLS)
   defaultValue: false
+
+ImageElementImmersiveEnabled:
+  type: bool
+  status: unstable
+  category: javascript
+  condition: ENABLE(MODEL_ELEMENT_IMMERSIVE)
+  humanReadableName: "Immersive <img> API"
+  humanReadableDescription: "Enable <img> element immersive API"
+  defaultValue: false
+  disableInLockdownMode: true
+  sharedPreferenceForWebProcess: true
 
 ImportDeferEnabled:
   type: bool
@@ -3570,7 +3723,8 @@ LayoutViewportHeightExpansionFactor:
   defaultValue:
     default: 0
     WebKit:
-      "PLATFORM(WATCHOS) || ENABLE(FLEXIBLE_VIEW_SCALE_FACTOR)" : 1
+      "PLATFORM(WATCHOS)" : 1
+      "PLATFORM(APPLETV)": WebKit::defaultLayoutViewportHeightExpansionFactor()
       default: 0
 
 LazyIframeLoadingEnabled:
@@ -3589,6 +3743,16 @@ LazyImageLoadingEnabled:
   category: html
   humanReadableName: "Lazy image loading"
   humanReadableDescription: "Enable lazy image loading support"
+  defaultValue:
+    default: false
+    WebKit: true
+
+LazyMediaLoadingEnabled:
+  type: bool
+  status: stable
+  category: html
+  humanReadableName: "Lazy media loading"
+  humanReadableDescription: "Enable lazy loading for audio and video elements via the loading attribute"
   defaultValue:
     default: false
     WebKit: true
@@ -3705,14 +3869,6 @@ LinkSanitizerEnabled:
   humanReadableName: "Link Sanitizer"
   humanReadableDescription: "Enable link sanitizer"
   defaultValue: false
-
-ListMarkerPositionedPostLayoutEnabled:
-  type: bool
-  status: stable
-  category: css
-  humanReadableName: "Position outside list markers after layout"
-  humanReadableDescription: "Keep an outside list marker as the list item's first child and position it after layout, instead of reparenting it into the descendant that holds the first line box"
-  defaultValue: true
 
 LoadDeferringEnabled:
   type: bool
@@ -4084,7 +4240,7 @@ MediaRecorderEnabled:
   defaultValue:
     default: false
     WebKit:
-      "PLATFORM(COCOA)": true
+      "USE(LIBWEBRTC)": WebKit::defaultPeerConnectionEnabledAvailable()
       "USE(GSTREAMER)": true
       default: false
   sharedPreferenceForWebProcess: true
@@ -4114,6 +4270,15 @@ MediaResourceLoadTimeoutForTesting:
   humanReadableName: "Media Resource Load Timeout For Testing"
   humanReadableDescription: "Test override for the timeout applied to each media resource load serviced by WebKit, in milliseconds (0 means use production default)"
   defaultValue: 0
+
+MediaSessionCallToActionEnabled:
+  type: bool
+  status: internal
+  category: media
+  humanReadableName: "MediaSession call-to-action"
+  humanReadableDescription: "Enable the MediaSession call-to-action action, shown as a button in Picture-in-Picture"
+  condition: ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+  defaultValue: false
 
 MediaSessionCaptureToggleAPIEnabled:
   type: bool
@@ -4244,6 +4409,12 @@ MediaVideoCodecIDsAllowedInLockdownMode:
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: '"avc1,zavc,qavc,cavc"_str'
 
+MediaVideoCodecIDsDecodedInContentProcess:
+  type: String
+  status: embedder
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: '"vp08,vp09,av01"_str'
+
 MetaViewportInteractiveWidgetEnabled:
   type: bool
   status: stable
@@ -4355,6 +4526,16 @@ ModelElementImmersiveEnabled:
     default: false
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
+
+ModelElementSTLEnabled:
+  type: bool
+  status: preview
+  category: html
+  humanReadableName: "STL in HTML <model> element"
+  humanReadableDescription: "Enable loading STL models in the HTML <model> element"
+  condition: ENABLE(MODEL_ELEMENT)
+  defaultValue: false
+  disableInLockdownMode: true
 
 ModelNoPortalAttributeEnabled:
   type: bool
@@ -4774,6 +4955,18 @@ PasswordEchoEnabled:
       default: false
     WebCore: false
 
+PasswordFieldScreenCaptureProtectionEnabled:
+  type: bool
+  status: internal
+  category: html
+  humanReadableName: "Password field screen capture protection"
+  humanReadableDescription: "Hide password fields from screenshots, screen sharing and screen recording"
+  defaultValue:
+    default: false
+    WebKit:
+      "PLATFORM(IOS_FAMILY)": true
+      default: false
+
 PeerConnectionEnabled:
   type: bool
   status: embedder
@@ -4796,6 +4989,14 @@ PeerConnectionVideoScalingAdaptationDisabled:
   humanReadableName: "WebRTC Peer Connection Video Scaling Adaptation"
   humanReadableDescription: "Disable RTCPeerConnection Video Scaling Adaptation"
   condition: ENABLE(WEB_RTC)
+  defaultValue: false
+
+PerEdgeViewportFitEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "Per-edge viewport-fit"
+  humanReadableDescription: "Enable the viewport-fit-top, viewport-fit-left, viewport-fit-bottom and viewport-fit-right attributes on the viewport meta element"
   defaultValue: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
@@ -4963,6 +5164,14 @@ PreferSpatialAudioExperience:
     WebKit: WebKit::defaultPreferSpatialAudioExperience()
   defaultsOverridable: true
   sharedPreferenceForWebProcess: true
+
+PrioritizedTaskSchedulingEnabled:
+  type: bool
+  status: unstable
+  category: dom
+  humanReadableName: "Prioritized Task Scheduling API"
+  humanReadableDescription: "Enable the Prioritized Task Scheduling API (scheduler.postTask() and scheduler.yield())"
+  defaultValue: false
 
 PrivateClickMeasurementDebugModeEnabled:
   type: bool
@@ -5211,7 +5420,7 @@ RequestVideoFrameCallbackEnabled:
 RequiresPageVisibilityForVideoToBeNowPlaying:
   type: bool
   status: embedder
-  condition: ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+  condition: PLATFORM(APPLETV)
   defaultValue:
     default: false
     WebKit: defaultRequiresPageVisibilityForVideoToBeNowPlaying()
@@ -5379,6 +5588,15 @@ ScreenCaptureEnabled:
   defaultValue:
     default: false
     WebKit: WebKit::defaultShouldEnableScreenCapture()
+
+ScreenCaptureForTabEnabled:
+  type: bool
+  status: unstable
+  category: media
+  condition: ENABLE(MEDIA_STREAM)
+  humanReadableName: "Screen Capture for Tab"
+  humanReadableDescription: "Enable sharing a tab with getDisplayMedia"
+  defaultValue: false
 
 ScreenOrientationAPIEnabled:
   type: bool
@@ -5832,9 +6050,8 @@ ShouldRestrictBaseURLSchemes:
   type: bool
   status: embedder
   defaultValue:
-    default: false
+    default: true
     WebKitLegacy: WebKit::defaultShouldRestrictBaseURLSchemes()
-    WebCore: true
 
 ShouldSuppressTextInputFromEditingDuringProvisionalNavigation:
   type: bool
@@ -5919,20 +6136,20 @@ SiteIsolationEnabled:
   defaultValue: false
   sharedPreferenceForWebProcess: true
 
-SiteIsolationGlobalDebuggerPauseEnabled:
-  type: bool
-  status: unstable
-  category: security
-  humanReadableName: "Site Isolation: hold all frames while debugging"
-  humanReadableDescription: "While Web Inspector is paused in a frame, hold the frames of the same page in other processes"
-  defaultValue: false
-
 SiteIsolationHighValueFraudTargetDomainsEnabled:
   type: bool
-  status: unstable
+  status: internal
   category: security
   humanReadableName: "High-value fraud target domains for Site Isolation"
   humanReadableDescription: "Exclude sites on the high-value fraud target domains list from the shared web process"
+  defaultValue: true
+
+SiteIsolationInPlaceBackForwardCacheEnabled:
+  type: bool
+  status: unstable
+  category: security
+  humanReadableName: "Site Isolation: in-place back/forward cache"
+  humanReadableDescription: "Keep the outgoing document in its process's existing page when the main frame changes process within its browsing context group"
   defaultValue: false
 
 SiteIsolationSharedProcessEnabled:
@@ -5944,6 +6161,16 @@ SiteIsolationSharedProcessEnabled:
   humanReadableDescription: "Put cross-site frames in a shared Web process"
   defaultValue: true
   sharedPreferenceForWebProcess: true
+
+SiteIsolationSharedProcessEnhancedSecurityEnabled:
+  type: bool
+  status: internal
+  defaultsOverridable: true
+  category: security
+  humanReadableName: "Site Isolation: Enhanced Security for shared process"
+  humanReadableDescription: "Use Enhanced Security for the Site Isolation shared Web process"
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
 
 SlowFrameIndicatorVisible:
   type: bool
@@ -6281,7 +6508,7 @@ TextAutosizingEnabledAtLargeInitialScale:
   humanReadableDescription: "Enable Text Autosizing at Large Initial Scale"
   excludeFrom: [ WebKitLegacy, WebKit ]
   defaultValue:
-    "ENABLE(TEXT_AUTOSIZING_BASED_ON_INITIAL_SCALE)": false
+    "PLATFORM(APPLETV)": defaultTextAutosizingEnabledAtLargeInitialScale()
     default: true
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
@@ -6533,6 +6760,17 @@ UnifyDamagedRegions:
       "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
 
+UnloadEventEnabled:
+  type: bool
+  status: embedder
+  category: dom
+  humanReadableName: "Unload event"
+  humanReadableDescription: "Dispatch the legacy unload event when a document is unloaded"
+  defaultValue:
+    default: WebKit::defaultUnloadEventEnabled()
+    WebKitLegacy: true
+    WebCore: true
+
 UpdateSceneGeometryEnabled:
   type: bool
   status: internal
@@ -6560,10 +6798,7 @@ UseAVCaptureDeviceRotationCoordinatorAPI:
   humanReadableDescription: "Use AVCaptureDeviceRotationCoordinator API"
   condition: HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
   excludeFrom: [ WebKitLegacy, WebCore ]
-  defaultValue:
-    "PLATFORM(APPLETV)": true
-    default: false
-  sharedPreferenceForWebProcess: true
+  defaultValue: true
 
 UseAlternatePDFHUD:
   type: bool
@@ -6574,37 +6809,6 @@ UseAlternatePDFHUD:
   condition: ENABLE(PDF_HUD)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: true
-
-UseAppKitGestures:
-  type: bool
-  status: internal
-  defaultsOverridable: true
-  humanReadableName: "AppKit Gestures"
-  humanReadableDescription: "Use AppKit Gestures"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
-
-UseAppKitGesturesForGestureEvents:
-  type: bool
-  status: internal
-  humanReadableName: "AppKit gestures for gesture events"
-  humanReadableDescription: "Use AppKit gestures to drive gesture event synthesis"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
-
-UseAppKitGesturesForPointerEvents:
-  type: bool
-  status: internal
-  humanReadableName: "AppKit gestures for pointer events"
-  humanReadableDescription: "Use AppKit gestures to drive DOM pointer events directly, rather than deriving them from synthesized mouse events"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
 
 UseAsyncUIKitInteractions:
   type: bool
@@ -6658,7 +6862,7 @@ UseGPUProcessForDOMRenderingEnabled:
   category: dom
   humanReadableName: "GPU Process: DOM Rendering"
   humanReadableDescription: "Enable DOM rendering in GPU Process"
-  condition: ENABLE(GPU_PROCESS)
+  condition: ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: defaultUseGPUProcessForDOMRenderingEnabled()
   sharedPreferenceForWebProcess: true
@@ -6691,10 +6895,9 @@ UseGPUProcessForWebGLEnabled:
   status: internal
   humanReadableName: "GPU Process: WebGL"
   humanReadableDescription: "Process all WebGL operations in GPU Process"
-  condition: ENABLE(GPU_PROCESS) && ENABLE(WEBGL)
+  condition: ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && !PLATFORM(COCOA)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue:
-    "ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_WEBGL_BY_DEFAULT)": true
     "USE(GRAPHICS_LAYER_WC)": true
     default: false
   sharedPreferenceForWebProcess: true
@@ -6882,6 +7085,15 @@ VideoRendererUseDecompressionSessionForProtected:
     "PLATFORM(VISION)" : true
     default: false
     WebKitLegacy: false
+  sharedPreferenceForWebProcess: true
+
+VideoSoftwareDecodingInContentProcessEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Video software decoding in content process"
+  humanReadableDescription: "Decode the video codecs listed in MediaVideoCodecIDsDecodedInContentProcess in software in the content process and send the decoded frames to the GPU process"
+  defaultValue: false
   sharedPreferenceForWebProcess: true
 
 ViewGestureDebuggingEnabled:
@@ -7142,12 +7354,14 @@ WebAuthenticationASEnabled:
 
 WebAuthenticationCrossDeviceFallbackURLEnabled:
   type: bool
-  status: testable
+  status: embedder
   category: dom
   humanReadableName: "Web Authentication cross-device fallback URL"
   humanReadableDescription: "Enable the Web Authentication crossDeviceFallbackUrl extension"
   condition: ENABLE(WEB_AUTHN)
-  defaultValue: false
+  defaultValue:
+    default: true
+    WebKitLegacy: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 WebAuthenticationEnabled:
@@ -7157,6 +7371,7 @@ WebAuthenticationEnabled:
   humanReadableDescription: "Enable Web Authentication support"
   condition: ENABLE(WEB_AUTHN)
   defaultValue:
+    "PLATFORM(GTK) || PLATFORM(WPE)": false
     default: true
     WebKitLegacy: false
   sharedPreferenceForWebProcess: true
@@ -7242,12 +7457,14 @@ WebCodecsVideoEnabled:
 
 WebCodecsVideoFrameRotationEnabled:
   type: bool
-  status: testable
+  status: stable
   category: media
   humanReadableName: "WebCodecs VideoFrame rotation"
   humanReadableDescription: "Enable the rotation attribute and init members of WebCodecs VideoFrame"
   condition: ENABLE(WEB_CODECS)
-  defaultValue: false
+  defaultValue:
+    "PLATFORM(COCOA)": true
+    default: false
 
 WebContentRestrictionsAskToEnabled:
   type: bool
@@ -7371,6 +7588,15 @@ WebInspectorEngineeringSettingsAllowed:
   humanReadableName: "WebInspector engineering settings allowed"
   defaultValue: false
 
+WebInspectorGlobalDebuggerPauseEnabled:
+  type: bool
+  status: internal
+  category: javascript
+  defaultsOverridable: true
+  humanReadableName: "Web Inspector: hold frames in other processes while debugging"
+  humanReadableDescription: "While Web Inspector is paused in a frame, hold the frames of the same page that run in other processes (requires Site Isolation)"
+  defaultValue: false
+
 WebLocksAPIEnabled:
   type: bool
   status: stable
@@ -7383,6 +7609,15 @@ WebLocksAPIEnabled:
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
   richJavaScript: true
+
+WebProcessGPUProcessTimeoutForTesting:
+  comment: Overrides the GPU process IPC timeout of the web process
+  type: double
+  status: internal
+  humanReadableName: "Web Process GPU Process Timeout For Testing"
+  humanReadableDescription: "Test override for the GPU process IPC timeout, in seconds (0 keeps the default)"
+  webKitLegacyExposed: false
+  defaultValue: 0
 
 WebRTCAV1CodecEnabled:
   type: bool
@@ -7587,16 +7822,6 @@ WebRTCVP9Profile2CodecEnabled:
     default: false
     WebKitLegacy: false
 
-WebRTCWebCoreVideoCodecsEnabled:
-  type: bool
-  status: stable
-  category: media
-  humanReadableName: "WebRTC WebCore Video Codecs"
-  humanReadableDescription: "Use WebCore's native video codecs instead of libwebrtc's for WebRTC codecs that support it"
-  condition: ENABLE(WEB_RTC)
-  defaultValue: true
-  sharedPreferenceForWebProcess: true
-
 WebSQLEnabled:
   type: bool
   status: embedder
@@ -7663,6 +7888,17 @@ WebTransportEnabled:
   richJavaScript: true
   disableInLockdownMode: true
 
+WebXRAnchorsModuleEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "WebXR Anchors Module"
+  humanReadableDescription: "Adds support for the Anchors Module for WebXR"
+  condition: ENABLE(WEBXR_ANCHORS)
+  defaultValue:
+    "PLATFORM(GTK) || PLATFORM(WPE)": true
+    default: false
+
 WebXRAugmentedRealityModuleEnabled:
   type: bool
   status: testable
@@ -7675,12 +7911,14 @@ WebXRAugmentedRealityModuleEnabled:
 
 WebXREnabled:
   type: bool
-  status: stable
+  status: Webxr_feature_status
   category: dom
   humanReadableName: "WebXR Device API"
   humanReadableDescription: "Adds support for accessing virtual reality (VR) and augmented reality (AR) devices, including sensors and head-mounted displays, on the Web"
   condition: ENABLE(WEBXR)
-  defaultValue: true
+  defaultValue:
+    "PLATFORM(MAC)": false
+    default: true
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
   richJavaScript: true
@@ -7723,6 +7961,18 @@ WebXRLayersAPIEnabled:
     "ENABLE(WEBXR_LAYERS) && USE(OPENXR)": true
     default: false
     WebKitLegacy: false
+
+WebXRPlaneDetectionModuleEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "WebXR Plane Detection Module"
+  humanReadableDescription: "Adds support for the Plane Detection Module for WebXR"
+  condition: ENABLE(WEBXR_PLANE_DETECTION)
+  defaultValue:
+    "USE(OPENXR)": true
+    default: false
+  disableInLockdownMode: true
 
 WebXRWebGPUBindingsEnabled:
   type: bool

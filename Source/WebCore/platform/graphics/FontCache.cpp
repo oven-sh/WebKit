@@ -77,11 +77,11 @@ inline void add(Hasher& hasher, const FontPlatformDataCacheKey& key)
 
 struct FontPlatformDataCacheKeyHashTraits : public SimpleClassHashTraits<FontPlatformDataCacheKey> {
     static constexpr bool emptyValueIsZero = false;
-    static void LEGACY_NODELETE constructDeletedValue(FontPlatformDataCacheKey& slot)
+    NODELETE static void constructDeletedValue(FontPlatformDataCacheKey& slot)
     {
         new (NotNull, &slot.descriptionKey) FontDescriptionKey(WTF::HashTableDeletedValue);
     }
-    static bool LEGACY_NODELETE isDeletedValue(const FontPlatformDataCacheKey& key)
+    NODELETE static bool isDeletedValue(const FontPlatformDataCacheKey& key)
     {
         return key.descriptionKey.isHashTableDeletedValue();
     }
@@ -99,7 +99,7 @@ struct FontDataCacheKeyTraits : WTF::GenericHashTraits<FontPlatformData> {
     {
         new (NotNull, &slot) FontPlatformData(WTF::HashTableDeletedValue);
     }
-    static bool LEGACY_NODELETE isDeletedValue(const FontPlatformData& value)
+    NODELETE static bool isDeletedValue(const FontPlatformData& value)
     {
         return value.isHashTableDeletedValue();
     }
@@ -220,7 +220,7 @@ FontPlatformData* FontCache::cachedFontPlatformData(const FontDescription& fontD
                 // Look up the key in the hash table again as the previous iterator may have
                 // been invalidated by the recursive call to cachedFontPlatformData().
                 it = m_fontDataCaches->platformData.find(key);
-                ASSERT(it != m_fontDataCaches->platformData.end());
+                RELEASE_ASSERT(it != m_fontDataCaches->platformData.end());
                 if (alternateData)
                     it->value = makeUnique<FontPlatformData>(*alternateData);
             }
@@ -397,7 +397,7 @@ void FontCache::invalidate()
     purgeInactiveFontData();
 }
 
-static Function<void()>& LEGACY_NODELETE fontCacheInvalidationCallback()
+NODELETE static Function<void()>& fontCacheInvalidationCallback()
 {
     static NeverDestroyed<Function<void()>> callback;
     return callback.get();

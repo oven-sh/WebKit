@@ -51,7 +51,6 @@ namespace Wasm {
 
 class CodeInImage;
 class EntryPlan;
-enum class InterpreterFallbackReason : uint8_t;
 struct ModuleInformation;
 struct UnlinkedWasmToWasmCall;
 
@@ -259,12 +258,14 @@ public:
         return m_wasmToWasmExitStubs[functionIndex].code();
     }
 
-    bool LEGACY_NODELETE isSafeToRun(MemoryMode);
+    NODELETE bool isSafeToRun(MemoryMode);
 
     MemoryMode mode() const { return m_mode; }
 
     void* const* imageCodePointers() const;
+    void didFault(CallFrame*, const void* pc);
     CodePtr<JSEntryPtrTag> jsEntrypointInImage(const RTT&) const;
+    CodePtr<WasmEntryPtrTag> javaScriptImportStubInImage(FunctionSpaceIndex importIndex) const;
 
     // TriState::Indeterminate means weakly referenced.
     TriState calleeIsReferenced(const AbstractLocker&, Wasm::Callee*) const WTF_REQUIRES_LOCK(m_lock);
@@ -283,7 +284,6 @@ private:
     CalleeGroup(MemoryMode, const CalleeGroup&, const ModuleInformation&);
     void takeEntrypoints(const ModuleInformation&);
     CodePtr<WasmEntryPtrTag> interpreterEntrypoint(unsigned functionCodeIndex) const;
-    void countInterpreterFallbackOnce();
     void setCompilationFinished() WTF_REQUIRES_LOCK(m_lock);
 
     OptimizedCallees* optimizedCalleesTuple(const AbstractLocker&, FunctionCodeIndex index) WTF_REQUIRES_LOCK(m_lock)
@@ -336,18 +336,18 @@ private:
     Vector<Ref<OptimizingJITCallee>, 4> m_pendingPublishCallees WTF_GUARDED_BY_LOCK(m_lock);
 #endif
     const Ref<IPIntCallees> m_ipintCallees;
-    UncheckedKeyHashMap<uint32_t, RefPtr<JSToWasmCallee>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_jsToWasmCallees WTF_GUARDED_BY_LOCK(m_jsToWasmCalleesLock);
+    HashMap<uint32_t, RefPtr<JSToWasmCallee>> m_jsToWasmCallees WTF_GUARDED_BY_LOCK(m_jsToWasmCalleesLock);
     mutable Lock m_jsToWasmCalleesLock;
 #if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
     // FIXME: We should probably find some way to prune dead entries periodically.
-    UncheckedKeyHashMap<uint32_t, ThreadSafeWeakPtr<OMGOSREntryCallee>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_osrEntryCallees WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<uint32_t, ThreadSafeWeakPtr<OMGOSREntryCallee>> m_osrEntryCallees WTF_GUARDED_BY_LOCK(m_lock);
 #endif
 
     // functionCodeIndex -> functionCodeIndex of internal functions that have direct JIT callsites to the lhs.
     // Note, this can grow over time since OMG inlining can add to the set of callers and we'll tranisition from
     // a sparse adjacency matrix to a bit vector based one if that's more space efficient.
     // FIXME: This should be a WTF class and we should use it in the JIT Plans.
-    using SparseCallers = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using SparseCallers = HashSet<uint32_t>;
     using DenseCallers = BitVector;
     FixedVector<Variant<SparseCallers, DenseCallers>> m_callers WTF_GUARDED_BY_LOCK(m_lock);
     FixedVector<CodePtr<WasmEntryPtrTag>> m_wasmIndirectCallEntrypoints;
@@ -356,8 +356,6 @@ private:
     bool m_crashesOnInterpreterUse { false };
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     RefPtr<CodeInImage> m_codeInImage;
-    std::optional<InterpreterFallbackReason> m_interpreterFallbackReason;
-    std::atomic<bool> m_didCountInterpreterFallback { false };
 #endif
     RefPtr<EntryPlan> m_plan WTF_GUARDED_BY_LOCK(m_lock);
     std::atomic<bool> m_compilationFinished { false };

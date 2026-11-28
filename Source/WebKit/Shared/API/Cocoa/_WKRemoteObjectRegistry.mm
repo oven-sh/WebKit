@@ -134,7 +134,7 @@ struct PendingReply {
     _remoteObjectRegistry = nullptr;
 }
 
-static uint64_t LEGACY_NODELETE generateReplyIdentifier()
+NODELETE static uint64_t generateReplyIdentifier()
 {
     static uint64_t identifier;
 
@@ -249,7 +249,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
             return;
         }
 
-        RetainPtr<NSString> wireBlockSignature = [NSMethodSignature signatureWithObjCTypes:replyInfo->blockSignature.utf8().legacyCStringPointer()]._typeString;
+        RetainPtr<NSString> wireBlockSignature = [NSMethodSignature signatureWithObjCTypes:makeUTF8CString(replyInfo->blockSignature).legacyCStringPointer()]._typeString;
         RetainPtr<NSString> expectedBlockSignature = replyBlockSignature(retainPtr([interface protocol]).get(), invocation.get().selector, i);
 
         if (!expectedBlockSignature) {
@@ -285,7 +285,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
                 remoteObjectRegistry->sendUnusedReply(m_replyID);
             }
 
-            void LEGACY_NODELETE didCallReplyBlock() { m_didCallReplyBlock = true; }
+            NODELETE void didCallReplyBlock() { m_didCallReplyBlock = true; }
 
         private:
             ReplyBlockCallChecker(_WKRemoteObjectRegistry *registry, uint64_t replyID)

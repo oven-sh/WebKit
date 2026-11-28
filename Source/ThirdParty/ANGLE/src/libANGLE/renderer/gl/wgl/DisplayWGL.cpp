@@ -372,7 +372,10 @@ void DisplayWGL::destroy()
             mFunctionsWGL->makeCurrent(mDeviceContext, nullptr);
         }
     }
-    mCurrentNativeContexts.clear();
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mCurrentNativeContextsMutex);
+        mCurrentNativeContexts.clear();
+    }
 
     SafeDelete(mFunctionsWGL);
 
@@ -683,46 +686,87 @@ egl::Error DisplayWGL::waitNative(const gl::Context *context, EGLint engine)
     return egl::NoError();
 }
 
-egl::Error DisplayWGL::makeCurrent(egl::Display *display,
-                                   egl::Surface *drawSurface,
+egl::Error DisplayWGL::makeCurrent(egl::Surface *drawSurface,
                                    egl::Surface *readSurface,
                                    gl::Context *context)
 {
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mCurrentNativeContextsMutex);
+        CurrentNativeContext &currentContext =
+            mCurrentNativeContexts[angle::GetCurrentThreadUniqueId()];
+
+        HDC newDC = mDeviceContext;
+        if (drawSurface)
+        {
+            SurfaceWGL *drawSurfaceWGL = GetImplAs<SurfaceWGL>(drawSurface);
+            newDC                      = drawSurfaceWGL->getDC();
+        }
+
+        HGLRC newContext = currentContext.glrc;
+        if (context)
+        {
+            ContextWGL *contextWGL = GetImplAs<ContextWGL>(context);
+            newContext             = contextWGL->getContext();
+        }
+        else if (!mUseDXGISwapChains)
+        {
+            newContext = 0;
+        }
+
+        if (newDC != currentContext.dc || newContext != currentContext.glrc)
+        {
+            ASSERT(newDC != 0);
+
+            if (!mFunctionsWGL->makeCurrent(newDC, newContext))
+            {
+                // TODO(geofflang): What error type here?
+                return egl::Error(EGL_CONTEXT_LOST, "Failed to make the WGL context current.");
+            }
+            currentContext.dc   = newDC;
+            currentContext.glrc = newContext;
+        }
+    }
+
+    return ThreadSafeDisplayGL::makeCurrent(drawSurface, readSurface, context);
+}
+
+egl::Error DisplayWGL::beforeDestroyContext(const gl::Context *context)
+{
+    ASSERT(context != nullptr);
+    ContextWGL *contextWGL = GetImplAs<ContextWGL>(context);
+    HGLRC nativeContext    = contextWGL->getContext();
+
+    std::lock_guard<angle::SimpleMutex> lock(mCurrentNativeContextsMutex);
     CurrentNativeContext &currentContext =
         mCurrentNativeContexts[angle::GetCurrentThreadUniqueId()];
-
-    HDC newDC = mDeviceContext;
-    if (drawSurface)
+    if (currentContext.glrc != nativeContext)
     {
-        SurfaceWGL *drawSurfaceWGL = GetImplAs<SurfaceWGL>(drawSurface);
-        newDC                      = drawSurfaceWGL->getDC();
-    }
-
-    HGLRC newContext = currentContext.glrc;
-    if (context)
-    {
-        ContextWGL *contextWGL = GetImplAs<ContextWGL>(context);
-        newContext             = contextWGL->getContext();
-    }
-    else if (!mUseDXGISwapChains)
-    {
-        newContext = 0;
-    }
-
-    if (newDC != currentContext.dc || newContext != currentContext.glrc)
-    {
-        ASSERT(newDC != 0);
-
-        if (!mFunctionsWGL->makeCurrent(newDC, newContext))
+        if (!mFunctionsWGL->makeCurrent(mDeviceContext, nativeContext))
         {
-            // TODO(geofflang): What error type here?
             return egl::Error(EGL_CONTEXT_LOST, "Failed to make the WGL context current.");
         }
-        currentContext.dc   = newDC;
-        currentContext.glrc = newContext;
+        currentContext.needsRestore = true;
     }
 
-    return DisplayGL::makeCurrent(display, drawSurface, readSurface, context);
+    return egl::NoError();
+}
+
+egl::Error DisplayWGL::afterDestroyContext()
+{
+    std::lock_guard<angle::SimpleMutex> lock(mCurrentNativeContextsMutex);
+    CurrentNativeContext &currentContext =
+        mCurrentNativeContexts[angle::GetCurrentThreadUniqueId()];
+    if (currentContext.needsRestore)
+    {
+        currentContext.needsRestore = false;
+        HDC dc = currentContext.dc != nullptr ? currentContext.dc : mDeviceContext;
+        if (!mFunctionsWGL->makeCurrent(dc, currentContext.glrc))
+        {
+            return egl::Error(EGL_CONTEXT_LOST, "Failed to make the WGL context current.");
+        }
+    }
+
+    return egl::NoError();
 }
 
 egl::Error DisplayWGL::registerD3DDevice(IUnknown *device, HANDLE *outHandle)
@@ -780,6 +824,26 @@ gl::Version DisplayWGL::getMaxSupportedESVersion() const
 
 void DisplayWGL::destroyNativeContext(HGLRC context)
 {
+    // If this context is current, remove it from the tracking of current contexts to make sure we
+    // don't try to make it current again.  If it is current on this thread, also have
+    // afterDestroyContext() release it; that only runs for the calling thread's entry.
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mCurrentNativeContextsMutex);
+        const uint64_t currentThreadId = angle::GetCurrentThreadUniqueId();
+        for (auto &currentContext : mCurrentNativeContexts)
+        {
+            if (currentContext.second.glrc == context)
+            {
+                currentContext.second.dc   = nullptr;
+                currentContext.second.glrc = nullptr;
+                if (currentContext.first == currentThreadId)
+                {
+                    currentContext.second.needsRestore = true;
+                }
+            }
+        }
+    }
+
     mFunctionsWGL->deleteContext(context);
 }
 
@@ -880,10 +944,13 @@ egl::Error DisplayWGL::createRenderer(std::shared_ptr<RendererWGL> *outRenderer)
         return egl::Error(EGL_NOT_INITIALIZED,
                           "Failed to make the intermediate WGL context current.");
     }
-    CurrentNativeContext &currentContext =
-        mCurrentNativeContexts[angle::GetCurrentThreadUniqueId()];
-    currentContext.dc   = mDeviceContext;
-    currentContext.glrc = context;
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mCurrentNativeContextsMutex);
+        CurrentNativeContext &currentContext =
+            mCurrentNativeContexts[angle::GetCurrentThreadUniqueId()];
+        currentContext.dc   = mDeviceContext;
+        currentContext.glrc = context;
+    }
 
     std::unique_ptr<FunctionsGL> functionsGL(
         new FunctionsGLWindows(mOpenGLModule, mFunctionsWGL->getProcAddress));

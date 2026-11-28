@@ -1,0 +1,53 @@
+# a body sets its frame up without a stack test where every way into it leads past a test and few enough frames like it stand below that test
+# function leaf(v) { return v.x }  function a(v) { return leaf(v).y }  function p(v) { return q(v).x }  function q(v) { return p(v).y }
+# f1 = leaf, f2 = a, f3 = p, f4 = q. a and p are handed to sink: whoever calls through the word of a closure tests right in front of the entry
+# of a ring of calls one member tests, the one that a caller meets while it is being counted, so each turn of the ring tests: here p, which is counted first
+# RUN: plan units mechanisms=none+DirectCalls
+# CHECK: unit f1:Body {{*}}covered-by-callers
+# CHECK: unit f2:Body {{*}}covered-by-callers
+# CHECK: unit f4:Body {{*}}covered-by-callers
+# RUN(RING): plan units mechanisms=none+DirectCalls
+# RING-NOT: unit f3:Body {{*}}covered-by-callers
+# RUN(WITHHELD): plan units mechanisms=none
+# WITHHELD-NOT: covered-by-callers
+
+variable g0 name="leaf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="p" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g2 name="q" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="leaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="a" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="leaf"
+    v3 = PropGet v2 key="y"
+    Return v3
+}
+function f3 name="p" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0 calleeName="q"
+    v3 = PropGet v2 key="x"
+    Return v3
+}
+function f4 name="q" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="p"
+    v3 = PropGet v2 key="y"
+    Return v3
+}

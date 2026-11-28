@@ -73,7 +73,7 @@ public:
     void reportExposedUnfilledArea(MonotonicTime, unsigned unfilledArea);
     void reportSynchronousScrollingReasonsChanged(MonotonicTime, OptionSet<SynchronousScrollingReason>);
 
-    bool LEGACY_NODELETE scrollAnimatorEnabled() const;
+    NODELETE bool scrollAnimatorEnabled() const;
 
     virtual void hasNodeWithAnimatedScrollChanged(bool) { };
 
@@ -88,7 +88,7 @@ public:
     LocalFrameView* frameViewForScrollingNode(LocalFrame& localMainFrame, std::optional<ScrollingNodeID>) const;
 
     WEBCORE_EXPORT ScrollingStateTree& ensureScrollingStateTreeForRootFrameID(FrameIdentifier);
-    const ScrollingStateTree* LEGACY_NODELETE existingScrollingStateTreeForRootFrameID(std::optional<FrameIdentifier>) const;
+    NODELETE const ScrollingStateTree* existingScrollingStateTreeForRootFrameID(std::optional<FrameIdentifier>) const;
     ScrollingStateTree* stateTreeForNodeID(std::optional<ScrollingNodeID>) const;
     std::unique_ptr<ScrollingStateTree> commitTreeStateForRootFrameID(FrameIdentifier, LayerRepresentation::Type);
 
@@ -189,7 +189,7 @@ private:
     void updateEventTrackingRegions(FrameIdentifier rootFrameID);
     
     void applyScrollPositionUpdate(ScrollUpdate&&, ScrollType, ViewportRectStability);
-    void updateScrollPositionAfterAsyncScroll(ScrollingNodeID, FloatPoint, const std::optional<LayoutViewportOriginOrOverrideRect>&, ScrollingLayerPositionAction, ScrollType, ViewportRectStability);
+    void updateScrollPositionAfterAsyncScroll(ScrollingNodeID, FloatPoint, const std::optional<LayoutViewportOriginOrOverrideRect>&, ScrollingLayerPositionAction, ScrollType, ViewportRectStability, std::optional<ScrollRelativity>);
     void animatedScrollWillStartForNode(ScrollingNodeID);
     void animatedScrollDidEndForNode(ScrollingNodeID);
     void wheelEventScrollWillStartForNode(ScrollingNodeID);
@@ -204,7 +204,7 @@ private:
     WEBCORE_EXPORT void setScrollbarEnabled(Scrollbar&) override;
     WEBCORE_EXPORT void setScrollbarWidth(ScrollableArea&, ScrollbarWidth) override;
 
-    void LEGACY_NODELETE hysterisisTimerFired(PAL::HysteresisState);
+    NODELETE void hysterisisTimerFired(PAL::HysteresisState);
 
     SmallMap<FrameIdentifier, UniqueRef<ScrollingStateTree>> m_scrollingStateTrees;
     RefPtr<ScrollingTree> m_scrollingTree;

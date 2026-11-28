@@ -1,13 +1,15 @@
-# object absorbs every object part. function keeps the functions that are listed beside it: they say what to expect of a value of the type, and rule nothing out
-# RUN: canonical
+# object absorbs layouts and classes. function and object keep the functions that are listed beside them: they say what to expect of a value of the type, and rule nothing out
+# The closure of a function is an argument: as the type of a parameter, a function that is only a signature stands for any function.
+# RUN: canonical f1 function L0 Array<int> object
 # CHECK: t0..t0 = f1
 # CHECK-NEXT: t0..t1 = function|f1
 # CHECK-NEXT: t0..t2 = function|L0|f1
-# CHECK-NEXT: t0..t3 = function|L0|f1|Array<int>
-# CHECK-NEXT: t0..t4 = object
+# CHECK-NEXT: t0..t3 = function|L0|Array<int>|f1
+# CHECK-NEXT: t0..t4 = object|f1
 # CHECK-NEXT: laws hold
 
 module m0 path="main.js" displayPath="main.js"
 layout L0
-function f0 name="types" parameters=[{type=f1}, {type=function}, {type=L0}, {type=Array<int>}, {type=object}] results=[{type=undefined}]
-function f1 name="listed" results=[{type=anything}]
+function f0 name="types" role=Signature results=[{type=undefined}]
+function f1 name="listed" role=Signature results=[{type=anything}]
+entry module=m0

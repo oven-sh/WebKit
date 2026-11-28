@@ -1,0 +1,28 @@
+# nothing is written of `p`, and unseen code has the function, so anything may arrive. The program's own call brings a Point: Link holds what it saw arrive (Facts::held()), and that is what is expected of `p`.
+# Beside anything every primitive is listed too, and no one test tells such a type: the object is what the value is tested for
+# function read(p) { return p.x; }  sink(read); read(point);
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetSlot {{*}}key="x"
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    v6 = FinishObject v4
+    v7 = Call v2, -, v6
+    Return v7
+}
+function f1 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

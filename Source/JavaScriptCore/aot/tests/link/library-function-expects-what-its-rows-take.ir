@@ -1,0 +1,40 @@
+# The text of a library function declares no types. The rows of the built-in that it stands behind say what a call takes: Array.prototype.map a list as `this` and a function as its callback.
+# Link hands that on as what is expected of the parameters, as a declaration. The walk guesses by it, also behind the ToObject that such a text begins with: one test, and the length and the element are read out of a list.
+# Outside a loop a read by index that tests the list itself opens no guess, so the length is read twice: two typed operations do.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK-NEXT: parameter 0 expected=Array declared
+# CHECK-NEXT: parameter 1 expected=function declared
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: b0([[this]]: anything
+# WALK: [[object]]: {{*}} = ToObject [[this]]
+# WALK: = TypeTest [[object]] testedType=Array
+# WALK: = GetArrayLength
+# WALK: = GetArrayElement
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: GetArrayLength
+
+variable g0 name="map" module=m0 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="map" variable=g0}]
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeMapOfList function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeMap
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMapOfList thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToObject v0
+    v3 = PropGet v2 key="length"
+    v4 = Integer
+    v5 = ElemGet v2, v4
+    v6 = PropGet v2 key="length"
+    v7 = Call v1, -, v5, v3, v6
+    Return v7
+}

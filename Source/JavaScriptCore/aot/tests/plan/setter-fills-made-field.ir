@@ -1,0 +1,48 @@
+# function A() { this.n = 1; }
+# function Holder() { this.part = new A(); this.kept = new A(); }
+# Holder.prototype.set = function (part) { this.part = part; };
+# globalThis.Holder = Holder;
+# The constructor makes both of one class. Nobody writes or expects the type of the setter's parameter: `part` takes any object, `kept` is held to A.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L1 CompiledObject
+# CHECK: slot {{*}}"part" JSValue Inline offset={{*}} record=0 filled-at-birth
+# CHECK: slot {{*}}"kept" {{*}}type=undefined|null|L0
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Holder" module=m0 constructor=f2 fields=[{key="part" declared={type=undefined|null|L0 flags=[IsFromCompiler, IsExpected]} flags=[IsRequired]}, {key="kept" declared={type=undefined|null|L0 flags=[IsFromCompiler, IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="set"
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v0 key="Holder"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="A" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="n"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Holder" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = NewClosure function=f1
+    v2 = Construct v1 calleeName="A"
+    PropSet v0, v2 key="part"
+    v4 = Construct v1 calleeName="A"
+    PropSet v0, v4 key="kept"
+    v6 = Undefined
+    Return v6
+}
+function f3 module=m0 flags=[HasThis] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="part"
+    v3 = Undefined
+    Return v3
+}

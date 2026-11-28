@@ -31,8 +31,7 @@
 
 #include <wtf/Forward.h>
 
-namespace WebCore {
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 enum class ContentExtensionError {
     // JSON parser error
@@ -91,15 +90,14 @@ enum class ContentExtensionError {
 
 extern ASCIILiteral WebKitContentBlockerDomain;
     
-WEBCORE_EXPORT const std::error_category& LEGACY_NODELETE contentExtensionErrorCategory();
+NODELETE WEBCORE_EXPORT const std::error_category& contentExtensionErrorCategory();
 
 inline std::error_code make_error_code(ContentExtensionError error)
 {
     return { static_cast<int>(error), contentExtensionErrorCategory() };
 }
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 namespace std {
     template<> struct is_error_code_enum<WebCore::ContentExtensions::ContentExtensionError> : public true_type { };

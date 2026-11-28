@@ -7,7 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPropertyListCache.h"
 #include "AOTPropertyLookupTableTestSupport.h"
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -19,62 +22,10 @@ constexpr uint32_t initialNumberOfEntries = HashedSlotTable::initialNumberOfEntr
 constexpr unsigned numberOfKeysTakingTurns = 2 * numberOfSlotAccesses;
 static_assert(numberOfKeysTakingTurns > HashedSlot::ways);
 
-constexpr uint32_t mostEvictionsWithoutGrowth = initialNumberOfEntries / 4;
-
-uint32_t offsetOfSet(Structure* structure, UniquedStringImpl* uid, uint32_t numberOfEntries)
-{
-    constexpr uint32_t wayBits = (HashedSlot::ways - 1) << HashedSlot::sizeShift;
-    return HashedSlot::offsetOfFirstWay(structure->id(), uid, HashedSlot::offsetMaskFor(numberOfEntries)) & ~wayBits;
-}
-
-// With each kind of access the two make more keys than a set has ways. They lie in one set of a table of the initial size and in two sets of a table of twice that size.
-struct OwnersSharingSet {
-    Structure* first { nullptr };
-    Structure* second { nullptr };
-};
-
-OwnersSharingSet createOwnersSharingSet(TableFixture& fixture, UniquedStringImpl* uid)
-{
-    constexpr unsigned maxNumberOfCandidates = 1 << 16;
-    AOT_TEST_CHECK(fixture.hashedTable().numberOfEntries() == initialNumberOfEntries);
-    Structure* first = fixture.createStructure();
-    for (unsigned i = 0; i < maxNumberOfCandidates; ++i) {
-        Structure* candidate = fixture.createStructure();
-        bool sharesSet = offsetOfSet(candidate, uid, initialNumberOfEntries) == offsetOfSet(first, uid, initialNumberOfEntries);
-        if (sharesSet && offsetOfSet(candidate, uid, 2 * initialNumberOfEntries) != offsetOfSet(first, uid, 2 * initialNumberOfEntries))
-            return { first, candidate };
-    }
-    AOT_TEST_CHECK(false);
-    return { };
-}
-
-uint64_t numberOfEvictions(TableFixture& fixture)
-{
-    return valueOf(fixture.vm(), RuntimeCounterID::HashedTableEvictions);
-}
-
-// The keys are filed again and again. While they share a set, all but the first few of the stores evict.
-void fileInTurns(TableFixture& fixture, const OwnersSharingSet& owners, UniquedStringImpl* uid, uint64_t maxNumberOfEvictions)
-{
-    constexpr unsigned maxNumberOfRounds = 4 * initialNumberOfEntries;
-    auto& table = fixture.hashedTable();
-    uint64_t numberBefore = numberOfEvictions(fixture);
-    for (unsigned round = 0; round < maxNumberOfRounds; ++round) {
-        for (Structure* structure : { owners.first, owners.second }) {
-            for (SlotAccess access : allSlotAccesses) {
-                if (numberOfEvictions(fixture) - numberBefore == maxNumberOfEvictions)
-                    return;
-                table.set(uid, access, ownValueSlot(structure, 0));
-            }
-        }
-    }
-}
-
 void growthKeepsTheAddressAndEveryEntry()
 {
     constexpr unsigned maxNumberOfFills = 16 * initialNumberOfEntries;
     TableFixture fixture;
-    VM& vm = fixture.vm();
     auto& table = fixture.hashedTable();
     UniquedStringImpl* uid = fixture.uid(1);
     const HashedSlot* entries = table.entries();
@@ -89,7 +40,6 @@ void growthKeepsTheAddressAndEveryEntry()
     }
 
     AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries && table.entries() == entries);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == numberOfFills - valueOf(vm, RuntimeCounterID::HashedTableEvictions));
     AOT_TEST_CHECK(table.numberOfFilledEntries() >= initialNumberOfEntries / 2);
     size_t numberOfEntriesFound = 0;
     size_t numberInUpperHalf = 0;
@@ -106,73 +56,74 @@ void growthKeepsTheAddressAndEveryEntry()
     AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries && table.entries() == entries);
 }
 
-void keysTakingTurnsInOneSetGrowMostlyEmptyTable()
+// What HashedSlot::structureMultiplier is chosen for. A size of the cells of Structure that it spreads badly fails here.
+void structuresMadeInRowFillHalfOfTableOfEverySize()
 {
+    constexpr uint32_t lastNumberOfEntries = 64 * initialNumberOfEntries;
+    constexpr unsigned maxNumberOfFills = 2 * lastNumberOfEntries;
     TableFixture fixture;
     auto& table = fixture.hashedTable();
     UniquedStringImpl* uid = fixture.uid(1);
-    OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
 
-    fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries && table.numberOfFilledEntries() == HashedSlot::ways);
-
-    fileInTurns(fixture, owners, uid, std::numeric_limits<uint64_t>::max());
-
-    AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries);
-    AOT_TEST_CHECK(numberOfEvictions(fixture) == mostEvictionsWithoutGrowth + 1);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == numberOfKeysTakingTurns && fixture.numberOfSlots() == numberOfKeysTakingTurns);
-    for (Structure* structure : { owners.first, owners.second }) {
-        for (SlotAccess access : allSlotAccesses)
-            AOT_TEST_CHECK(isSameSlot(table.find(structure->id(), uid, access), ownValueSlot(structure, 0)));
+    for (unsigned numberOfFills = 0; table.numberOfEntries() < lastNumberOfEntries; ++numberOfFills) {
+        AOT_TEST_CHECK(numberOfFills < maxNumberOfFills);
+        uint32_t numberOfEntries = table.numberOfEntries();
+        if (table.set(uid, SlotAccess::Read, absentSlot(fixture.createStructure(), 0)) == HashedSlotTable::SetResult::StoredAndGrew)
+            AOT_TEST_CHECK(table.numberOfEntries() == 2 * numberOfEntries && table.numberOfFilledEntries() >= numberOfEntries / 2);
     }
+    table.clear();
 }
 
-void fewEvictionsBetweenCollectionsDoNotGrowMostlyEmptyTable()
+// What structureIDPlaceShift is chosen for, and the product of AbsenceFilter. A size of the cells of Structure that leaves a kept bit the same in every StructureID fails here.
+// The structure heap of a release build has its blocks 32768 bytes apart and that of a build with ASAN 16384: the three tables hold for both.
+void structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesKeyedByTheID()
 {
-    constexpr unsigned numberOfCollections = 6;
+    constexpr unsigned numberOfStructures = 4 * AbsenceFilter::numberOfFilters;
     TableFixture fixture;
-    auto& table = fixture.hashedTable();
-    UniquedStringImpl* uid = fixture.uid(1);
-    OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
+    Vector<StructureID> structureIDs;
+    for (unsigned index = 0; index < numberOfStructures; ++index)
+        structureIDs.append(fixture.createStructure()->id());
 
-    for (unsigned i = 0; i < numberOfCollections; ++i) {
-        fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-        fixture.sweep(i % 2 ? CollectionScope::Full : CollectionScope::Eden);
+    auto numberOfPlacesTaken = [&](unsigned numberOfPlaces, const auto& placeOf) {
+        BitVector taken(numberOfPlaces);
+        for (StructureID structureID : structureIDs)
+            taken.set(placeOf(structureID));
+        return taken.bitCount();
+    };
+    AOT_TEST_CHECK(numberOfPlacesTaken(AbsenceFilter::numberOfFilters, [](StructureID structureID) { return AbsenceFilter::indexFor(structureID.bits()); }) > AbsenceFilter::numberOfFilters / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(NameShapesOfStructure::numberOfEntries, [](StructureID structureID) { return NameShapesOfStructure::indexFor(structureID); }) > NameShapesOfStructure::numberOfEntries / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(FirstElementTransition::numberOfEntries, [](StructureID structureID) { return FirstElementTransition::indexFor(structureID, 0); }) > FirstElementTransition::numberOfEntries / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(PropertyListCache::numberOfEntries, [](StructureID structureID) { return PropertyListCache::placeOf(structureID, 0, 0); }) > PropertyListCache::numberOfEntries / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(PropertyCacheWords::numberOfErrorsWithMessage, [](StructureID structureID) { return structureID.bits() >> PropertyCacheWords::shiftOfErrorWithMessage & (PropertyCacheWords::numberOfErrorsWithMessage - 1); }) > PropertyCacheWords::numberOfErrorsWithMessage / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(PropertyCacheWords::numberOfStructuresBelowBuiltinClasses, [](StructureID structureID) { return structureID.bits() >> PropertyCacheWords::shiftOfPlaceOfStructureBelowBuiltinClass & (PropertyCacheWords::numberOfStructuresBelowBuiltinClasses - 1); }) > PropertyCacheWords::numberOfStructuresBelowBuiltinClasses / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(ForwardingProxyHandlers::size, [](StructureID structureID) { return ForwardingProxyHandlers::offsetFor(structureID.bits()) >> ForwardingProxyHandlers::sizeShift; }) > ForwardingProxyHandlers::size / 2);
+}
+
+// PropertyListCache::isSecondWalk() forgets the walks it has seen after as many as the cache has entries. Of that many structures made in a row, and of every second
+// of twice as many, few fall on a place that another has taken: sixteen where the places are as good as random, and eighty where WTF::intHash() took the StructureIDs
+// themselves. The two words are those of a compiled object with one name of its own beside its fields.
+void structuresMadeInRowSeldomShareAPlaceOfTheWalksRemembered()
+{
+    constexpr unsigned numberOfWalks = PropertyListCache::numberOfEntries;
+    constexpr uint32_t shapeWord = 0xffffffeb;
+    constexpr uint32_t orderAndCount = 0x10000;
+    TableFixture fixture;
+    Vector<StructureID> structureIDs;
+    for (unsigned index = 0; index < 4 * numberOfWalks; ++index)
+        structureIDs.append(fixture.createStructure()->id());
+
+    for (unsigned step : { 1u, 2u }) {
+        for (unsigned start = 0; start + step * numberOfWalks <= structureIDs.size(); start += step * numberOfWalks) {
+            BitVector taken(PropertyListCache::numberOfWalksRemembered);
+            unsigned numberThatShare = 0;
+            for (unsigned index = 0; index < numberOfWalks; ++index) {
+                unsigned place = PropertyListCache::placeOfWalk(structureIDs[start + index * step], shapeWord, orderAndCount);
+                numberThatShare += taken.get(place);
+                taken.set(place);
+            }
+            AOT_TEST_CHECK(numberThatShare <= 40);
+        }
     }
-
-    AOT_TEST_CHECK(numberOfEvictions(fixture) == numberOfCollections * mostEvictionsWithoutGrowth);
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == HashedSlot::ways);
-}
-
-// A table that is at least half full grows after it has evicted 1/64 of its size, so this stops where the table is half full.
-NEVER_INLINE void fileAbsenceForUnreferencedOwnersUntilHalfFull(TableFixture& fixture, UniquedStringImpl* uid)
-{
-    while (fixture.hashedTable().numberOfFilledEntries() < initialNumberOfEntries / 2)
-        fixture.hashedTable().set(uid, SlotAccess::Read, absentSlot(fixture.createStructure(), 0));
-}
-
-void sweptEntriesNoLongerCountAsFilled()
-{
-    TableFixture fixture;
-    auto& table = fixture.hashedTable();
-    UniquedStringImpl* uid = fixture.uid(1);
-    fileAbsenceForUnreferencedOwnersUntilHalfFull(fixture, uid);
-    uint32_t numberFilled = table.numberOfFilledEntries();
-    AOT_TEST_CHECK(numberFilled >= initialNumberOfEntries / 2 && numberFilled == fixture.numberOfSlots());
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
-
-    size_t numberDropped = fixture.sweep(CollectionScope::Full);
-
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == numberFilled - numberDropped);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() + numberOfKeysTakingTurns < initialNumberOfEntries / 2);
-
-    // What a table that is at least half full evicts counts across collections.
-    OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
-    fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-    fixture.sweep(CollectionScope::Eden);
-    fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
 }
 
 } // namespace
@@ -181,9 +132,9 @@ std::span<const NativeTest> hashedSlotTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "hashed-slot-table/growth-keeps-the-address-and-every-entry"_s, growthKeepsTheAddressAndEveryEntry },
-        { "hashed-slot-table/keys-taking-turns-in-one-set-grow-a-mostly-empty-table"_s, keysTakingTurnsInOneSetGrowMostlyEmptyTable },
-        { "hashed-slot-table/few-evictions-between-collections-do-not-grow-a-mostly-empty-table"_s, fewEvictionsBetweenCollectionsDoNotGrowMostlyEmptyTable },
-        { "hashed-slot-table/swept-entries-no-longer-count-as-filled"_s, sweptEntriesNoLongerCountAsFilled },
+        { "hashed-slot-table/structures-made-in-a-row-fill-half-of-a-table-of-every-size"_s, structuresMadeInRowFillHalfOfTableOfEverySize },
+        { "hashed-slot-table/structures-made-in-a-row-take-more-than-half-of-the-places-of-tables-keyed-by-the-id"_s, structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesKeyedByTheID },
+        { "hashed-slot-table/structures-made-in-a-row-seldom-share-a-place-of-the-walks-remembered"_s, structuresMadeInRowSeldomShareAPlaceOfTheWalksRemembered },
     };
     return tests;
 }

@@ -35,7 +35,6 @@
 #import "GraphicsClient.h"
 #import "GraphicsContext.h"
 #import "GraphicsContextCG.h"
-#import "Image.h"
 #import "ImageBuffer.h"
 #import "NativeImage.h"
 #import "NotImplemented.h"
@@ -160,7 +159,7 @@ static PlatformDragImage createDragImageForColor(const Color& color, const Float
 
     auto render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:imageRect.size()]);
     RetainPtr image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
-        GraphicsContextCG context { rendererContext.CGContext };
+        GraphicsContextCG context(protect(rendererContext.CGContext));
         context.translate(0, CGRectGetHeight(imageRect));
         context.scale({ 1, -1 });
         context.fillRoundedRect(swatch, color);

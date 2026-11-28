@@ -1,0 +1,8 @@
+# the same program with direct calls withheld: the call is closed, it gives a promise, and the await takes the promise
+# RUN: walk f2:CoroutineBody mechanisms=none
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = Call
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=none
+# NEVER-NOT: = AwaitCallBySavingFrame
+# PROGRAM-OF: awaited-call-of-an-async-function-enters-its-body-without-a-promise.ir

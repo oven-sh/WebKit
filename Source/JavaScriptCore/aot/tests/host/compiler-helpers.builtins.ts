@@ -15,12 +15,12 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
         runsUnseenCode: false,
         uses,
         implementation: b.compiled(file, name),
+        ...(name === "applyMethodDecorators" ? { marks: ["AppliesMethodDecorators"] as const } : {}),
       } satisfies b.FunctionField,
     ]),
   );
 
-// A list that the program makes by its length. The length is converted where it is no number, and the mapper gets what lies at each index and the index.
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
@@ -44,13 +44,10 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
-// A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
+const changedOrReturned = [b.everything, b.returned];
 const kept = [b.retained];
-const keptWithContents = [b.retained, b.contentsStoredIn(b.nativeMemory)];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
-// The compiler writes a number here. Anything else would be compared with one.
-const comparedWithNumbers = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
 
 const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
   ({
@@ -60,9 +57,12 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
     throws: true,
     runsOnlyOperandCode: true,
     runsUnseenCode: false,
-    uses: { value: uses },
+    uses: { value: [...uses, b.runs("PrototypeChain")] },
     implementation: b.compiled("DisposableStackPrototype", name),
   }) satisfies b.FunctionField;
+
+const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
+const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
 
 const ownProperties = [
   "ObjectFields",
@@ -72,39 +72,6 @@ const ownProperties = [
   "Elements",
   "ArrayStorage",
 ] as const;
-
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from. describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description. definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
-const definitionFrom = {
-  args: { target: b.any, described: b.object, source: b.any },
-  returns: b.operand("target"),
-  capability: "js",
-  throws: true,
-  runsOnlyOperandCode: true,
-  runsUnseenCode: false,
-  uses: {
-    target: [b.returned, b.definedFrom("source"), ...b.ownPropertyTraps],
-    described: b.inspected,
-    source: b.inspected,
-  },
-  reads: ownProperties,
-  writes: ["MemberGuards"],
-  implementation: b.hostCall,
-  directEntry: {
-    symbol: "AOT__definePropertiesFrom",
-    declaration:
-      'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);',
-    headers: [],
-    parameters: [
-      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-    ],
-  },
-} satisfies b.FunctionField;
-
-const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
-const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
 
 const scanOfText = (
   symbol: string,
@@ -159,7 +126,6 @@ export default b.declarations(
       value,
       value,
     ]),
-    // Object.entries(object) for a loop that takes each pair apart at once: the keys and values one behind the other in one list.
     ownEntriesFlat: {
       args: { object: b.any },
       returns: b.instance("Array").fresh.dense,
@@ -168,6 +134,7 @@ export default b.declarations(
       runsOnlyOperandCode: true,
       runsUnseenCode: false,
       uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.resultSlot("element"))] },
+      writes: ["ShapeWords", "NamedProperties", "MemberGuards", "ObjectFields"],
       implementation: b.hostCall,
       directEntry: {
         symbol: "AOT__ownEntriesFlat",
@@ -195,20 +162,49 @@ export default b.declarations(
         declaration:
           'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__describeUnlessOrdinary(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
         headers: [],
-        parameters: [
-          { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-          { value: "Value", cppType: "JSC::EncodedJSValue" },
-        ],
+        parameters: [realm, value],
       },
     },
-    definePropertiesFrom: definitionFrom,
+    definePropertiesFrom: {
+      args: { target: b.any, described: b.object, source: b.any },
+      returns: b.operand("target"),
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      uses: {
+        target: [b.returned, b.definedFrom("source"), ...b.ownPropertyTraps],
+        described: b.inspected,
+        source: b.inspected,
+      },
+      reads: ownProperties,
+      writes: ["MemberGuards"],
+      implementation: b.hostCall,
+      directEntry: {
+        symbol: "AOT__definePropertiesFrom",
+        declaration:
+          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);',
+        headers: [],
+        parameters: [realm, value, value, value],
+      },
+    },
     ...helpersIn("prelude/decorators", {
-      decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
+      decorateClass: { decorators: calledOrChanged, target: changedOrReturned },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateParameter: {
         index: kept,
-        decorator: [b.retained, b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [], spreadArgs: b.any, result: "Escapes" })],
+        decorator: [
+          b.retained,
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "Later",
+            this: b.undefined,
+            args: [],
+            spreadArgs: b.any,
+            result: "Escapes",
+          }),
+        ],
       },
       defineMetadata: { key: kept, value: kept },
       createDecoratorMetadata: { base: calledOrChanged },
@@ -217,7 +213,7 @@ export default b.declarations(
       createPrivateStorage: { test: kept, get: kept, set: kept },
       applyClassDecorators: {
         decorators: calledOrChanged,
-        target: calledOrChanged,
+        target: changedOrReturned,
         name: kept,
         metadata: calledOrChanged,
         initializers: calledOrChanged,
@@ -231,7 +227,7 @@ export default b.declarations(
       },
       applyPrivateMethodDecorators: {
         decorators: calledOrChanged,
-        value: calledOrChanged,
+        value: changedOrReturned,
         element: calledOrChanged,
         test: calledOrChanged,
         metadata: calledOrChanged,
@@ -268,11 +264,11 @@ export default b.declarations(
         valueInitializers: calledOrChanged,
         extraInitializers: calledOrChanged,
       },
+      keepInitializerLists: { lists: calledOrChanged },
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
-      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
+      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: changedOrReturned },
     }),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
-    // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
     arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {
       length: lengthOfNewArray,
       mapper: calledForEachIndex(b.undefined),
@@ -285,18 +281,7 @@ export default b.declarations(
     mappedFilledArray: arrayMaker("mappedFilledArray", newArrayOf(b.callbackResult("mapper")), {
       length: b.inspected,
       value: b.inspected,
-      // Where the length is no small number the list is filled and mapped as the program wrote it, and the mapper gets that list too.
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
-    }),
-    ...helpersIn("prelude/array-traversal", {
-      traverseArray: {
-        array: keptWithContents,
-        start: comparedWithNumbers,
-        end: comparedWithNumbers,
-        shape: comparedWithNumbers,
-        operands: keptWithContents,
-        operand: [b.retained, b.returned],
-      },
     }),
     getDisposeMethod: disposeMethodLookup("getDisposeMethod", [b.readByKey(b.keysNamed("@@dispose"))]),
     getAsyncDisposeMethod: disposeMethodLookup("getAsyncDisposeMethod", [

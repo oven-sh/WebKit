@@ -1,0 +1,42 @@
+# function pick(c, v) { if (c === null) return c; one(c); return v; }
+# the way that returns at once needs nothing of a frame, so v stays where it arrived there. The other way calls with v alive, and v is read once behind the call: it takes no callee-saved register at the head of that part
+# and is stored there, right behind the setup, which on x86-64 pushes it
+# f1 = pick, f2 = one. pick is handed to sink
+# REQUIRES: x86_64 unsanitized-code
+# RUN: allocate f1:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f1:Body
+# CHECK: isStoredAtHeadOfFramedPart
+# CHECK-NOT: usedCalleeSaves
+# CHECK: headOfFramedPart =
+# CHECK-NOT: needsFrameAheadOfFramedPart
+# RUN(FRAME): frame f1:Body mechanisms=none+DirectCalls
+# FRAME-LABEL: unit f1:Body
+# FRAME: coverage = FramedPart
+
+variable g0 name="one" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=null
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0 calleeName="one"
+    Return v1
+}
+function f2 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}

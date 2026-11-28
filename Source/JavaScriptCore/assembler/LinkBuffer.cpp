@@ -55,7 +55,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SourceCodeDumpDebugInfo);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LinkBuffer);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(LinkBuffer::Records);
 
-static const char* LEGACY_NODELETE profileName(LinkBuffer::Profile profile)
+NODELETE static const char* profileName(LinkBuffer::Profile profile)
 {
 #define RETURN_LINKBUFFER_PROFILE_NAME(name) case LinkBuffer::Profile::name: return #name;
     switch (profile) {
@@ -158,11 +158,11 @@ LinkBuffer::CodeRef<LinkBufferPtrTag> LinkBuffer::finalizeCodeWithDisassemblyImp
 
         constexpr auto prefix = "thunk: "_s;
         std::span<char> buffer;
-        size_t length = stringLength + prefix.length() + 1;
+        size_t length = stringLength + prefix.length();
         auto label = ASCIICString::newUninitialized(length, buffer);
         memcpySpan(buffer, prefix.span8());
-        vsnprintf(buffer.subspan(prefix.length()).data(), stringLength + 1, format, argList);
-        out.printf("%s", buffer.data());
+        vsnprintf(label.mutableSpanIncludingNullTerminator().subspan(prefix.length()).data(), stringLength + 1, format, argList);
+        out.printf("%s", label.data());
 
         registerLabel(result.code().untaggedPtr(), WTF::move(label));
     } else
@@ -249,7 +249,7 @@ public:
             BranchCompactionLinkBufferMalloc::free(m_data);
     }
 
-    uint8_t* LEGACY_NODELETE data()
+    NODELETE uint8_t* data()
     {
         return m_data;
     }
@@ -312,7 +312,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
 
     uint8_t* codeOutData = m_code.dataLocation<uint8_t*>();
 // It is important not to spill this to the stack, so we don't make a local.
-#define shouldCopyDirectlyToJITRegion (!m_shouldPerformBranchCompaction || g_jscConfig.useFastJITPermissions)
+#define shouldCopyDirectlyToJITRegion (g_jscConfig.useFastJITPermissions)
 
     BranchCompactionLinkBuffer outBuffer(m_size, shouldCopyDirectlyToJITRegion ? codeOutData : 0);
     uint8_t* outData = outBuffer.data();
@@ -325,6 +325,17 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
     int readPtr = 0;
     int writePtr = 0;
     unsigned jumpCount = jumpsToLink.size();
+#if CPU(ARM64)
+    ARM64BranchIslands* islands = macroAssembler.m_assembler.branchIslands();
+    macroAssembler.m_assembler.setBranchIslands(nullptr);
+    // allocate() has padded the code with as many nops as the pools take.
+    const size_t sizeOfIslands = islands ? islands->size() : 0;
+    size_t nextIslandPool = 0;
+    size_t nextFarBranch = 0;
+    RELEASE_ASSERT(!islands || (!m_executableMemory && !m_policy.recordsLinkedSites));
+#else
+    constexpr size_t sizeOfIslands = 0;
+#endif
 
     auto read = [&](const InstructionType* ptr) -> InstructionType {
         InstructionType value = *ptr;
@@ -339,66 +350,94 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
     if (g_jscConfig.useFastJITPermissions)
         threadSelfRestrict<MemoryRestriction::kRwxToRw>();
 #if ENABLE(MPROTECT_RX_TO_RWX)
-    ExecutableAllocator::singleton().startWriting(outData, initialSize);
+    ExecutableAllocator::singleton().startWriting(codeOutData, initialSize);
 #endif
 
-    if (m_shouldPerformBranchCompaction) {
-        for (unsigned i = 0; i < jumpCount; ++i) {
-            auto& linkRecord = jumpsToLink[i];
-            int offset = readPtr - writePtr;
-            ASSERT(!(offset & 1));
-
-            // Copy the instructions from the last jump to the current one.
-            size_t regionSize = linkRecord.from() - readPtr;
-            InstructionType* copySource = reinterpret_cast_ptr<InstructionType*>(inData + readPtr);
-            InstructionType* copyEnd = reinterpret_cast_ptr<InstructionType*>(inData + readPtr + regionSize);
-            InstructionType* copyDst = reinterpret_cast_ptr<InstructionType*>(outData + writePtr);
-            ASSERT(!(regionSize % 2));
-            ASSERT(!(readPtr % 2));
-            ASSERT(!(writePtr % 2));
-            while (copySource != copyEnd) {
-                InstructionType insn = read(copySource++);
-                *copyDst++ = insn;
-            }
-            recordLinkOffsets(m_assemblerStorage, readPtr, linkRecord.from(), offset);
-            readPtr += regionSize;
-            writePtr += regionSize;
-
-            // Calculate absolute address of the jump target, in the case of backwards
-            // branches we need to be precise, forward branches we are pessimistic
-            const uint8_t* target;
-            const intptr_t to = linkRecord.to(&macroAssembler.m_assembler);
-            if (linkRecord.isThunk())
-                target = std::bit_cast<uint8_t*>(to);
-            else if (to >= linkRecord.from())
-                target = codeOutData + to - offset; // Compensate for what we have collapsed so far
+#if CPU(ARM64)
+    auto reserveIslandPoolsUpTo = [&](int64_t emittedOffset) {
+        for (; nextIslandPool < islands->pools.size() && islands->pools[nextIslandPool].emittedOffset <= emittedOffset; ++nextIslandPool) {
+            ARM64BranchIslands::Pool& pool = islands->pools[nextIslandPool];
+            const int begin = readPtr;
+            const int offset = readPtr - writePtr;
+            for (; readPtr < pool.emittedOffset; readPtr += sizeof(InstructionType), writePtr += sizeof(InstructionType))
+                *reinterpret_cast_ptr<InstructionType*>(outData + writePtr) = read(reinterpret_cast_ptr<InstructionType*>(inData + readPtr));
+            recordLinkOffsets(m_assemblerStorage, begin, readPtr, offset);
+            pool.linkedOffset = writePtr;
+            const size_t size = pool.numberOfIslands * sizeof(uint32_t);
+            if (shouldCopyDirectlyToJITRegion)
+                Assembler::fillNops<memcpyRepatch>(outData + writePtr, size);
             else
-                target = codeOutData + to - executableOffsetFor(to);
+                Assembler::fillNops<jitMemcpyRepatch>(outData + writePtr, size);
+            writePtr += size;
+            // A label here names the code after the pool, and executableOffsetFor() reads the word before a label.
+            recordLinkOffsets(m_assemblerStorage, readPtr - sizeof(InstructionType), readPtr, readPtr - writePtr);
+        }
+    };
+#endif
 
-            JumpLinkType jumpLinkType = MacroAssembler::computeJumpType(linkRecord, codeOutData + writePtr, target);
-            // Compact branch if we can...
-            if (MacroAssembler::canCompact(linkRecord.type())) {
-                // Step back in the write stream
-                int32_t delta = MacroAssembler::jumpSizeDelta(linkRecord.type(), jumpLinkType);
-                if (delta) {
-                    writePtr -= delta;
-                    recordLinkOffsets(m_assemblerStorage, linkRecord.from() - delta, readPtr, readPtr - writePtr);
-                }
+    for (unsigned i = 0; i < jumpCount; ++i) {
+        auto& linkRecord = jumpsToLink[i];
+#if CPU(ARM64)
+        if (islands) [[unlikely]]
+            reserveIslandPoolsUpTo(linkRecord.from());
+#endif
+        int offset = readPtr - writePtr;
+        ASSERT(!(offset & 1));
+
+        // Copy the instructions from the last jump to the current one.
+        size_t regionSize = linkRecord.from() - readPtr;
+        InstructionType* copySource = reinterpret_cast_ptr<InstructionType*>(inData + readPtr);
+        InstructionType* copyEnd = reinterpret_cast_ptr<InstructionType*>(inData + readPtr + regionSize);
+        InstructionType* copyDst = reinterpret_cast_ptr<InstructionType*>(outData + writePtr);
+        ASSERT(!(regionSize % 2));
+        ASSERT(!(readPtr % 2));
+        ASSERT(!(writePtr % 2));
+        while (copySource != copyEnd) {
+            InstructionType insn = read(copySource++);
+            *copyDst++ = insn;
+        }
+        recordLinkOffsets(m_assemblerStorage, readPtr, linkRecord.from(), offset);
+        readPtr += regionSize;
+        writePtr += regionSize;
+
+        // Calculate absolute address of the jump target, in the case of backwards
+        // branches we need to be precise, forward branches we are pessimistic
+        const uint8_t* target;
+        const intptr_t to = linkRecord.to(&macroAssembler.m_assembler);
+        if (linkRecord.isThunk())
+            target = std::bit_cast<uint8_t*>(to);
+        else if (to >= linkRecord.from())
+#if CPU(ARM64)
+            target = codeOutData + to - offset + (islands ? islands->sizeOfPoolsBetween(nextIslandPool, to) : 0);
+#else
+            target = codeOutData + to - offset; // Compensate for what we have collapsed so far
+#endif
+        else
+            target = codeOutData + to - executableOffsetFor(to);
+
+        JumpLinkType jumpLinkType = MacroAssembler::computeJumpType(linkRecord, codeOutData + writePtr, target);
+        // Compact branch if we can...
+        if (MacroAssembler::canCompact(linkRecord.type())) {
+            // Step back in the write stream
+            int32_t delta = MacroAssembler::jumpSizeDelta(linkRecord.type(), jumpLinkType);
+            if (delta) {
+                writePtr -= delta;
+                recordLinkOffsets(m_assemblerStorage, linkRecord.from() - delta, readPtr, readPtr - writePtr);
             }
-            linkRecord.setFrom(&macroAssembler.m_assembler, writePtr);
         }
-    } else {
-        if (ASSERT_ENABLED) {
-            for (unsigned i = 0; i < jumpCount; ++i)
-                ASSERT(!MacroAssembler::canCompact(jumpsToLink[i].type()));
-        }
+        linkRecord.setFrom(&macroAssembler.m_assembler, writePtr);
     }
+
+#if CPU(ARM64)
+    if (islands) [[unlikely]]
+        reserveIslandPoolsUpTo(initialSize);
+#endif
 
     // Copy everything after the last jump
     {
         InstructionType* dst = std::bit_cast<InstructionType*>(outData + writePtr);
         InstructionType* src = std::bit_cast<InstructionType*>(inData + readPtr);
-        size_t bytes = initialSize - readPtr;
+        size_t bytes = initialSize - sizeOfIslands - readPtr;
 
         RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(dst) % sizeof(InstructionType)));
         RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(src) % sizeof(InstructionType)));
@@ -421,6 +460,28 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             target = std::bit_cast<uint8_t*>(to);
         else
             target = codeOutData + to - executableOffsetFor(to);
+#if CPU(ARM64)
+        if (islands && nextFarBranch < islands->farBranches.size() && islands->farBranches[nextFarBranch].record == i) [[unlikely]] {
+            std::span<const ARM64BranchIslands::Island> chain = islands->islandsOf(nextFarBranch++);
+            for (size_t index = chain.size(); index--;) {
+                const size_t offset = islands->pools[chain[index].pool].linkedOffset + chain[index].index * sizeof(uint32_t);
+                if (!Assembler::canEmitJump(codeOutData + offset, target)) [[unlikely]] {
+                    m_hasBranchOutOfReach = true;
+                    break;
+                }
+                if (shouldCopyDirectlyToJITRegion)
+                    Assembler::linkBranchIsland<memcpyRepatch>(outData + offset, codeOutData + offset, target);
+                else
+                    Assembler::linkBranchIsland<jitMemcpyRepatch>(outData + offset, codeOutData + offset, target);
+                target = codeOutData + offset;
+            }
+        }
+        // The executable allocator's jump islands serve its own pool only.
+        if (m_policy.recordsProcessAddresses && !linkRecord.isThunk() && !Assembler::canEmitJump(location, target)) [[unlikely]]
+            m_hasBranchOutOfReach = true;
+        if (m_hasBranchOutOfReach) [[unlikely]]
+            continue;
+#endif
         BranchEncoding encoding;
         if (shouldCopyDirectlyToJITRegion)
             encoding = MacroAssembler::link<memcpyRepatch>(linkRecord, outData + linkRecord.from(), location, target);
@@ -430,7 +491,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             didLinkRecord(linkRecord, to, encoding);
     }
 
-    size_t compactSize = writePtr + initialSize - readPtr;
+    size_t compactSize = writePtr + initialSize - sizeOfIslands - readPtr;
     if (!m_executableMemory) {
         size_t nopSizeInBytes = initialSize - compactSize;
 
@@ -464,7 +525,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
 #endif
 
 #if ENABLE(MPROTECT_RX_TO_RWX)
-    ExecutableAllocator::singleton().finishWriting(outData, initialSize);
+    ExecutableAllocator::singleton().finishWriting(codeOutData, initialSize);
 #endif
 
     jumpsToLink.clear();
@@ -501,8 +562,10 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
 #if CPU(X86_64)
     if (m_records && (m_policy.recordsLinkedSites || m_policy.shortensJumps)) [[unlikely]] {
         macroAssembler.m_assembler.assignJumpKinds();
-        if (m_policy.shortensJumps)
+        if (m_policy.shortensJumps) {
             m_records->jumpShifts = macroAssembler.m_assembler.shortenJumps();
+            indexX86JumpShifts(m_records->jumpShifts.span(), m_records->firstJumpShiftByStretch);
+        }
     }
 #endif
     allocate(macroAssembler, effort);
@@ -544,6 +607,10 @@ void LinkBuffer::allocate(MacroAssembler& macroAssembler, JITCompilationEffort e
         return;
     }
     
+    if (macroAssembler.policy().trapsWithIllegalInstruction) {
+        macroAssembler.emitNops(roundUpToMultipleOf<jitAllocationGranule>(initialSize) - initialSize);
+        initialSize = macroAssembler.m_assembler.codeSize();
+    }
     while (initialSize % jitAllocationGranule) {
         macroAssembler.breakpoint();
         initialSize = macroAssembler.m_assembler.codeSize();
@@ -625,14 +692,21 @@ void LinkBuffer::takeRecords(MacroAssembler& macroAssembler)
         return;
     m_records->emittedJumps = macroAssembler.m_assembler.takeEmittedJumps();
     Vector<X86LinkedJump> jumps = macroAssembler.m_assembler.takeLinkedJumps();
-    m_records->linkedSites.reserveInitialCapacity(jumps.size());
+    ASSERT(m_records->linkedSites.isEmpty());
+    m_records->linkedSites.grow(jumps.size());
+    LinkedSite* site = m_records->linkedSites.mutableSpan().data();
     for (const X86LinkedJump& jump : jumps) {
+        if (jump.lengthOfReturn)
+            continue;
         bool isConditional = jump.kind == X86JumpKind::Conditional;
-        RelocationKind kind = jump.isShort
+        bool isShort = jump.savings;
+        RelocationKind kind = isShort
             ? (isConditional ? RelocationKind::ShortConditionalJump : RelocationKind::ShortJump)
             : (isConditional ? RelocationKind::ConditionalJump : RelocationKind::Jump);
-        m_records->linkedSites.append(LinkedSite { jump.from - MacroAssembler::relocationSize(kind), jump.to, kind });
+        uint32_t length = isShort ? X86JumpShortener::shortJumpLength : X86JumpShortener::longJumpLength(jump.kind);
+        *site++ = LinkedSite { jump.from - length, jump.to, kind };
     }
+    m_records->linkedSites.shrink(static_cast<size_t>(site - m_records->linkedSites.mutableSpan().data()));
 #endif
 }
 
@@ -785,13 +859,6 @@ NEVER_INLINE void LinkBuffer::finalizeRecords()
         RELEASE_ASSERT(previous.offset + MacroAssembler::relocationSize(previous.kind) <= linkedSites[i].offset);
     }
 }
-
-#if CPU(X86_64)
-uint32_t LinkBuffer::jumpShiftAt(uint32_t offset) const
-{
-    return shortenedJumpShiftAt(m_records->jumpShifts.span(), offset, m_records->jumpShiftCursor);
-}
-#endif
 
 #else
 

@@ -400,16 +400,6 @@ void RemoteMediaPlayerProxy::setBufferingPolicy(MediaPlayer::BufferingPolicy pol
 }
 
 #if PLATFORM(IOS_FAMILY)
-void RemoteMediaPlayerProxy::accessLog(CompletionHandler<void(String)>&& completionHandler)
-{
-    completionHandler(m_player->accessLog());
-}
-
-void RemoteMediaPlayerProxy::errorLog(CompletionHandler<void(String)>&& completionHandler)
-{
-    completionHandler(m_player->errorLog());
-}
-
 void RemoteMediaPlayerProxy::setSceneIdentifier(String&& identifier)
 {
     m_player->setSceneIdentifier(identifier);
@@ -444,6 +434,7 @@ void RemoteMediaPlayerProxy::mediaPlayerReadyStateChanged()
     m_cachedState.seekableTimeRangesLastModifiedTime = m_player->seekableTimeRangesLastModifiedTime();
     m_cachedState.liveUpdateInterval = m_player->liveUpdateInterval();
     m_cachedState.hasAvailableVideoFrame = m_player->hasAvailableVideoFrame();
+    m_cachedState.videoFrameHasAlpha = m_player->videoFrameHasAlpha();
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     m_cachedState.wirelessVideoPlaybackDisabled = m_player->wirelessVideoPlaybackDisabled();
 #endif
@@ -611,6 +602,7 @@ void RemoteMediaPlayerProxy::updateCachedMediaCharacteristics()
 {
     m_cachedState.hasAudio = m_player->hasAudio();
     m_cachedState.hasVideo = m_player->hasVideo();
+    m_cachedState.videoFrameHasAlpha = m_player->videoFrameHasAlpha();
     m_cachedState.hasClosedCaptions = m_player->hasClosedCaptions();
     m_cachedState.languageOfPrimaryAudioTrack = m_player->languageOfPrimaryAudioTrack();
 }
@@ -975,7 +967,7 @@ void RemoteMediaPlayerProxy::currentTimeChanged(const MediaTime& mediaTime)
     protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::CurrentTimeChanged(timeUpdateData(*m_player, mediaTime)), m_id);
 }
 
-void RemoteMediaPlayerProxy::videoFrameForCurrentTimeIfChanged(CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&& completionHandler)
+void RemoteMediaPlayerProxy::videoFrameForCurrentTimeIfChanged(RemoteVideoFrameReference reference, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&& completionHandler)
 {
     std::optional<RemoteVideoFrameProxy::Properties> result;
     bool changed = false;
@@ -985,8 +977,10 @@ void RemoteMediaPlayerProxy::videoFrameForCurrentTimeIfChanged(CompletionHandler
     if (m_videoFrameForCurrentTime != videoFrame) {
         m_videoFrameForCurrentTime = videoFrame;
         changed = true;
-        if (videoFrame)
-            result = protect(m_videoFrameObjectHeap)->add(videoFrame.releaseNonNull());
+        if (videoFrame) {
+            result = RemoteVideoFrameProxy::properties(*videoFrame);
+            protect(m_videoFrameObjectHeap)->add(reference, videoFrame.releaseNonNull());
+        }
     }
     completionHandler(WTF::move(result), changed);
 }

@@ -72,7 +72,7 @@ public:
     BinarySwitch(GPRReg value, std::span<const int64_t> cases, Type);
     // Contiguous unsigned key runs: each entry is (firstKey, length). firstKey of run 0 must be 0,
     // and each subsequent run must start immediately after the previous (no holes).
-    BinarySwitch(GPRReg value, std::span<const std::tuple<uint32_t, size_t>> runs);
+    BinarySwitch(GPRReg value, std::span<const std::tuple<uint32_t, size_t>> runs, unsigned seed);
     ~BinarySwitch();
     
     unsigned caseIndex() const { return m_cases[m_caseIndex].index; }
@@ -97,7 +97,7 @@ private:
         {
         }
         
-        bool LEGACY_NODELETE operator<(const Case& other) const
+        NODELETE bool operator<(const Case& other) const
         {
             return value < other.value;
         }

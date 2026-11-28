@@ -1,0 +1,162 @@
+# function label(x) { return x + ":"; }
+# function text(x) { return "" + x; }
+# function joined(x) { let out = ""; for (let i = 0; i < 16; i++) out += x; return out; }
+# function labeled(x) { return `${x}:`; }   function rows(x) { let out = ""; for (let i = 0; i < 16; i++) out += `${x};`; return out; }
+# show("[" + (take() as number) + "]")
+# function flagged(x) { return `${x === 2}!`; }   function flag(x) { return `${x === 2}`; }
+# async function labeledLater(x) { return `${x}:`; }
+# RUN(ANSWER): run-in-shell globalThis.log = ""; globalThis.first = { [Symbol.toPrimitive]: (hint) => { log += hint[0]; return "F"; } }; const taken = [7, first, true]; globalThis.take = () => taken.shift(); globalThis.show = (text) => print(text + " " + log);
+# ANSWER: a:|2:|F:|a|2|F|aaaaaaaaaaaaaaaa|2222222222222222|FFFFFFFFFFFFFFFF|a:|2:|F:|a;a;a;a;a;a;a;a;a;a;a;a;a;a;a;a;|2;2;2;2;2;2;2;2;2;2;2;2;2;2;2;2;|F;F;F;F;F;F;F;F;F;F;F;F;F;F;F;F;|[7]|[F]|[true]|false!|true!|false|true ddddddddddddddddddsssssssssssssssssd
+# ANSWER-NEXT: exited with 0
+
+variable g0 name="label" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="text" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="joined" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="labeled" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="rows" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="flagged" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="flag" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="labeledLater" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = String string="[\"a\",2]"
+    v3 = Call v1, v0, v2 calleeKey="parse" calleeName="JSON.parse"
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    v6 = Integer integer=1
+    v7 = ElemGet v3, v6
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="first" [isFreeName]
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v5 calleeName="label"
+    v12 = Call v10, -, v7 calleeName="label"
+    v13 = Call v10, -, v9 calleeName="label"
+    v14 = GetModuleVariable variable=g1
+    v15 = Call v14, -, v5 calleeName="text"
+    v16 = Call v14, -, v7 calleeName="text"
+    v17 = Call v14, -, v9 calleeName="text"
+    v18 = GetModuleVariable variable=g2
+    v19 = Call v18, -, v5 calleeName="joined"
+    v20 = Call v18, -, v7 calleeName="joined"
+    v21 = Call v18, -, v9 calleeName="joined"
+    v22 = GetModuleVariable variable=g3
+    v23 = Call v22, -, v5 calleeName="labeled"
+    v24 = Call v22, -, v7 calleeName="labeled"
+    v25 = Call v22, -, v9 calleeName="labeled"
+    v26 = GetModuleVariable variable=g4
+    v27 = Call v26, -, v5 calleeName="rows"
+    v28 = Call v26, -, v7 calleeName="rows"
+    v29 = Call v26, -, v9 calleeName="rows"
+    v30 = PropGet v8 key="take" [isFreeName]
+    v31 = String string="["
+    v32 = String string="]"
+    v33 = Call v30, - calleeName="take"
+    v34 = Convert v33 declared={type=number} illTypedCause=Assertion
+    v35 = Add v31, v34
+    v36 = Add v35, v32
+    v37 = Call v30, - calleeName="take"
+    v38 = Convert v37 declared={type=number} illTypedCause=Assertion
+    v39 = Add v31, v38
+    v40 = Add v39, v32
+    v41 = Call v30, - calleeName="take"
+    v42 = Convert v41 declared={type=number} illTypedCause=Assertion
+    v43 = Add v31, v42
+    v44 = Add v43, v32
+    v45 = GetModuleVariable variable=g5
+    v46 = Call v45, -, v5 calleeName="flagged"
+    v47 = Call v45, -, v7 calleeName="flagged"
+    v48 = GetModuleVariable variable=g6
+    v49 = Call v48, -, v5 calleeName="flag"
+    v50 = Call v48, -, v7 calleeName="flag"
+    v51 = GetModuleVariable variable=g7
+    v52 = Call v51, -, v5 calleeName="labeledLater"
+    v53 = Call v51, -, v7 calleeName="labeledLater"
+    v54 = String string="|"
+    v55 = Strcat v11, v54, v12, v54, v13, v54, v15, v54, v16, v54, v17, v54, v19, v54, v20, v54, v21, v54, v23, v54, v24, v54, v25, v54, v27, v54, v28, v54, v29, v54, v36, v54, v40, v54, v44, v54, v46, v54, v47, v54, v49, v54, v50
+    v56 = PropGet v8 key="show" [isFreeName]
+    v57 = Call v56, -, v55 calleeName="show"
+    Return v57
+}
+function f1 name="label" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string=":"
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Add v1, v0
+    Return v2
+}
+function f3 name="joined" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=16
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v3, v0
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v3
+}
+function f4 name="labeled" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = String string=":"
+    v3 = Strcat v1, v2
+    Return v3
+}
+function f5 name="rows" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=16
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ToString v0
+    v9 = String string=";"
+    v10 = Strcat v8, v9
+    v11 = Add v3, v10
+    v12 = Increment v4
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v3
+}
+function f6 name="flagged" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = StrictEq v0, v1
+    v3 = ToString v2
+    v4 = String string="!"
+    v5 = Strcat v3, v4
+    Return v5
+}
+function f7 name="flag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = StrictEq v0, v1
+    v3 = ToString v2
+    Return v3
+}
+function f8 name="labeledLater" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = String string=":"
+    v3 = Strcat v1, v2
+    Return v3
+}
+entry module=m0

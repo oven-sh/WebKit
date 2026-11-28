@@ -30,13 +30,10 @@
 #include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-
-namespace Layout {
+namespace WebCore::Layout {
 
 struct GridAutoFlowOptions;
 struct LeadingImplicitTracks;
-struct UnplacedGridItems;
 
 // https://drafts.csswg.org/css-grid-1/#implicit-grids
 class ImplicitGrid {
@@ -53,16 +50,16 @@ public:
 
     GridAreaLines insertUnplacedGridItem(const UnplacedGridItem&);
     GridAreaLines insertDefiniteRowItem(const UnplacedGridItem&, GridAutoFlowOptions);
-    void determineImplicitGridColumns(const Vector<UnplacedGridItem>&);
+    void determineImplicitGridColumns(const UnplacedGridItems&);
     GridAreaLines insertAutoPositionedItem(const UnplacedGridItem&, GridAutoFlowOptions);
 
 private:
-    using RowCursors = HashMap<size_t, size_t, WTF::DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>>;
-    std::optional<size_t> LEGACY_NODELETE findFirstAvailableColumnPosition(WTF::Range<size_t> rowRange, size_t columnSpan, size_t startSearchColumn) const;
+    using RowCursors = HashMap<size_t, size_t>;
+    NODELETE std::optional<size_t> findFirstAvailableColumnPosition(WTF::Range<size_t> rowRange, size_t columnSpan, size_t startSearchColumn) const;
     std::optional<size_t> findColumnPositionForDefiniteRowItem(WTF::Range<size_t> rowRange, size_t columnSpan, GridAutoFlowOptions) const;
     void growColumnsForDefiniteRowItem(size_t columnSpan, WTF::Range<size_t> rowRange);
-    bool LEGACY_NODELETE isCellRangeEmpty(WTF::Range<size_t> columnRange, WTF::Range<size_t> rowRange) const;
-    GridAreaLines LEGACY_NODELETE markAreaAsOccupied(WTF::Range<size_t> columnRange, WTF::Range<size_t> rowRange);
+    NODELETE bool isCellRangeEmpty(WTF::Range<size_t> columnRange, WTF::Range<size_t> rowRange) const;
+    NODELETE GridAreaLines markAreaAsOccupied(WTF::Range<size_t> columnRange, WTF::Range<size_t> rowRange);
 
     // Helper functions for auto-positioned items
     void growColumnsToFit(size_t requiredCount);
@@ -85,6 +82,4 @@ private:
     size_t m_autoPlacementCursorColumn { 0 };
 };
 
-} // namespace Layout
-
-} // namespace WebCore
+} // namespace WebCore::Layout

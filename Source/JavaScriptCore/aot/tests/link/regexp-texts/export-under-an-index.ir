@@ -1,0 +1,31 @@
+# words.mjs: const word = "open"; export { word as "0" };   main.mjs: import * as words from "./words.mjs"; new RegExp("^" + words[0] + "$");
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-1: text /
+# RUN(TEXT): regexp-texts mechanisms=all
+# TEXT: text /^open$/
+
+module m0 path="words.mjs" displayPath="words.mjs" body=f0 exports=[{name="0" variable=g0}] namespaceLayout=L(m0)
+module m1 path="main.mjs" displayPath="main.mjs" body=f1 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+variable g0 name="word" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="open" @13
+    PutModuleVariable v0 variable=g0 @6
+    v2 = Undefined @36
+    Return v2 @36
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = ModuleNamespace module=m0 @14
+    v1 = Integer @46
+    v2 = ElemGet v0, v1 @46
+    v3 = Builtin builtin=RegExp @83
+    v4 = String string="^" @90
+    v5 = Add v4, v2 @90
+    v6 = String string="$" @103
+    v7 = Add v5, v6 @90
+    v8 = Construct v3, -, v7 calleeName="RegExp" @79
+    v9 = Undefined @67
+    Return v9 @67
+}

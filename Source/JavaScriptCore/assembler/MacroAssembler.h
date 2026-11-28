@@ -1127,7 +1127,7 @@ public:
     
     void lshiftPtr(Imm32 imm, RegisterID srcDest)
     {
-        lshift64(trustedImm32ForShift(imm), srcDest);
+        lshift64(imm.asTrustedImm32(), srcDest);
     }
 
     void lshiftPtr(TrustedImm32 imm, RegisterID srcDest)
@@ -1147,7 +1147,7 @@ public:
 
     void rshiftPtr(Imm32 imm, RegisterID srcDest)
     {
-        rshift64(trustedImm32ForShift(imm), srcDest);
+        rshift64(imm.asTrustedImm32(), srcDest);
     }
 
     void rshiftPtr(TrustedImm32 imm, RegisterID srcDest)
@@ -1162,7 +1162,7 @@ public:
 
     void urshiftPtr(Imm32 imm, RegisterID srcDest)
     {
-        urshift64(trustedImm32ForShift(imm), srcDest);
+        urshift64(imm.asTrustedImm32(), srcDest);
     }
 
     void urshiftPtr(TrustedImm32 imm, RegisterID srcDest)
@@ -1341,6 +1341,13 @@ public:
     {
         store64(TrustedImm64(imm), address);
     }
+
+#if CPU(X86_64)
+    void storePtr(TrustedImm32 imm, BaseIndex address)
+    {
+        store64(imm, address);
+    }
+#endif
 
     void storePairPtr(RegisterID src1, RegisterID src2, RegisterID dest)
     {
@@ -2017,6 +2024,10 @@ public:
         uint32_t key = keyForConstant(baseValue) & maskTable[baseValue & 3];
         if (key > baseValue)
             key = key - baseValue;
+        // addPtr / subPtr apply both halves sign-extended, so their int32 sum must not overflow.
+        int64_t value1 = static_cast<int64_t>(static_cast<int32_t>(baseValue)) - static_cast<int32_t>(key);
+        if (value1 != static_cast<int32_t>(value1))
+            key ^= 0x80000000;
         return BlindedImm32(baseValue - key, key);
     }
     

@@ -62,6 +62,9 @@ public:
     double maxNumberOfEnabledRulesets() const { return webExtensionDeclarativeNetRequestMaximumNumberOfEnabledRulesets; }
     double maxNumberOfDynamicAndSessionRules() const { return webExtensionDeclarativeNetRequestMaximumNumberOfDynamicAndSessionRules; }
 
+    NODELETE NSDictionary *resourceType();
+    NODELETE NSDictionary *unsupportedRegexReason();
+
 #if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
     WebExtensionAPIEvent& onRuleMatchedDebug();

@@ -32,9 +32,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/text/AtomStringHash.h>
 
-namespace WebCore {
-
-namespace MQ {
+namespace WebCore::MQ {
 
 // A <style-range-value> that is a bare <custom-property-name> is substituted as if wrapped in var().
 // Returns the referenced property name, or nullAtom() if the tokens are anything else.
@@ -54,7 +52,7 @@ struct FeatureParser {
 
     static AtomString consumeFeatureName(CSSParserTokenRange&);
     static std::optional<Value> consumeCustomPropertyValue(const AtomString& propertyName, CSSParserTokenRange&, const CSSParserContext&);
-    static std::optional<ComparisonOperator> LEGACY_NODELETE consumeRangeComparisonOperator(CSSParserTokenRange&);
+    NODELETE static std::optional<ComparisonOperator> consumeRangeComparisonOperator(CSSParserTokenRange&);
 
     static bool validateFeatureAgainstSchema(Feature&, const FeatureSchema&);
 };
@@ -230,5 +228,4 @@ const FeatureSchema* GenericMediaQueryParser<ConcreteParser>::schemaForFeatureNa
     return schemas->get(name);
 }
 
-}
 }

@@ -1,0 +1,54 @@
+# The state knows the length and the elements of a list that was made here, and follows what is appended to it. So a spread of such a list appends its elements, a read of the new list is answered,
+# a call that takes it writes its elements out, and the sweep drops every one of the lists with what was appended.
+# function all(x, y) { const a = [x, 1]; const b = [2, y]; const all = [...a, ...b]; return keep(all.length, all[0], all[3], ...[...a, y]); }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: [[four]]: 4 {{*}} = Integer integer=4
+# CHECK: ([[x]]: {{*}}, [[y]]: {{*}}entry=0
+# CHECK: = Call {{*}}, -, [[four]], [[x]], [[y]], [[x]], {{*}}, [[y]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: = NewArray
+# NEVER-NOT: AppendElement
+# NEVER-NOT: CallList
+# NEVER-NOT: @@iterator
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
+# WITHHELD-COUNT-5: = NewArray
+# WITHHELD: = CallList
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="all" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewArray v0, v2 contents=anything
+    v4 = Integer integer=2
+    v5 = NewArray v4, v1 contents=anything
+    v6 = NewArray contents=anything
+    AppendSpread v6, v3
+    AppendSpread v6, v5
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="keep" [isFreeName]
+    v11 = NewArray contents=anything
+    v12 = PropGet v6 key="length"
+    AppendElement v11, v12
+    v14 = Integer
+    v15 = ElemGet v6, v14
+    AppendElement v11, v15
+    v17 = Integer integer=3
+    v18 = ElemGet v6, v17
+    AppendElement v11, v18
+    v20 = NewArray contents=anything
+    AppendSpread v20, v3
+    AppendElement v20, v1
+    AppendSpread v11, v20
+    v24 = CallList v10, -, v11
+    Return v24
+}

@@ -46,7 +46,7 @@ public:
     {
     }
 
-    PlatformMouseEvent(const DoublePoint& position, const DoublePoint& globalPosition, MouseButton button, PlatformEvent::Type type, int clickCount, OptionSet<PlatformEvent::Modifier> modifiers, MonotonicTime timestamp, double force, SyntheticClickType syntheticClickType, MouseEventInputSource inputSource, PointerID pointerId = mousePointerID, const DoublePoint& movementDelta = { })
+    PlatformMouseEvent(const DoublePoint& position, const DoublePoint& globalPosition, std::expected<MouseButton, MouseButtonState> button, PlatformEvent::Type type, int clickCount, OptionSet<PlatformEvent::Modifier> modifiers, MonotonicTime timestamp, double force, SyntheticClickType syntheticClickType, MouseEventInputSource inputSource, PointerID pointerId = mousePointerID, const DoublePoint& movementDelta = { })
         : PlatformEvent(type, modifiers, timestamp)
         , m_button(button)
         , m_syntheticClickType(syntheticClickType)
@@ -68,7 +68,7 @@ public:
     // Unaccelerated pointer movement
     const DoublePoint& unadjustedMovementDelta() const LIFETIME_BOUND { return m_unadjustedMovementDelta; }
 
-    MouseButton button() const { return m_button; }
+    std::expected<MouseButton, MouseButtonState> button() const { return m_button; }
     unsigned short buttons() const { return m_buttons; }
     int clickCount() const { return m_clickCount; }
     double force() const { return m_force; }
@@ -86,6 +86,7 @@ public:
 #if PLATFORM(MAC)
     int eventNumber() const { return m_eventNumber; }
     int menuTypeForEvent() const { return m_menuTypeForEvent; }
+    NODELETE WEBCORE_EXPORT bool isContextMenuEvent() const;
 #endif
 
 #if PLATFORM(WIN)
@@ -101,7 +102,7 @@ public:
 #endif
 
 protected:
-    MouseButton m_button { MouseButton::None };
+    std::expected<MouseButton, MouseButtonState> m_button { std::unexpected { MouseButtonState::None } };
     SyntheticClickType m_syntheticClickType { SyntheticClickType::NoTap };
 
     DoublePoint m_position;
@@ -115,7 +116,7 @@ protected:
     unsigned short m_buttons { 0 };
     Vector<PlatformMouseEvent> m_coalescedEvents;
     Vector<PlatformMouseEvent> m_predictedEvents;
-    MouseEventInputSource m_inputSource { MouseEventInputSource::UserDriven };
+    MouseEventInputSource m_inputSource { MouseEventInputSource::Default };
     CanInitiateDrag m_canInitiateDrag { CanInitiateDrag::Yes };
 #if PLATFORM(MAC)
     int m_eventNumber { 0 };

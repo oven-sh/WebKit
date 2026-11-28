@@ -47,8 +47,6 @@ class RenderThemeIOS final : public RenderThemeCocoa {
 public:
     friend NeverDestroyed<RenderThemeIOS>;
 
-    static void adjustRoundBorderRadius(Style::ComputedStyle&, RenderBox&);
-
 #if USE(SYSTEM_PREVIEW)
     void paintSystemPreviewBadge(RefPtr<NativeImage>&&, const PaintInfo&, const FloatRect&) final;
     void paintSystemPreviewBadge(const PaintInfo&, const FloatRect&) final;
@@ -64,7 +62,7 @@ public:
 
     WEBCORE_EXPORT static Color systemFocusRingColor();
 
-    WEBCORE_EXPORT static IconAndSize iconForAttachment(const String& fileName, const String& attachmentType, const String& title);
+    WEBCORE_EXPORT static IconAndSize iconForAttachment(const String& fileExtension, const String& attachmentType, const String& title);
 
     bool canCreateControlPartForRenderer(const RenderElement&) const final;
 
@@ -73,6 +71,8 @@ public:
     int baselinePosition(const RenderBox&) const final;
 
     bool isControlStyled(const Style::ComputedStyle&) const final;
+
+    void adjustControlBorderRadius(Style::ComputedStyle&, const Element&) const final;
 
     // Methods for each appearance value.
     void adjustCheckboxStyle(Style::ComputedStyle&, const Element*) const final;
@@ -146,10 +146,6 @@ public:
 
     Color platformTextSearchHighlightColor(OptionSet<StyleColorOptions>) const final;
 
-#if ENABLE(CSS_TAP_HIGHLIGHT_COLOR)
-    Color platformTapHighlightColor() const final { return SRGBA<uint8_t> { 26, 26, 26, 77 } ; }
-#endif
-
 #if ENABLE(ATTACHMENT_ELEMENT)
     LayoutSize attachmentIntrinsicSize(const RenderAttachment&) const final;
     bool attachmentShouldAllowWidthToShrink(const RenderAttachment&) const final { return true; }
@@ -176,7 +172,7 @@ private:
 
     Color checkboxRadioBorderColor(OptionSet<ControlStyle::State>, OptionSet<StyleColorOptions>);
     Color checkboxRadioBackgroundColor(const Style::ComputedStyle&, OptionSet<ControlStyle::State>, OptionSet<StyleColorOptions>);
-    RefPtr<Gradient> checkboxRadioBackgroundGradient(const FloatRect&, OptionSet<ControlStyle::State>);
+    RefPtr<const Gradient> checkboxRadioBackgroundGradient(const FloatRect&, OptionSet<ControlStyle::State>);
     Color checkboxRadioIndicatorColor(OptionSet<ControlStyle::State>, OptionSet<StyleColorOptions>);
 
     void paintCheckboxRadioInnerShadow(const PaintInfo&, const FloatRoundedRect&, OptionSet<ControlStyle::State>);

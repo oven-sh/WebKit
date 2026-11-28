@@ -1,0 +1,46 @@
+# The version of a loop over unknown objects asks the site of a read and tests what it found. Where the iteration reads the name off the same object again, it takes the value with the proof of the first test.
+# function sum(t, n) { let s = 0; for (let i = 0; i < n; i++) { const u = t[i]; s += u.p.x * u.p.x; } return s; }  sink(sum);
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetValueAtSiteOrAbsent {{*}}key="p"
+# CHECK-NEXT: = TypeTest {{*}}testedType=absent
+# CHECK: = GetValueAtSiteOrAbsent {{*}}key="x"
+# CHECK-NEXT: = TypeTest {{*}}testedType=number
+# CHECK-NOT: = TypeTest
+# CHECK: = Mul
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = ElemGet v0, v7 @10
+    v11 = PropGet v10 key="p" @20
+    v12 = PropGet v11 key="x" @30
+    v13 = PropGet v10 key="p" @40
+    v14 = PropGet v13 key="x" @50
+    v15 = Mul v12, v14 @60
+    v16 = Add v6, v15 @70
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @80
+    v18 = Increment v7 @90
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]} @100
+    Jump -> next b1(v17, v19)
+  b3():
+    Return v6
+}

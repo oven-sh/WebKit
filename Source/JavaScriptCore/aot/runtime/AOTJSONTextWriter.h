@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTSchemaEnums.h"
-#include "AOTStringBuilderStorage.h"
 #include "AOTStringBuilderWords.h"
 #include "DateTimeWriter.h"
 #include <charconv>
 #include <cmath>
+#include <span>
 #include <wtf/MathExtras.h>
 #include <wtf/dtoa.h>
 
@@ -22,9 +22,8 @@ namespace JSC { namespace AOT {
 
 inline constexpr unsigned maxJSONIntegerLength = 20;
 inline constexpr unsigned maxJSONNumberLength = numberToShortestStringBufferSize;
-inline constexpr unsigned maxJSONDateLength = maxISODateTimeLength + 2;
 
-static_assert(maxJSONIntegerLength <= jsonIntegerBytes && maxJSONNumberLength <= jsonNumberBytes && maxJSONDateLength <= jsonDateBytes);
+static_assert(maxJSONIntegerLength <= jsonIntegerBytes && maxJSONNumberLength <= jsonNumberBytes);
 
 inline constexpr char jsonDigitPairs[] =
     "0001020304050607080910111213141516171819"
@@ -60,6 +59,8 @@ ALWAYS_INLINE Latin1Character* appendUpToFourJSONDigits(Latin1Character* cursor,
     return appendFourJSONDigits(cursor, value);
 }
 
+Latin1Character* appendLongJSONInteger(Latin1Character* cursor, int64_t);
+
 ALWAYS_INLINE Latin1Character* appendJSONInteger(Latin1Character* cursor, int64_t integer)
 {
     if (static_cast<uint64_t>(integer) < 10000) [[likely]]
@@ -68,8 +69,7 @@ ALWAYS_INLINE Latin1Character* appendJSONInteger(Latin1Character* cursor, int64_
         uint32_t value = static_cast<uint32_t>(integer);
         return appendFourJSONDigits(appendUpToFourJSONDigits(cursor, value / 10000), value % 10000);
     }
-    char* to = std::bit_cast<char*>(cursor);
-    return std::bit_cast<Latin1Character*>(std::to_chars(to, to + maxJSONIntegerLength, integer).ptr);
+    return appendLongJSONInteger(cursor, integer);
 }
 
 ALWAYS_INLINE Latin1Character* appendJSONLiteral(Latin1Character* cursor, ASCIILiteral text)
@@ -101,24 +101,8 @@ ALWAYS_INLINE Latin1Character* appendJSONNumber(Latin1Character* cursor, double 
     return cursor + numberToShortestString(number, std::span<char, numberToShortestStringBufferSize> { std::bit_cast<char*>(cursor), numberToShortestStringBufferSize });
 }
 
-// Behind a long text comes the rest of what holds it, which is mostly short.
-constexpr size_t roomBehindJSONText(size_t length) { return length / 8; }
-
-constexpr size_t maxLengthOfEscapedJSONString(size_t length) { return 6 * length + 2; }
+constexpr size_t maxEscapedJSONStringLength(size_t length) { return 6 * length + 2; }
 Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character>);
-
-// The cursor behind the quoted text, with maxStringBuilderReservation bytes of room. Null with an exception.
-Latin1Character* appendEscapedJSONString(JSGlobalObject*, StringBuilderStorage&, Latin1Character* cursor, std::span<const Latin1Character>);
-
-ALWAYS_INLINE Latin1Character* appendJSONTimeValue(Latin1Character* cursor, double timeValue)
-{
-    if (!std::isfinite(timeValue)) [[unlikely]]
-        return appendJSONLiteral(cursor, "null"_s);
-    *cursor++ = '"';
-    cursor = writeISODateTime(cursor, timeValue);
-    *cursor++ = '"';
-    return cursor;
-}
 
 } } // namespace JSC::AOT
 

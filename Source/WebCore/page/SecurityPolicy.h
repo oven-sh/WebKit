@@ -29,6 +29,7 @@
 #pragma once
 
 #include <WebCore/FetchOptions.h>
+#include <WebCore/SandboxFlags.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -56,6 +57,8 @@ public:
 
     WEBCORE_EXPORT static bool shouldInheritSecurityOriginFromOwner(const URL&);
 
+    WEBCORE_EXPORT static Ref<SecurityOrigin> determineOrigin(const URL&, SandboxFlags, SecurityOrigin* sourceOrigin);
+
     static bool isBaseURLSchemeAllowed(const URL&);
 
     enum LocalLoadPolicy {
@@ -64,9 +67,9 @@ public:
         AllowLocalLoadsForLocalOnly,
     };
 
-    WEBCORE_EXPORT static void LEGACY_NODELETE setLocalLoadPolicy(LocalLoadPolicy);
-    static bool LEGACY_NODELETE restrictAccessToLocal();
-    static bool LEGACY_NODELETE allowSubstituteDataAccessToLocal();
+    NODELETE WEBCORE_EXPORT static void setLocalLoadPolicy(LocalLoadPolicy);
+    NODELETE static bool restrictAccessToLocal();
+    NODELETE static bool allowSubstituteDataAccessToLocal();
 
     WEBCORE_EXPORT static void addOriginAccessAllowlistEntry(const SecurityOrigin& sourceOrigin, const String& destinationProtocol, const String& destinationDomain, bool allowDestinationSubdomains);
     WEBCORE_EXPORT static void removeOriginAccessAllowlistEntry(const SecurityOrigin& sourceOrigin, const String& destinationProtocol, const String& destinationDomain, bool allowDestinationSubdomains);

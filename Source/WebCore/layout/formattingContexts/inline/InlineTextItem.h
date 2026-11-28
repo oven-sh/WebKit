@@ -29,8 +29,7 @@
 #include <WebCore/LayoutInlineTextBox.h>
 #include <WebCore/WritingMode.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineItemsBuilder;
 
@@ -48,9 +47,9 @@ public:
     bool isEmpty() const { return !length() && m_textItemType == TextItemType::Undefined; }
     bool isWhitespace() const { return m_textItemType == TextItemType::Whitespace; }
     bool isWordSeparator() const { return m_isWordSeparator; }
-    bool LEGACY_NODELETE isZeroWidthSpaceSeparator() const;
-    bool LEGACY_NODELETE isQuirkNonBreakingSpace() const;
-    bool LEGACY_NODELETE isFullyTrimmable() const;
+    NODELETE bool isZeroWidthSpaceSeparator() const;
+    NODELETE bool isQuirkNonBreakingSpace() const;
+    NODELETE bool isFullyTrimmable() const;
     bool hasTrailingSoftHyphen() const { return m_hasTrailingSoftHyphen; }
     std::optional<InlineLayoutUnit> width() const { return m_hasWidth ? std::make_optional(m_width) : std::optional<InlineLayoutUnit> { }; }
     std::pair<uint8_t, uint8_t> glyphOverflow() const { return { m_glyphTopOverflow, m_glyphBottomOverflow }; }
@@ -60,16 +59,16 @@ public:
     String content() const { return inlineTextBox().content().substring(start(), length()); }
     TextDirection direction() const { return bidiLevel() % 2 ? TextDirection::RTL : TextDirection::LTR; }
 
-    InlineTextItem LEGACY_NODELETE left(unsigned length) const;
-    InlineTextItem LEGACY_NODELETE right(unsigned length, std::optional<InlineLayoutUnit> width) const;
+    NODELETE InlineTextItem left(unsigned length) const;
+    NODELETE InlineTextItem right(unsigned length, std::optional<InlineLayoutUnit> width) const;
 
-    static bool LEGACY_NODELETE shouldPreserveSpacesAndTabs(const InlineTextItem&);
+    NODELETE static bool shouldPreserveSpacesAndTabs(const InlineTextItem&);
 
 private:
     friend class InlineItemsBuilder;
     using InlineItem::TextItemType;
 
-    InlineTextItem LEGACY_NODELETE split(size_t leftSideLength);
+    NODELETE InlineTextItem split(size_t leftSideLength);
     void setGlyphOverflow(LayoutUnit top, LayoutUnit bottom);
 
     InlineTextItem(const InlineTextBox&, unsigned start, unsigned length, UBiDiLevel, bool hasTrailingSoftHyphen, bool isWordSeparator, std::optional<InlineLayoutUnit> width, TextItemType);
@@ -108,7 +107,6 @@ inline void InlineTextItem::setGlyphOverflow(LayoutUnit top, LayoutUnit bottom)
     m_glyphBottomOverflow = bottom.ceil();
 }
 
-}
 }
 
 SPECIALIZE_TYPE_TRAITS_INLINE_ITEM(InlineTextItem, isText())

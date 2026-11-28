@@ -186,7 +186,7 @@ static pas_allocation_result delegated_allocate_impl(size_t size,
     /* Only a heap that tags its own memory can accept MTE-tagged memory back from the
        system allocator. Everyone else has to ask for canonically-tagged memory, since
        their callers may store the result somewhere that cannot carry a tag. */
-    return pas_system_heap_allocate(size, alignment, heap_config->allow_mte_tagging);
+    return pas_system_heap_allocate(size, alignment, pas_heap_config_allows_mte_tagging(*heap_config));
 }
 
 static bool should_delegate_user_allocation_to_system_malloc(pas_large_heap* heap,
@@ -240,6 +240,22 @@ pas_large_heap_try_allocate_user_allocation(pas_large_heap* heap,
     pas_large_map_add(&pas_large_maps[heap->variant], entry);
 
     return result;
+}
+
+bool pas_large_heap_owns_object(uintptr_t begin,
+                                const pas_heap_config* heap_config)
+{
+    pas_large_map_entry map_entry;
+
+    pas_heap_lock_assert_held();
+
+    map_entry = pas_large_map_find(begin);
+
+    if (pas_large_map_entry_is_empty(map_entry))
+        return heap_config->pgm_enabled && pas_probabilistic_guard_malloc_check_exists(begin);
+
+    return pas_heap_config_kind_get_config(
+        pas_heap_for_large_heap(map_entry.heap)->config_kind) == heap_config;
 }
 
 bool pas_large_heap_try_deallocate(uintptr_t begin,

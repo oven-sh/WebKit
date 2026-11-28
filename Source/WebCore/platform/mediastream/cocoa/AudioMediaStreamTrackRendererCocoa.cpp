@@ -127,7 +127,7 @@ void AudioMediaStreamTrackRendererCocoa::setAudioOutputDevice(const String& devi
 
 void AudioMediaStreamTrackRendererCocoa::setRegisteredDataSource(RefPtr<AudioSampleDataSource>&& source)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (RefPtr registeredDataSource = m_registeredDataSource)
         rendererUnit().removeSource(m_deviceID, *registeredDataSource);
@@ -147,7 +147,7 @@ void AudioMediaStreamTrackRendererCocoa::setRegisteredDataSource(RefPtr<AudioSam
     rendererUnit().addSource(m_deviceID, *source);
 }
 
-static unsigned LEGACY_NODELETE pollSamplesCount()
+NODELETE static unsigned pollSamplesCount()
 {
 #if USE(LIBWEBRTC)
     return LibWebRTCAudioModule::PollSamplesCount + 1;
@@ -158,7 +158,7 @@ static unsigned LEGACY_NODELETE pollSamplesCount()
 
 void AudioMediaStreamTrackRendererCocoa::pushSamples(const MediaTime& sampleTime, const PlatformAudioData& audioData, const AudioStreamDescription& description, size_t sampleCount)
 {
-    ASSERT(!isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(!isMainThread());
     ASSERT(description.platformDescription().type == PlatformDescription::CAAudioStreamBasicType);
     RefPtr dataSource = m_dataSource;
     if (!dataSource || m_shouldRecreateDataSource || !dataSource->inputDescription() || *dataSource->inputDescription() != description) {

@@ -29,8 +29,7 @@
 #include <WebCore/CSSValueTypes.h>
 #include <wtf/text/AtomString.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // https://drafts.csswg.org/css-values-4/#identifier-value
 struct CustomIdent {
@@ -51,7 +50,6 @@ WTF::TextStream& operator<<(WTF::TextStream&, const CustomIdent&);
 
 // MARK: - Hashing
 
-void LEGACY_NODELETE add(Hasher&, const CustomIdent&);
+NODELETE void add(Hasher&, const CustomIdent&);
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

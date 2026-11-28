@@ -1,0 +1,48 @@
+# If a closure or an object that is handed to unseen code kept what Link had proven of it, that code could call the closure with anything, or store into the object, freeze it or give it a property, while the compiled program still trusts the proof
+# function given(v) { return v; }  function kept(v) { return 2; }  const out = { x: "a" }, home = { y: "a" };  sink(given, out);  kept(home.y);
+# Only the edge into unseen code lets anything escape. `kept` and the object that stays at home keep all that Link can say.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 cycle=
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f2 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=string
+# CHECK: field L0.0 "x"
+# CHECK-NOT: writers-known
+# CHECK: field L1.0 "y" proven=string writers-known written-at-construction-alone filled
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L1 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="x"
+    v3 = FinishObject v1
+    v4 = NewObject layout=L1
+    PropDefine v4, v0 key="y"
+    v6 = FinishObject v4
+    v7 = PropGet v6 key="y"
+    v8 = NewClosure function=f1
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -, v8, v3
+    v12 = GetModuleVariable variable=g0
+    v13 = Call v12, -, v7 calleeName="kept"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="given" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}

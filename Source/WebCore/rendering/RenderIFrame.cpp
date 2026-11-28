@@ -45,7 +45,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderIFrame);
 
 using namespace HTMLNames;
     
-RenderIFrame::RenderIFrame(HTMLIFrameElement& element, Style::ComputedStyle&& style)
+RenderIFrame::RenderIFrame(HTMLIFrameElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderFrameBase(Type::IFrame, element, WTF::move(style))
 {
     ASSERT(isRenderIFrame());
@@ -53,7 +53,7 @@ RenderIFrame::RenderIFrame(HTMLIFrameElement& element, Style::ComputedStyle&& st
 
 RenderIFrame::~RenderIFrame() = default;
 
-HTMLIFrameElement& LEGACY_NODELETE RenderIFrame::iframeElement() const
+NODELETE HTMLIFrameElement& RenderIFrame::iframeElement() const
 {
     return downcast<HTMLIFrameElement>(RenderFrameBase::frameOwnerElement());
 }

@@ -1,0 +1,53 @@
+# `kept.push(o)`, `kept[0]`, `kept.length`: all that arrives at the receiver of the operation is a list out of a family of sites that has not escaped and under whose unknown names nothing lies: it stays as its class makes it,
+# whatever has run in front of the operation. The tables of the reading that proves list the operation by its place: a read by its own, the read of a method by the call that takes it.
+# const kept = [];  kept.push({ x: "a" });  kept[0];  kept.length;    const handed = [];  handed.push(kept);  sink(handed);  handed[0];    const named = [];  named[sink()] = 1;  named.push(1);
+# A list that unseen code has, and with it the list that it holds, and a list under whose unknown names something lies are not listed. So `kept` is listed nowhere once `handed` holds it: f1 has a list of its own.
+# RUN: link accesses mechanisms=all
+# CHECK-NOT: receiver-as-made f0
+# CHECK: receiver-as-made f1 v5
+# CHECK-NEXT: receiver-as-made f1 v7
+# CHECK-NEXT: receiver-as-made f1 v8
+# CHECK-NOT: receiver-as-made
+# RUN(HELD): link held accesses mechanisms=all
+# HELD-NOT: receiver-as-made
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Integer integer=1
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    v4 = NewArray contents=anything
+    v5 = PropGet v4 key="push"
+    v6 = Call v5, v4, v0 calleeKey="push"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v4 calleeName="sink"
+    v10 = Integer integer=0
+    v11 = ElemGet v4, v10
+    v12 = NewArray contents=anything
+    v13 = Call v8, - calleeName="sink"
+    ElemSet v12, v13, v1
+    v15 = PropGet v12 key="push"
+    v16 = Call v15, v12, v1 calleeKey="push"
+    v17 = NewClosure function=f1
+    v18 = Call v17, - calleeName="own"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="own" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = String string="a"
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = PropGet v0 key="push"
+    v5 = Call v4, v0, v3 calleeKey="push"
+    v6 = Integer integer=0
+    v7 = ElemGet v0, v6
+    v8 = PropGet v0 key="length"
+    Return v8
+}

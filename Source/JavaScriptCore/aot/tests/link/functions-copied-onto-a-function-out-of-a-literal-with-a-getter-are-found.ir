@@ -1,0 +1,44 @@
+# function Holder() {} Object.assign(Holder, { get unused() { return unused }, used }); Holder.unused()
+# A control of functions-copied-onto-a-function-out-of-a-literal-do-not-meet.ir: the copy runs the getter and stores what it answers: the literal does not spell that.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f3 unreached
+# CHECK-NOT: function f4 unreached
+
+layout L0 fields=[{key="used" declared={type=anything}}, {key="unused" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject layout=L0
+    v3 = NewClosure function=f4
+    DefineGetter v2, v3 key="unused"
+    PropDefine v2, v1 key="used"
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectAssign
+    v8 = Call v7, v6, v0, v2 calleeKey="assign" calleeName="Object.assign"
+    v9 = PropGet v0 key="unused"
+    v10 = Call v9, v0 calleeKey="unused"
+    Return v10
+}
+function f1 name="Holder" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="used" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="unused" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="unused" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    Return v0
+}

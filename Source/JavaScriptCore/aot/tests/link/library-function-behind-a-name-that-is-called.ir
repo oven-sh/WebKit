@@ -1,0 +1,43 @@
+# If the code of the library behind a built-in were left out where a value that nobody knows may be the receiver, the interpreter would run the engine's own text beside the compiled program, and nothing would say so
+# globalThis.use = function use(list, callback) { return list.map(callback); };
+# `list` may be an array. So the name finds `Array.prototype.map`, and the function of the library behind it is entered from outside, with operands that nobody knows. Nobody names `filter`.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 {{*}}
+# CHECK-NOT: function f2 unreached
+# CHECK-NOT: function f2 callers-known
+# CHECK: function f3 unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE-NOT: function f2 unreached
+# NONE: function f3 unreached
+# RUN(IMAGE): image ProgramTables
+# IMAGE: compiledRuntimeFunction ArrayPrototypeMap
+# IMAGE-NOT: compiledRuntimeFunction ArrayPrototypeFilter
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f3
+runtimefunction id=ArrayPrototypeMap function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="use"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="use" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="map"
+    v3 = Call v2, v0, v1 calleeKey="map"
+    Return v3
+}
+function f2 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

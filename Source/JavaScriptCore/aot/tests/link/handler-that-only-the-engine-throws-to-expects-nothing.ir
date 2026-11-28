@@ -1,0 +1,33 @@
+# nothing of the program is thrown under the handler: only an error of the engine's own can come, which nobody lists. So nothing is expected of what the handler catches
+# function reads(v) { try { return v.x; } catch (e) { return e; } }  sink(reads);
+# RUN: summary f1
+# CHECK: access {{*}} Read Parameter 0 "x" {{*}}throws-to=[[caught]]
+# CHECK: handler b2 caught=[[caught]]
+# CHECK: edge Unknown -> [[caught]]
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: catch f1
+# RUN(HELD): link held functions mechanisms=all
+# HELD-NOT: catch f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="reads" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = PropGet v0 key="x"
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}

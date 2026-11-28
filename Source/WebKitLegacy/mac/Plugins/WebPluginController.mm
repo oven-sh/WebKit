@@ -50,6 +50,7 @@
 #import <JavaScriptCore/JSLock.h>
 #import <WebCore/CommonVM.h>
 #import <WebCore/DocumentLoader.h>
+#import <WebCore/DocumentView.h>
 #import <WebCore/FrameLoadRequest.h>
 #import <WebCore/FrameLoader.h>
 #import <WebCore/HTMLMediaElement.h>
@@ -63,12 +64,14 @@
 #import <objc/runtime.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/WTFString.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import "DOMElementInternal.h"
 #import "WebUIKitDelegate.h"
 #import <WebCore/AudioSession.h>
+#import <WebCore/DocumentView.h>
 #import <WebCore/GraphicsLayer.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/WebCoreThreadRun.h>
@@ -100,7 +103,7 @@ static void installFlip4MacPlugInWorkaroundIfNecessary();
 #endif
 
 
-static RetainPtr<NSMutableSet>& LEGACY_NODELETE pluginViews()
+NODELETE static RetainPtr<NSMutableSet>& pluginViews()
 {
     static NeverDestroyed<RetainPtr<NSMutableSet>> pluginViews;
     return pluginViews;
@@ -254,8 +257,8 @@ static RetainPtr<NSMutableSet>& LEGACY_NODELETE pluginViews()
     if (viewsCount > 0)
         LOG(Plugins, "stopping WebKit plugins for PageCache: %@", [views description]);
 
-    for (NSUInteger i = 0; i < viewsCount; ++i)
-        [self stopOnePluginForPageCache:[views objectAtIndex:i]];
+    for (RetainPtr view : makeVector<RetainPtr<NSView>>(views.get()))
+        [self stopOnePluginForPageCache:view];
 
     _started = NO;
 }

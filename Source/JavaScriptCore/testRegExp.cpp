@@ -79,7 +79,7 @@ void StopWatch::stop()
     m_stopTime = MonotonicTime::now();
 }
 
-long LEGACY_NODELETE StopWatch::getElapsedMS()
+NODELETE long StopWatch::getElapsedMS()
 {
     return (m_stopTime - m_startTime).millisecondsAs<long>();
 }
@@ -394,10 +394,10 @@ static bool runFromFiles(GlobalObject* globalObject, const Vector<String>& files
 
     bool success = true;
     for (size_t i = 0; i < files.size(); i++) {
-        FILE* testCasesFile = posixFopen(files[i].utf8(), "rb"_s);
+        FILE* testCasesFile = posixFopen(makeUTF8CString(files[i]), "rb"_s);
 
         if (!testCasesFile) {
-            SAFE_PRINTF("Unable to open test data file \"%s\"\n", files[i].utf8());
+            SAFE_PRINTF("Unable to open test data file \"%s\"\n", makeUTF8CString(files[i]));
             continue;
         }
             

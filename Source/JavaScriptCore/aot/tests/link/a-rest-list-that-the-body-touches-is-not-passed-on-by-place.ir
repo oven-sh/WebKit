@@ -1,0 +1,37 @@
+# The list holds what the callers wrote only while nothing but calls takes it. Here the body empties it first: if the call still passed on by place, the parameters of `take` would be proven `i32` and `string` while both are `undefined`.
+#   function take(a, b) { return b; }  function wrap(...list) { list.length = 0; return take(...list); }  wrap(1, "x");
+# RUN: summary f1
+# CHECK-NOT: OnlyPassesOnGatheredArguments
+# CHECK: call c0 {{*}} passes-list
+# CHECK-NOT: passes-on-gathered-arguments
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2 callers-known
+# LINK-NEXT: parameter 0 expected=undefined|i32|string proven=undefined|int[0, 2147483647]|string
+# LINK-NEXT: parameter 1 expected=undefined|i32|string proven=undefined|int[0, 2147483647]|string
+
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = String string="x"
+    v5 = Call v2, -, v3, v4 calleeName="wrap"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="wrap" module=m0 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer
+    PropSet v0, v1 key="length"
+    v3 = GetModuleVariable variable=g0
+    v4 = CallList v3, -, v0 calleeName="take"
+    Return v4
+}
+function f2 name="take" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

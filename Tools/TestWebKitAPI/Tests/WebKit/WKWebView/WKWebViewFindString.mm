@@ -25,7 +25,6 @@
 
 #import "config.h"
 
-#import "Helpers/DeprecatedGlobalValues.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "WKWebViewFindStringFindDelegate.h"
@@ -37,17 +36,17 @@
 #import "UIKitSPIForTesting.h"
 #endif
 
-static bool focusDidStartInputSession;
 static const NSUInteger maxCount = 100;
 
 @interface WKWebViewFindStringInputDelegate : NSObject <_WKInputDelegate>
+@property (nonatomic, readonly) BOOL didStartInputSession;
 @end
 
 @implementation WKWebViewFindStringInputDelegate
 
 - (void)_webView:(WKWebView *)webView didStartInputSession:(id <_WKFormInputSession>)inputSession
 {
-    focusDidStartInputSession = YES;
+    _didStartInputSession = YES;
 }
 
 @end
@@ -94,13 +93,12 @@ TEST(WKWebViewFindString, DoNotFocusMatchWhenWebViewResignedAndHardwareKeyboardA
     EXPECT_TRUE([secondWebView becomeFirstResponder]);
     EXPECT_FALSE(viewIsFirstResponder(firstWebView.get()));
 
-    isDone = false;
     [firstWebView _findString:@"hello" options:0 maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
 
     EXPECT_FALSE(viewIsFirstResponder(firstWebView.get()));
     EXPECT_WK_STREQ("hello", [findDelegate findString]);
-    EXPECT_FALSE(focusDidStartInputSession);
+    EXPECT_FALSE([inputDelegate didStartInputSession]);
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -120,13 +118,12 @@ TEST(WKWebViewFindString, DoNotFocusMatchWhenWebViewResigned)
     EXPECT_TRUE([secondWebView becomeFirstResponder]);
     EXPECT_FALSE([firstWebView isFirstResponder]);
 
-    isDone = false;
     [firstWebView _findString:@"hello" options:0 maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
 
     EXPECT_FALSE([firstWebView isFirstResponder]);
     EXPECT_WK_STREQ("hello", [findDelegate findString]);
-    EXPECT_FALSE(focusDidStartInputSession);
+    EXPECT_FALSE([inputDelegate didStartInputSession]);
 }
 #endif
 
@@ -138,19 +135,16 @@ TEST(WKWebViewFindString, DoNotUpdateMatchIndexWhenGivenNoIndexChangeOption)
     [webView synchronouslyLoadHTMLString:@"<p>hello</p><p>hello</p><p>hello</p>"];
     [webView _setFindDelegate:findDelegate.get()];
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(1, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex | _WKFindOptionsNoIndexChange maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_FALSE([findDelegate didFail]);
     EXPECT_EQ(1, [findDelegate matchIndex]);
 }
@@ -163,24 +157,20 @@ TEST(WKWebViewFindString, MatchIndexIsCorrectWhenNavigatingForwardAndBackward)
     [webView synchronouslyLoadHTMLString:@"<p>hello</p><p>hello</p><p>hello</p>"];
     [webView _setFindDelegate:findDelegate.get()];
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(1, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(2, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsBackwards | _WKFindOptionsDetermineMatchIndex  maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(1, [findDelegate matchIndex]);
 }
 
@@ -192,19 +182,16 @@ TEST(WKWebViewFindString, MatchIndexDoesNotUpdateWithoutDetermineMatchIndexOptio
     [webView synchronouslyLoadHTMLString:@"<p>hello</p><p>hello</p><p>hello</p>"];
     [webView _setFindDelegate:findDelegate.get()];
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(1, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:0 maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_FALSE([findDelegate didFail]);
     EXPECT_EQ(1, [findDelegate matchIndex]);
 }
@@ -219,24 +206,20 @@ TEST(WKWebViewFindString, MatchIndexIsCorrectNavigatingWrapAround)
 
     auto findOptions = _WKFindOptionsWrapAround | _WKFindOptionsDetermineMatchIndex;
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptions maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptions maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(1, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptions maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(2, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptions maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 }
 
@@ -251,24 +234,20 @@ TEST(WKWebViewFindString, MatchIndexIsCorrectNavigatingWrapAroundBackwards)
     auto findOptions = _WKFindOptionsWrapAround | _WKFindOptionsDetermineMatchIndex;
     auto findOptionsBackwards =  findOptions | _WKFindOptionsBackwards;
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptions maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptionsBackwards maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(2, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptionsBackwards maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(1, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"hello" options:findOptionsBackwards maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 }
 
@@ -280,24 +259,20 @@ TEST(WKWebViewFindString, MatchIndexResetsWhenSearchStringChanges)
     [webView synchronouslyLoadHTMLString:@"<p>word word</p>>"];
     [webView _setFindDelegate:findDelegate.get()];
 
-    isDone = false;
     [webView _findString:@"w" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"wo" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"wor" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 
-    isDone = false;
     [webView _findString:@"word" options:_WKFindOptionsDetermineMatchIndex maxCount:maxCount];
-    Util::run(&isDone);
+    [findDelegate waitForFindResult];
     EXPECT_EQ(0, [findDelegate matchIndex]);
 }
 

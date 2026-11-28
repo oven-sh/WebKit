@@ -47,13 +47,13 @@ enum B3CompilationMode {
     AirMode
 };
 
-JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldDumpIR(Procedure&, B3CompilationMode);
-bool LEGACY_NODELETE shouldDumpIRAtEachPhase(B3CompilationMode);
-JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldValidateIR();
-JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldValidateIRAtEachPhase();
+NODELETE JS_EXPORT_PRIVATE bool shouldDumpIR(Procedure&, B3CompilationMode);
+NODELETE bool shouldDumpIRAtEachPhase(B3CompilationMode);
+NODELETE JS_EXPORT_PRIVATE bool shouldValidateIR();
+NODELETE JS_EXPORT_PRIVATE bool shouldValidateIRAtEachPhase();
 JS_EXPORT_PRIVATE bool shouldValidateIR(const Procedure&);
 JS_EXPORT_PRIVATE bool shouldValidateIRAtEachPhase(const Procedure&);
-bool LEGACY_NODELETE shouldSaveIRBeforePhase();
+NODELETE bool shouldSaveIRBeforePhase();
 
 template<typename IntType>
 IntType chillDiv(IntType numerator, IntType denominator)
@@ -122,7 +122,7 @@ inline unsigned defaultOptLevel()
     return Options::defaultB3OptLevel();
 }
 
-GPRReg LEGACY_NODELETE extendedOffsetAddrRegister();
+NODELETE GPRReg extendedOffsetAddrRegister();
 
 } } // namespace JSC::B3
 

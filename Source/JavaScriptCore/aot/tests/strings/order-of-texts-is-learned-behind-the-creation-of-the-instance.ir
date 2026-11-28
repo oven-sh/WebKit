@@ -1,0 +1,39 @@
+# function order(a, b) { return (a + "").localeCompare(b + ""); }
+# "pier".localeCompare("basin"): the weights by which the default collator orders ASCII are learned when texts are first compared, behind the creation of the instance, and compiled code reads what was learned.
+# RUN: run-in-shell mechanisms=all globalThis.publish = (order, first, second, third) => { print(first, second, third); print(order("pier", "basin"), order("quay", "dock"), order("dock", "quay"), order("a", "a"), order("", "berth")); };
+# CHECK: 1 1 -1
+# CHECK-NEXT: 1 1 -1 0 -1
+# CHECK-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.publish = (order, first, second, third) => { print(first, second, third); print(order("pier", "basin"), order("quay", "dock"), order("dock", "quay"), order("a", "a"), order("", "berth")); };
+# NONE: 1 1 -1
+# NONE-NEXT: 1 1 -1 0 -1
+# NONE-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = String string="pier"
+    v4 = String string="basin"
+    v5 = PropGet v3 key="localeCompare"
+    v6 = Call v5, v3, v4 calleeKey="localeCompare"
+    v7 = String string="quay"
+    v8 = String string="dock"
+    v9 = PropGet v7 key="localeCompare"
+    v10 = Call v9, v7, v8 calleeKey="localeCompare"
+    v11 = PropGet v8 key="localeCompare"
+    v12 = Call v11, v8, v7 calleeKey="localeCompare"
+    v13 = Call v1, -, v2, v6, v10, v12
+    Return
+}
+function f1 name="order" length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Add v0, v2
+    v4 = Add v1, v2
+    v5 = PropGet v3 key="localeCompare"
+    v6 = Call v5, v3, v4 calleeKey="localeCompare"
+    Return v6
+}

@@ -1,0 +1,155 @@
+# Each way makes an object of one layout with the same keys, hands it to the one parameter of the join and names it no more. The parameter is an object that only this code has:
+# a call of unseen code ends nothing of it, the read in a later block is the parameter that unites what the slots hold, and nothing needs either allocation
+# function pick(c, f) { const p = c ? { x: 1 } : { x: 2 }; if (f()) return p.x; return 0; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: Branch
+# CHECK: ({{*}}, [[x]]: int[1, 2]
+# CHECK: = Call
+# CHECK: Return [[x]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: = NewObject
+# NEVER-NOT: GetSlot
+# NEVER-NOT: = PropGet
+# RUN(COUNT): compile FreshObjectsMergedAtJoins mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# COUNT: statistic FreshObjectsMergedAtJoins 1
+# Without the mechanism both are made and the slot is read
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
+# WITHHELD: = NewObject
+# WITHHELD: = NewObject
+# WITHHELD: [[read]]: {{*}}Get{{*}}key="x"
+# WITHHELD: Return [[read]]
+# One of the two was made in front of the branch and still has a name behind the join, so a store under that name may be a store into what the parameter is: the read is made
+# function aliased(c) { const a = { x: 1 }; const p = c ? a : { x: 2 }; a.x = 5; if (c) return p.x; return 5; }
+# RUN(ALIAS): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# ALIAS-LABEL: code f2:Body
+# ALIAS: = NewObject
+# ALIAS: [[read]]: {{*}}Get{{*}}key="x"
+# ALIAS: Return [[read]]
+# The two list other keys: what the parameter is has left, and the call ends what was known of it
+# function ordered(c, f) { let p; if (c) { p = { x: 1 }; p.y = 1; } else p = { x: 2 }; if (f()) return p.x; return 0; }
+# RUN(ORDER): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# ORDER-LABEL: code f3:Body
+# ORDER: = NewObject
+# ORDER: = NewObject
+# ORDER: = Call
+# ORDER: [[read]]: {{*}}Get{{*}}key="x"
+# ORDER: Return [[read]]
+# One object is handed to two parameters, which are two names of it
+# RUN(TWICE): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# TWICE-LABEL: code f4:Body
+# TWICE: = NewObject
+# TWICE: = NewObject
+# TWICE: [[read]]: {{*}}Get{{*}}key="x"
+# TWICE: Return [[read]]
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v8
+    Return v9
+}
+function f1 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Integer integer=2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Call v1, -
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    v10 = PropGet v8 key="x"
+    Return v10
+  b5():
+    v11 = Integer integer=0
+    Return v11
+}
+function f2 name="aliased" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    v4 = Integer integer=2
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Integer integer=5
+    PropSet v3, v8 key="x" mode=Strict
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    v10 = PropGet v7 key="x"
+    Return v10
+  b5():
+    Return v8
+}
+function f3 name="ordered" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PropSet v4, v2 key="y" mode=Strict
+    Jump -> next b3(v4)
+  b2():
+    v6 = Integer integer=2
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    Jump -> next b3(v8)
+  b3(v9):
+    v10 = Call v1, -
+    Branch v10 -> taken b4(), notTaken b5()
+  b4():
+    v11 = PropGet v9 key="x"
+    Return v11
+  b5():
+    v12 = Integer integer=0
+    Return v12
+}
+function f4 name="twice" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b3(v4, v4)
+  b2():
+    v5 = Integer integer=2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    Jump -> next b3(v7, v7)
+  b3(v8, v9):
+    v10 = Integer integer=5
+    PropSet v8, v10 key="x" mode=Strict
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    v12 = PropGet v9 key="x"
+    Return v12
+  b5():
+    Return v10
+}

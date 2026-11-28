@@ -30,6 +30,7 @@
 #pragma once
 
 #include "EventTarget.h"
+#include "InspectorMediaEventTracker.h"
 #include "InspectorOverlay.h"
 #include "InspectorWebAgentBase.h"
 #include "Timer.h"
@@ -45,6 +46,7 @@
 #include <wtf/JSONValues.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/text/AtomString.h>
@@ -68,6 +70,7 @@ class Element;
 class Event;
 class Exception;
 class FloatQuad;
+class Frame;
 class HTMLFrameOwnerElement;
 class InspectorHistory;
 #if ENABLE(VIDEO)
@@ -87,7 +90,11 @@ enum class PlatformEventModifier : uint8_t;
 
 struct Styleable;
 
-class InspectorDOMAgent final : public InspectorAgentBase, public Inspector::DOMBackendDispatcherHandler, public CanMakeWeakPtr<InspectorDOMAgent>, public CanMakeCheckedPtr<InspectorDOMAgent> {
+class InspectorDOMAgent final : public InspectorAgentBase, public Inspector::DOMBackendDispatcherHandler
+#if ENABLE(VIDEO)
+    , public InspectorMediaEventTracker::Client
+#endif
+    , public CanMakeWeakPtr<InspectorDOMAgent>, public CanMakeCheckedPtr<InspectorDOMAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorDOMAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorDOMAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorDOMAgent);
@@ -100,19 +107,26 @@ public:
     static String toErrorString(ExceptionCode);
     static String toErrorString(Exception&&);
 
-    static String LEGACY_NODELETE documentURLString(Document*);
+    NODELETE static String documentURLString(Document*);
     static String documentBaseURLString(Document*);
 
     // We represent embedded doms as a part of the same hierarchy. Hence we treat children of frame owners differently.
     // We also skip whitespace text nodes conditionally. Following methods encapsulate these specifics.
-    static Node* LEGACY_NODELETE innerFirstChild(Node*);
-    static Node* LEGACY_NODELETE innerNextSibling(Node*);
-    static Node* LEGACY_NODELETE innerPreviousSibling(Node*);
-    static unsigned LEGACY_NODELETE innerChildNodeCount(Node*);
-    static Node* LEGACY_NODELETE innerParentNode(Node*);
+    NODELETE static Node* innerFirstChild(Node*);
+    NODELETE static Node* innerNextSibling(Node*);
+    NODELETE static Node* innerPreviousSibling(Node*);
+    NODELETE static unsigned innerChildNodeCount(Node*);
+    NODELETE static Node* innerParentNode(Node*);
+
+    NODELETE static RefPtr<Element> elementToPushForStyleable(const Styleable&);
+    static Ref<Inspector::Protocol::DOM::Styleable> buildObjectForStyleable(Inspector::Protocol::DOM::NodeId, const Styleable&);
 
     static Node* scriptValueAsNode(JSC::JSValue);
     static JSC::JSValue nodeAsScriptValue(JSC::JSGlobalObject&, Node*);
+
+#if ENABLE(VIDEO)
+    static Ref<Inspector::Protocol::DOM::MediaStats> buildMediaStats(HTMLMediaElement&);
+#endif
 
     // InspectorAgentBase
     void didCreateFrontendAndBackend();
@@ -192,7 +206,7 @@ public:
     void didInsertDOMNode(Node&);
     void didRemoveDOMNode(Node&);
     void willDestroyDOMNode(Node&);
-    void LEGACY_NODELETE willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
+    NODELETE void willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
     void didModifyDOMAttr(Element&, const AtomString& name, const AtomString& value);
     void didRemoveDOMAttr(Element&, const AtomString& name);
     void characterDataModified(CharacterData&);
@@ -242,13 +256,17 @@ public:
     Node* assertNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     Element* assertElement(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     Document* assertDocument(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
+    RefPtr<Frame> assertFrame(Inspector::Protocol::ErrorString&, const Inspector::Protocol::Network::FrameId&);
 
     RefPtr<JSC::Breakpoint> breakpointForEventListener(EventTarget&, const AtomString& eventType, EventListener&, bool capture);
     Inspector::Protocol::DOM::EventListenerId idForEventListener(EventTarget&, const AtomString& eventType, EventListener&, bool capture);
 
 private:
 #if ENABLE(VIDEO)
-    void mediaMetricsTimerFired();
+    // InspectorMediaEventTracker::Client
+    Inspector::Protocol::DOM::NodeId pushNodePathForMediaEvent(Node&) final;
+    void mediaEventDidFire(Inspector::Protocol::DOM::NodeId, const String& eventName, RefPtr<JSON::Object>&& data) final;
+    void powerEfficientPlaybackStateDidChange(Inspector::Protocol::DOM::NodeId, bool isPowerEfficient) final;
 #endif
 
     void highlightMousedOverNode();
@@ -313,42 +331,26 @@ private:
     Timer m_destroyedNodesTimer;
 
 #if ENABLE(VIDEO)
-    Timer m_mediaMetricsTimer;
-    struct MediaMetrics {
-        unsigned displayCompositedFrames { 0 };
-        bool isPowerEfficient { false };
-
-        MediaMetrics() { }
-
-        MediaMetrics(unsigned displayCompositedFrames)
-            : displayCompositedFrames(displayCompositedFrames)
-        {
-        }
-    };
-
-    // The pointer key for this map should not be used for anything other than matching.
-    WeakHashMap<HTMLMediaElement, MediaMetrics> m_mediaMetrics;
-
-    RefPtr<EventListener> m_eventFiredCallback;
+    const UniqueRef<InspectorMediaEventTracker> m_mediaEventTracker;
 #endif
 
     struct InspectorEventListener {
         Inspector::Protocol::DOM::EventListenerId identifier { 1 };
+        bool useCapture { false };
+        bool disabled { false };
         RefPtr<EventTarget> eventTarget;
         RefPtr<EventListener> eventListener;
         AtomString eventType;
-        bool useCapture { false };
-        bool disabled { false };
         RefPtr<JSC::Breakpoint> breakpoint;
 
         InspectorEventListener() { }
 
         InspectorEventListener(Inspector::Protocol::DOM::EventListenerId identifier, EventTarget& target, const AtomString& type, EventListener& listener, bool capture)
             : identifier(identifier)
+            , useCapture(capture)
             , eventTarget(&target)
             , eventListener(&listener)
             , eventType(type)
-            , useCapture(capture)
         {
         }
 
@@ -366,9 +368,6 @@ private:
         }
     };
 
-    friend class EventFiredCallback;
-
-    HashSet<const Event*> m_dispatchedEvents;
     HashMap<Inspector::Protocol::DOM::EventListenerId, InspectorEventListener> m_eventListenerEntries;
     Inspector::Protocol::DOM::EventListenerId m_lastEventListenerId { 1 };
 

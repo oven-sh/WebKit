@@ -230,8 +230,7 @@ private:
 
         HashMap<WTF::String, bool> result;
         RetainPtr permissions = [m_delegate.get() notificationPermissionsForWebsiteDataStore:m_dataStore.get().get()];
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *key in permissions.get()) {
+        for (NSString *key in permissions.get()) {
             RetainPtr<NSNumber> value = permissions.get()[key];
             auto originString = WebCore::SecurityOriginData::fromURL(URL(key)).toString();
             if (originString.isEmpty()) {
@@ -259,8 +258,7 @@ private:
         auto apiOrigin = API::SecurityOrigin::create(origin);
         auto delegateCompletionHandler = makeBlockPtr([completionHandler = WTF::move(completionHandler)] (NSArray<NSDictionary *> *notifications) mutable {
             Vector<WebCore::NotificationData> notificationDatas;
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL id notificationDictionary in notifications) {
+            for (id notificationDictionary in notifications) {
                 auto notification = WebCore::NotificationData::fromDictionary(dynamic_objc_cast<NSDictionary>(notificationDictionary));
                 RELEASE_ASSERT_WITH_MESSAGE(notification, "getDisplayedNotificationsForWorkerOrigin: Invalid notification dictionary passed back to WebKit");
                 notificationDatas.append(*notification);
@@ -516,8 +514,7 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 {
     Vector<WebKit::WebsiteDataRecord> result;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WKWebsiteDataRecord *dataRecord in dataRecords)
+    for (WKWebsiteDataRecord *dataRecord in dataRecords)
         result.append(dataRecord->_websiteDataRecord->websiteDataRecord());
 
     return result;
@@ -867,8 +864,7 @@ struct WKWebsiteData {
 - (void)_setPersistedSites:(NSArray<NSURL *> *)persistedSites
 {
     HashSet<URL> urls;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSURL *site in persistedSites) {
+    for (NSURL *site in persistedSites) {
         URL url { site };
         if (url.isValid())
             urls.add(WTF::move(url));
@@ -1126,6 +1122,11 @@ struct WKWebsiteData {
     });
 }
 
+- (void)_setLinkDecorationFilteringDataForTesting:(NSArray<NSString *> *)queryParameters completionHandler:(void (^)(void))completionHandler
+{
+    protect(*_websiteDataStore)->setLinkDecorationFilteringDataForTesting(makeVector<String>(queryParameters), makeBlockPtr(completionHandler));
+}
+
 - (void)_setPrivateTokenIPCForTesting:(bool)enabled
 {
     protect(*_websiteDataStore)->setPrivateTokenIPCForTesting(enabled);
@@ -1341,7 +1342,7 @@ struct WKWebsiteData {
     }
 #endif
 
-    RELEASE_LOG(Push, "Sending persistent notification click from origin %" SENSITIVE_LOG_STRING " to network process to handle", notificationData.originString.utf8());
+    RELEASE_LOG(Push, "Sending persistent notification click from origin %" SENSITIVE_LOG_STRING " to network process to handle", makeUTF8CString(notificationData.originString));
 
     notificationData.sourceSession = _websiteDataStore->sessionID();
     protect(protect(*_websiteDataStore)->networkProcess())->processNotificationEvent(notificationData, WebCore::NotificationEventType::Click, [completionHandler = makeBlockPtr(completionHandler)] (bool wasProcessed) {
@@ -1364,7 +1365,7 @@ struct WKWebsiteData {
 
 -(void)_processWebCorePersistentNotificationClose:(const WebCore::NotificationData&)notificationData completionHandler:(void(^)(bool))completionHandler
 {
-    RELEASE_LOG(Push, "Sending persistent notification close from origin %" SENSITIVE_LOG_STRING " to network process to handle", notificationData.originString.utf8());
+    RELEASE_LOG(Push, "Sending persistent notification close from origin %" SENSITIVE_LOG_STRING " to network process to handle", makeUTF8CString(notificationData.originString));
 
     protect(protect(*_websiteDataStore)->networkProcess())->processNotificationEvent(notificationData, WebCore::NotificationEventType::Close, [completionHandler = makeBlockPtr(completionHandler)] (bool wasProcessed) {
         RELEASE_LOG(Push, "Notification close event processing complete. Callback result: %d", wasProcessed);
@@ -1530,13 +1531,33 @@ struct WKWebsiteData {
 #endif // ENGINEERING_BUILD
 }
 
++ (void)_requestDisabledSecurityFlagsForTesting
+{
+#if defined(ENGINEERING_BUILD) && ENGINEERING_BUILD
+    WebKit::SecurityFlagsController::singleton().requestRemoteListForTesting();
+#endif // ENGINEERING_BUILD
+}
+
 - (void)_isSecurityFlagEnabledInNetworkProcessForTesting:(NSString *)flagName completionHandler:(void(^)(NSNumber *))completionHandler
 {
 #if defined(ENGINEERING_BUILD) && ENGINEERING_BUILD
     protect(protect(*_websiteDataStore)->networkProcess())->isSecurityFlagEnabledForTesting(flagName, [completionHandlerCopy = makeBlockPtr(completionHandler)] (std::optional<bool> enabled) {
         completionHandlerCopy(enabled ? [NSNumber numberWithBool:*enabled] : nil);
     });
+#else
+    UNUSED_PARAM(flagName);
+    completionHandler(nil);
 #endif // ENGINEERING_BUILD
+}
+
++ (NSNumber *)_isSecurityFlagEnabledInUIProcessForTesting:(NSString *)flagName
+{
+#if defined(ENGINEERING_BUILD) && ENGINEERING_BUILD
+    auto name = String { flagName };
+    if (auto enabled = WebKit::securityFlags().isFlagEnabledNamedForTesting(name))
+        return [NSNumber numberWithBool:*enabled];
+#endif // ENGINEERING_BUILD
+    return nil;
 }
 
 + (void)_setWebPushActionHandler:(WKWebsiteDataStore *(^)(_WKWebPushAction *))handler
@@ -1618,6 +1639,14 @@ struct WKWebsiteData {
     });
 }
 
+- (void)_loadersAwaitingWebProcessTransferCountForTesting:(void(^)(NSUInteger))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    protect(*_websiteDataStore)->loadersAwaitingWebProcessTransferCountForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](auto result) {
+        completionHandlerCopy(result);
+    });
+}
+
 - (void)_fetchDataOfTypes:(NSSet<NSString *> *)dataTypes completionHandler:(void(^)(NSData *))completionHandler
 {
     completionHandler(nullptr);
@@ -1632,6 +1661,22 @@ struct WKWebsiteData {
 {
     auto completionHandlerCopy = makeBlockPtr(completionHandler);
     protect(*_websiteDataStore)->isStorageSuspendedForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](auto result) {
+        completionHandlerCopy(result);
+    });
+}
+
+- (void)_canPrefetchDNSForTesting:(void(^)(BOOL))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    protect(*_websiteDataStore)->canPrefetchDNSForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](auto result) {
+        completionHandlerCopy(result);
+    });
+}
+
+- (void)_prefetchedDNSHostnameCountForTesting:(void(^)(NSUInteger))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    protect(*_websiteDataStore)->prefetchedDNSHostnameCountForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](uint64_t result) {
         completionHandlerCopy(result);
     });
 }
@@ -1712,8 +1757,8 @@ struct WKWebsiteData {
 {
     RetainPtr unhandled = adoptNS([[NSMutableSet alloc] init]);
 
-    for (BSAction *action in applicationActions) {
-        NSDictionary *object = [action.info objectForSetting:WebKit::WebPushD::pushActionSetting];
+    for (RetainPtr action : makeVector<RetainPtr<BSAction>>(applicationActions.allObjects)) {
+        NSDictionary *object = [action.get().info objectForSetting:WebKit::WebPushD::pushActionSetting];
         _WKWebPushAction *pushAction = [_WKWebPushAction webPushActionWithDictionary:object];
         if (!pushAction) {
             [unhandled addObject:action];
@@ -1723,11 +1768,11 @@ struct WKWebsiteData {
         RetainPtr dataStoreForPushAction = _webPushActionHandler.get()(pushAction);
         if (dataStoreForPushAction) {
             [dataStoreForPushAction _handleWebPushAction:pushAction];
-            if (action.canSendResponse)
+            if (action.get().canSendResponse)
                 [action sendResponse:BSActionResponse.response];
         } else {
             RELEASE_LOG_ERROR(Push, "Unable to handle a _WKWebPushAction: Client did not return a valid WKWebsiteDataStore");
-            if (action.canSendResponse)
+            if (action.get().canSendResponse)
                 [action sendResponse:[BSActionResponse responseForError:adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:nil]).get()]];
         }
     }

@@ -26,9 +26,9 @@
 #pragma once
 
 #include "ISO8601.h"
-#include "IntlListFormat.h"
 #include "IntlNumberFormat.h"
 #include "JSObject.h"
+#include <wtf/unicode/ListFormatter.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
 namespace JSC {
@@ -88,11 +88,9 @@ public:
     };
 
     const UnitData* units() const { return m_units; }
-    unsigned fractionalDigits() const { return m_fractionalDigits; }
-    const String& numberingSystem() const LIFETIME_BOUND;
-    const ASCIICString& dataLocaleWithExtensions() const LIFETIME_BOUND { return m_dataLocaleWithExtensions; }
+    const String& timeSeparator() const LIFETIME_BOUND;
 
-    UNumberFormatter* createNumberFormatterIfNecessary(JSGlobalObject*, TemporalUnit, const String& skeleton) const;
+    UNumberFormatter* createNumberFormatterIfNecessary(JSGlobalObject*, TemporalUnit) const;
 
 private:
     IntlDurationFormat(VM&, Structure*);
@@ -102,17 +100,20 @@ private:
     static ASCIILiteral unitStyleString(UnitStyle);
     static ASCIILiteral displayString(Display);
 
+    const String& numberingSystem() const LIFETIME_BOUND;
+
     struct FormatterCache {
         WTF_MAKE_TZONE_ALLOCATED(FormatterCache);
     public:
         std::array<std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>, numberOfTemporalUnits> m_formatters { };
     };
 
-    std::unique_ptr<UListFormatter, UListFormatterDeleter> m_listFormat;
+    ListFormatter m_listFormat;
     mutable std::unique_ptr<FormatterCache> m_formatterCache;
     String m_locale;
     String m_dataLocale;
     mutable String m_numberingSystem;
+    mutable String m_timeSeparator;
     ASCIICString m_dataLocaleWithExtensions;
     unsigned m_fractionalDigits { 0 };
     Style m_style { Style::Long };

@@ -57,6 +57,7 @@
 #include "WorkerRunLoop.h"
 #include <JavaScriptCore/JSLock.h>
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -78,7 +79,7 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
         if (options.numberOfOutputs != options.outputChannelCount->size())
             return Exception { ExceptionCode::IndexSizeError, "Length of specified outputChannelCount does not match the given number of outputs"_s };
 
-        for (auto& channelCount : *options.outputChannelCount) {
+        for (auto& channelCount : borrow(*options.outputChannelCount)) {
             if (channelCount < 1 || channelCount > AudioContext::maxNumberOfChannels)
                 return Exception { ExceptionCode::NotSupportedError, "Provided number of channels for output is outside supported range"_s };
         }
@@ -148,11 +149,13 @@ AudioWorkletNode::AudioWorkletNode(BaseAudioContext& context, const String& name
         addOutput(options.outputChannelCount ? options.outputChannelCount->at(i): 1);
 
     initialize();
+    context.audioWorklet().addNode(*this);
 }
 
 AudioWorkletNode::~AudioWorkletNode()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
+    protect(context().audioWorklet())->removeNode(*this);
     {
         Locker locker { m_processLock };
         if (m_processor) {
@@ -177,13 +180,13 @@ void AudioWorkletNode::initializeAudioParameters(const Vector<AudioParamDescript
     Locker locker { m_processLock };
 
     Ref context = this->context();
-    for (auto& descriptor : descriptors) {
+    for (auto& descriptor : borrow(descriptors)) {
         auto parameter = AudioParam::create(context, descriptor.name, descriptor.defaultValue, descriptor.minValue, descriptor.maxValue, descriptor.automationRate);
         m_parameters->add(descriptor.name, WTF::move(parameter));
     }
 
     if (paramValues) {
-        for (auto& paramValue : *paramValues) {
+        for (auto& paramValue : borrow(*paramValues)) {
             if (RefPtr audioParam = m_parameters->map().get(paramValue.key))
                 audioParam->setValue(paramValue.value);
         }
@@ -191,6 +194,13 @@ void AudioWorkletNode::initializeAudioParameters(const Vector<AudioParamDescript
 
     for (auto& parameterName : m_parameters->map().keys())
         m_paramValuesMap.add(parameterName, makeUnique<AudioFloatArray>(AudioUtilities::renderQuantumSize));
+}
+
+RefPtr<AudioWorkletProcessor> AudioWorkletNode::takeProcessorForThreadShutdown()
+{
+    ASSERT(isMainThread());
+    Locker locker { m_processLock };
+    return std::exchange(m_processor, nullptr);
 }
 
 void AudioWorkletNode::setProcessor(RefPtr<AudioWorkletProcessor>&& processor)
@@ -233,7 +243,7 @@ void AudioWorkletNode::process(size_t framesToProcess)
     for (unsigned i = 0; i < numberOfInputs(); ++i) {
         CheckedPtr currentInput = input(i);
         bool connected = currentInput->isConnected();
-        m_inputs[i] = connected ? &currentInput->bus() : nullptr;
+        borrow(m_inputs)[i] = connected ? &currentInput->bus() : nullptr;
         if (connected && !hasActiveInputs && !currentInput->bus().isSilent())
             hasActiveInputs = true;
     }
@@ -247,11 +257,12 @@ void AudioWorkletNode::process(size_t framesToProcess)
     }
 
     for (unsigned i = 0; i < numberOfOutputs(); ++i)
-        m_outputs[i] = output(i)->bus();
+        borrow(m_outputs)[i] = output(i)->bus();
 
     if (noiseInjectionPolicies().contains(NoiseInjectionPolicy::Minimal)) {
+        Borrow inputs { m_inputs };
         for (unsigned inputIndex = 0; inputIndex < numberOfInputs(); ++inputIndex) {
-            if (auto& input = m_inputs[inputIndex]) {
+            if (auto& input = inputs[inputIndex]) {
                 for (unsigned channelIndex = 0; channelIndex < input->numberOfChannels(); ++channelIndex) {
                     auto* channel = input->channel(channelIndex);
                     AudioUtilities::applyNoise(channel->mutableSpan(), 0.01);
@@ -290,7 +301,7 @@ void AudioWorkletNode::didFinishProcessingOnRenderingThread(std::optional<Except
 
 void AudioWorkletNode::updatePullStatus()
 {
-    ASSERT(context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
 
     bool hasConnectedOutput = false;
     for (unsigned i = 0; i < numberOfOutputs(); ++i) {
@@ -310,7 +321,7 @@ void AudioWorkletNode::updatePullStatus()
 
 void AudioWorkletNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
 {
-    ASSERT(context().isAudioThread() && context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isAudioThread() && protect(context())->isGraphOwner());
 
     // Dynamic channel count only works when the node has 1 input, 1 output and |outputChannelCount|
     // is not given. Otherwise the channel count(s) should not be dynamically changed.

@@ -1,0 +1,15 @@
+# ({}) instanceof Set
+# As asking-whether-an-object-is-an-instance-of-function-is-no-use-of-function.ir: Set stays in sight, so none of what lies below it counts as used.
+# RUN: features
+# CHECK-NOT: by SetPrototype
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Builtin builtin=Set
+    v2 = InstanceOf v0, v1
+    Return v2
+}

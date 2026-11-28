@@ -28,10 +28,11 @@
 
 #include "GraphicsContext.h"
 #include "Scrollbar.h"
+#include "ScrollbarInlines.h"
 
 namespace WebCore {
 
-bool ScrollbarThemeComposite::paint(Scrollbar& scrollbar, GraphicsContext& graphicsContext, const IntRect& damageRect)
+bool ScrollbarThemeComposite::paint(Scrollbar& scrollbar, GraphicsContext& graphicsContext, const IntRect& damageRect, OptionSet<ScrollbarPaintBehavior>)
 {
     // Create the ScrollbarControlPartMask based on the damageRect
     ScrollbarControlPartMask scrollMask = NoPart;
@@ -221,7 +222,7 @@ void ScrollbarThemeComposite::splitTrack(Scrollbar& scrollbar, const IntRect& un
 
 // Returns the size represented by track taking into account scrolling past
 // the end of the document.
-static float LEGACY_NODELETE usedTotalSize(Scrollbar& scrollbar)
+NODELETE static float usedTotalSize(Scrollbar& scrollbar)
 {
     float overhangAtStart = -scrollbar.currentPos();
     float overhangAtEnd = scrollbar.currentPos() + scrollbar.visibleSize() - scrollbar.totalSize();
@@ -258,7 +259,7 @@ int ScrollbarThemeComposite::thumbLength(Scrollbar& scrollbar)
 
 int ScrollbarThemeComposite::minimumThumbLength(Scrollbar& scrollbar)
 {
-    return scrollbarThickness(scrollbar.widthStyle());
+    return scrollbarThickness(protect(scrollbar.scrollableArea())->scrollbarStyle(), scrollbar.widthStyle());
 }
 
 int ScrollbarThemeComposite::trackPosition(Scrollbar& scrollbar)

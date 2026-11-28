@@ -32,10 +32,10 @@
 #include <WebCore/InlineLayoutState.h>
 #include <WebCore/InlineQuirks.h>
 #include <WebCore/LayoutIntegrationUtils.h>
+#include <WebCore/LayoutState.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineDamage;
 class InlineContentCache;
@@ -101,14 +101,14 @@ private:
     void resetBoxGeometriesForDiscardedContent(const InlineItemRange& discardedRange, const LineLayoutResult::SuspendedFloatList& suspendedFloats);
     bool createDisplayContentForLineFromCachedContent(const ConstraintsForInlineContent&, InlineLayoutResult&, bool mayUseSimplifiedDisplayContentBuild);
     bool createDisplayContentForEmptyInlineContent(const ConstraintsForInlineContent&, const InlineItemList&, InlineLayoutResult&);
-    void LEGACY_NODELETE initializeInlineLayoutState(const LayoutState&);
+    NODELETE void initializeInlineLayoutState(const LayoutState&);
     void rebuildInlineItemListIfNeeded(InlineDamage*);
 
     InlineContentCache& inlineContentCache() LIFETIME_BOUND { return m_inlineContentCache; }
 
 private:
-    const ElementBox& m_rootBlockContainer;
-    LayoutState& m_globalLayoutState;
+    const CheckedRef<const ElementBox> m_rootBlockContainer;
+    const CheckedRef<LayoutState> m_globalLayoutState;
     const FloatingContext m_floatingContext;
     const InlineFormattingUtils m_inlineFormattingUtils;
     const InlineQuirks m_inlineQuirks;
@@ -117,5 +117,4 @@ private:
     InlineLayoutState m_inlineLayoutState;
 };
 
-}
 }

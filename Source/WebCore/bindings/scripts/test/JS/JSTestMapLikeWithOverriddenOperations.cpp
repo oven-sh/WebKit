@@ -418,14 +418,14 @@ bool JSTestMapLikeWithOverriddenOperationsOwner::isReachableFromOpaqueRoots(JSC:
     return false;
 }
 
-void JSTestMapLikeWithOverriddenOperationsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestMapLikeWithOverriddenOperationsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestMapLikeWithOverriddenOperations = static_cast<JSTestMapLikeWithOverriddenOperations*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestMapLikeWithOverriddenOperations->wrapped(), jsTestMapLikeWithOverriddenOperations);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -441,7 +441,7 @@ static inline void verifyVTable(TestMapLikeWithOverriddenOperations* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestMapLikeWithOverriddenOperations@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore35TestMapLikeWithOverriddenOperationsE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore35TestMapLikeWithOverriddenOperationsE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -452,7 +452,6 @@ static inline void verifyVTable(TestMapLikeWithOverriddenOperations* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestMapLikeWithOverriddenOperations>&& impl)
 {

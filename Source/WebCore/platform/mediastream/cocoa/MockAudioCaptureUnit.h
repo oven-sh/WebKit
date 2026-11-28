@@ -29,17 +29,13 @@
 
 #include "CoreAudioCaptureUnit.h"
 
-namespace WebCore {
-
-namespace MockAudioCaptureUnit {
+namespace WebCore::MockAudioCaptureUnit {
 void enable();
 void disable();
 CoreAudioCaptureUnit& singleton();
-void LEGACY_NODELETE increaseBufferSize();
+NODELETE void increaseBufferSize();
 
-}
-
-} // namespace WebCore
+} // namespace WebCore::MockAudioCaptureUnit
 
 #endif // ENABLE(MEDIA_STREAM)
 

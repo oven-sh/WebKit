@@ -88,7 +88,7 @@ public:
     WebUserContentControllerProxy();
     ~WebUserContentControllerProxy();
 
-    static WebUserContentControllerProxy* LEGACY_NODELETE get(UserContentControllerIdentifier);
+    NODELETE static WebUserContentControllerProxy* get(UserContentControllerIdentifier);
 
     UserContentControllerParameters parametersForProcess(WebProcessProxy&) const;
 
@@ -104,7 +104,7 @@ public:
 #else
     void removeAllUserScripts();
 #endif
-    WebCoreUserScriptData dataFromUserScript(const WebCore::UserScript&) const;
+    WebCoreUserScriptData dataFromUserScript(const API::UserScript&, WebProcessProxy&) const;
 
     API::Array& userStyleSheets() { return m_userStyleSheets.get(); }
     void addUserStyleSheet(API::UserStyleSheet&);

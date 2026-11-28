@@ -60,7 +60,7 @@ public:
         std::optional<uint64_t> duration;
     };
 
-    static bool LEGACY_NODELETE isVPXSupported();
+    NODELETE static bool isVPXSupported();
 
     using OutputCallback = Function<void(std::expected<DecodedFrame, String>&&)>;
     using CreateResult = std::expected<Ref<VideoDecoder>, String>;
@@ -68,7 +68,7 @@ public:
     using CreateCallback = Function<void(CreateResult&&)>;
 
     using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, OutputCallback&&);
-    WEBCORE_EXPORT static void LEGACY_NODELETE setCreatorCallback(CreatorFunction&&);
+    NODELETE WEBCORE_EXPORT static void setCreatorCallback(CreatorFunction&&);
 
     static Ref<CreatePromise> create(const String&, const Config&, OutputCallback&&);
     WEBCORE_EXPORT static void createLocalDecoder(const String&, const Config&, CreateCallback&&, OutputCallback&&);
@@ -79,6 +79,7 @@ public:
     virtual Ref<GenericPromise> flush() = 0;
     virtual void reset() = 0;
     virtual void close() = 0;
+    virtual void setColorSpaceOverride(const std::optional<PlatformVideoColorSpace>&) { }
 
     static String fourCCToCodecString(uint32_t fourCC);
 

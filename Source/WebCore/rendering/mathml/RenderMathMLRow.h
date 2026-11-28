@@ -38,8 +38,8 @@ class RenderMathMLRow : public RenderMathMLBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLRow);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLRow);
 public:
-    RenderMathMLRow(Type, MathMLRowElement&, Style::ComputedStyle&&);
-    MathMLRowElement& LEGACY_NODELETE element() const;
+    RenderMathMLRow(Type, MathMLRowElement&, UniqueRef<Style::ComputedStyle>&&);
+    NODELETE MathMLRowElement& element() const;
     virtual ~RenderMathMLRow();
 
     CheckedPtr<RenderMathMLOperator> unembellishedOperator() const override;
@@ -52,7 +52,7 @@ protected:
     void getContentBoundingBox(LayoutUnit& width, LayoutUnit& ascent, LayoutUnit& descent) const;
     void layoutRowItems(LayoutUnit width, LayoutUnit ascent);
     LayoutUnit preferredLogicalWidthOfRowItems();
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
 
 private:
     ASCIILiteral renderName() const override { return "RenderMathMLRow"_s; }

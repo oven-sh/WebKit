@@ -1,0 +1,29 @@
+# a deletion takes a locked member away, so it throws in every run: the build stops. Where the build sees the object and cannot read the name it says that
+# in a function nobody knows whether it is called: a warning
+# delete Array.prototype.push; function later() { Array.prototype[name] = 1; Array.prototype.pop = later; }
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype @1
+    v1 = PropDelete v0 key="push" @2
+    v2 = NewClosure function=f1 @3
+    v3 = Call v2 @4
+    Return v3 @5
+}
+function f1 name="later" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype @6
+    v1 = Builtin builtin=GlobalThis @6
+    v2 = PropGet v1 key="name" [isFreeName] @6
+    v3 = Integer integer=1 @6
+    ElemSet v0, v2, v3 @7
+    v5 = NewClosure function=f1 @8
+    PropSet v0, v5 key="pop" @9
+    Return v3 @10
+}

@@ -35,7 +35,6 @@ function f2 name="makeHolder" parameters=[{type=anything}] results=[{type=anythi
 }
 )IR"_s;
 
-// `add` runs in the interpreter, which remembers a store that adds a property for as long as the Structures of the prototype chain stay the same.
 static constexpr ASCIILiteral statements = R"JS(
 globalThis.publish = (makeEmpty, makeHolder) => {
     const add = (target, value) => { target.held = value; return target; };

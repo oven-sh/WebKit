@@ -22,7 +22,8 @@ struct ProgramFile {
     enum class Kind : uint8_t { Bytes, Text };
 
     Kind kind { Kind::Text };
-    Vector<uint8_t> bytes;
+    Program::OwnedBytes bytes;
+    std::optional<Wire::CompileOptions> options;
     String text;
 };
 
@@ -39,24 +40,17 @@ WrittenOutText writeOut(String&& text, const String& folder = { });
 
 ProgramFile::Kind programKindOf(std::span<const uint8_t>);
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors);
-std::unique_ptr<Program> createProgram(const ProgramFile&, BuildContext&);
+std::unique_ptr<Program> createProgram(ProgramFile&&, BuildContext&, SchemaHashCheck = SchemaHashCheck::Required);
 
 void printDiagnostics(const Diagnostics&, PrintStream&);
 
 Vector<uint8_t> encodeProgramText(StringView text, BuildContext&);
 
 inline constexpr ASCIILiteral ownLibraryLine = "# LIBRARY: own"_s;
+inline constexpr ASCIILiteral lineOfCalledStandIn = "the stand-in for a built-in written in JavaScript was called"_s;
 
 String standInLibraryText(unsigned libraryFunction);
 String withStandInLibrary(const String& programText);
-
-struct ReaderFuzzRequest {
-    uint32_t seed { 1 };
-    unsigned count { 1000 };
-    Vector<String> programPaths;
-};
-
-unsigned fuzzReader(const ReaderFuzzRequest&, PrintStream&);
 
 } } } // namespace JSC::AOT::Typed
 

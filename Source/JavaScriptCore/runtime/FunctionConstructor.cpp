@@ -163,7 +163,7 @@ static String stringifyFunction(JSGlobalObject* globalObject, const ArgList& arg
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
-        program = builder.toString();
+        program = WTF::move(builder).toString();
     }
 
     return program;

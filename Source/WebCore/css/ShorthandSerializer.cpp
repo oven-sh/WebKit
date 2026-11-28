@@ -74,36 +74,36 @@ private:
         Ref<CSSValue> value;
     };
     struct LonghandIteratorBase {
-        void LEGACY_NODELETE operator++() { ++index; }
-        bool LEGACY_NODELETE operator==(std::nullptr_t) const { return index >= serializer.length(); }
+        NODELETE void operator++() { ++index; }
+        NODELETE bool operator==(std::nullptr_t) const { return index >= serializer.length(); }
         const ShorthandSerializer& serializer;
         unsigned index { 0 };
     };
     struct LonghandIterator : LonghandIteratorBase {
-        Longhand LEGACY_NODELETE operator*() const { return { serializer.longhand(index) }; }
+        NODELETE Longhand operator*() const { return { serializer.longhand(index) }; }
     };
     struct LonghandValueIterator : LonghandIteratorBase {
-        CSSValue& LEGACY_NODELETE operator*() const { return { serializer.longhandValue(index) }; }
+        NODELETE CSSValue& operator*() const { return { serializer.longhandValue(index) }; }
     };
     template<typename IteratorType> struct LonghandRange {
-        IteratorType LEGACY_NODELETE begin() const { return { { serializer } }; }
-        static constexpr std::nullptr_t LEGACY_NODELETE end() { return nullptr; }
-        unsigned LEGACY_NODELETE size() const { return serializer.length(); }
+        NODELETE IteratorType begin() const { return { { serializer } }; }
+        NODELETE static constexpr std::nullptr_t end() { return nullptr; }
+        NODELETE unsigned size() const { return serializer.length(); }
         const ShorthandSerializer& serializer;
     };
 
     static bool isInitialValue(Longhand);
     String serializeValue(Longhand) const;
 
-    unsigned LEGACY_NODELETE length() const { return m_shorthand.length(); }
-    Longhand LEGACY_NODELETE longhand(unsigned index) const { return { longhandProperty(index), longhandValue(index) }; }
+    NODELETE unsigned length() const { return m_shorthand.length(); }
+    NODELETE Longhand longhand(unsigned index) const { return { longhandProperty(index), longhandValue(index) }; }
     CSSPropertyID longhandProperty(unsigned index) const;
     CSSValue& longhandValue(unsigned index) const;
 
     unsigned longhandIndex(unsigned index, CSSPropertyID) const;
 
-    LonghandRange<LonghandIterator> LEGACY_NODELETE longhands() const { return { *this }; }
-    LonghandRange<LonghandValueIterator> LEGACY_NODELETE longhandValues() const { return { *this }; }
+    NODELETE LonghandRange<LonghandIterator> longhands() const { return { *this }; }
+    NODELETE LonghandRange<LonghandValueIterator> longhandValues() const { return { *this }; }
 
     CSSValueID longhandValueID(unsigned index) const;
     bool isLonghandValueID(unsigned index, CSSValueID valueID) const { return longhandValueID(index) == valueID; }
@@ -126,10 +126,9 @@ private:
     String serializePair() const;
     String serializeQuad() const;
 
-    String serializeCornerSingle() const;
-    String serializeCornerPair() const;
-    String serializeCornerQuad() const;
-    String serializeOneCorner(unsigned radiusIndex, unsigned shapeIndex) const;
+    String serializeCorner() const;
+    String serializeCornerRadii(unsigned count) const;
+    String serializeCornerShapes(unsigned count) const;
 
     String serializeLayered() const;
     String serializeCoordinatingListPropertyGroup() const;
@@ -175,12 +174,12 @@ inline ShorthandSerializer::ShorthandSerializer(const CSS::SerializationContext&
 {
 }
 
-inline CSSPropertyID LEGACY_NODELETE ShorthandSerializer::longhandProperty(unsigned index) const
+NODELETE inline CSSPropertyID ShorthandSerializer::longhandProperty(unsigned index) const
 {
     return m_shorthand.properties()[index];
 }
 
-inline CSSValue& LEGACY_NODELETE ShorthandSerializer::longhandValue(unsigned index) const
+NODELETE inline CSSValue& ShorthandSerializer::longhandValue(unsigned index) const
 {
     return *m_longhandValues[index];
 }
@@ -195,7 +194,7 @@ inline bool ShorthandSerializer::isInitialValue(Longhand longhand)
     return isInitialValueForLonghand(longhand.property, protect(longhand.value));
 }
 
-inline unsigned LEGACY_NODELETE ShorthandSerializer::longhandIndex(unsigned index, CSSPropertyID longhand) const
+NODELETE inline unsigned ShorthandSerializer::longhandIndex(unsigned index, CSSPropertyID longhand) const
 {
     ASSERT_UNUSED(longhand, longhandProperty(index) == longhand);
     return index;
@@ -388,7 +387,6 @@ String ShorthandSerializer::serialize()
     case CSSPropertyID::CornerStartEnd:
     case CSSPropertyID::CornerEndStart:
     case CSSPropertyID::CornerEndEnd:
-        return serializeCornerSingle();
     case CSSPropertyID::CornerTop:
     case CSSPropertyID::CornerRight:
     case CSSPropertyID::CornerBottom:
@@ -397,9 +395,8 @@ String ShorthandSerializer::serialize()
     case CSSPropertyID::CornerBlockEnd:
     case CSSPropertyID::CornerInlineStart:
     case CSSPropertyID::CornerInlineEnd:
-        return serializeCornerPair();
     case CSSPropertyID::Corner:
-        return serializeCornerQuad();
+        return serializeCorner();
     case CSSPropertyID::BlockStep:
     case CSSPropertyID::BorderBlockEnd:
     case CSSPropertyID::BorderBlockStart:
@@ -601,88 +598,80 @@ String ShorthandSerializer::serializeQuad() const
     return top;
 }
 
-static bool cornerShorthandRadiusIsZero(const CSSValue& value)
+// The corner shorthands serialize as `<radius> || <shape>`, omitting a
+// component that is at its initial value. A zero percentage radius is not the
+// initial value and is therefore kept.
+// https://drafts.csswg.org/css-borders-4/#corner-shorthands
+
+String ShorthandSerializer::serializeCornerRadii(unsigned count) const
 {
-    RefPtr pair = dynamicDowncast<CSSValuePair>(value);
-    if (!pair)
-        return false;
-    auto isZero = [](const CSSValue& value) {
-        RefPtr primitive = dynamicDowncast<CSSPrimitiveValue>(value);
-        return primitive && (primitive->isLength() || primitive->isPercentage()) && primitive->isZero().value_or(false);
+    auto horizontalRadius = [&](unsigned i) {
+        return protect(longhandValue(i).first());
     };
-    return isZero(pair->first()) && isZero(pair->second());
-}
-
-static bool cornerShorthandShapeIsRound(const CSSValue& value)
-{
-    if (RefPtr keyword = dynamicDowncast<CSSKeywordValue>(value))
-        return keyword->valueID() == CSSValueID::Round;
-
-    // round is equivalent to superellipse(1), which is also how computed values serialize.
-    RefPtr function = dynamicDowncast<CSSFunctionValue>(value);
-    if (!function || function->name() != CSSValueID::Superellipse || function->size() != 1)
-        return false;
-    RefPtr parameter = dynamicDowncast<CSSPrimitiveValue>(function->item(0));
-    return parameter && parameter->isNumber() && parameter->isOne().value_or(false);
-}
-
-String ShorthandSerializer::serializeOneCorner(unsigned radiusIndex, unsigned shapeIndex) const
-{
-    RefPtr radius = m_longhandValues[radiusIndex];
-    RefPtr shape = m_longhandValues[shapeIndex];
-    if (!radius || !shape)
-        return String();
-    if (cornerShorthandRadiusIsZero(*radius) && cornerShorthandShapeIsRound(*shape))
-        return "normal"_s;
-    auto radiusStr = serializeLonghandValue(radiusIndex);
-    auto shapeStr = serializeLonghandValue(shapeIndex);
-    return makeString(radiusStr, ' ', shapeStr);
-}
-
-String ShorthandSerializer::serializeCornerSingle() const
-{
-    ASSERT(length() == 2);
-    return serializeOneCorner(0, 1);
-}
-
-String ShorthandSerializer::serializeCornerPair() const
-{
-    ASSERT(length() == 4);
-    auto first = serializeOneCorner(0, 1);
-    auto second = serializeOneCorner(2, 3);
-    if (first.isNull() || second.isNull())
-        return String();
-    if (first == second)
-        return first;
-    return makeString(first, " / "_s, second);
-}
-
-String ShorthandSerializer::serializeCornerQuad() const
-{
-    ASSERT(length() == 8);
-    std::array<String, 4> corners {
-        serializeOneCorner(0, 1),
-        serializeOneCorner(2, 3),
-        serializeOneCorner(4, 5),
-        serializeOneCorner(6, 7),
+    auto verticalRadius = [&](unsigned i) {
+        return protect(longhandValue(i).second());
     };
-    for (const auto& s : corners) {
-        if (s.isNull())
-            return String();
+
+    bool serializeVertical = false;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!horizontalRadius(i)->equals(verticalRadius(i))) {
+            serializeVertical = true;
+            break;
+        }
     }
-    bool showBL = corners[1] != corners[3];
-    bool showBR = showBL || corners[0] != corners[2];
-    bool showTR = showBR || corners[0] != corners[1];
+
+    // A single corner is written as `<horizontal> <vertical>` rather than with a slash.
+    if (count == 1) {
+        if (!serializeVertical)
+            return horizontalRadius(0)->cssText(m_serializationContext);
+        return makeString(horizontalRadius(0)->cssText(m_serializationContext), ' ', verticalRadius(0)->cssText(m_serializationContext));
+    }
+
+    auto serializeAxis = [&](auto&& radius) {
+        StringBuilder axis;
+        unsigned lastIndex = count - 1;
+        while (lastIndex && radius(lastIndex)->equals(radius(lastIndex == 3 ? 1 : 0)))
+            --lastIndex;
+        for (unsigned i = 0; i <= lastIndex; ++i)
+            axis.append(i ? " "_s : ""_s, radius(i)->cssText(m_serializationContext));
+        return axis.toString();
+    };
+
+    auto horizontal = serializeAxis(horizontalRadius);
+    if (!serializeVertical)
+        return horizontal;
+    return makeString(horizontal, " / "_s, serializeAxis(verticalRadius));
+}
+
+String ShorthandSerializer::serializeCornerShapes(unsigned count) const
+{
+    auto shape = [&](unsigned i) {
+        return serializeLonghandValue(count + i);
+    };
+
+    unsigned lastIndex = count - 1;
+    while (lastIndex && shape(lastIndex) == shape(lastIndex == 3 ? 1 : 0))
+        --lastIndex;
 
     StringBuilder result;
-    result.append(corners[0]);
-    if (showTR)
-        result.append(" / "_s, corners[1]);
-    if (showBR)
-        result.append(" / "_s, corners[2]);
-    if (showBL)
-        result.append(" / "_s, corners[3]);
+    for (unsigned i = 0; i <= lastIndex; ++i)
+        result.append(i ? " "_s : ""_s, shape(i));
     return result.toString();
+}
+
+String ShorthandSerializer::serializeCorner() const
+{
+    ASSERT(!(length() % 2));
+    unsigned count = length() / 2;
+
+    auto shapes = serializeCornerShapes(count);
+    auto radii = serializeCornerRadii(count);
+
+    if (shapes == "round"_s)
+        return radii;
+    if (radii == "0px"_s)
+        return shapes;
+    return makeString(shapes, ' ', radii);
 }
 
 class LayerValues {
@@ -701,7 +690,7 @@ public:
         m_values[index] = value;
     }
 
-    bool& LEGACY_NODELETE skip(unsigned index)
+    NODELETE bool& skip(unsigned index)
     {
         ASSERT(index < m_shorthand.length());
         return m_skipSerializing[index];
@@ -732,7 +721,7 @@ public:
         return result && *result != CSSValueID::Invalid;
     }
 
-    bool LEGACY_NODELETE isPair(unsigned index) const
+    NODELETE bool isPair(unsigned index) const
     {
         // This returns false for implicit initial values that are pairs, which is OK for now.
         ASSERT(index < m_shorthand.length());
@@ -849,7 +838,7 @@ String ShorthandSerializer::serializeLayered() const
                     // If the two are different, both need to be serialized, unless clip is invalid as origin
                     if (layerValues.valueID(j) == CSSValueID::NoClip)
                         continue;
-                    if (layerValues.valueID(j) == CSSValueID::BorderArea) {
+                    if (layerValues.valueID(j) == CSSValueID::BorderArea || layerValues.isPair(j)) {
                         layerValues.skip(j - 1) = layerValues.valueID(j - 1) == CSSValueID::BorderBox;
                         continue;
                     }
@@ -1183,7 +1172,7 @@ String ShorthandSerializer::serializeColumnBreak() const
     }
 }
 
-static std::optional<CSSValueID> LEGACY_NODELETE fontWidthKeyword(double value)
+NODELETE static std::optional<CSSValueID> fontWidthKeyword(double value)
 {
     // If the numeric value does not fit in the fixed point FontSelectionValue, don't convert it to a keyword even if it rounds to a keyword value.
     float valueAsFloat = value;
@@ -1335,7 +1324,7 @@ String ShorthandSerializer::serializeFontVariant() const
     return result.isEmpty() ? nameString(CSSValueID::Normal) : result.toString();
 }
 
-static bool LEGACY_NODELETE gridTemplateListIsNone(const CSSValue& value)
+NODELETE static bool gridTemplateListIsNone(const CSSValue& value)
 {
     if (auto* list = dynamicDowncast<CSSGridTemplateListValue>(value))
         return list->list().isNone();
@@ -1354,7 +1343,7 @@ static bool gridTrackSizesIsAuto(const CSSValue& value)
     return isValueID(value, CSSValueID::Auto);
 }
 
-static bool LEGACY_NODELETE gridAutoFlowIsRow(CSSValue& value)
+NODELETE static bool gridAutoFlowIsRow(CSSValue& value)
 {
     if (auto* autoFlowValue = dynamicDowncast<CSSGridAutoFlowValue>(value))
         return autoFlowValue->autoFlow().isRow() && autoFlowValue->autoFlow().isSparse();
@@ -1371,7 +1360,7 @@ static bool LEGACY_NODELETE gridAutoFlowIsRow(CSSValue& value)
     return isValueID(value, CSSValueID::Row);
 }
 
-static bool LEGACY_NODELETE gridAutoFlowContains(CSSValue& value, CSSValueID id)
+NODELETE static bool gridAutoFlowContains(CSSValue& value, CSSValueID id)
 {
     if (auto* autoFlowValue = dynamicDowncast<CSSGridAutoFlowValue>(value)) {
         switch (id) {

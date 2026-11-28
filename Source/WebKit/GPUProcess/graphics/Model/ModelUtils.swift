@@ -23,7 +23,6 @@
 
 #if ENABLE_GPU_PROCESS_MODEL && canImport(RealityCoreDeformation, _version: 23.0.2) && canImport(ShaderGraph, _version: 159.0.3) && arch(arm64)
 
-import DirectResource
 import Metal
 import USDKit
 import RealityKit
@@ -92,7 +91,11 @@ private func copyDataIntoBuffer(_ buffer: inout MutableRawSpan, from data: Data)
     )
 
     // unsafe used here as that is the method for populating a MTLBuffer
+    #if compiler(>=6.4)
+    buffer.withUnsafeMutableBytes { unsafe $0.copyBytes(from: data) }
+    #else
     unsafe buffer.withUnsafeMutableBytes { unsafe $0.copyBytes(from: data) }
+    #endif
 }
 
 extension LowLevelMeshResource {
@@ -224,7 +227,7 @@ extension LowLevelMeshResource.Descriptor {
                 stepRate: layout.stepRate
             )
         }
-        descriptor.indexCapacity = llmDescriptor.indexCapacity
+        descriptor.indexCapacity = max(1, llmDescriptor.indexCapacity)
         descriptor.indexType = llmDescriptor.indexType
 
         return descriptor

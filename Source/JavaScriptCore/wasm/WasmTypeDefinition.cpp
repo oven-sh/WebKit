@@ -274,7 +274,7 @@ TypeInformation::TypeInformation()
     // (whose RTT is m_Void_Externref) matches a wasm module's imported
     // `(tag (param externref))` whose RTT comes from the canonical recgroup
     // table.
-    m_Void_Externref = canonicalizeStandaloneRTTImpl(typeDefinitionForFunction({ }, { externrefType() }));
+    lazyInitialize(m_Void_Externref, canonicalizeStandaloneRTTImpl(typeDefinitionForFunction({ }, { externrefType() })));
 }
 
 // Returns a Ref to an external (already-canonical) RTT referenced by this Type,
@@ -1030,7 +1030,7 @@ size_t TypeInformation::canonicalTypeCount()
     return info.m_canonicalRecursionGroups.size() + info.m_canonicalSingletonGroups.size();
 }
 
-bool LEGACY_NODELETE Type::definitelyIsCellOrNull() const
+NODELETE bool Type::definitelyIsCellOrNull() const
 {
     if (!isRefType(*this))
         return false;

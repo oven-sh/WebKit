@@ -1,0 +1,56 @@
+# const locked = () => ({ getTime: one }); const free = () => ({ getEight: one, getSeven: one }); const few = () => ({ getNine: one });
+# Object.assign(Date.prototype, free()); Object.assign(Date.prototype, locked(), few()); Object.assign(Date.prototype, few(), free(), locked());
+# the first copy brings no name that is locked; each of the others does, in whichever place the source stands
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 2
+# RUN: locks
+
+layout L0 module=m0 fields=[{key="getTime" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="getEight" declared={type=anything} flags=[IsRequired]}, {key="getSeven" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="getNine" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectAssign
+    v5 = Builtin builtin=DatePrototype
+    v6 = Call v1
+    v7 = Call v4, v3, v5, v6 @10
+    v8 = Call v0
+    v9 = Call v2
+    v10 = Call v4, v3, v5, v8, v9 @20
+    v11 = Call v2
+    v12 = Call v1
+    v13 = Call v0
+    v14 = Call v4, v3, v5, v11, v12, v13 @30
+    Return v14
+}
+function f1 name="locked" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="free" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="few" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f4 name="one" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

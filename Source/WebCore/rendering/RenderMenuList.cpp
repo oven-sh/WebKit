@@ -54,7 +54,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMenuList);
 
-RenderMenuList::RenderMenuList(HTMLSelectElement& element, Style::ComputedStyle&& style)
+RenderMenuList::RenderMenuList(HTMLSelectElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderFlexibleBox(Type::MenuList, element, WTF::move(style))
     , m_needsOptionsWidthUpdate(true)
     , m_optionsWidth(0)
@@ -64,7 +64,7 @@ RenderMenuList::RenderMenuList(HTMLSelectElement& element, Style::ComputedStyle&
 
 RenderMenuList::~RenderMenuList() = default;
 
-HTMLSelectElement& LEGACY_NODELETE RenderMenuList::selectElement() const
+NODELETE HTMLSelectElement& RenderMenuList::selectElement() const
 {
     return downcast<HTMLSelectElement>(nodeForNonAnonymous());
 }
@@ -129,7 +129,8 @@ void RenderMenuList::updateOptionsWidth()
             auto text = htmlSelectMultipleItems(count);
             if (countReplacesSelectedContent)
                 text = select->buttonLabelText(text);
-            auto run = RenderBlock::constructTextRun(applyTextTransform(style, text), style);
+            auto transformed = applyTextTransform(style, text);
+            auto run = RenderBlock::constructTextRun(transformed, style);
             return font->width(run);
         };
         widthWithoutOptions = countTextWidth(0);
@@ -219,35 +220,27 @@ std::pair<LayoutUnit, LayoutUnit> RenderMenuList::computeIntrinsicLogicalWidths(
     return { minLogicalWidth, maxLogicalWidth };
 }
 
-void RenderMenuList::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMenuList::computeIntrinsicLogicalWidthContributions()
 {
-    if (style().fieldSizing() == FieldSizing::Content) {
-        RenderFlexibleBox::computeIntrinsicLogicalWidthContributions();
-        return;
-    }
+    if (style().fieldSizing() == FieldSizing::Content)
+        return RenderFlexibleBox::computeIntrinsicLogicalWidthContributions();
 
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-    
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else {
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-        auto& logicalWidth = style().logicalWidth();
-        if (logicalWidth.isCalcSize() && (logicalWidth.isMinContent() || logicalWidth.isMaxContent())) {
-            // A calc-size() contributes the result of its calculation, not the size of its basis.
-            auto keywordLogicalWidth = logicalWidth.isMaxContent() ? m_maxContentLogicalWidthContribution : m_minContentLogicalWidthContribution;
-            m_minContentLogicalWidthContribution = resolveCalcSizeLogicalWidth(logicalWidth.calcSize(), keywordLogicalWidth, 0_lu);
-            m_maxContentLogicalWidthContribution = m_minContentLogicalWidthContribution;
-        }
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(style().logicalWidth(), LayoutUnit { fixedLogicalWidth->resolveZoom(style().usedZoomForLength()) }, 0_lu);
+        return { logicalWidth, logicalWidth };
     }
 
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+    auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
+    auto& logicalWidth = style().logicalWidth();
+    if (logicalWidth.isCalcSize() && (logicalWidth.isMinContent() || logicalWidth.isMaxContent())) {
+        // A calc-size() contributes the result of its calculation, not the size of its basis.
+        auto keywordLogicalWidth = logicalWidth.isMaxContent() ? maxContentLogicalWidth : minContentLogicalWidth;
+        auto calcSizeLogicalWidth = resolveCalcSizeLogicalWidth(logicalWidth.calcSize(), keywordLogicalWidth, 0_lu);
+        return { calcSizeLogicalWidth, calcSizeLogicalWidth };
+    }
+    return { minContentLogicalWidth, maxContentLogicalWidth };
 }
+
 
 void RenderMenuList::getItemBackgroundColor(unsigned listIndex, Color& itemBackgroundColor, bool& itemHasCustomBackgroundColor) const
 {
@@ -305,28 +298,6 @@ LayoutUnit RenderMenuList::clientPaddingRight() const
         return endOfLinePadding;
 
     return paddingRight();
-}
-#endif
-
-#if PLATFORM(IOS_FAMILY)
-void RenderMenuList::layout()
-{
-    RenderFlexibleBox::layout();
-
-    // Ideally, we should not be adjusting styles during layout. However, for a
-    // pill-shaped appearance, the horizontal border radius is dependent on the
-    // computed height of the box. This means that the appearance cannot be declared
-    // prior to layout, since CSS only allows the horizontal border radius to be
-    // dependent on the computed width of the box.
-    //
-    // Ignoring the style's border radius and forcing a pill-shaped appearance at
-    // paint time is not an option, since focus rings and tap highlights will not
-    // use the correct border radius. Consequently, we need to adjust the border
-    // radius here.
-    //
-    // Note that similar adjustments are made in RenderSliderThumb, RenderButton
-    // and RenderTextControlSingleLine.
-    RenderThemeIOS::adjustRoundBorderRadius(protect(mutableStyle()), *this);
 }
 #endif
 

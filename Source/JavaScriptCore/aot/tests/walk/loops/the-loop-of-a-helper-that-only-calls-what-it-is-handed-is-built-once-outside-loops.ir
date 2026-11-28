@@ -1,0 +1,199 @@
+# class Counter { step: number; total = 0; constructor(step: number) { this.step = step; } add(value: number) { this.total = (this.total + value * this.step) | 0; return this.total; } }
+# function each(list: number[], visit: (x: number) => void) { for (let i = 0; i < list.length; i++) visit(list[i]); }
+# function drive(counter: Counter, times: number) { let last = 0; for (let i = 0; i < times; i++) last = counter.add(i); return last; }
+# function outsideLoops(list: number[], box: Counter) { each(list, x => { box.add(x); }); return box.total; }
+# function insideLoop(lists: number[][], box: Counter) { for (let k = 0; k < lists.length; k++) each(lists[k], x => { box.add(x); }); return box.total; }
+# function withoutFunction(box: Counter, times: number) { return drive(box, times); }
+# declare function sink(...values: unknown[]): void;
+# sink(outsideLoops, insideLoop, withoutFunction, Counter);
+# A loop is built twice: a typed build behind tests in front of it, and the build as it is written for what fails them.
+# A helper that takes a function only to call it (each) is copied to its call with the function's body in every build of its loop. Where that call stands outside every loop of its callers
+# the loop is built once, as it is written: outsideLoops has one head. Inside a loop of the caller (insideLoop) both builds stay, and so they do in the copy of a callee
+# that takes no function (drive in withoutFunction): the loop that a program's main function calls for is as hot as any.
+# RUN: walk f3 f4 f5 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: callee=f1
+# CHECK: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# CHECK-LABEL: code f4:Body
+# CHECK: callee=f1
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f5:Body
+# CHECK: callee=f2
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (outsideLoops, insideLoop, withoutFunction, Counter) => { const made = step => new Counter(step); const holed = [1, 2, 3]; delete holed[1]; print(outsideLoops([1, 2, 3], made(2)), outsideLoops([1.5, 2.5], made(2)), outsideLoops(holed, made(2)), outsideLoops([], made(2)), insideLoop([[1], [2, 3], []], made(1)), withoutFunction(made(3), 4)); const grows = [1, 2]; const box = made(1); const add = box.add; let turns = 0; box.add = function (value) { if (turns++ < 2) grows.push(10); return add.call(this, value); }; print(outsideLoops(grows, box), grows.length); };
+# ANSWER: 12 8 6 0 6 18
+# ANSWER: 23 4
+# ANSWER: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Counter" module=m0 position=6 constructor=f6 fields=[{key="step" declared={type=number} flags=[IsRequired]}, {key="total" declared={type=number} flags=[IsRequired]}] place=6 ownFieldCount=2
+variable g0 name="each" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="drive" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable] place=2
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=34
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f6 @0
+    v7 = NewClass v6 layout=L0 @0
+    PutModuleVariable v7 variable=g2 @0
+    v9 = NewClosure function=f7 @89
+    DefineMethod v7, v9 layout=L0 key="add" @89
+    v11 = FinishClass v7 layout=L0 @0
+    v12 = Convert v11 declared={type=f6 flags=[IsFromCompiler]} @0
+    v13 = Convert v11 declared={type=f6 flags=[IsFromCompiler]} @0
+    v14 = Builtin builtin=GlobalThis @829
+    v15 = PropGet v14 key="sink" [isFreeName] @829
+    v16 = Call v15, -, v1, v3, v5, v13 calleeName="sink" @829
+    v17 = Undefined @829
+    Return v17 @829
+}
+function f1 name="each" module=m0 position=184 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|function):
+    v2 = Integer @257
+    v3 = Convert v2 declared={type=number} @257
+    Jump -> next b1(v3) @253
+  b1(v4: number):
+    LoopHint @253
+    v6 = PropGet v0 key="length" @264
+    v7 = Less v4, v6 @264
+    Branch v7 -> taken b2(), notTaken b3() @264
+  b2():
+    v8 = ElemGet v0, v4 @288
+    v9 = Call v1, -, v8 calleeName="visit" @282
+    v10 = Increment v4 @277
+    v11 = Convert v10 declared={type=number} @277
+    Jump -> next b1(v11) @277
+  b3():
+    v12 = Undefined @277
+    Return v12 @277
+}
+function f2 name="drive" module=m0 position=300 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer @361
+    v3 = Convert v2 declared={type=number} @361
+    v4 = Integer @377
+    v5 = Convert v4 declared={type=number} @377
+    Jump -> next b1(v3, v5) @373
+  b1(v6: number, v7: number):
+    LoopHint @373
+    v9 = Less v7, v1 @384
+    Branch v9 -> taken b2(), notTaken b3() @384
+  b2():
+    v10 = PropGet v0 key="add" @403
+    v11 = Call v10, v0, v7 calleeKey="add" calleeName="counter.add" @411
+    v12 = Convert v11 declared={type=number} @396
+    v13 = Increment v7 @391
+    v14 = Convert v13 declared={type=number} @391
+    Jump -> next b1(v12, v14) @391
+  b3():
+    Return v6 @426
+}
+function f3 name="outsideLoops" module=m0 position=434 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|L0):
+    v2 = GetModuleVariable variable=g0 @488
+    v3 = NewClosure v1 function=f8 @499
+    v4 = Call v2, -, v0, v3 calleeName="each" @488
+    v5 = PropGet v1 key="total" @529
+    Return v5 @529
+}
+function f4 name="insideLoop" module=m0 position=542 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<number>>, v1: undefined|null|L0):
+    v2 = Integer @610
+    v3 = Convert v2 declared={type=number} @610
+    Jump -> next b1(v3) @606
+  b1(v4: number):
+    LoopHint @606
+    v6 = PropGet v0 key="length" @617
+    v7 = Less v4, v6 @617
+    Branch v7 -> taken b2(), notTaken b3() @617
+  b2():
+    v8 = GetModuleVariable variable=g0 @636
+    v9 = ElemGet v0, v4 @641
+    v10 = NewClosure v1 function=f9 @651
+    v11 = Call v8, -, v9, v10 calleeName="each" @636
+    v12 = Increment v4 @631
+    v13 = Convert v12 declared={type=number} @631
+    Jump -> next b1(v13) @631
+  b3():
+    v14 = PropGet v1 key="total" @681
+    Return v14 @681
+}
+function f5 name="withoutFunction" module=m0 position=694 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = GetModuleVariable variable=g1 @757
+    v3 = Call v2, -, v0, v1 calleeName="drive" @757
+    ReturnCall v3 @757
+}
+function f6 name="Counter" module=m0 position=52 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0 @52
+    v3 = NewObject v2 layout=L0 @52
+    v4 = Convert v3 declared={type=L0} @52
+    PropDefine v4, v1 key="step" @16
+    v6 = Integer @38
+    v7 = Convert v6 declared={type=number} @38
+    PropDefine v4, v7 key="total" @30
+    v9 = Undefined @81
+    v10 = TypeTest v9 testedType=object @81
+    Branch v10 -> taken b1(| 0), notTaken b2(v4) @81
+  b1(v11):
+    Jump -> next b2(v11) @81
+  b2(v12):
+    Return v12 @81
+}
+function f7 name="add" module=m0 position=89 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    v2 = PropGet v0 key="total" @124
+    v3 = PropGet v0 key="step" @145
+    v4 = Mul v1, v3 @145
+    v5 = Add v2, v4 @145
+    v6 = Integer @158
+    v7 = BitOr v5, v6 @158
+    PropSet v0, v7 key="total" @110
+    v9 = PropGet v0 key="total" @168
+    Return v9 @168
+}
+function f8 module=m0 position=499 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined] variableName="box"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = PropGet v0 key="add" @506
+    v3 = Call v2, v0, v1 calleeKey="add" calleeName="box.add" @510
+    v4 = Undefined @506
+    Return v4 @506
+}
+function f9 module=m0 position=651 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined] variableName="box"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = PropGet v0 key="add" @658
+    v3 = Call v2, v0, v1 calleeKey="add" calleeName="box.add" @662
+    v4 = Undefined @658
+    Return v4 @658
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private

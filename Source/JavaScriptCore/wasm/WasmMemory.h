@@ -108,8 +108,8 @@ private:
 
     std::expected<PageCount, GrowFailReason> growShared(VM&, PageCount);
 
-    Ref<BufferMemoryHandle> m_handle;
-    RefPtr<SharedArrayBufferContents> m_shared;
+    const Ref<BufferMemoryHandle> m_handle;
+    const RefPtr<SharedArrayBufferContents> m_shared;
     WTF::Function<void(GrowSuccess, PageCount, PageCount)> m_growSuccessCallback;
     AddressType m_addressType;
     // FIXME: If/When merging this into JSWebAssemblyMemory we should just use an unconditionalFinalizer.

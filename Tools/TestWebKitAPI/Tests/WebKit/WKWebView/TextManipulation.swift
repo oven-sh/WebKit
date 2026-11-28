@@ -28,6 +28,7 @@ private import TestWebKitAPILibrary.Helpers.cocoa.WKWebViewConfigurationExtras
 import Testing
 import WebKit
 private import WebKit_Private
+private import WebKit_Private.WKPreferencesPrivate
 private import WebKit_Private.WKWebViewPrivate
 private import WebKit_Private._WKTextManipulationConfiguration
 private import WebKit_Private._WKTextManipulationDelegate
@@ -84,96 +85,6 @@ extension _WKTextManipulationToken {
         self.isExcluded = excluded
         self.content = content
     }
-}
-
-// Each `#expect` or `#require` is a round trip to the Swift Testing macro plugin, followed by type-checking the code it
-// expands to. An inline `#expect(a == b)` is the worst case, taking roughly 20ms in this module because the expanded
-// comparison is solved against every `==` overload visible here. With hundreds of checks, that made this file by far
-// the slowest to compile in TestWebKitAPI. Routing them through these helpers expands each macro once, leaving
-// ordinary function calls at the call sites.
-//
-// The helpers take the caller's location as `#fileID`, `#filePath`, `#line`, and `#column` rather than as
-// `SourceLocation = #_sourceLocation`, because `#_sourceLocation` is a plugin macro too, and as a default argument it
-// would still be expanded at every call site.
-
-private func expectEqual<T: Equatable>(
-    _ actual: T,
-    _ expected: T,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    #expect(actual == expected, sourceLocation: sourceLocation)
-}
-
-private func requireEqual<T: Equatable>(
-    _ actual: T,
-    _ expected: T,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) throws {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    try #require(actual == expected, sourceLocation: sourceLocation)
-}
-
-private func expectNil<T>(
-    _ value: T?,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    #expect(value == nil, sourceLocation: sourceLocation)
-}
-
-private func requireNonNil<T>(
-    _ value: T?,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) throws -> T {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    return try #require(value, sourceLocation: sourceLocation)
-}
-
-private func expectTrue(
-    _ condition: Bool,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    #expect(condition, sourceLocation: sourceLocation)
-}
-
-private func expectFalse(
-    _ condition: Bool,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    #expect(!condition, sourceLocation: sourceLocation)
-}
-
-private func expectIdentical(
-    _ actual: AnyObject?,
-    _ expected: AnyObject?,
-    fileID: String = #fileID,
-    filePath: String = #filePath,
-    line: Int = #line,
-    column: Int = #column
-) {
-    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
-    #expect(actual === expected, sourceLocation: sourceLocation)
 }
 
 private func item(containing text: String, in items: [_WKTextManipulationItem]) -> _WKTextManipulationItem? {
@@ -1040,6 +951,127 @@ struct TextManipulationTests {
 
         let title = try requireNonNil(item(containing: "Title text", in: items))
         expectTrue(title.webViewBoundingRect.isNull)
+    }
+
+    @Test
+    func webViewBoundingRectInFrameUnderCrossSiteIframeWithSiteIsolation() async throws {
+        // Each innermost frame is from 127.0.0.1, the main frame's site, and has text at (10, 10). It's at (20, 30) in
+        // a middle frame, which is at (100, 150) in the main frame if it's from localhost, a different site, or at
+        // (450, 150) if it's from 127.0.0.1. So under Site Isolation, the former innermost frame is in the main frame's
+        // process, but its parent isn't.
+        func middleFrameMarkup(innerFramePath: String) -> String {
+            """
+            <!DOCTYPE html>\
+            <body style='margin: 0'>\
+            <iframe style='position: absolute; left: 20px; top: 30px; width: 250px; height: 150px; border: none'></iframe>\
+            <script>document.querySelector('iframe').src = `http://127.0.0.1:${location.port}\(innerFramePath)`;</script>\
+            </body>
+            """
+        }
+
+        // Under Site Isolation, the innermost frame's process can only map its content into the main frame once it has
+        // received the positions of the middle frame's children from the middle frame's process, which happens
+        // asynchronously. Until then, an intersection observer reports the text as not intersecting the viewport, so
+        // tell the main frame when it does.
+        func innerFrameMarkup(text: String) -> String {
+            """
+            <!DOCTYPE html>\
+            <body style='margin: 0'>\
+            <p style='position: absolute; left: 10px; top: 10px; margin: 0; font: 20px/20px monospace'>\(text)</p>\
+            <script>\
+            new IntersectionObserver((entries) => {\
+                if (entries.some((entry) => entry.isIntersecting))\
+                    top.postMessage('\(text)', '*');\
+            }).observe(document.querySelector('p'));\
+            </script>\
+            </body>
+            """
+        }
+
+        var server = try HTTPServer(protocol: .http) {
+            Route("/main.html") {
+                """
+                <!DOCTYPE html>\
+                <meta name='viewport' content='width=800, initial-scale=1'>\
+                <body style='margin: 0'>\
+                <iframe id='crossSite' style='position: absolute; left: 100px; top: 150px; width: 300px; height: 250px; border: none'></iframe>\
+                <iframe id='sameSite' style='position: absolute; left: 450px; top: 150px; width: 300px; height: 250px; border: none'></iframe>\
+                <script>\
+                intersectingTexts = new Set;\
+                addEventListener('message', (event) => intersectingTexts.add(event.data));\
+                for (const [id, host] of [['crossSite', 'localhost'], ['sameSite', '127.0.0.1']])\
+                    document.getElementById(id).src = `http://${host}:${location.port}/middle-${id}.html`;\
+                </script>\
+                </body>
+                """
+            }
+            Route("/middle-crossSite.html") {
+                middleFrameMarkup(innerFramePath: "/inner-crossSite.html")
+            }
+            Route("/middle-sameSite.html") {
+                middleFrameMarkup(innerFramePath: "/inner-sameSite.html")
+            }
+            Route("/inner-crossSite.html") {
+                innerFrameMarkup(text: "Text under cross-site frame")
+            }
+            Route("/inner-sameSite.html") {
+                innerFrameMarkup(text: "Text under same-site frame")
+            }
+        }
+
+        try await server.run { serverConfiguration in
+            let configuration = WKWebViewConfiguration()
+            for feature in WKPreferences._features() where feature.key == "SiteIsolationEnabled" {
+                configuration.preferences._setEnabled(true, for: feature)
+            }
+            let webView = TestWKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+            webView._textManipulationDelegate = delegate
+
+            let url = try requireNonNil(URL(string: "http://127.0.0.1:\(serverConfiguration.port)/main.html"))
+            try await webView.loadAndWait(URLRequest(url: url))
+            // Wait until both innermost frames' text intersects the viewport, which means that the main frame's process
+            // can map their content into the main frame.
+            var intersectingTextCount = 0
+            for _ in 0..<250 {
+                intersectingTextCount = try await webView.callJavaScript(returning: Int.self) { "return intersectingTexts.size" }
+                if intersectingTextCount == 2 {
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try requireEqual(intersectingTextCount, 2)
+
+            let textManipulationConfiguration = _WKTextManipulationConfiguration()
+            textManipulationConfiguration.includeSubframes = true
+            await webView._startTextManipulations(with: textManipulationConfiguration)
+
+            @MainActor func bothItemsFound() -> Bool {
+                item(containing: "Text under cross-site frame", in: delegate.items) != nil
+                    && item(containing: "Text under same-site frame", in: delegate.items) != nil
+            }
+            var attempts = 0
+            while !bothItemsFound() && attempts < 100 {
+                try await Task.sleep(for: .milliseconds(20))
+                attempts += 1
+            }
+
+            // webViewBoundingRect is in the web view's coordinates, which on iOS are scaled by the page's zoom. For
+            // example, the page may be laid out 980px wide and zoomed out to fit the web view.
+            #if WTF_PLATFORM_IOS_FAMILY
+            let scale = webView.scrollView.zoomScale
+            #else
+            let scale: CGFloat = 1
+            #endif
+
+            let sameSiteRect = try requireNonNil(item(containing: "Text under same-site frame", in: delegate.items)).webViewBoundingRect
+            #expect(abs(sameSiteRect.origin.x - (450 + 20 + 10) * scale) <= 1)
+            #expect(abs(sameSiteRect.origin.y - (150 + 30 + 10) * scale) <= 2)
+
+            // The innermost frames' text is at the same position in each, and their middle frames are 350px apart.
+            let crossSiteRect = try requireNonNil(item(containing: "Text under cross-site frame", in: delegate.items)).webViewBoundingRect
+            #expect(abs(crossSiteRect.origin.x - (sameSiteRect.origin.x - 350 * scale)) <= 0.5)
+            #expect(abs(crossSiteRect.origin.y - sameSiteRect.origin.y) <= 0.5)
+        }
     }
 
     @Test

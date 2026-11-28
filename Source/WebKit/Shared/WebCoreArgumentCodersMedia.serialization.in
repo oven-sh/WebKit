@@ -22,6 +22,15 @@
 
 
 #if ENABLE(MEDIA_SESSION)
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+header: <WebCore/CallToActionLabel.h>
+enum class WebCore::CallToActionLabel : uint8_t {
+    VisitWebsite,
+    Download,
+    VisitAppStore,
+};
+#endif
+
 header: <WebCore/MediaSessionPlaybackState.h>
 enum class WebCore::MediaSessionPlaybackState : uint8_t {
     None,
@@ -245,8 +254,9 @@ header: <WebCore/MediaPlayer.h>
     UseDecompressionSessionForProtectedContent,
     UseStereoDecoding,
 #if PLATFORM(IOS_FAMILY)
-    CanShowWhileLocked
+    CanShowWhileLocked,
 #endif
+    RequiresHardwareDecoder
 };
 
 header: <WebCore/MediaPlayer.h>
@@ -555,15 +565,16 @@ class WebCore::RealtimeMediaSourceSettings {
     WebCore::RealtimeMediaSourceSupportedConstraints supportedConstraints();
 };
 
-[Nested] enum class WebCore::CaptureDevice::DeviceType : uint8_t {
+[Nested] enum class WebCore::CaptureDevice::DeviceType : uint16_t {
     Unknown,
     Microphone,
     Speaker,
     Camera,
     Screen,
     Window,
-    SystemAudio
-    Canvas
+    SystemAudio,
+    Canvas,
+    BrowserTab
 };
 
 class WebCore::CaptureDevice {
@@ -637,6 +648,8 @@ header: <WebCore/RealtimeMediaSourceCenter.h>
 [Nested] struct WebCore::RealtimeMediaSourceCenter::ValidDevices {
     Vector<WebCore::CaptureDevice> audioDevices;
     Vector<WebCore::CaptureDevice> videoDevices;
+    [Validator='*bestMatchingAudioDeviceCount <= audioDevices->size()'] unsigned bestMatchingAudioDeviceCount;
+    [Validator='*bestMatchingVideoDeviceCount <= videoDevices->size()'] unsigned bestMatchingVideoDeviceCount;
 };
 
 #endif // ENABLE(MEDIA_STREAM)
@@ -1052,7 +1065,7 @@ class WebCore::SerializedPlatformDataCueValue {
 #endif
 
 #if ENABLE(VIDEO)
-using WebCore::MediaPlayer::VideoFullscreenMode = uint32_t
+using WebCore::MediaPlayerEnums::VideoFullscreenMode = uint32_t
 using WebCore::TrackID = uint64_t
 #endif
 
@@ -1077,6 +1090,7 @@ enum class WebCore::PlatformMediaError : uint8_t {
     CDMInstanceKeyNeeded,
     Shutdown,
     ProtectedContent,
+    HardwareDecoderUnavailable,
 };
 #endif
 

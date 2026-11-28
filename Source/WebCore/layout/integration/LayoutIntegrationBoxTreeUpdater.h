@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,28 +25,12 @@
 
 #pragma once
 
-#include <wtf/CheckedPtr.h>
-#include <wtf/CheckedRef.h>
-#include <wtf/UniqueRef.h>
+#include <WebCore/RenderElement.h>
 
 namespace WebCore {
 
-class Document;
 class RenderBlock;
-class RenderBoxModelObject;
-class RenderElement;
-class RenderObject;
 class RenderText;
-
-namespace Style {
-class ComputedStyle;
-}
-
-namespace Layout {
-class Box;
-class ElementBox;
-class InitialContainingBlock;
-}
 
 namespace LayoutIntegration {
 
@@ -54,42 +38,61 @@ namespace LayoutIntegration {
 class InlineContent;
 #endif
 
-class BoxTreeUpdater {
-public:
-    BoxTreeUpdater(RenderBlock&);
-    BoxTreeUpdater(RenderBlock&, const Document&);
-    ~BoxTreeUpdater();
+// The box tree is the render tree, and the boxes get their data from their renderers. The root state is set and cleared
+// by the root's own LineLayout or GridLayout. This clears what a formatting context stored on its boxes.
+namespace BoxTreeUpdater {
 
-    CheckedRef<Layout::ElementBox> build();
-    void tearDown();
+// Clears what the formatting context stored on its boxes. Text content that waited for the inline items goes in.
+void tearDown(RenderBlock& rootRenderer);
 
-    static void updateStyle(const RenderObject&);
-    static void updateContent(const RenderText&);
+// Partial removal in an inline formatting context.
+void remove(RenderObject& child);
 
-    const Layout::Box& insert(const RenderElement& parent, RenderObject& child, const RenderObject* beforeChild = nullptr);
-    // Destroys the layout box of the child, and the boxes of its subtree.
-    void remove(const RenderElement& parent, RenderObject& child);
+// The renderer is content of a formatting context whose root has a live LineLayout or GridLayout. Constant time, except
+// for content of inline boxes, which walks up to the block container.
+inline bool isInLiveFormattingContext(const RenderObject&);
+// The same, or the renderer is such a root.
+inline bool isLaidOutByIntegration(const RenderObject&);
 
-private:
-    const RenderBlock& rootRenderer() const { return m_rootRenderer; }
-    RenderBlock& rootRenderer() { return m_rootRenderer; }
+// The text content of the box and the flags derived from it.
+void updateContent(RenderText&);
+// Simplified measuring also depends on the style.
+void updateSimplifiedMeasuring(RenderText&);
+// So does the text-combine-upright font. Returns whether the text became combined or stopped being combined.
+bool updateCombinedText(RenderText&);
 
-    const Layout::ElementBox& LEGACY_NODELETE rootLayoutBox() const;
-    Layout::ElementBox& LEGACY_NODELETE rootLayoutBox();
+// From the renderer type, which is set up before the layout box.
+Layout::Box::ElementAttributes elementAttributes(const RenderObject&);
+// Whether the box may have a first-line style. Changes with the style, and for anonymous blocks, with the parent.
+void updateFirstLineStyleState(RenderElement&);
 
-    Layout::InitialContainingBlock& LEGACY_NODELETE initialContainingBlock();
+inline bool isInLiveFormattingContext(const RenderObject& renderer)
+{
+    SUPPRESS_UNCHECKED_LOCAL auto* parent = renderer.parent();
+    if (!parent)
+        return false;
+    // These renderers have a parent but are not in its child list.
+    auto isOutsideChildList = [&] {
+        return renderer.isRenderReplica() || renderer.isRenderScrollbarPart() || Layout::isExcludedFromLayoutBoxNavigation(renderer);
+    };
+    if (!parent->childrenInline()) [[likely]]
+        return parent->layoutBox().isGridIntegrationRoot() && !isOutsideChildList();
+    if (isOutsideChildList()) [[unlikely]]
+        return false;
+    while (parent->isInlineBox()) {
+        parent = parent->parent();
+        if (!parent)
+            return false;
+    }
+    return parent->layoutBox().isInlineIntegrationRoot();
+}
 
-    static UniqueRef<Layout::Box> createLayoutBox(RenderObject&);
+inline bool isLaidOutByIntegration(const RenderObject& renderer)
+{
+    return renderer.layoutBox().isIntegrationRoot() || isInLiveFormattingContext(renderer);
+}
 
-    void buildTreeForInlineContent();
-    void buildTreeForFlexContent();
-    void buildTreeForGridContent();
-
-    void insertChild(UniqueRef<Layout::Box>, RenderObject&, const RenderObject* beforeChild = nullptr);
-
-    RenderBlock& m_rootRenderer;
-    CheckedPtr<const Document> m_document;
-};
+}
 
 #if ENABLE(TREE_DEBUGGING)
 void showInlineContent(TextStream&, const InlineContent&, size_t depth, bool isDamaged = false);

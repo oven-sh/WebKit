@@ -39,6 +39,11 @@
 #include <wtf/Lock.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(MODEL_PROCESS) && ENABLE(SPATIAL_PORTAL)
+#include <wtf/CompletionHandler.h>
+#include <wtf/MachSendRight.h>
+#endif
+
 #if ENABLE(GPU_PROCESS)
 
 namespace IPC {
@@ -52,9 +57,6 @@ namespace WebKit {
 class RemoteImageBufferSetProxyFlushFence;
 struct BufferSetBackendHandle;
 
-// FIXME: We should have a generic 'ImageBufferSet' class that contains
-// the code that isn't specific to being remote, and this helper belongs
-// there.
 class ThreadSafeImageBufferSetFlusher {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(ThreadSafeImageBufferSetFlusher);
     WTF_MAKE_NONCOPYABLE(ThreadSafeImageBufferSetFlusher);
@@ -77,7 +79,8 @@ public:
     virtual void setNeedsDisplay() = 0;
 };
 
-// A RemoteImageBufferSet is an ImageBufferSet, where the actual ImageBuffers are owned by the GPU process.
+// A RemoteImageBufferSet is a set of three ImageBuffers (front, back, secondary back) owned by the GPU process,
+// for the purpose of drawing successive layer frames.
 // To draw a frame, the consumer allocates a new RemoteGraphicsContextProxy and
 // asks the RemoteImageBufferSet set to map it to an appropriate new front
 // buffer (either by picking one of the back buffers, or by allocating a new
@@ -86,8 +89,6 @@ public:
 // Usage is done through RemoteRenderingBackendProxy::prepareImageBufferSetsForDisplay,
 // so that a Vector of RemoteImageBufferSets can be used with a single
 // IPC call.
-// FIXME: It would be nice if this could actually be a subclass of ImageBufferSet, but
-// probably can't while it uses batching for prepare and volatility.
 class RemoteImageBufferSetProxy : public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>, public Identified<ImageBufferSetIdentifier> {
 public:
     static Ref<RemoteImageBufferSetProxy> create(RemoteRenderingBackendProxy&, ImageBufferSetClient&);
@@ -95,9 +96,9 @@ public:
 
     OptionSet<BufferInSetType> requestedVolatility() { return m_requestedVolatility; }
     OptionSet<BufferInSetType> confirmedVolatility() { return m_confirmedVolatility; }
-    void LEGACY_NODELETE clearVolatility();
-    void LEGACY_NODELETE addRequestedVolatility(OptionSet<BufferInSetType> request);
-    void LEGACY_NODELETE setConfirmedVolatility(OptionSet<BufferInSetType> types);
+    NODELETE void clearVolatility();
+    NODELETE void addRequestedVolatility(OptionSet<BufferInSetType> request);
+    NODELETE void setConfirmedVolatility(OptionSet<BufferInSetType> types);
 
     void setNeedsDisplay();
 
@@ -108,7 +109,7 @@ public:
     void prepareToDisplay(const WebCore::Region& dirtyRegion, bool supportsPartialRepaint, bool hasEmptyDirtyRegion, bool drawingRequiresClearedPixels);
 #endif
 
-    WebCore::GraphicsContext& LEGACY_NODELETE context();
+    NODELETE WebCore::GraphicsContext& context();
     bool hasContext() const { return !!m_context; }
 
     RemoteGraphicsContextIdentifier contextIdentifier() const { return m_contextIdentifier; }
@@ -122,6 +123,12 @@ public:
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     std::optional<WebCore::DynamicContentScalingDisplayList> dynamicContentScalingDisplayList();
+#endif
+
+#if ENABLE(MODEL_PROCESS) && ENABLE(SPATIAL_PORTAL)
+    // Shares the current front buffer so another process can display it, replying on the main run loop. There is no
+    // buffer to share while one is being prepared for display, or before the first one is painted.
+    void frontBufferForExternalRead(CompletionHandler<void(std::optional<MachSendRight>&&)>&&);
 #endif
 
     unsigned generation() const { return m_generation; }

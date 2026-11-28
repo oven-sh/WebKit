@@ -1,0 +1,102 @@
+# The list follows from the program alone. Inside the rehearsal no built-in itself lies in a structure that a built-in made fresh for the program: a descriptor, a list of values.
+# So a program that never held a built-in cannot lay it under another name either: Object.defineProperty(mute, "toString", Object.getOwnPropertyDescriptor(Math, "cbrt")); new RegExp("a" + mute): Math.cbrt is not written down.
+# What lies there is what the program gets wherever it reads the same thing: ("b" + Object.values(Object.getOwnPropertyDescriptor(Math, "max")).includes(Math.max))
+# An object inside a list pays by its length like one that is handed over: const small = Object.create(Array.prototype); small.length = 3; ("d" + [small].join().length)
+# heir.length = 1000000; const holder = [heir]; ("c" + (holder.join().length + .. nine times ..)): the nine together are more than a start may do.
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /aNaN/
+# CHECK: text /btrue/
+# CHECK-NOT: text /c8999991/
+# CHECK: text /d2/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=Math
+    v3 = NewObject layout=L0
+    v4 = String string="toString"
+    v5 = String string="cbrt"
+    v6 = PropGet v1 key="getOwnPropertyDescriptor"
+    v7 = Call v6, v1, v2, v5 calleeKey="getOwnPropertyDescriptor"
+    v8 = PropGet v1 key="defineProperty"
+    v9 = Call v8, v1, v3, v4, v7 calleeKey="defineProperty"
+    v10 = String string="a"
+    v11 = Add v10, v3
+    v12 = Construct v0, -, v11
+    v13 = String string="max"
+    v14 = PropGet v1 key="getOwnPropertyDescriptor"
+    v15 = Call v14, v1, v2, v13 calleeKey="getOwnPropertyDescriptor"
+    v16 = PropGet v1 key="values"
+    v17 = Call v16, v1, v15 calleeKey="values"
+    v18 = PropGet v2 key="max"
+    v19 = PropGet v17 key="includes"
+    v20 = Call v19, v17, v18 calleeKey="includes"
+    v21 = String string="b"
+    v22 = Add v21, v20
+    v23 = Construct v0, -, v22
+    v24 = Builtin builtin=Array
+    v25 = PropGet v24 key="prototype"
+    v26 = PropGet v1 key="create"
+    v27 = Call v26, v1, v25 calleeKey="create"
+    v28 = Integer integer=3
+    PropSet v27, v28 key="length"
+    v30 = NewArray v27 contents=anything
+    v31 = PropGet v30 key="join"
+    v32 = Call v31, v30 calleeKey="join"
+    v33 = PropGet v32 key="length"
+    v34 = String string="d"
+    v35 = Add v34, v33
+    v36 = Construct v0, -, v35
+    v37 = Builtin builtin=Array
+    v38 = PropGet v37 key="prototype"
+    v39 = PropGet v1 key="create"
+    v40 = Call v39, v1, v38 calleeKey="create"
+    v41 = Integer integer=1000000
+    PropSet v40, v41 key="length"
+    v43 = NewArray v40 contents=anything
+    v44 = PropGet v43 key="join"
+    v45 = Call v44, v43 calleeKey="join"
+    v46 = PropGet v45 key="length"
+    v47 = PropGet v43 key="join"
+    v48 = Call v47, v43 calleeKey="join"
+    v49 = PropGet v48 key="length"
+    v50 = Add v46, v49
+    v51 = PropGet v43 key="join"
+    v52 = Call v51, v43 calleeKey="join"
+    v53 = PropGet v52 key="length"
+    v54 = Add v50, v53
+    v55 = PropGet v43 key="join"
+    v56 = Call v55, v43 calleeKey="join"
+    v57 = PropGet v56 key="length"
+    v58 = Add v54, v57
+    v59 = PropGet v43 key="join"
+    v60 = Call v59, v43 calleeKey="join"
+    v61 = PropGet v60 key="length"
+    v62 = Add v58, v61
+    v63 = PropGet v43 key="join"
+    v64 = Call v63, v43 calleeKey="join"
+    v65 = PropGet v64 key="length"
+    v66 = Add v62, v65
+    v67 = PropGet v43 key="join"
+    v68 = Call v67, v43 calleeKey="join"
+    v69 = PropGet v68 key="length"
+    v70 = Add v66, v69
+    v71 = PropGet v43 key="join"
+    v72 = Call v71, v43 calleeKey="join"
+    v73 = PropGet v72 key="length"
+    v74 = Add v70, v73
+    v75 = PropGet v43 key="join"
+    v76 = Call v75, v43 calleeKey="join"
+    v77 = PropGet v76 key="length"
+    v78 = Add v74, v77
+    v79 = String string="c"
+    v80 = Add v79, v78
+    v81 = Construct v0, -, v80
+    v82 = NewArray v12, v23, v36, v81 contents=anything
+    Return v82
+}

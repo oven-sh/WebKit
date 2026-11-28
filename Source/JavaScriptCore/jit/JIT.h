@@ -184,13 +184,13 @@ namespace JSC {
         
         static CompilationResult compileSync(VM&, CodeBlock*, JITCompilationEffort);
 
-        static unsigned LEGACY_NODELETE frameRegisterCountFor(UnlinkedCodeBlock*);
+        NODELETE static unsigned frameRegisterCountFor(UnlinkedCodeBlock*);
         static unsigned frameRegisterCountFor(CodeBlock*);
-        static int LEGACY_NODELETE stackPointerOffsetFor(UnlinkedCodeBlock*);
+        NODELETE static int stackPointerOffsetFor(UnlinkedCodeBlock*);
         static int stackPointerOffsetFor(CodeBlock*);
 
-        JS_EXPORT_PRIVATE static UncheckedKeyHashMap<ASCIICString, Seconds> compileTimeStats();
-        JS_EXPORT_PRIVATE static Seconds LEGACY_NODELETE totalCompileTime();
+        JS_EXPORT_PRIVATE static HashMap<ASCIICString, Seconds> compileTimeStats();
+        NODELETE JS_EXPORT_PRIVATE static Seconds totalCompileTime();
 
     private:
         void privateCompileMainPass();
@@ -364,6 +364,7 @@ namespace JSC {
         void emit_op_tail_call(const JSInstruction*);
         void emit_op_call_direct_eval(const JSInstruction*);
         void emit_op_call_varargs(const JSInstruction*);
+        void emit_op_call_varargs_with_spread(const JSInstruction*);
         void emit_op_tail_call_varargs(const JSInstruction*);
         void emit_op_construct_varargs(const JSInstruction*);
         void emit_op_super_construct_varargs(const JSInstruction*);
@@ -375,7 +376,7 @@ namespace JSC {
         void emit_op_get_argument(const JSInstruction*);
         void emit_op_argument_count(const JSInstruction*);
         void emit_op_check_tdz(const JSInstruction*);
-        void LEGACY_NODELETE emit_op_identity_with_profile(const JSInstruction*);
+        NODELETE void emit_op_identity_with_profile(const JSInstruction*);
         void emit_op_debug(const JSInstruction*);
         void emit_op_del_by_id(const JSInstruction*);
         void emitSlow_op_del_by_id(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
@@ -443,7 +444,7 @@ namespace JSC {
         void emit_op_jtrue(const JSInstruction*);
         void emit_op_loop_hint(const JSInstruction*);
         void emit_op_check_traps(const JSInstruction*);
-        void LEGACY_NODELETE emit_op_nop(const JSInstruction*);
+        NODELETE void emit_op_nop(const JSInstruction*);
         void emit_op_super_sampler_begin(const JSInstruction*);
         void emit_op_super_sampler_end(const JSInstruction*);
         void emit_op_lshift(const JSInstruction*);
@@ -836,8 +837,8 @@ namespace JSC {
         BaselineJITPlan& m_plan;
         Vector<FarCallRecord> m_farCalls;
         Vector<Label> m_labels;
-        UncheckedKeyHashMap<BytecodeIndex, Label> m_checkpointLabels;
-        UncheckedKeyHashMap<BytecodeIndex, Label> m_fastPathResumeLabels;
+        HashMap<BytecodeIndex, Label> m_checkpointLabels;
+        HashMap<BytecodeIndex, Label> m_fastPathResumeLabels;
         Vector<JITGetByIdGenerator> m_getByIds;
         Vector<JITGetByValGenerator> m_getByVals;
         Vector<JITGetByIdWithThisGenerator> m_getByIdsWithThis;
@@ -879,12 +880,12 @@ namespace JSC {
         Label m_arityCheck;
 
         std::unique_ptr<JITDisassembler> m_disassembler;
-        RefPtr<Profiler::Compilation> m_compilation;
+        const RefPtr<Profiler::Compilation> m_compilation;
 
         PCToCodeOriginMapBuilder m_pcToCodeOriginMapBuilder;
 
-        UncheckedKeyHashMap<const JSInstruction*, void*> m_instructionToMathIC;
-        UncheckedKeyHashMap<const JSInstruction*, UniqueRef<MathICGenerationState>> m_instructionToMathICGenerationState;
+        HashMap<const JSInstruction*, void*> m_instructionToMathIC;
+        HashMap<const JSInstruction*, UniqueRef<MathICGenerationState>> m_instructionToMathICGenerationState;
 
         bool m_canBeOptimized;
         bool m_shouldEmitProfiling;

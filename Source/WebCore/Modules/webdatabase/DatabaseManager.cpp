@@ -53,8 +53,8 @@ public:
     ProposedDatabase(DatabaseManager&, SecurityOrigin&, const String& name, const String& displayName, unsigned long estimatedSize);
     ~ProposedDatabase();
 
-    SecurityOrigin& LEGACY_NODELETE origin() { return m_origin; }
-    DatabaseDetails& LEGACY_NODELETE details() { return m_details; }
+    NODELETE SecurityOrigin& origin() { return m_origin; }
+    NODELETE DatabaseDetails& details() { return m_details; }
 
 private:
     DatabaseManager& m_manager;
@@ -114,7 +114,7 @@ Ref<DatabaseContext> DatabaseManager::databaseContext(Document& document)
 
 #if LOG_DISABLED
 
-static inline void LEGACY_NODELETE logOpenDatabaseError(Document&, const String&)
+NODELETE static inline void logOpenDatabaseError(Document&, const String&)
 {
 }
 
@@ -200,7 +200,7 @@ void DatabaseManager::removeProposedDatabase(ProposedDatabase& database)
 
 ExceptionOr<Ref<Database>> DatabaseManager::openDatabase(Document& document, const String& name, const String& expectedVersion, const String& displayName, unsigned estimatedSize, RefPtr<DatabaseCallback>&& creationCallback)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     // FIXME: Remove this call to ScriptController::initializeMainThread(). The
     // main thread should have been initialized by a WebKit entrypoint already.
@@ -262,7 +262,7 @@ DatabaseDetails DatabaseManager::detailsForNameAndOrigin(const String& name, Sec
         Locker locker { m_proposedDatabasesLock };
         for (auto* proposedDatabase : m_proposedDatabases) {
             if (proposedDatabase->details().name() == name && proposedDatabase->origin().equal(origin)) {
-                ASSERT(proposedDatabase->details().threadID() == currentThreadID() || isMainThread());
+                ASSERT_WITH_SECURITY_IMPLICATION(proposedDatabase->details().threadID() == currentThreadID() || isMainThread());
                 return proposedDatabase->details();
             }
         }

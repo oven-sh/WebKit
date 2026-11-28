@@ -33,11 +33,9 @@
 #include "config.h"
 #include "InspectorTimelineAgent.h"
 
-#include "Element.h"
 #include "Event.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorCPUProfilerAgent.h"
-#include "InspectorDOMAgent.h"
 #include "InspectorMemoryAgent.h"
 #include "InstrumentingAgents.h"
 #include "JSExecState.h"
@@ -50,6 +48,7 @@
 #include <JavaScriptCore/Debugger.h>
 #include <JavaScriptCore/InspectorScriptProfilerAgent.h>
 #include <JavaScriptCore/ScriptArguments.h>
+#include <utility>
 #include <wtf/SetForScope.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -111,9 +110,22 @@ Inspector::Protocol::ErrorStringOr<void> InspectorTimelineAgent::start(std::opti
 
 Inspector::Protocol::ErrorStringOr<void> InspectorTimelineAgent::stop()
 {
-    if (tracking())
-        internalStop();
+    ASSERT(tracking() || m_pendingConsoleProfileRecords.isEmpty());
 
+    if (tracking()) {
+        // End open console profiles with the capture, so that their `console.profileEnd()` does not stop a capture
+        // that is not running, and the next `console.profile()` starts a new one.
+        for (auto& record : m_pendingConsoleProfileRecords)
+            didCompleteRecordEntry(record);
+
+        internalStop();
+    }
+
+    // A programmatic capture can end here instead of in `stopProgrammaticCapture()`, either because its console
+    // profiles were ended above, or because a later `Timeline.start` kept `console.profileEnd()` from stopping it.
+    restoreBreakpointsAfterProgrammaticCapture();
+
+    m_pendingConsoleProfileRecords.clear();
     m_trackingFromFrontend = false;
 
     return { };
@@ -348,26 +360,12 @@ void InspectorTimelineAgent::didPerformanceMark(const String& label, std::option
     appendRecord(TimelineRecordFactory::createTimeStampData(label), TimelineRecordType::TimeStamp, true, timestamp);
 }
 
-void InspectorTimelineAgent::didEnqueueFirstContentfulPaint()
-{
-    appendRecord(JSON::Object::create(), TimelineRecordType::FirstContentfulPaint, false);
-}
-
-void InspectorTimelineAgent::didEnqueueLargestContentfulPaint(Element* element, unsigned area)
-{
-    Inspector::Protocol::DOM::NodeId nodeID = 0;
-    if (CheckedPtr domAgent = Ref { m_instrumentingAgents.get() }->persistentDOMAgent())
-        nodeID = domAgent->pushNodeToFrontend(element);
-
-    appendRecord(TimelineRecordFactory::createLargestContentfulPaintData(nodeID, area), TimelineRecordType::LargestContentfulPaint, false);
-}
-
 void InspectorTimelineAgent::startProgrammaticCapture()
 {
     ASSERT(!tracking());
 
     // Disable breakpoints during programmatic capture.
-    if (CheckedPtr webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent()) {
+    if (CheckedPtr webDebuggerAgent = debuggerAgentForProgrammaticCapture()) {
         m_programmaticCaptureRestoreBreakpointActiveValue = webDebuggerAgent->breakpointsActive();
         if (m_programmaticCaptureRestoreBreakpointActiveValue)
             std::ignore = webDebuggerAgent->setBreakpointsActive(false);
@@ -388,11 +386,22 @@ void InspectorTimelineAgent::stopProgrammaticCapture()
     toggleTimelineInstrument(InstrumentState::Stop);
     toggleScriptProfilerInstrument(InstrumentState::Stop);
 
-    // Re-enable breakpoints if they were enabled.
-    if (m_programmaticCaptureRestoreBreakpointActiveValue) {
-        if (CheckedPtr webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent())
-            std::ignore = webDebuggerAgent->setBreakpointsActive(true);
-    }
+    restoreBreakpointsAfterProgrammaticCapture();
+}
+
+void InspectorTimelineAgent::restoreBreakpointsAfterProgrammaticCapture()
+{
+    // Clearing the value keeps a later stop from turning on breakpoints that the user has turned off since.
+    if (!std::exchange(m_programmaticCaptureRestoreBreakpointActiveValue, false))
+        return;
+
+    if (CheckedPtr webDebuggerAgent = debuggerAgentForProgrammaticCapture())
+        std::ignore = webDebuggerAgent->setBreakpointsActive(true);
+}
+
+WebDebuggerAgent* InspectorTimelineAgent::debuggerAgentForProgrammaticCapture() const
+{
+    return protect(m_instrumentingAgents)->enabledWebDebuggerAgent();
 }
 
 void InspectorTimelineAgent::toggleInstruments(InstrumentState state)
@@ -430,6 +439,9 @@ void InspectorTimelineAgent::toggleInstruments(InstrumentState state)
 
 void InspectorTimelineAgent::toggleScriptProfilerInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::ScriptProfiler))
+        return;
+
     if (CheckedPtr scriptProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentScriptProfilerAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = scriptProfilerAgent->startTracking(true);
@@ -440,6 +452,9 @@ void InspectorTimelineAgent::toggleScriptProfilerInstrument(InstrumentState stat
 
 void InspectorTimelineAgent::toggleHeapInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::Heap))
+        return;
+
     if (CheckedPtr heapAgent = Ref { m_instrumentingAgents.get() }->persistentWebHeapAgent()) {
         if (state == InstrumentState::Start) {
             if (shouldStartHeapInstrument())
@@ -451,6 +466,9 @@ void InspectorTimelineAgent::toggleHeapInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleCPUInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::CPU))
+        return;
+
 #if ENABLE(RESOURCE_USAGE)
     if (CheckedPtr cpuProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentCPUProfilerAgent()) {
         if (state == InstrumentState::Start)
@@ -465,6 +483,9 @@ void InspectorTimelineAgent::toggleCPUInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleMemoryInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::Memory))
+        return;
+
 #if ENABLE(RESOURCE_USAGE)
     if (CheckedPtr memoryAgent = Ref { m_instrumentingAgents.get() }->persistentMemoryAgent()) {
         if (state == InstrumentState::Start)
@@ -490,6 +511,9 @@ void InspectorTimelineAgent::toggleTimelineInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleAnimationInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::Animation))
+        return;
+
     if (CheckedPtr animationAgent = Ref { m_instrumentingAgents.get() }->persistentAnimationAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = animationAgent->startTracking();
@@ -533,7 +557,7 @@ void InspectorTimelineAgent::breakpointActionProbe(JSC::JSGlobalObject*, JSC::Br
     appendRecord(TimelineRecordFactory::createProbeSampleData(actionID, sampleId), TimelineRecordType::ProbeSample, false);
 }
 
-static Inspector::Protocol::Timeline::EventType LEGACY_NODELETE toProtocol(TimelineRecordType type)
+NODELETE static Inspector::Protocol::Timeline::EventType toProtocol(TimelineRecordType type)
 {
     switch (type) {
     case TimelineRecordType::EventDispatch:

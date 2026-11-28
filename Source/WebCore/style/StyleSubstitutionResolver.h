@@ -46,7 +46,6 @@ class MutableStyleProperties;
 namespace Style {
 
 class Builder;
-class ComputedStyle;
 class CustomProperty;
 class LocalPropertyRegistry;
 
@@ -55,18 +54,22 @@ class SubstitutionResolver {
 public:
     // The registration is that of the custom property whose value is being resolved, if any. It is
     // used to validate first-valid() candidates against the target syntax.
-    explicit SubstitutionResolver(Builder&, const CSSRegisteredCustomProperty* = nullptr);
+    NODELETE explicit SubstitutionResolver(Builder&, const CSSRegisteredCustomProperty* = nullptr);
 
     RefPtr<CSSValue> substituteAndParse(const CSSSubstitutionValue&, CSSPropertyID);
     RefPtr<CSSValue> substituteAndParseShorthand(const CSSShorthandSubstitutionValue&, CSSPropertyID);
     RefPtr<CSSVariableData> substitute(const CSSSubstitutionValue&);
 
 private:
+    RefPtr<CSSVariableData> substituteUsingCache(const CSSSubstitutionValue&);
+    RefPtr<CSSVariableData> tryCachedVarSubstitution(const CSSSubstitutionValue&);
+    bool canReuseVarSubstitution(const AtomString&, const CustomProperty*);
+
     std::optional<Vector<CSSParserToken>> substituteTokenRange(CSSParserTokenRange, const CSSParserContext&);
 
     bool substituteVarFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
     bool substituteEnvFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
-    bool substituteNamedValueOrFallback(const std::optional<AtomString>& name, const std::optional<CSSParserTokenRange>& fallbackRange, CSSValueID, Vector<CSSParserToken>&, const CSSParserContext&);
+    bool substituteNamedValueOrFallback(const std::optional<AtomString>& name, const std::optional<CSSParserTokenRange>& fallbackRange, CSSValueID, Vector<CSSParserToken>&, const CSSParserContext&, std::span<const unsigned> envIndices = { });
     bool substituteFirstValid(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
     bool substituteInheritFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
     bool substituteDashedFunction(StringView functionName, CSSParserTokenRange, Vector<CSSParserToken>&);
@@ -106,9 +109,9 @@ private:
     };
     std::optional<Vector<IfBranch>> substituteIfArgumentGrammar(CSSParserTokenRange, const CSSParserContext&);
 
-    RefPtr<const CustomProperty> propertyValueForVariableName(const AtomString&, CSSValueID);
+    RefPtr<const CustomProperty> propertyValueForVariableName(const AtomString&, CSSValueID, std::span<const unsigned> envIndices = { });
     RefPtr<CSSVariableData> trySimpleSubstitution(const CSSSubstitutionValue&);
-    bool LEGACY_NODELETE isBaseAppearance();
+    NODELETE bool isBaseAppearance();
     bool isInURLContext() const { return m_urlContextDepth; }
     void updateURLContext(const CSSParserToken&);
     void propagateAttrTaint(IsAttrTainted, std::span<const CSSParserToken>);
@@ -131,6 +134,10 @@ private:
     unsigned m_randomItemAutoIndex { 0 };
     IsAttrTainted m_isAttrTainted { IsAttrTainted::No };
     bool m_hasTaintedURL { false };
+    // The custom properties var() substituted, in order. The result can be cached if no other function
+    // was substituted.
+    Vector<std::pair<AtomString, RefPtr<const CustomProperty>>> m_varSubstitutions;
+    bool m_didSubstituteFunctionOtherThanVar { false };
 };
 
 } // namespace Style

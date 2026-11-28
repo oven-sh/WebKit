@@ -28,8 +28,7 @@
 
 #include "LayoutElementBox.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 // Convert a 1-indexed explicit CSS grid line into a 0-indexed grid line.
 // https://www.w3.org/TR/css-grid-1/#line-placement
@@ -43,7 +42,7 @@ namespace Layout {
 // A negative index is not a valid matrix position on its own; GridFormattingContext computes the
 // most-negative line across all items and shifts every line forward by that magnitude (the number
 // of leading implicit tracks) so, e.g., -2 above maps to matrix column 0. See GridPosition::create().
-static int LEGACY_NODELETE explicitLineToIndex(const Style::GridPosition& position, size_t explicitTrackCount)
+NODELETE static int explicitLineToIndex(const Style::GridPosition& position, size_t explicitTrackCount)
 {
     ASSERT(position.isExplicit());
     auto line = position.explicitPosition();
@@ -176,6 +175,4 @@ WTF::Range<size_t> UnplacedGridItem::definiteColumnRange() const
     return { definitePosition.startLine, definitePosition.endLine };
 }
 
-} // namespace Layout
-
-} // namespace WebCore
+} // namespace WebCore::Layout

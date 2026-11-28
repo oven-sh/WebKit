@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/IntSize.h>
 #include <WebCore/PlatformVideoColorSpace.h>
 #include <WebCore/VideoCodecType.h>
 #include <WebCore/VideoEncoderScalabilityMode.h>
@@ -48,6 +49,7 @@ struct GPUVideoEncoderFrameInfo {
     int64_t captureTimeMS { 0 };
     bool isKeyFrame { false };
     VideoFrame::Rotation rotation { VideoFrame::Rotation::None };
+    bool isMirrored { false };
     bool isScreenshare { false };
     int qp { -1 };
     std::optional<uint8_t> temporalIndex { };
@@ -63,16 +65,16 @@ public:
 
     struct CreationInfo {
         VideoCodecType codecType;
-        bool useWebCoreEncoder;
         bool useAnnexB;
         VideoEncoderScalabilityMode scalabilityMode;
         bool isLowLatencyEnabled;
+        IntSize size;
         Ref<WorkQueue> queue;
     };
     WEBCORE_EXPORT static RefPtr<GPUVideoEncoder> create(CreationInfo&&, const Vector<std::pair<String, String>>& parameters, GPUVideoEncoderCallback&&, GPUVideoEncoderDescriptionCallback&&, GPUVideoEncoderErrorCallback&&);
 
     virtual void initialize(uint16_t width, uint16_t height, unsigned startBitrate, unsigned maxBitrate, unsigned minBitrate, uint32_t maxFramerate) = 0;
-    virtual void encodeFrame(CVPixelBufferRef, int64_t timeStampNs, int64_t timeStamp, std::optional<uint64_t> duration, VideoFrame::Rotation, bool isKeyframeRequired) = 0;
+    virtual void encodeFrame(CVPixelBufferRef, int64_t timeStampNs, int64_t timeStamp, std::optional<uint64_t> duration, VideoFrame::Rotation, bool isMirrored, bool isKeyframeRequired) = 0;
     virtual void setRates(uint32_t bitRate, uint32_t frameRate) = 0;
     virtual void flush() = 0;
 

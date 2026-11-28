@@ -135,7 +135,7 @@ TrackListBase* TrackBase::trackList() const
 }
 
 // See: https://tools.ietf.org/html/bcp47#section-2.1
-static bool LEGACY_NODELETE isValidBCP47LanguageTag(const String& languageTag)
+NODELETE static bool isValidBCP47LanguageTag(const String& languageTag)
 {
     auto const length = languageTag.length();
 
@@ -205,7 +205,7 @@ void TrackBase::setLanguage(const AtomString& language)
     else
         message = makeString("The language '"_s, language, "' is not a valid BCP 47 language tag."_s);
 
-    context->addConsoleMessage(MessageSource::Rendering, MessageLevel::Warning, message);
+    context->addConsoleMessage(MessageSource::Media, MessageLevel::Warning, message);
 }
 
 #if !RELEASE_LOG_DISABLED

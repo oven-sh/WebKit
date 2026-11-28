@@ -1,0 +1,49 @@
+# function sum(x: number) { return ((x & 7) + 12) + ((x & 3) + 6) + 8; }
+# The three constants are one. The trees: `testaot native machine-folding/sums-and-products`.
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Const32(26)
+# RUN(ANSWER): run-in-shell
+# ANSWER: 26 36 28 34
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer
+    v2 = Call v0, -, v1
+    v3 = Integer integer=7
+    v4 = Call v0, -, v3
+    v5 = Integer integer=9
+    v6 = Call v0, -, v5
+    v7 = Integer integer=-2
+    v8 = Call v0, -, v7
+    v9 = String string=" "
+    v10 = Add v2, v9
+    v11 = Add v10, v4
+    v12 = Add v11, v9
+    v13 = Add v12, v6
+    v14 = Add v13, v9
+    v15 = Add v14, v8
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="print" [isFreeName]
+    v18 = Call v17, -, v15
+    Return v18
+}
+function f1 name="sum" module=m0 flags=[IsChecked] parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=7
+    v2 = BitAnd v0, v1
+    v3 = Integer integer=12
+    v4 = Add v2, v3
+    v5 = Integer integer=3
+    v6 = BitAnd v0, v5
+    v7 = Integer integer=6
+    v8 = Add v6, v7
+    v9 = Add v4, v8
+    v10 = Integer integer=8
+    v11 = Add v9, v10
+    Return v11
+}

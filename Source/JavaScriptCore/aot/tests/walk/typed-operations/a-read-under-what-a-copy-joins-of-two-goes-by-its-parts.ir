@@ -1,0 +1,61 @@
+# function named(i) { return "n" + i; }  function look(table, i) { return table[named(i | 0)]; }  function three(i) { return "n" + i + "!"; }  function long(table, i) { return table[three(i | 0)]; }
+# A helper that joins a text of two parts is copied into the function that reads under what it gives. The read goes by the two parts: the key is not made, not hashed and not looked for among the names.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGetByKeyParts
+# RUN(UNMADE): walk f1:Body mechanisms=all
+# UNMADE-NOT: = Strcat
+# What is joined of three is made as a key, as before.
+# RUN(THREE): walk f2:Body mechanisms=all
+# THREE-LABEL: code f2:Body
+# THREE: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# RUN(NOPARTS): walk f2:Body mechanisms=all
+# NOPARTS-NOT: ElemGetByKeyParts
+# Where the helper is called and not copied there are no parts to go by.
+# RUN(CALLED): walk f1:Body mechanisms=all-Inlining
+# CALLED-NOT: ElemGetByKeyParts
+
+variable g0 name="named" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g1 name="three" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="look" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3 calleeName="named"
+    v6 = ElemGet v0, v5
+    Return v6
+}
+function f2 name="long" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v3 calleeName="three"
+    v6 = ElemGet v0, v5
+    Return v6
+}
+function f3 name="named" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="n"
+    v2 = Strcat v1, v0
+    Return v2
+}
+function f4 name="three" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="n"
+    v2 = String string="!"
+    v3 = Strcat v1, v0, v2
+    Return v3
+}

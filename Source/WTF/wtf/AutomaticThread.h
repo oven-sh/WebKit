@@ -73,7 +73,7 @@ class AutomaticThread;
 
 class AutomaticThreadCondition : public ThreadSafeRefCounted<AutomaticThreadCondition> {
 public:
-    static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> LEGACY_NODELETE create();
+    NODELETE static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> create();
 
     WTF_EXPORT_PRIVATE ~AutomaticThreadCondition();
     
@@ -116,6 +116,8 @@ public:
     // strong ref to AutomaticThreadCondition and the underlying thread holds a strong ref to
     // AutomaticThread).
     virtual ~AutomaticThread();
+
+    enum class PollResult { Work, Stop, Wait };
     
     // Sometimes it's possible to optimize for the case that there is no underlying thread.
     bool hasUnderlyingThread(const AbstractLocker&) const { return m_hasUnderlyingThread; }
@@ -124,9 +126,9 @@ public:
     // running. Returns true if the thread has been stopped. A good idiom for stopping your automatic
     // thread is to first try this, and if that doesn't work, to tell the thread using your own
     // mechanism (set some flag and then notify the condition).
-    bool LEGACY_NODELETE tryStop(const AbstractLocker&);
+    NODELETE bool tryStop(const AbstractLocker&);
 
-    bool LEGACY_NODELETE isWaiting(const AbstractLocker&);
+    NODELETE bool isWaiting(const AbstractLocker&);
 
     bool notify(const AbstractLocker&);
 
@@ -135,10 +137,6 @@ public:
 #if ENABLE(AOT)
     // Starts the underlying thread if there is none. False where Thread::survivesFailedCreation() and the system refuses a thread.
     WTF_EXPORT_PRIVATE bool tryEnsureUnderlyingThread(const AbstractLocker&);
-    // Returns once the underlying thread, if there is one, has allocated what it needs to wait for work. Does not wait for work it has taken.
-    WTF_EXPORT_PRIVATE void waitUntilIsUp(const AbstractLocker&);
-    // Before any thread that waitUntilIsUp() is asked about starts. Without it no thread says that it is up, and nobody waits.
-    WTF_EXPORT_PRIVATE static void setThreadsSayWhenTheyAreUp();
 #endif
 
     virtual ASCIILiteral name() const { return "WTF::AutomaticThread"_s; }
@@ -178,7 +176,6 @@ protected:
     //     }
     // }
     
-    enum class PollResult { Work, Stop, Wait };
     virtual PollResult poll(const AbstractLocker&) = 0;
     
     enum class WorkResult { Continue, Stop };
@@ -227,11 +224,6 @@ protected:
     bool m_hasUnderlyingThread { false };
     Condition m_waitCondition;
     Condition m_isRunningCondition;
-#if ENABLE(AOT)
-    bool m_isUp { false };
-    Condition m_isUpCondition;
-    static bool s_threadsSayWhenTheyAreUp;
-#endif
 };
 
 } // namespace WTF

@@ -36,6 +36,7 @@
 #include "FileSystemStorageConnection.h"
 #include "FrameLoader.h"
 #include "IDBConnectionProxy.h"
+#include "InspectorObjectIdentifier.h"
 #include "LoaderStrategy.h"
 #include "LocalFrame.h"
 #include "MessageEvent.h"
@@ -55,12 +56,11 @@
 #include "WorkerFetchResult.h"
 #include "WorkerInitializationData.h"
 #include "WorkerThread.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
-static HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>& LEGACY_NODELETE allSharedWorkerThreadProxies()
+NODELETE static HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>& allSharedWorkerThreadProxies()
 {
     static MainThreadNeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>> map;
     return map;
@@ -73,8 +73,9 @@ static WorkerParameters generateWorkerParameters(const WorkerFetchResult& worker
         workerFetchResult.responseURL,
         document.url(),
         workerOptions.name,
-        makeString("sharedworker:"_s, Inspector::IdentifiersFactory::createIdentifier()),
+        makeString("sharedworker:"_s, generateInspectorObjectIdentifierString()),
         WTF::move(initializationData.userAgent),
+        WTF::move(initializationData.navigatorPlatform),
         platformStrategies()->loaderStrategy()->isOnLine(),
         workerFetchResult.contentSecurityPolicy,
         false,
@@ -158,7 +159,7 @@ void SharedWorkerThreadProxy::notifyNetworkStateChange(bool isOnline)
 
 void SharedWorkerThreadProxy::postExceptionToWorkerObject(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL)
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_workerThread);
     if (!m_workerThread->isInStaticScriptEvaluation())
         return;
 
@@ -174,7 +175,7 @@ void SharedWorkerThreadProxy::postExceptionToWorkerObject(const String& errorMes
 
 void SharedWorkerThreadProxy::reportErrorToWorkerObject(const String& errorMessage)
 {
-    ASSERT(!isMainThread());
+    assertIsCurrent(m_workerThread);
 
     callOnMainThread([sharedWorkerIdentifier = m_workerThread->identifier(), errorMessage = errorMessage.isolatedCopy()] {
         bool isErrorEvent = false;
@@ -185,7 +186,7 @@ void SharedWorkerThreadProxy::reportErrorToWorkerObject(const String& errorMessa
 
 RefPtr<CacheStorageConnection> SharedWorkerThreadProxy::createCacheStorageConnection()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (!m_cacheStorageConnection)
         lazyInitialize(m_cacheStorageConnection, Ref { m_cacheStorageProvider.get() }->createCacheStorageConnection());
     return m_cacheStorageConnection;
@@ -258,7 +259,7 @@ ReportingClient* SharedWorkerThreadProxy::reportingClient() const
 
 void SharedWorkerThreadProxy::setAppBadge(std::optional<uint64_t> badge)
 {
-    ASSERT(!isMainThread());
+    assertIsCurrent(m_workerThread);
     callOnMainRunLoop([badge = WTF::move(badge), this, protectedThis = Ref { *this }] {
         m_page->badgeClient().setAppBadge(nullptr, m_clientOrigin.clientOrigin, badge);
     });
@@ -266,7 +267,7 @@ void SharedWorkerThreadProxy::setAppBadge(std::optional<uint64_t> badge)
 
 RefPtr<FileSystemStorageConnection> SharedWorkerThreadProxy::createFileSystemStorageConnection()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (RefPtr storageConnection = m_document->storageConnection())
         return storageConnection->fileSystemStorageConnection();
     return nullptr;

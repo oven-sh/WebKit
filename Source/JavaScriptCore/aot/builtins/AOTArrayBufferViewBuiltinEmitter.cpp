@@ -10,12 +10,17 @@
 
 #include "AOTArrayStorageForms.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTByteLiterals.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
+#include "AOTResultRules.h"
+#include "AOTStringEmitter.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsElements.h"
+#include "AOTTypeArena.h"
 #include "AOTTypedArrayKinds.h"
 #include "JSArrayBufferView.h"
 #include "PageCount.h"
@@ -49,28 +54,6 @@ Pointer ArrayBufferViewBuiltinEmitter::vectorOf(CellPointer view)
     return loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector);
 }
 
-Pointer ArrayBufferViewBuiltinEmitter::findTypedArrayElement(CellPointer view, Integer index, LBasicBlock otherwise, LBasicBlock outside)
-{
-    Condition isFixed = hasFixedLength(view);
-    Condition isInside = below(index, select(isFixed, lengthOf(view), 0));
-    if (otherwise == outside) {
-        branchUnless(isInside, otherwise);
-        return vectorOf(view);
-    }
-    LBasicBlock inside = newBlock();
-    LBasicBlock notInside = newBlock();
-    m_out.branch(isInside.value(), normalEdge(inside), rareEdge(notInside));
-    m_out.appendTo(notInside);
-    m_out.branch(isFixed.value(), normalEdge(outside), rareEdge(otherwise));
-    m_out.appendTo(inside);
-    return vectorOf(view);
-}
-
-Operand ArrayBufferViewBuiltinEmitter::loadElement(CellPointer view, Pointer vector, Integer index, TypedArrayType type)
-{
-    return emitter<ElementAccessEmitter>().loadTypedArrayElement(TypedArrayElements { view, { }, vector }, index, type);
-}
-
 Condition ArrayBufferViewBuiltinEmitter::haveFixedLength(CellPointer first, CellPointer second)
 {
     Word32 modeOfFirst = loadByte(first, m_heaps.JSArrayBufferView_mode);
@@ -82,21 +65,22 @@ void ArrayBufferViewBuiltinEmitter::moveBytes(const OperationContext& context, C
 {
     Pointer to = offsetBy(vectorOf(target), targetOffset, 0);
     Pointer from = offsetBy(vectorOf(source), sourceOffset, 0);
+    Condition areFew = belowOrEqual(count, maxBytesMovedByStub);
     LBasicBlock few = newBlock();
     LBasicBlock many = newBlock();
     LBasicBlock moved = newBlock();
-    m_out.branch(belowOrEqual(count, maxBytesMovedByStub).value(), normalEdge(few), normalEdge(many));
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(areFew.value(), normalEdge(few), normalEdge(many));
 
-    // The stub preserves all but two registers, so nothing is saved around the call.
-    m_out.appendTo(few);
+    m_out.appendToArm(few, fork);
     callStub(context, moveFewBytes(), { to.value(), from.value(), count.value() });
     m_out.jump(moved);
 
-    m_out.appendTo(many);
+    m_out.appendToArm(many, fork);
     callLeaf(RuntimeOperation::MoveBytes, std::initializer_list<Operand> { to, from, count }, Representation::Void);
     m_out.jump(moved);
 
-    m_out.appendTo(moved);
+    m_out.appendToJoin(moved, fork);
     ensureStillAliveHere(target);
     ensureStillAliveHere(source);
 }
@@ -110,7 +94,7 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayLength(const InlineCall& c
 
 void ArrayBufferViewBuiltinEmitter::generateTypedArrayByteLength(const InlineCall& call)
 {
-    TypedArrayType type = typedArrayTypeOf(m_builtins, typeOf(call.receiver()));
+    TypedArrayType type = typedArrayTypeOf(BuiltinTypeContext { m_program, types() }, typeIDOf(call.receiver()));
     RELEASE_ASSERT(isTypedView(type));
     CellPointer view = cellOperand(call.receiver());
     missUnless(call, hasFixedLength(view));
@@ -124,25 +108,80 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayByteOffset(const InlineCal
     finish(call, byteOffsetOf(view), bufferSizeRange);
 }
 
+Integer ArrayBufferViewBuiltinEmitter::lengthOfViewInArgument(const InlineCall& call)
+{
+    ValueID argument = call.argument(0);
+    Boxed value = in<Boxed>(argument);
+    if (typeOf(argument).primitives)
+        missUnless(call, isCell(value));
+    CellPointer view = unboxCell(value);
+    missUnless(call, hasCellTypeIn(view, { Int8ArrayType, BigUint64ArrayType }));
+    missUnless(call, hasFixedLength(view));
+    Integer length = lengthOf(view);
+    missUnless(call, isNotZero(length));
+    return length;
+}
+
+void ArrayBufferViewBuiltinEmitter::generateViewLength(const InlineCall& call)
+{
+    finish(call, lengthOfViewInArgument(call), bufferSizeRange);
+}
+
+void ArrayBufferViewBuiltinEmitter::generateViewIsOutOfBounds(const InlineCall& call)
+{
+    lengthOfViewInArgument(call);
+    finish(call, boolean(false));
+}
+
 void ArrayBufferViewBuiltinEmitter::generateTypedArrayWithLength(const InlineCall& call)
 {
     BuiltinClassID constructedClass = m_builtins.at(m_builtins.at(call.overload()).builtin).instanceClass;
     RELEASE_ASSERT(constructedClass);
     TypedArrayType type = m_builtins.typedArrayTypeOf(constructedClass);
     RELEASE_ASSERT(isTypedView(type) && m_builtins.typedArrayClassOf(constructedClass) == constructedClass);
-    StubCallResult view = callStub(call.context(), newTypedArray(), { word32(type).value(), numberOperand(call.argument(0)).value() }, { .calledBuiltin = functionOf(call.overload()) });
-    finish(call, CellPointer(view.first));
+    ValueID length = call.argument(0);
+    auto finishWith = [&](StubKey stub, LValue lengthOperand) {
+        StubCallResult view = callStub(call.context(), stub, { word32(type).value(), lengthOperand }, { .calledBuiltin = functionOf(call.overload()) });
+        finish(call, CellPointer(view.first));
+    };
+    if (typeOf(length).isInt32())
+        finishWith(newTypedArray(LengthOfTypedArray::WholeNumber), int32Operand(length).value());
+    else
+        finishWith(newTypedArray(LengthOfTypedArray::Number), numberOperand(length).value());
+}
+
+void ArrayBufferViewBuiltinEmitter::generateByteLiteral(const InlineCall& call)
+{
+    auto stringOf = [&](ValueID argument) {
+        const Operation& definition = operationAt(definitionOf(argument));
+        RELEASE_ASSERT(definition.opcode == Opcode::String);
+        return definition.string();
+    };
+    auto kind = call.parameter<ByteLiteralKind>(0);
+    ValueID encoding = call.argumentOrNull(1);
+    StringID string = stringOf(call.argument(0));
+    std::optional<Vector<uint8_t>> bytes = encodeByteLiteral(types(), build().stringEncoders(), kind, string, encoding ? stringOf(encoding) : StringID());
+    RELEASE_ASSERT(bytes);
+    if (StringEmitter& strings = emitter<StringEmitter>(); m_records.inlinedStrings.areRecorded() && bytes->size() >= strings.textOf(string).length()) [[unlikely]]
+        strings.recordInlined(string);
+    Pointer address(bytes->isEmpty() ? m_out.constInt64(0) : m_out.relocatable(SymbolSpace::Constant, m_out.addConstantData(bytes->span(), ConstantKind::ByteLiteral)));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::CopyByteLiteral, { address, word32(static_cast<uint32_t>(bytes->size())), word32(kind == ByteLiteralKind::BufferFrom) }, { .calledBuiltin = functionOf(call.overload()) }));
+}
+CellPointer ArrayBufferViewBuiltinEmitter::askedAnewWherePositionsAreTested(CellPointer view)
+{
+    ElementAccessEmitter& accesses = emitter<ElementAccessEmitter>();
+    return accesses.checksBounds() ? accesses.askedAnew(view) : view;
 }
 
 void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call)
 {
-    TypedArrayType type = typedArrayTypeOf(m_builtins, typeOf(call.receiver()));
-    RELEASE_ASSERT(isTypedView(type) && typedArrayTypeOf(m_builtins, typeOf(call.argument(0))) == type);
+    BuiltinTypeContext typeContext { m_program, types() };
+    TypedArrayType type = typedArrayTypeOf(typeContext, typeIDOf(call.receiver()));
+    RELEASE_ASSERT(isTypedView(type) && typedArrayTypeOf(typeContext, typeIDOf(call.argument(0))) == type);
     unsigned shift = logElementSize(type);
-    CellPointer target = cellOperand(call.receiver());
-    CellPointer source = cellOperand(call.argument(0));
+    CellPointer target = askedAnewWherePositionsAreTested(cellOperand(call.receiver()));
+    CellPointer source = askedAnewWherePositionsAreTested(cellOperand(call.argument(0)));
     ValueID offset = call.argumentOrNull(1);
-    // A fractional part is truncated, and a number that is not a valid index into the view falls back to the function.
     Integer position = !offset ? integer(0) : typeOf(offset).isInteger() ? integerOperand(offset) : emitter<ConversionEmitter>().toInteger(numberOperand(offset));
     missUnless(call, haveFixedLength(target, source));
     Integer count = lengthOf(source);
@@ -161,7 +200,6 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
     moveBytes(call.context(), target, targetOffset, source, integer(0), numberOfBytes);
     m_out.jump(done);
 
-    // A view of a detached buffer has no elements; the function throws for it.
     m_out.appendTo(nothingToMove);
     Condition targetHasMemory = isNotZero(Integer(vectorOf(target).value()));
     Condition sourceHasMemory = isNotZero(Integer(vectorOf(source).value()));
@@ -170,66 +208,6 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
 
     m_out.appendTo(done);
     finishWithUndefined(call);
-}
-
-void ArrayBufferViewBuiltinEmitter::generateArrayFrom(const InlineCall& call)
-{
-    ValueID items = call.argument(0);
-    TypedArrayType arrayType = typedArrayTypeOf(m_builtins, typeOf(items));
-    RELEASE_ASSERT(hasInlineElementAccess(arrayType));
-    Type elementType = elementTypeOf(arrayType);
-    ArrayAllocationEmitter allocation(generator());
-    ElementAccessEmitter& elementAccess = emitter<ElementAccessEmitter>();
-    const ArrayStorageForm& resultForm = allocation.formAtAllocation(resultTypeOf(call));
-    const ArrayStorageForm& form = resultForm.kind == ArrayStorage::Int32 && !elementType.isInt32() ? arrayStorageFormOf(ArrayStorage::Double) : resultForm;
-    Representation rawRepresentation = form.element == Representation::Double ? Representation::Double : Representation::JSValue;
-    LBasicBlock isShort = newBlock();
-    LBasicBlock outOfLine = newBlock();
-    LBasicBlock copyLoop = newBlock();
-    LBasicBlock copy = newBlock();
-    LBasicBlock copied = newBlock();
-    Join<CellPointer> join(m_out);
-
-    CellPointer source = cellOperand(items);
-    missUnless(call, hasFixedLength(source));
-    Integer count = lengthOf(source);
-    missUnless(call, isNotZero(count));
-    Integer maxInlineCount = integer(static_cast<int64_t>(build().limit(LimitID::MaxInlineTypedArrayCopyLength)));
-    m_out.branch(belowOrEqual(count, maxInlineCount).value(), normalEdge(isShort), unlikelyEdge(outOfLine));
-
-    m_out.appendTo(isShort);
-    CellPointer array = allocation.allocateArrayOfHoles(call.context(), count, form, outOfLine);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        ArrayElements elements = elementAccess.elementsOf(array);
-        Pointer vector = vectorOf(source);
-        ValueFromBlock firstIndex = m_out.anchor(integer(0).value());
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copyLoop);
-        Integer index(m_out.phi(B3::Int64, firstIndex));
-        m_out.branch(below(index, count).value(), normalEdge(copy), normalEdge(copied));
-
-        m_out.appendTo(copy);
-        Operand loaded = loadElement(source, vector, index, arrayType);
-        // A NaN leaves for the operation.
-        if (loaded.is<ImpureNumber>() && rawRepresentation == Representation::Double)
-            loaded = Number(loaded.value);
-        Operand element = inRepresentation(call.context(), rawRepresentation, loaded, elementType);
-        if (element.is<Number>() && !elementType.isInteger())
-            branchUnless(equal(element.as<Number>(), element.as<Number>()), outOfLine);
-        elementAccess.storeRawElement(form, elements, index, element);
-        m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copied);
-    }
-    emitter<BarrierEmitter>().fenceAfterInitialization();
-    join.add(array);
-
-    m_out.appendTo(outOfLine);
-    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ArrayFromTypedArray, { source, word32(form.indexingType) }));
-    finish(call, join.finish());
 }
 
 } } } // namespace JSC::AOT::Typed

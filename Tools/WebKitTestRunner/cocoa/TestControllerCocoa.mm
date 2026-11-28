@@ -553,6 +553,15 @@ void TestController::platformSetStatisticsCrossSiteLoadWithLinkDecoration(WKStri
     }];
 }
 
+void TestController::setStatisticsLinkDecorationFilteringData(WKStringRef queryParameter)
+{
+    __block bool done = false;
+    [(__bridge WKWebsiteDataStore *)websiteDataStore() _setLinkDecorationFilteringDataForTesting:@[ toWTFString(queryParameter).createNSString().get() ] completionHandler:^{
+        done = true;
+    }];
+    runUntil(done, noTimeout);
+}
+
 void TestController::platformWillRunTest(const TestInvocation& testInvocation)
 {
     setCrashReportApplicationSpecificInformationToURL(testInvocation.url());
@@ -756,6 +765,18 @@ bool TestController::isDoingMediaCapture() const
     return m_mainWebView->platformView().microphoneCaptureState != WKMediaCaptureStateNone || m_mainWebView->platformView().cameraCaptureState != WKMediaCaptureStateNone;
 }
 
+bool TestController::isEnhancedSecurity() const
+{
+    bool done = false;
+    bool result = false;
+    [m_mainWebView->platformView() _isEnhancedSecurityEnabled:makeBlockPtr([&](BOOL enabled) {
+        result = enabled;
+        done = true;
+    }).get()];
+    TestController::singleton().platformRunUntil(done, noTimeout);
+    return result;
+}
+
 #if PLATFORM(IOS_FAMILY)
 
 static WKContentMode contentMode(const TestOptions& options)
@@ -773,10 +794,12 @@ static WKContentMode contentMode(const TestOptions& options)
 void TestController::configureWebpagePreferences(WKWebViewConfiguration *configuration, const TestOptions& options)
 {
     auto webpagePreferences = adoptNS([[WKWebpagePreferences alloc] init]);
+    _WKWebsiteNetworkConnectionIntegrityPolicy networkConnectionIntegrityPolicy = _WKWebsiteNetworkConnectionIntegrityPolicyNone;
     if (options.advancedPrivacyProtectionsEnabled())
-        [webpagePreferences _setNetworkConnectionIntegrityPolicy:_WKWebsiteNetworkConnectionIntegrityPolicyEnabled];
-    else
-        [webpagePreferences _setNetworkConnectionIntegrityPolicy:_WKWebsiteNetworkConnectionIntegrityPolicyNone];
+        networkConnectionIntegrityPolicy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnabled;
+    if (options.fingerprintingProtectionsEnabled())
+        networkConnectionIntegrityPolicy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry;
+    [webpagePreferences _setNetworkConnectionIntegrityPolicy:networkConnectionIntegrityPolicy];
 
     if (options.enhancedSecurityEnabled())
         webpagePreferences.get().securityRestrictionMode = WKSecurityRestrictionModeMaximizeCompatibility;

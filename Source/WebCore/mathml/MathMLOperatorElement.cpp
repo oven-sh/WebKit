@@ -162,7 +162,7 @@ const Property& MathMLOperatorElement::dictionaryProperty()
     return m_dictionaryProperty.value();
 }
 
-static const QualifiedName& LEGACY_NODELETE propertyFlagToAttributeName(MathMLOperatorDictionary::Flag flag)
+NODELETE static const QualifiedName& propertyFlagToAttributeName(MathMLOperatorDictionary::Flag flag)
 {
     switch (flag) {
     case Accent:
@@ -343,7 +343,7 @@ void MathMLOperatorElement::attributeChanged(const QualifiedName& name, const At
     MathMLTokenElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-RenderPtr<RenderElement> MathMLOperatorElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLOperatorElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderMathMLOperator>(RenderObject::Type::MathMLOperator, *this, WTF::move(style));
 }

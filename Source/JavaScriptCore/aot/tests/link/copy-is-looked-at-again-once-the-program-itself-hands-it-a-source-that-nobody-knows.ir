@@ -1,0 +1,51 @@
+# Where the program itself hands a copy a source that nobody knows, nothing is held of the fields of the target, however late that source arrives
+# function fill(t, s) { Object.assign(t, s); }  function widthOf(t) { return t.width; }  const options = { width: 1, title: "x" };  const target = { width: 2, title: "y" };  sink(fill);  fill(target, options);  fill(target, source()()()()()());  widthOf(target);
+# Unseen code has fill(), so both parameters hold anything early, by escape alone, and the copy is looked at in that state: it waits for nothing more. What source()()()()()() gives comes rounds later and names nothing new: it only brings what was there by escape alone into sight. If the copy took the two states for one, target.width would stay held an integer or a text though the program's own call lays whatever it likes there
+# RUN: link held functions mechanisms=all
+# CHECK: function f2
+# CHECK-NOT: result=
+
+layout L0 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="title" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="title" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = PropGet v0 key="source" [isFreeName]
+    v3 = Integer integer=1
+    v4 = String string="x"
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Integer integer=2
+    v8 = String string="y"
+    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = NewClosure function=f1
+    v12 = NewClosure function=f2
+    v13 = Call v1, -, v11 calleeName="sink"
+    v14 = Call v11, -, v10, v6 calleeName="fill"
+    v15 = Call v2, - calleeName="source"
+    v16 = Call v15, -
+    v17 = Call v16, -
+    v18 = Call v17, -
+    v19 = Call v18, -
+    v20 = Call v19, -
+    v21 = Call v11, -, v10, v20 calleeName="fill"
+    v22 = Call v12, -, v10 calleeName="widthOf"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
+    v3 = Call v2, -, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f2 name="widthOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="width"
+    Return v1
+}

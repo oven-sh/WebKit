@@ -1,0 +1,7 @@
+# the same function with unboxed numbers withheld: the sum is a sum of doubles, which is boxed behind it
+# RUN: walk f2 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f2:Body
+# CHECK: @Double = Add {{*}}form=Numbers
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations
+# NEVER-NOT: @JSValue = Add
+# PROGRAM-OF: chain-of-operators-on-boxed-numbers-is-walked-on-integers-and-on-doubles.ir

@@ -45,9 +45,9 @@ void CommonData::shrinkToFit()
 }
 
 static Lock pcCodeBlockMapLock;
-inline UncheckedKeyHashMap<void*, CodeBlock*>& pcCodeBlockMap() WTF_REQUIRES_LOCK(pcCodeBlockMapLock)
+inline HashMap<void*, CodeBlock*>& pcCodeBlockMap() WTF_REQUIRES_LOCK(pcCodeBlockMapLock)
 {
-    static LazyNeverDestroyed<UncheckedKeyHashMap<void*, CodeBlock*>> pcCodeBlockMap;
+    static LazyNeverDestroyed<HashMap<void*, CodeBlock*>> pcCodeBlockMap;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
         pcCodeBlockMap.construct();
@@ -55,7 +55,7 @@ inline UncheckedKeyHashMap<void*, CodeBlock*>& pcCodeBlockMap() WTF_REQUIRES_LOC
     return pcCodeBlockMap;
 }
 
-bool CommonData::invalidateLinkedCode()
+bool CommonData::invalidateLinkedCode(Profiler::JettisonReason reason)
 {
     if (m_isUnlinked) {
         ASSERT(m_jumpReplacements.isEmpty());
@@ -73,8 +73,17 @@ bool CommonData::invalidateLinkedCode()
         m_hasVMTrapsBreakpointsInstalled = false;
     }
 
-    for (unsigned i = m_jumpReplacements.size(); i--;)
-        m_jumpReplacements[i].fire();
+    // The GC jettisons for a dead weak reference only once it has found the CodeBlock unreachable,
+    // so it is on no stack and can no longer be entered. Debug builds verify that by crashing on entry.
+    if (reason == Profiler::JettisonDueToWeakReference) {
+#if ASSERT_ENABLED
+        for (auto& jumpReplacement : m_jumpReplacements)
+            jumpReplacement.installCrash();
+#endif
+    } else {
+        for (unsigned i = m_jumpReplacements.size(); i--;)
+            m_jumpReplacements[i].fire();
+    }
 
     m_isStillValid = false;
     return true;
@@ -104,7 +113,7 @@ void CommonData::installVMTrapBreakpoints(CodeBlock* owner)
 #if !defined(NDEBUG)
     // We need to be able to handle more than one invalidation point at the same pc
     // but we want to make sure we don't forget to remove a pc from the map.
-    UncheckedKeyHashSet<void*> newReplacements;
+    HashSet<void*> newReplacements;
 #endif
     for (auto& jumpReplacement : m_jumpReplacements) {
         jumpReplacement.installVMTrapBreakpoint();

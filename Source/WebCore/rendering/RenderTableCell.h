@@ -41,8 +41,8 @@ class RenderTableCell final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderTableCell);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTableCell);
 public:
-    RenderTableCell(Element&, Style::ComputedStyle&&);
-    RenderTableCell(Document&, Style::ComputedStyle&&);
+    RenderTableCell(Element&, UniqueRef<Style::ComputedStyle>&&);
+    RenderTableCell(Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderTableCell();
     
     unsigned colSpan() const;
@@ -88,6 +88,7 @@ public:
 
     void paintCollapsedBorders(PaintInfo&, const LayoutPoint&);
     void paintBackgroundsBehindCell(PaintInfo&, LayoutPoint paintOffset, RenderBox* backgroundObject, LayoutPoint backgroundPaintOffset);
+    bool isHiddenEmptyCell() const;
 
     LayoutUnit cellBaselinePosition() const;
     bool isBaselineAligned() const;
@@ -144,7 +145,8 @@ protected:
 
 private:
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
 
     LayoutUnit containingBlockLogicalWidthForContent() const override;
 
@@ -156,8 +158,6 @@ private:
 
     void updateLogicalWidth() override;
 
-    void paintBoxDecorations(PaintInfo&, const LayoutPoint&) override;
-    void paintMask(PaintInfo&, const LayoutPoint&) override;
 
     LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = 0) const override;
     std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const override;
@@ -176,7 +176,7 @@ private:
     void setIntrinsicPaddingAfter(LayoutUnit p) { m_intrinsicPaddingAfter = p; }
     void setIntrinsicPadding(LayoutUnit before, LayoutUnit after) { setIntrinsicPaddingBefore(before); setIntrinsicPaddingAfter(after); }
 
-    bool LEGACY_NODELETE hasStartBorderAdjoiningTable() const;
+    NODELETE bool hasStartBorderAdjoiningTable() const;
     bool hasEndBorderAdjoiningTable() const;
 
     CollapsedBorderValue collapsedStartBorder(IncludeBorderColorOrNot = IncludeBorderColor) const;
@@ -202,7 +202,7 @@ private:
 
     unsigned parseRowSpanFromDOM() const;
     unsigned parseColSpanFromDOM() const;
-    unsigned LEGACY_NODELETE calculateRowSpanForRowSpanZero() const;
+    NODELETE unsigned calculateRowSpanForRowSpanZero() const;
 
     void nextSibling() const = delete;
     void previousSibling() const = delete;

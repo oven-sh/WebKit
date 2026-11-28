@@ -1,0 +1,18 @@
+# the same call with a written tag: the one locale that it asks for, at the text. If every call that Link finds kept every locale, this would say unknown
+# (1234.5).toLocaleString("de");
+# RUN: locales
+# CHECK: locale constant "de" NumberPrototypeToLocaleString at f0 v1
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double number=1234.5
+    v1 = String string="de" @40
+    v2 = PropGet v0 key="toLocaleString"
+    v3 = Call v2, v0, v1 calleeKey="toLocaleString" @20
+    Return v3
+}

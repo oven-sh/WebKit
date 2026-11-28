@@ -110,7 +110,7 @@ namespace WebCore {
 
 using ScrollbarSet = HashSet<SingleThreadWeakRef<Scrollbar>>;
 
-static ScrollbarSet& LEGACY_NODELETE scrollbarMap()
+NODELETE static ScrollbarSet& scrollbarMap()
 {
     static NeverDestroyed<ScrollbarSet> instances;
     return instances;
@@ -273,13 +273,13 @@ void ScrollbarThemeMac::preferencesChanged()
     usesOverlayScrollbarsChanged();
 }
 
-int ScrollbarThemeMac::scrollbarThickness(ScrollbarWidth scrollbarWidth, OverlayScrollbarSizeRelevancy overlayRelevancy)
+int ScrollbarThemeMac::scrollbarThickness(ScrollbarStyle scrollbarStyle, ScrollbarWidth scrollbarWidth, OverlayScrollbarSizeRelevancy overlayRelevancy)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    if (scrollbarWidth == ScrollbarWidth::None || (usesOverlayScrollbars() && overlayRelevancy == OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize))
+    if (scrollbarWidth == ScrollbarWidth::None || (scrollbarStyle == ScrollbarStyle::Overlay && overlayRelevancy == OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize))
         return 0;
 
-    return [[NSScrollerImp self] scrollerWidthForControlSize:nsControlSizeFromScrollbarWidth(scrollbarWidth) scrollerStyle:ScrollerStyle::recommendedScrollerStyle()];
+    return [[NSScrollerImp self] scrollerWidthForControlSize:nsControlSizeFromScrollbarWidth(scrollbarWidth) scrollerStyle:nsScrollerStyle(scrollbarStyle)];
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
@@ -316,7 +316,7 @@ ScrollbarButtonsPlacement ScrollbarThemeMac::buttonsPlacement() const
     return gButtonPlacement;
 }
 
-inline constexpr unsigned LEGACY_NODELETE scrollbarWidthToIndex(ScrollbarWidth scrollbarWidth)
+NODELETE inline constexpr unsigned scrollbarWidthToIndex(ScrollbarWidth scrollbarWidth)
 {
     switch (scrollbarWidth) {
     case ScrollbarWidth::Auto:
@@ -347,7 +347,7 @@ bool ScrollbarThemeMac::hasThumb(Scrollbar& scrollbar)
              scrollbar.height()) >= minLengthForThumb;
 }
 
-static IntRect LEGACY_NODELETE buttonRepaintRect(const IntRect& buttonRect, ScrollbarOrientation orientation, ScrollbarWidth widthStyle, bool start)
+NODELETE static IntRect buttonRepaintRect(const IntRect& buttonRect, ScrollbarOrientation orientation, ScrollbarWidth widthStyle, bool start)
 {
     ASSERT(gButtonPlacement != ScrollbarButtonsNone);
 
@@ -375,7 +375,7 @@ IntRect ScrollbarThemeMac::backButtonRect(Scrollbar& scrollbar, ScrollbarPart pa
     if (part == BackButtonEndPart && (buttonsPlacement() == ScrollbarButtonsNone || buttonsPlacement() == ScrollbarButtonsDoubleStart || buttonsPlacement() == ScrollbarButtonsSingle))
         return result;
         
-    int thickness = scrollbarThickness(scrollbar.widthStyle());
+    int thickness = scrollbarThickness(protect(scrollbar.scrollableArea())->scrollbarStyle(), scrollbar.widthStyle());
     bool outerButton = part == BackButtonStartPart && (buttonsPlacement() == ScrollbarButtonsDoubleStart || buttonsPlacement() == ScrollbarButtonsDoubleBoth);
     if (outerButton) {
         if (scrollbar.orientation() == ScrollbarOrientation::Horizontal)
@@ -409,7 +409,7 @@ IntRect ScrollbarThemeMac::forwardButtonRect(Scrollbar& scrollbar, ScrollbarPart
     if (part == ForwardButtonStartPart && (buttonsPlacement() == ScrollbarButtonsNone || buttonsPlacement() == ScrollbarButtonsDoubleEnd || buttonsPlacement() == ScrollbarButtonsSingle))
         return result;
         
-    int thickness = scrollbarThickness(scrollbar.widthStyle());
+    int thickness = scrollbarThickness(protect(scrollbar.scrollableArea())->scrollbarStyle(), scrollbar.widthStyle());
     int outerButtonLength = cOuterButtonLength[scrollbarWidthToIndex(scrollbar.widthStyle())];
     int buttonLength = cButtonLength[scrollbarWidthToIndex(scrollbar.widthStyle())];
     
@@ -444,7 +444,7 @@ IntRect ScrollbarThemeMac::trackRect(Scrollbar& scrollbar, bool painting)
     if (painting || !hasButtons(scrollbar))
         return scrollbar.frameRect();
     
-    int thickness = scrollbarThickness(scrollbar.widthStyle());
+    int thickness = scrollbarThickness(protect(scrollbar.scrollableArea())->scrollbarStyle(), scrollbar.widthStyle());
     int startWidth = 0;
     int endWidth = 0;
     int outerButtonLength = cOuterButtonLength[scrollbarWidthToIndex(scrollbar.widthStyle())];
@@ -485,7 +485,7 @@ int ScrollbarThemeMac::minimumThumbLength(Scrollbar& scrollbar)
         return scrollbar.minimumThumbLength();
 }
 
-static bool LEGACY_NODELETE shouldCenterOnThumb(const PlatformMouseEvent& evt)
+NODELETE static bool shouldCenterOnThumb(const PlatformMouseEvent& evt)
 {
     if (evt.button() != MouseButton::Left)
         return false;
@@ -544,15 +544,19 @@ void ScrollbarThemeMac::updateEnabledState(Scrollbar& scrollbar)
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
-void ScrollbarThemeMac::setPaintCharacteristicsForScrollbar(Scrollbar& scrollbar)
+static std::pair<float, float> scrollbarValueAndProportion(Scrollbar& scrollbar)
 {
-    BEGIN_BLOCK_OBJC_EXCEPTIONS
-    RetainPtr painter = scrollerImpForScrollbar(scrollbar);
-
     float value;
     float overhang;
     ScrollableArea::computeScrollbarValueAndOverhang(scrollbar.currentPos(), scrollbar.totalSize(), scrollbar.visibleSize(), value, overhang);
     float proportion = scrollbar.totalSize() > 0 ? (static_cast<CGFloat>(scrollbar.visibleSize()) - overhang) / scrollbar.totalSize() : 1;
+    return { value, proportion };
+}
+
+void ScrollbarThemeMac::setPaintCharacteristicsForScrollbar(NSScrollerImp *painter, Scrollbar& scrollbar)
+{
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
+    auto [value, proportion] = scrollbarValueAndProportion(scrollbar);
 
     [painter setEnabled:scrollbar.enabled()];
     [painter setBoundsSize:scrollbar.frameRect().size()];
@@ -566,14 +570,27 @@ void ScrollbarThemeMac::setPaintCharacteristicsForScrollbar(Scrollbar& scrollbar
 
 static void paintScrollbarUsingLayersForSnapshot(Scrollbar& scrollbar, GraphicsContext& context)
 {
-    LocalCurrentGraphicsContext localContext { context };
-
-    RetainPtr scrollerImp = ScrollbarThemeMac::scrollerImpForScrollbar(scrollbar);
-    if (!scrollerImp)
+    if (scrollbar.isOverlayScrollbar())
         return;
 
+    LocalCurrentGraphicsContext localContext { context };
+
+    RetainPtr scrollerImp = [NSScrollerImp scrollerImpWithStyle:NSScrollerStyleLegacy controlSize:nsControlSizeFromScrollbarWidth(scrollbar.widthStyle()) horizontal:scrollbar.orientation() == ScrollbarOrientation::Horizontal replacingScrollerImp:nil];
+    CheckedRef scrollableArea = scrollbar.scrollableArea();
+    auto [value, proportion] = scrollbarValueAndProportion(scrollbar);
+    auto scrollbarColor = scrollableArea->scrollbarColorStyle();
+    setScrollerImpValues(scrollerImp.get(), {
+        .isEnabled = scrollbar.enabled(),
+        .layoutDirection = scrollableArea->shouldPlaceVerticalScrollbarOnLeft() ? UserInterfaceLayoutDirection::RTL : UserInterfaceLayoutDirection::LTR,
+        .size = scrollbar.frameRect().size(),
+        .value = value,
+        .proportion = proportion,
+        .trackColor = scrollbarColor ? cocoaColor(scrollbarColor->trackColor) : RetainPtr<NSColor> { },
+        .thumbColor = scrollbarColor ? cocoaColor(scrollbarColor->thumbColor) : RetainPtr<NSColor> { },
+    });
+
     RetainPtr delegate = adoptNS([[WebSnapshotScrollerImpDelegate alloc] init]);
-    [delegate setUseDarkAppearance:protect(scrollbar.scrollableArea())->useDarkAppearanceForScrollbars()];
+    [delegate setUseDarkAppearance:scrollableArea->useDarkAppearanceForScrollbars()];
     [delegate setScrollerImp:scrollerImp.get()];
     [scrollerImp setDelegate:delegate.get()];
 
@@ -585,12 +602,12 @@ static void paintScrollbarUsingLayersForSnapshot(Scrollbar& scrollbar, GraphicsC
     [hostLayer setGeometryFlipped:YES];
     [scrollerImp setLayer:hostLayer.get()];
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL CALayer *sublayer in [hostLayer sublayers])
+    for (CALayer *sublayer in [hostLayer sublayers])
         [sublayer setDelegate:delegate.get()];
 
     [hostLayer renderInContext:protect(localContext.cgContext())];
 
+    // The scroller is autoreleased, so it can outlive the delegate, which it does not retain.
     [scrollerImp setLayer:nil];
     [scrollerImp setDelegate:nil];
 }
@@ -610,24 +627,24 @@ static void paintScrollbarUsingLegacyAppearance(Scrollbar& scrollbar, GraphicsCo
         [scrollerImp drawKnob];
 }
 
-static void paintScrollbar(Scrollbar& scrollbar, GraphicsContext& context)
+static void paintScrollbar(Scrollbar& scrollbar, GraphicsContext& context, OptionSet<ScrollbarPaintBehavior> paintBehavior)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    if (scrollbar.paintingIntoSnapshot() && scrollbar.supportsUpdateOnSecondaryThread())
+    if (paintBehavior.contains(ScrollbarPaintBehavior::Snapshot) && scrollbar.supportsUpdateOnSecondaryThread())
         paintScrollbarUsingLayersForSnapshot(scrollbar, context);
     else
         paintScrollbarUsingLegacyAppearance(scrollbar, context);
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
-bool ScrollbarThemeMac::paint(Scrollbar& scrollbar, GraphicsContext& context, const IntRect& damageRect)
+bool ScrollbarThemeMac::paint(Scrollbar& scrollbar, GraphicsContext& context, const IntRect& damageRect, OptionSet<ScrollbarPaintBehavior> paintBehavior)
 {
     if (context.paintingDisabled())
         return false;
 
-    setPaintCharacteristicsForScrollbar(scrollbar);
+    setPaintCharacteristicsForScrollbar(protect(scrollerImpForScrollbar(scrollbar)).get(), scrollbar);
 
-    if (scrollbar.supportsUpdateOnSecondaryThread() && !scrollbar.paintingIntoSnapshot())
+    if (scrollbar.supportsUpdateOnSecondaryThread() && !paintBehavior.contains(ScrollbarPaintBehavior::Snapshot))
         return true;
 
     SetForScope isCurrentlyDrawingIntoLayer(g_isCurrentlyDrawingIntoLayer, context.isCALayerContext());
@@ -638,11 +655,13 @@ bool ScrollbarThemeMac::paint(Scrollbar& scrollbar, GraphicsContext& context, co
     auto scrollbarRect = scrollbar.frameRect();
     if (context.hasPlatformContext()) {
         context.translate(scrollbarRect.location());
-        paintScrollbar(scrollbar, context);
+        paintScrollbar(scrollbar, context, paintBehavior);
     } else {
+        // AppKit draws the scroll bar into a CGContext, so display list and PDF contexts get an Unaccelerated buffer.
+        auto renderingMode = context.renderingMode() == RenderingMode::Accelerated ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
         if (auto imageBuffer = [&] -> RefPtr<ImageBuffer> {
-            if (auto buffer = context.createImageBuffer(scrollbarRect.size(), scrollbar.deviceScaleFactor(), ColorSpace::SRGB(), context.renderingMode(), RenderingMethod::Local)) {
-                paintScrollbar(scrollbar, buffer->context());
+            if (auto buffer = context.createImageBuffer(scrollbarRect.size(), scrollbar.deviceScaleFactor(), ColorSpace::SRGB(), renderingMode, RenderingMethod::Local)) {
+                paintScrollbar(scrollbar, buffer->context(), paintBehavior);
                 return buffer;
             }
             return nullptr;

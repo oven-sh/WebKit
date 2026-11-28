@@ -257,7 +257,7 @@ static MTCoreMaterialVisualStyleCategory materialVisualStyleCategoryForAppleVisu
 
 #if HAVE(MATERIAL_HOSTING)
 
-static WKHostedMaterialEffectType LEGACY_NODELETE hostedMaterialEffectTypeForAppleVisualEffect(AppleVisualEffect effect)
+NODELETE static WKHostedMaterialEffectType hostedMaterialEffectTypeForAppleVisualEffect(AppleVisualEffect effect)
 {
     switch (effect) {
     case AppleVisualEffect::GlassMaterial:
@@ -289,7 +289,7 @@ static WKHostedMaterialEffectType LEGACY_NODELETE hostedMaterialEffectTypeForApp
     }
 }
 
-static WKHostedMaterialColorScheme LEGACY_NODELETE hostedMaterialColorSchemeForAppleVisualEffectData(const AppleVisualEffectData& data)
+NODELETE static WKHostedMaterialColorScheme hostedMaterialColorSchemeForAppleVisualEffectData(const AppleVisualEffectData& data)
 {
     switch (data.colorScheme) {
     case AppleVisualEffectData::ColorScheme::Light:
@@ -527,10 +527,15 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
     if (properties.changedProperties & LayerChange::FiltersChanged)
         PlatformCAFilters::setFiltersOnLayer(layer, properties.filters ? *properties.filters : FilterOperations(), layerTreeNode && layerTreeNode->backdropRootIsOpaque());
 
+#if ENABLE(THREADED_ANIMATIONS)
+    if (properties.changedProperties & LayerChange::AnimationExtentChanged && layerTreeNode)
+        layerTreeNode->setAnimationExtent(properties.animationExtent);
+#endif
+
     if (properties.changedProperties & LayerChange::AnimationsChanged) {
 #if ENABLE(THREADED_ANIMATIONS)
         // FIXME: layerTreeHost will be null if this method is called from within the Web process.
-        if (layerTreeHost && layerTreeHost->threadedAnimationsEnabled()) {
+        if (layerTreeHost && layerTreeHost->isPrimary() && layerTreeHost->threadedAnimationsEnabled()) {
             LOG_WITH_STREAM(Animations, stream << "RemoteLayerTreePropertyApplier::applyProperties() for layer " << layerTreeNode->layerID() << " found " << properties.animationChanges.effects.size() << " effects.");
             layerTreeNode->setAcceleratedEffectsAndBaseValues(properties.animationChanges.effects, properties.animationChanges.baseValues, *layerTreeHost);
         }
@@ -546,6 +551,9 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
 
     if (properties.changedProperties & LayerChange::BackdropRootChanged)
         layer.shouldRasterize = properties.backdropRoot;
+
+    if (properties.changedProperties & LayerChange::HidesFromScreenCaptureChanged)
+        [layer _web_setHidesFromScreenCapture:properties.hidesFromScreenCapture];
 
     if (properties.changedProperties & LayerChange::TonemappingEnabledChanged) {
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
@@ -605,8 +613,12 @@ void RemoteLayerTreePropertyApplier::applyProperties(RemoteLayerTreeNode& node, 
 #endif
 
 #if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
-    if (properties.changedProperties & LayerChange::EventRegionChanged || properties.changedProperties & LayerChange::VisibleRectChanged)
-        updateLayersForInteractionRegions(node);
+    if (properties.changedProperties.containsAny({ LayerChange::EventRegionChanged, LayerChange::VisibleRectChanged })) {
+        if (layerTreeHost)
+            layerTreeHost->updateOrDeferInteractionRegions(node);
+        else
+            updateLayersForInteractionRegions(node);
+    }
 #endif
 
 #if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
@@ -692,7 +704,7 @@ void RemoteLayerTreePropertyApplier::applyHierarchyUpdates(RemoteLayerTreeNode& 
 #endif
 
     [layer setSublayers:createNSArray(properties.children, [&] (auto& child) -> CALayer * {
-        // FIXME: Static analysis false positive. This context is LEGACY_NODELETE.
+        // FIXME: Static analysis false positive. This context is NODELETE.
         SUPPRESS_UNRETAINED_LOCAL auto* childNode = relatedLayers.get(child);
         ASSERT(childNode);
         if (!childNode)

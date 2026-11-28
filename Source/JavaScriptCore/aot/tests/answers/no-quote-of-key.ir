@@ -1,0 +1,69 @@
+# function at(list, key) { try { return list[key]; } catch (error) { return error.message; } }
+# function put(list, key) { try { list[key] = 1; return 0; } catch (error) { return error.message; } }
+# report(at(null, 6)); report(at(undefined, "k 5")); report(put(null, "two words")); report(at(null, {}));
+# Built with --no-compile-function-source: the image holds no text to quote. A computed key may be a text of the program's user: a message never spells it
+# OPTIONS: exclude=FunctionSource
+# RUN: run-in-shell globalThis.report = message => print(message);
+# CHECK: null is not an object
+# CHECK-NOT: evaluating
+# CHECK: undefined is not an object
+# CHECK-NOT: evaluating
+# CHECK: null is not an object
+# CHECK-NOT: evaluating
+# CHECK: null is not an object
+# CHECK-NOT: evaluating
+# CHECK: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 93, 194]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClosure function=f2 @0
+    v2 = Builtin builtin=GlobalThis @194
+    v3 = PropGet v2 key="report" [isFreeName] @194
+    v4 = Null @204
+    v5 = Integer integer=6 @210
+    v6 = Call v0, -, v4, v5 calleeName="at" @201
+    v7 = Call v3, -, v6 calleeName="report" @194
+    v8 = Undefined @225
+    v9 = String string="k 5" @236
+    v10 = Call v0, -, v8, v9 calleeName="at" @222
+    v11 = Call v3, -, v10 calleeName="report" @215
+    v12 = Null @255
+    v13 = String string="two words" @261
+    v14 = Call v1, -, v12, v13 calleeName="put" @251
+    v15 = Call v3, -, v14 calleeName="report" @244
+    v16 = Null @286
+    v17 = NewObject layout=L0 @292
+    v18 = FinishObject v17 @292
+    v19 = Call v0, -, v16, v18 calleeName="at" @283
+    v20 = Call v3, -, v19 calleeName="report" @276
+    v21 = Undefined @276
+    Return v21 @276
+}
+function f1 name="at" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @25
+  b1() handler=b2():
+    v2 = ElemGet v0, v1 @38
+    Return v2 @38
+  b2() role=CatchHandler:
+    v3 = CatchValue @65
+    v4 = PropGet v3 key="message" @74
+    Return v4 @74
+}
+function f2 name="put" module=m0 position=93 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @119
+  b1() handler=b2():
+    v2 = Integer integer=1 @137
+    ElemSet v0, v1, v2 @125
+    v4 = Integer @147
+    Return v4 @147
+  b2() role=CatchHandler:
+    v5 = CatchValue @166
+    v6 = PropGet v5 key="message" @175
+    Return v6 @175
+}
+layout L0 module=m0 position=292

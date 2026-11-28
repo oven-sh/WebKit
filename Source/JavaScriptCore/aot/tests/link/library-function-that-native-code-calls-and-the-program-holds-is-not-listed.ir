@@ -1,0 +1,5 @@
+# The control of library-function-that-native-code-calls-and-the-program-does-not-hold-is-listed.ir: the same program with next() of array iterators in it. Nothing that may run is lacked.
+# PROGRAM-OF: library-function-that-native-code-calls-to-step-the-iterator-of-a-typed-array.ir
+# LIBRARY: own
+# RUN: lacked
+# CHECK-NOT: lacked

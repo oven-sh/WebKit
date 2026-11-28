@@ -117,7 +117,7 @@ public:
     // The reply channel is open: an accepted TCP socket, or a registered RWI handler. TCP: reset()
     // closes the socket and this goes false. RWI: the handler is never unregistered, so it stays
     // true with or without LLDB attached.
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isConnected() const;
+    NODELETE JS_EXPORT_PRIVATE bool isConnected() const;
 
     // Set only by QueryHandler, on the final ('l') chunk of any qXfer:libraries:read -- including
     // the re-queries a new instance triggers, so not a once-per-session bit. Cleared by reset().
@@ -184,7 +184,7 @@ private:
     uint16_t m_port { defaultPort };
     SocketType m_serverSocket { invalidSocketValue };
     SocketType m_clientSocket { invalidSocketValue };
-    RefPtr<Thread> m_acceptThread;
+    const RefPtr<Thread> m_acceptThread;
 
     bool m_noAckMode { false };
     std::unique_ptr<QueryHandler> m_queryHandler;

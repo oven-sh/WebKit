@@ -1,0 +1,6 @@
+# the same function with calls of built-ins withheld: the method is called by value, and nothing reads a code unit
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: GetStringCodeUnit
+# CHECK: = Call v
+# PROGRAM-OF: position-that-a-case-has-narrowed-is-tested-against-the-length.ir

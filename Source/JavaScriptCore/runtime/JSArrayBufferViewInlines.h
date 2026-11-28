@@ -49,6 +49,7 @@ inline void JSArrayBufferView::refreshVector(void* newData)
     if (hasVector()) {
         void* newVectorPtr = static_cast<uint8_t*>(newData) + byteOffsetRaw();
         m_vector.setWithoutBarrier(newVectorPtr);
+        didMoveStorage();
     }
 }
 

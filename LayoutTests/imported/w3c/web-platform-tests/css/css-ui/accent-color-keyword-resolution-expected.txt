@@ -1,0 +1,9 @@
+
+PASS AccentColor updates when accent-color changes
+PASS AccentColor resolves against the element's own accent-color
+PASS AccentColor resolves in a registered color custom property
+PASS AccentColor resolves in a color function in a registered property
+PASS Canvas AccentColor mirrors inherited and updated accent-color
+PASS Canvas color functions resolve AccentColor against accent-color
+PASS When <canvas>'s accent-color is initial, fillStyle=accentColor resolves to the default accent color
+

@@ -64,6 +64,8 @@ class OptimizingJITCallee;
 class TierUpCount;
 
 struct CompilationContext {
+    CCallHelpers& entrypointJIT() { return codeForImage ? codeForImage->jit : *wasmEntrypointJIT; }
+
     std::unique_ptr<CCallHelpers> jsToWasmJIT;
     std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
     std::unique_ptr<OpaqueByproducts> wasmEntrypointByproducts;
@@ -74,6 +76,9 @@ struct CompilationContext {
     Box<PCToCodeOriginMap> pcToCodeOriginMap;
     Box<PCToCodeOriginMapBuilder> pcToCodeOriginMapBuilder;
     Vector<CCallHelpers::Label> catchEntrypoints;
+    CCallHelpers::Label directEntry;
+    // The direct entry for callers whose first argument is zero. They omit the argument of a resumable function.
+    Box<CCallHelpers::Label> directEntryWithZero;
     SegmentedVector<WasmOrigin> origins;
     CodeForImage* codeForImage { nullptr };
 };

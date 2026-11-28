@@ -34,9 +34,7 @@
 #include <unistd.h>
 #endif
 
-namespace WTF {
-
-namespace FileSystemImpl {
+namespace WTF::FileSystemImpl {
 
 bool validRepresentation(const UTF8CString& representation)
 {
@@ -110,7 +108,7 @@ UTF8CString currentExecutablePath()
         return { };
 
     String path(buffer, length);
-    return path.utf8();
+    return makeUTF8CString(path);
 }
 #endif
 
@@ -139,9 +137,9 @@ String createTemporaryDirectory(const String& directoryPrefix)
 {
     String newTempDir = makeString(directoryPrefix, "XXXXXX"_s);
     GUniqueOutPtr<GError> error;
-    GUniquePtr<char> tempDir(g_dir_make_tmp(newTempDir.utf8().legacyCStringPointer(), &error.outPtr()));
+    GUniquePtr<char> tempDir(g_dir_make_tmp(makeUTF8CString(newTempDir).legacyCStringPointer(), &error.outPtr()));
     if (!tempDir) {
-        SAFE_G_WARNING("Creating temporary directory at %s failed: %s", directoryPrefix.utf8(), error->message);
+        SAFE_G_WARNING("Creating temporary directory at %s failed: %s", makeUTF8CString(directoryPrefix), error->message);
         return { };
     }
 
@@ -164,5 +162,4 @@ UTF8CString webkitTopLevelDirectory()
 }
 #endif
 
-} // namespace FileSystemImpl
-} // namespace WTF
+} // namespace WTF::FileSystemImpl

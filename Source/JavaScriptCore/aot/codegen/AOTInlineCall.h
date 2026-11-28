@@ -31,8 +31,6 @@ public:
         , m_overload(builtinCall->overload())
         , m_receiver(builtinCall->receiverOperand())
         , m_arguments(builtinCall->argumentsOperands())
-        , m_accessSite(builtinCall->accessSite())
-        , m_allocationSite(builtinCall->allocationSite())
     {
     }
 
@@ -44,8 +42,6 @@ public:
         , m_overload(tryCallInline->overload())
         , m_receiver(tryCallInline->receiverOperand())
         , m_arguments(tryCallInline->argumentsOperands())
-        , m_accessSite(tryCallInline->accessSite())
-        , m_allocationSite(tryCallInline->allocationSite())
     {
     }
 
@@ -66,8 +62,6 @@ public:
     ValueID argument(unsigned index) const { return m_arguments[index]; }
     ValueID argumentOrNull(unsigned index) const { return index < m_arguments.size() ? m_arguments[index] : ValueID(); }
 
-    AccessSiteID accessSite() const { return m_accessSite; }
-    AllocationSiteID allocationSite() const { return m_allocationSite; }
 
 private:
     friend class OperationEmitter;
@@ -80,8 +74,6 @@ private:
     BuiltinOverloadID m_overload;
     ValueID m_receiver;
     std::span<const ValueID> m_arguments;
-    AccessSiteID m_accessSite;
-    AllocationSiteID m_allocationSite;
     mutable LBasicBlock m_missBlock { nullptr };
 };
 

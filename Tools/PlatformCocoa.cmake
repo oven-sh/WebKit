@@ -1,16 +1,9 @@
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
 
 # MiniBrowser is the primary dev-loop target -- simpler than the test harnesses.
-# Default ON is set via WEBKIT_OPTION_DEFAULT_PORT_VALUE in OptionsMac.cmake.
+# Default ON is set via WEBKIT_OPTION_DEFAULT_PORT_VALUE in OptionsCocoa.cmake.
 if (ENABLE_MINIBROWSER AND ENABLE_WEBKIT)
     add_subdirectory(MiniBrowser/mac)
-endif ()
-
-# A WEBKIT_OPTION would reach cmakeconfig.h, so turning SwiftBrowser on or off
-# would rebuild everything that includes it.
-option(ENABLE_SWIFTBROWSER "Build SwiftBrowser" ON)
-if (ENABLE_SWIFTBROWSER AND ENABLE_WEBKIT)
-    add_subdirectory(SwiftBrowser)
 endif ()
 
 if (ENABLE_LAYOUT_TESTS)
@@ -46,4 +39,17 @@ if (ENABLE_LLDB_WEBKIT_TESTER)
     add_subdirectory(lldb/lldbWebKitTester)
 endif ()
 
+endif ()
+
+# A WEBKIT_OPTION would reach cmakeconfig.h, so turning SwiftBrowser on or off
+# would rebuild everything that includes it. SwiftBrowser/CMakeLists.txt skips
+# the platforms it doesn't support.
+option(ENABLE_SWIFTBROWSER "Build SwiftBrowser" ON)
+if (ENABLE_SWIFTBROWSER AND ENABLE_WEBKIT)
+    add_subdirectory(SwiftBrowser)
+endif ()
+
+# The iOS family includes Mac Catalyst.
+if (WEBKIT_SDK_IS_IOS_FAMILY AND ENABLE_MINIBROWSER AND ENABLE_WEBKIT)
+    add_subdirectory(MobileMiniBrowser)
 endif ()

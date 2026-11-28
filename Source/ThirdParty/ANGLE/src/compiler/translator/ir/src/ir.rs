@@ -763,7 +763,7 @@ pub enum OpCode {
     // Create a register alias for another id.  Produced by transformations, makes it possible to
     // make an existing register id use a different value (such as a constant, or another
     // pre-existing register id).
-    //   Alias %new %old
+    //  %new = Alias %old
     Alias(TypedId),
 
     // Call a function, optionally returning a result.
@@ -2113,6 +2113,7 @@ pub struct Field {
     pub precision: Precision,
     pub precise: bool,
     pub decorations: Decorations,
+    pub built_in: Option<BuiltIn>,
     // Reflection info.  Tracking is only needed for fields of nameless interface blocks.
     pub is_static_use: bool,
 }
@@ -2124,8 +2125,9 @@ impl Field {
         precision: Precision,
         precise: bool,
         decorations: Decorations,
+        built_in: Option<BuiltIn>,
     ) -> Field {
-        Field { name, type_id, precision, precise, decorations, is_static_use: false }
+        Field { name, type_id, precision, precise, decorations, built_in, is_static_use: false }
     }
 }
 

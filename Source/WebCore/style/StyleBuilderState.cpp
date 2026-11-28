@@ -39,11 +39,13 @@
 #include "CSSCursorImageValue.h"
 #include "CSSFilterImageValue.h"
 #include "CSSFontSelector.h"
+#include "CSSFreeformGradientValue.h"
 #include "CSSFunctionValue.h"
 #include "CSSGradientValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
 #include "CSSLightDarkImageValue.h"
+#include "CSSMeshGradientValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSPaintImageValue.h"
 #include "CSSParserIdioms.h"
@@ -79,8 +81,7 @@
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleScope.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuilderState);
 
@@ -150,6 +151,10 @@ RefPtr<Image> BuilderState::createStyleImage(const CSSValue& value) const
         return filterImageValue->createStyleImage(*this);
     if (auto* gradientValue = dynamicDowncast<CSSGradientValue>(value))
         return gradientValue->createStyleImage(*this);
+    if (auto* meshGradientValue = dynamicDowncast<CSSMeshGradientValue>(value))
+        return meshGradientValue->createStyleImage(*this);
+    if (auto* freeformGradientValue = dynamicDowncast<CSSFreeformGradientValue>(value))
+        return freeformGradientValue->createStyleImage(*this);
     if (auto* colorImageValue = dynamicDowncast<CSSColorImageValue>(value))
         return colorImageValue->createStyleImage(*this);
     if (auto* lightDarkImageValue = dynamicDowncast<CSSLightDarkImageValue>(value))
@@ -185,35 +190,33 @@ void BuilderState::updateFont()
     if (!needsUpdate())
         return;
 
-    updateFontForTextSizeAdjust();
     updateFontForGenericFamilyChange();
+    updateFontForTextSizeAdjust();
     updateFontForZoomChange();
     updateFontForOrientationChange();
     updateFontForSizeChange();
 
-    m_style->fontCascade().update(fontSelector.ptr());
+    protect(m_style->fontCascade())->update(fontSelector.ptr());
 
     m_fontDirty = false;
 }
 
 void BuilderState::updateFontForTextSizeAdjust()
 {
-    if (m_style->textSizeAdjust().isAuto()
-        || !document().textAutosizingEnabled()
-        || (document().settings().textAutosizingUsesIdempotentMode()
-            && !m_style->textSizeAdjust().isNone()
-            && !document().settings().idempotentModeAutosizingOnlyHonorsPercentages()))
+    if (!document().textAutosizingEnabled())
+        return;
+
+    auto textSizeAdjust = m_style->textSizeAdjust();
+    auto multiplier = textSizeAdjust.usedFontSizeMultiplier(document());
+    if (!multiplier && !textSizeAdjust.isNone())
         return;
 
     auto newFontDescription = m_style->fontDescription();
-    auto baseSize = newFontDescription.computedSize();
-    if (!m_style->textSizeAdjust().isNone())
-        baseSize *= m_style->textSizeAdjust().multiplier();
+    auto baseSize = newFontDescription.computedSize() * multiplier.value_or(1.0f);
 
     float zoomFactor = m_style->usedZoom();
     if (auto* frame = document().frame(); frame && m_style->textZoom() != TextZoom::Reset)
         zoomFactor *= frame->textZoomFactor();
-    newFontDescription.setComputedSize(baseSize);
     newFontDescription.setUsedSize(baseSize * zoomFactor, zoomFactor);
 
     m_style->setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
@@ -228,11 +231,7 @@ void BuilderState::updateFontForZoomChange()
     // computed the correct size (incorporating both the multiplier and the current zoom factor).
     // Skip recalculation here to avoid overwriting that result, which would lose the
     // text-size-adjust multiplier.
-    if (document().textAutosizingEnabled()
-        && !m_style->textSizeAdjust().isAuto()
-        && !m_style->textSizeAdjust().isNone()
-        && (!document().settings().textAutosizingUsesIdempotentMode()
-            || document().settings().idempotentModeAutosizingOnlyHonorsPercentages()))
+    if (m_style->textSizeAdjust().usedFontSizeMultiplier(document()))
         return;
 
     setFontDescriptionFontSize(m_style->fontDescription().computedSize());
@@ -340,7 +339,7 @@ double BuilderState::lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey& k
 
 // MARK: - Tree Counting Functions
 
-static void LEGACY_NODELETE markTreeCountingFunctionUsed(const Element& element, ComputedStyle& style)
+NODELETE static void markTreeCountingFunctionUsed(const Element& element, ComputedStyle& style)
 {
     style.setUsesTreeCountingFunctions();
 
@@ -355,7 +354,7 @@ static void LEGACY_NODELETE markTreeCountingFunctionUsed(const Element& element,
 
 // "Loosely-matched tree-scoped references" count as 0 for cross-tree styling.
 // https://drafts.csswg.org/css-shadow-1/#tree-scoped-name-loosely-matched
-static bool LEGACY_NODELETE isLooselyMatchedTreeScopedReference(const PropertyCascade::Property* property)
+NODELETE static bool isLooselyMatchedTreeScopedReference(const PropertyCascade::Property* property)
 {
     return property && property->styleScopeOrdinal <= ScopeOrdinal::ContainingHost;
 }
@@ -396,11 +395,9 @@ unsigned BuilderState::siblingIndex()
     return count;
 }
 
-void BuilderState::disableNativeAppearanceIfNeeded(CSSPropertyID propertyID, PropertyCascade::Origin origin)
+void BuilderState::didApplyAuthorProperty(CSSPropertyID propertyID)
 {
-    auto shouldDisable = [&] {
-        if (origin != PropertyCascade::Origin::Author)
-            return false;
+    auto shouldDisableNativeAppearance = [&] {
         if (!CSSProperty::disablesNativeAppearance(propertyID))
             return false;
         if (!applyPropertyToRegularStyle())
@@ -408,10 +405,12 @@ void BuilderState::disableNativeAppearanceIfNeeded(CSSPropertyID propertyID, Pro
         SUPPRESS_UNCOUNTED_ARG return element()->isDevolvableWidget() || RenderTheme::hasAppearanceForElementTypeFromUAStyle(*element());
     };
 
-    if (shouldDisable())
+    if (shouldDisableNativeAppearance())
         style().setNativeAppearanceDisabled(true);
+
+    // https://drafts.csswg.org/css-pseudo-4/#paired-defaults
+    if (isBuildingHighlightStyle() && (propertyID == CSSPropertyID::Color || propertyID == CSSPropertyID::BackgroundColor))
+        style().setHasAuthorHighlightColors();
 }
 
-
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

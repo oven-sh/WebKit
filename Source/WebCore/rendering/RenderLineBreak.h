@@ -33,7 +33,7 @@ class RenderLineBreak final : public RenderBoxModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderLineBreak);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderLineBreak);
 public:
-    RenderLineBreak(HTMLElement&, Style::ComputedStyle&&);
+    RenderLineBreak(HTMLElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderLineBreak();
 
     // FIXME: The lies here keep render tree dump based test results unchanged.
@@ -58,8 +58,8 @@ private:
 
     PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) final;
     int caretMinOffset() const final;
-    int LEGACY_NODELETE caretMaxOffset() const final;
-    bool LEGACY_NODELETE canBeSelectionLeaf() const final;
+    NODELETE int caretMaxOffset() const final;
+    NODELETE bool canBeSelectionLeaf() const final;
 
     LayoutUnit marginTop() const final { return 0; }
     LayoutUnit marginBottom() const final { return 0; }
@@ -74,7 +74,7 @@ private:
     LayoutRect visualOverflowRect() const final { return linesBoundingBox(); }
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const final { return { }; }
 
-    void LEGACY_NODELETE updateFromStyle() final;
+    NODELETE void updateFromStyle() final;
     bool requiresLayer() const final { return false; }
 };
 

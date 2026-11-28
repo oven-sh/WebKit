@@ -69,7 +69,7 @@ public:
 
     void initialize(MediaStreamTrackPrivate&);
     std::function<void(Function<void()>&&)> getPostTask() { return m_postTask; }
-    RealtimeMediaSource& LEGACY_NODELETE source() { return m_source.get(); }
+    NODELETE RealtimeMediaSource& source() { return m_source.get(); }
     void start();
     void stop();
     void requestToEnd();
@@ -100,7 +100,7 @@ public:
     static Ref<MediaStreamTrackPrivate> create(Ref<const Logger>&&, Ref<RealtimeMediaSource>&&, std::function<void(Function<void()>&&)>&& postTask = { });
     static Ref<MediaStreamTrackPrivate> create(Ref<const Logger>&&, Ref<RealtimeMediaSource>&&, String&& id, std::function<void(Function<void()>&&)>&& postTask = { });
 
-    WEBCORE_EXPORT virtual ~MediaStreamTrackPrivate();
+    WEBCORE_EXPORT ~MediaStreamTrackPrivate();
 
     const String& id() const LIFETIME_BOUND { return m_data.trackId; }
     const String& label() const LIFETIME_BOUND { return m_data.label; }
@@ -110,7 +110,7 @@ public:
     bool ended() const { return m_data.isEnded; }
 
     MediaStreamTrackHintValue contentHint() const { return m_data.contentHint; }
-    void LEGACY_NODELETE setContentHint(MediaStreamTrackHintValue);
+    NODELETE void setContentHint(MediaStreamTrackHintValue);
     
     void startProducingData();
     void stopProducingData();
@@ -130,10 +130,10 @@ public:
 
     Ref<MediaStreamTrackPrivate> clone();
 
-    WEBCORE_EXPORT RealtimeMediaSource& LEGACY_NODELETE source();
-    const RealtimeMediaSource& LEGACY_NODELETE source() const;
-    RealtimeMediaSource& LEGACY_NODELETE sourceForProcessor();
-    bool LEGACY_NODELETE hasSource(const RealtimeMediaSource*) const;
+    NODELETE WEBCORE_EXPORT RealtimeMediaSource& source();
+    NODELETE const RealtimeMediaSource& source() const;
+    NODELETE RealtimeMediaSource& sourceForProcessor();
+    NODELETE bool hasSource(const RealtimeMediaSource*) const;
 
     RealtimeMediaSource::Type type() const { return m_data.type; }
     CaptureDevice::DeviceType deviceType() const { return m_data.deviceType; }
@@ -208,7 +208,7 @@ private:
     WTFLogChannel& logChannel() const final;
 #endif
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     bool isOnCreationThread();
 #endif
 
@@ -224,7 +224,7 @@ private:
 #if !RELEASE_LOG_DISABLED
     const uint64_t m_logIdentifier;
 #endif
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     uint32_t m_creationThreadId { 0 };
 #endif
 };

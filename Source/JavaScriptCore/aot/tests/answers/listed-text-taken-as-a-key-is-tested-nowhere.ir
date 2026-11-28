@@ -1,0 +1,130 @@
+# type Name = "alpha" | "beta" | "delta" | "epsilon" | "gamma" | "zeta";   type Width = "narrow" | "wide";
+# function read(name: Name) { return table[name]; }
+# function readUnlessFirst(name: Name) { return name === "alpha" ? 0 : table[name]; }
+# function has(name: Name) { return name in table; }
+# function readBehindEdge(name: Name) { .. table[name] }
+# function readOneOfFew(width: Width) { return table[width]; }
+# function join(name: Name) { return name + "!"; }
+# RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value)); globalThis.table = { alpha: 1, zeta: 6, other: 9, 7: 70, wide: 80 }; globalThis.inputs = ["zeta", "other", 7, { toString() { return "alpha"; } }, "wide"];
+# ANSWER: 6
+# ANSWER-NEXT: 9
+# ANSWER-NEXT: 70
+# ANSWER-NEXT: 1
+# ANSWER-NEXT: 6
+# ANSWER-NEXT: 1
+# ANSWER-NEXT: true
+# ANSWER-NEXT: true
+# ANSWER-NEXT: 9
+# ANSWER-NEXT: 80
+# ANSWER-NEXT: 9
+# ANSWER-NEXT: zeta!
+# ANSWER-NEXT: 7!
+# ANSWER-NEXT: exited with 0
+
+variable g0 name="read" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="readUnlessFirst" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="has" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="readBehindEdge" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="readOneOfFew" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="join" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = PropGet v0 key="inputs" [isFreeName]
+    v3 = Integer
+    v4 = ElemGet v2, v3
+    v5 = Integer integer=1
+    v6 = ElemGet v2, v5
+    v7 = Integer integer=2
+    v8 = ElemGet v2, v7
+    v9 = Integer integer=3
+    v10 = ElemGet v2, v9
+    v11 = Integer integer=4
+    v12 = ElemGet v2, v11
+    v13 = GetModuleVariable variable=g0
+    v14 = Call v13, -, v4 calleeName="read" [isNeverInlined]
+    v15 = Call v1, -, v14 calleeName="report"
+    v16 = Call v13, -, v6 calleeName="read" [isNeverInlined]
+    v17 = Call v1, -, v16 calleeName="report"
+    v18 = Call v13, -, v8 calleeName="read" [isNeverInlined]
+    v19 = Call v1, -, v18 calleeName="report"
+    v20 = Call v13, -, v10 calleeName="read" [isNeverInlined]
+    v21 = Call v1, -, v20 calleeName="report"
+    v22 = GetModuleVariable variable=g1
+    v23 = Call v22, -, v4 calleeName="readUnlessFirst" [isNeverInlined]
+    v24 = Call v1, -, v23 calleeName="report"
+    v25 = Call v22, -, v10 calleeName="readUnlessFirst" [isNeverInlined]
+    v26 = Call v1, -, v25 calleeName="report"
+    v27 = GetModuleVariable variable=g2
+    v28 = Call v27, -, v4 calleeName="has" [isNeverInlined]
+    v29 = Call v1, -, v28 calleeName="report"
+    v30 = Call v27, -, v8 calleeName="has" [isNeverInlined]
+    v31 = Call v1, -, v30 calleeName="report"
+    v32 = GetModuleVariable variable=g3
+    v33 = Call v32, -, v6 calleeName="readBehindEdge" [isNeverInlined]
+    v34 = Call v1, -, v33 calleeName="report"
+    v35 = GetModuleVariable variable=g4
+    v36 = Call v35, -, v12 calleeName="readOneOfFew" [isNeverInlined]
+    v37 = Call v1, -, v36 calleeName="report"
+    v38 = Call v35, -, v6 calleeName="readOneOfFew" [isNeverInlined]
+    v39 = Call v1, -, v38 calleeName="report"
+    v40 = GetModuleVariable variable=g5
+    v41 = Call v40, -, v4 calleeName="join" [isNeverInlined]
+    v42 = Call v1, -, v41 calleeName="report"
+    v43 = Call v40, -, v8 calleeName="join" [isNeverInlined]
+    v44 = Call v1, -, v43 calleeName="report"
+    Return v44
+}
+function f1 name="read" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: "alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="table" [isFreeName]
+    v3 = ElemGet v2, v0
+    Return v3
+}
+function f2 name="readUnlessFirst" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: "alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"):
+    v1 = String string="alpha"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer
+    Return v3
+  b2():
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="table" [isFreeName]
+    v6 = ElemGet v5, v0
+    Return v6
+}
+function f3 name="has" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: "alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="table" [isFreeName]
+    v3 = ElemHas v2, v0
+    Return v3
+}
+function f4 name="readBehindEdge" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: "alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"):
+    Jump -> next b1(v0)
+  b1(v1):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="table" [isFreeName]
+    v4 = ElemGet v3, v1
+    Return v4
+}
+function f5 name="readOneOfFew" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="narrow"|"wide"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: "narrow"|"wide"):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="table" [isFreeName]
+    v3 = ElemGet v2, v0
+    Return v3
+}
+function f6 name="join" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: "alpha"|"beta"|"delta"|"epsilon"|"gamma"|"zeta"):
+    v1 = String string="!"
+    v2 = Add v0, v1
+    Return v2
+}

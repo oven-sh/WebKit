@@ -1,0 +1,51 @@
+# async function load(k) { await k; return k; }  async function isSmallSquare(k, slow) { return await (slow ? load(k) : (k === 1 || k === 4 || k === 9)); }  sink(isSmallSquare);
+# One way into the join brings a call, the others the truth of a comparison, through a block that only hands on what it is brought. A switch over the alternatives passes their blocks by and leads their jumps on itself.
+# While each jump into the join built the await for itself, nothing was awaited on those ways and the Await in the join was bound to its operand: the function did not suspend.
+# RUN: walk f2:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK-NOT: = AwaitBySavingFrame
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=all
+# NEVER-NOT: = AwaitCallBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="isSmallSquare" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v0 calleeName="load"
+    Jump -> next b6(v4)
+  b2():
+    v5 = Integer integer=1
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(v6), notTaken b3()
+  b3():
+    v7 = Integer integer=4
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b5(v8), notTaken b4()
+  b4():
+    v9 = Integer integer=9
+    v10 = StrictEq v0, v9
+    Jump -> next b5(v10)
+  b5(v11):
+    Jump -> next b6(v11)
+  b6(v12):
+    v13 = Await v12
+    Return v13
+}

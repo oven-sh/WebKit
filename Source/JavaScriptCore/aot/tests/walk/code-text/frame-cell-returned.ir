@@ -1,0 +1,17 @@
+# a cell of the frame ends with the frame: it is not what the function hands back, under whatever name
+# RUN: verify-code
+# CHECK: {{*}}a cell of the frame is returned
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: Array @Cell = CreateRest firstArgument=0 storage=Frame
+#     v2: Array @JSValue = Box v1
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keeps" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+entry module=m0

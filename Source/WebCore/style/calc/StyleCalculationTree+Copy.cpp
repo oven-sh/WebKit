@@ -28,9 +28,7 @@
 #include "StyleCalculationTree.h"
 #include <wtf/StdLibExtras.h>
 
-namespace WebCore {
-namespace Style {
-namespace Calculation {
+namespace WebCore::Style::Calculation {
 
 static auto copy(const std::optional<Child>& root) -> std::optional<Child>;
 static auto copy(const Random::Fixed&) -> Random::Fixed;
@@ -40,7 +38,7 @@ static auto copy(const Vector<CalcMix::Item>&) -> Vector<CalcMix::Item>;
 static auto copy(const ChildOrNone&) -> ChildOrNone;
 static auto copy(const Children&) -> Children;
 template<Leaf Op>
-Child LEGACY_NODELETE copy(const Op&);
+NODELETE Child copy(const Op&);
 template<typename Op>
 static auto copy(const IndirectNode<Op>&) -> Child;
 
@@ -58,12 +56,12 @@ std::optional<Child> copy(const std::optional<Child>& root)
     return std::nullopt;
 }
 
-Random::Fixed LEGACY_NODELETE copy(const Random::Fixed& root)
+NODELETE Random::Fixed copy(const Random::Fixed& root)
 {
     return root;
 }
 
-CSS::Keyword::None LEGACY_NODELETE copy(const CSS::Keyword::None& none)
+NODELETE CSS::Keyword::None copy(const CSS::Keyword::None& none)
 {
     return none;
 }
@@ -93,7 +91,7 @@ Child copy(const Child& root)
     return WTF::switchOn(root, [&](const auto& root) { return copy(root); });
 }
 
-template<Leaf Op> Child LEGACY_NODELETE copy(const Op& root)
+template<Leaf Op> NODELETE Child copy(const Op& root)
 {
     return { root };
 }
@@ -103,6 +101,4 @@ template<typename Op> Child copy(const IndirectNode<Op>& root)
     return makeChild(WTF::apply([](const auto& ...x) { return Op { copy(x)... }; } , *root));
 }
 
-} // namespace Calculation
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style::Calculation

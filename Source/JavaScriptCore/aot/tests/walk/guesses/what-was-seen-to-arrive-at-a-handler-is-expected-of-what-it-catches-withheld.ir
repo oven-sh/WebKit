@@ -1,0 +1,9 @@
+# the same program with handlers withheld: Link lists nothing for the handler, so nothing is expected of what it catches, and both reads are closed
+# RUN: walk f2 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f2:Body
+# CHECK: = CatchValue
+# CHECK: = PropGet {{*}}key="node"
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: = ShapeTest
+# NEVER-NOT: = GetSlot
+# PROGRAM-OF: what-was-seen-to-arrive-at-a-handler-is-expected-of-what-it-catches.ir

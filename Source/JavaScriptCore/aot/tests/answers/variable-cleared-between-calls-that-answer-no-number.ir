@@ -1,0 +1,43 @@
+# function keep(call, a, .., l, big) { const x: number = call(); call(big); big = null; const y: number = call(); return x + y + a + .. + l; }
+# Fifteen values are alive at the first call, and `big = null` stands behind the last read of `big`. No call, then the first, the second, the third answers a string.
+# RUN(ANSWER): run-in-shell globalThis.register = keep => { for (let bad = 0; bad < 4; bad++) { let calls = 0; const call = big => ++calls === bad ? "s" + big : calls; print(keep(call, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "B")); } };
+# ANSWER: 4abcdefghijkl
+# ANSWER-NEXT: sundefined3abcdefghijkl
+# ANSWER-NEXT: 4abcdefghijkl
+# ANSWER-NEXT: 1sundefinedabcdefghijkl
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = String string="return globalThis.register"
+    v2 = Construct v0, -, v1
+    v3 = Call v2
+    v4 = NewClosure function=f1
+    v5 = Call v3, -, v4
+    v6 = Undefined
+    Return v6
+}
+function f1 name="keep" module=m0 flags=[IsChecked] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything):
+    v14 = Call v0, -
+    v15 = Convert v14 declared={type=number} illTypedCause=FromLooseType
+    v16 = Call v0, -, v13
+    v17 = Call v0, -
+    v18 = Convert v17 declared={type=number} illTypedCause=FromLooseType
+    v19 = Add v15, v18
+    v20 = Add v19, v1
+    v21 = Add v20, v2
+    v22 = Add v21, v3
+    v23 = Add v22, v4
+    v24 = Add v23, v5
+    v25 = Add v24, v6
+    v26 = Add v25, v7
+    v27 = Add v26, v8
+    v28 = Add v27, v9
+    v29 = Add v28, v10
+    v30 = Add v29, v11
+    v31 = Add v30, v12
+    Return v31
+}
+entry module=m0

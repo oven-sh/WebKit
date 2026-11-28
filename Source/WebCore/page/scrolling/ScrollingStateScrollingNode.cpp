@@ -190,7 +190,8 @@ OptionSet<ScrollingStateNode::Property> ScrollingStateScrollingNode::applicableP
         Property::ScrolledContentsLayer,
         Property::HorizontalScrollbarLayer,
         Property::VerticalScrollbarLayer,
-        Property::PainterForScrollbar
+        Property::PainterForScrollbar,
+        Property::ScrollbarEnabledState
     };
 
     auto properties = ScrollingStateNode::applicableProperties();
@@ -370,11 +371,20 @@ void ScrollingStateScrollingNode::mergeOrAppendScrollRequest(RequestedScrollData
             accumulateDelta(m_requestedScrollData, WTF::move(scrollRequest));
             break;
         case ScrollRequestType::ImplicitDeltaUpdate:
-            m_requestedScrollData[0].requestType = ScrollRequestType::DeltaUpdate;
+            if (scrollRequest.requestType == ScrollRequestType::DeltaUpdate)
+                m_requestedScrollData[0].requestType = ScrollRequestType::DeltaUpdate;
             accumulateDelta(m_requestedScrollData, WTF::move(scrollRequest));
             break;
         case ScrollRequestType::AnimatedPositionUpdate:
         case ScrollRequestType::AnimatedDeltaUpdate:
+            if (scrollRequest.requestType == ScrollRequestType::ImplicitDeltaUpdate) {
+                // Keep the animated scroll, after the delta. The last request carries the most recent identifier.
+                auto animatedRequest = std::exchange(m_requestedScrollData[0], WTF::move(scrollRequest));
+                m_requestedScrollData[0].requestType = ScrollRequestType::DeltaUpdate;
+                std::swap(m_requestedScrollData[0].identifier, animatedRequest.identifier);
+                m_requestedScrollData.append(WTF::move(animatedRequest));
+                break;
+            }
             m_requestedScrollData[0] = WTF::move(scrollRequest);
             break;
         case ScrollRequestType::CancelAnimatedScroll:
@@ -643,6 +653,9 @@ void ScrollingStateScrollingNode::dumpProperties(TextStream& ts, OptionSet<Scrol
 
         if (isAnimatedUpdate(request.requestType))
             ts.dumpProperty("requested scroll position is animated"_s, true);
+
+        if (request.animationCurve != ScrollAnimationCurve::Default)
+            ts.dumpProperty("requested scroll animation curve"_s, request.animationCurve);
     };
 
     for (auto& request : m_requestedScrollData)

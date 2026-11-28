@@ -28,38 +28,57 @@
 #include "CellContainerInlines.h"
 #include "HeapCellInlines.h"
 #include "MarkedBlock.h"
+#include <JavaScriptCore/Collector.h>
+#include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/JSCell.h>
 
 namespace JSC {
+
+inline Lock& WeakBlock::weakBlockLock() const
+{
+    return m_heap.weakBlockLock();
+}
+
+inline void WeakBlock::assertIsMarkerWithWorldStopped() const
+{
+    m_heap.collector().assertIsMarkerWithWorldStopped();
+}
+
+inline Lock& WeakSet::weakBlockLock() const
+{
+    return heap()->weakBlockLock();
+}
+
+inline void WeakSet::assertIsHoldingWeakBlockLock() const
+{
+    assertIsHeld(weakBlockLock());
+}
+
+inline void WeakSet::assertIsMarkerWithWorldStopped() const
+{
+    heap()->collector().assertIsMarkerWithWorldStopped();
+}
+
+inline void WeakSet::assertIsExclusiveAccessHolder() const
+{
+    heap()->assertIsExclusiveAccessHolder();
+}
 
 inline WeakImpl* WeakSet::allocate(JSValue jsValue, WeakHandleOwner* weakHandleOwner, void* context)
 {
     CellContainer container = jsValue.asCell()->cellContainer();
     ASSERT(container.vm().currentThreadIsHoldingAPILock());
     WeakSet& weakSet = container.weakSet();
+    weakSet.assertIsExclusiveAccessHolder();
     WeakBlock* block = weakSet.m_currentBlock;
-    if (!block || !block->hasFreeCell()) [[unlikely]]
-        block = weakSet.findAllocator(container);
-
-    WeakImpl* weakImpl = WeakBlock::asWeakImpl(block->takeFreeCell());
+    WeakImpl* weakImpl = block ? block->takeFreeCell() : nullptr;
+    if (!weakImpl) [[unlikely]] {
+        weakImpl = weakSet.findAllocator(container)->takeFreeCell();
+        ASSERT(weakImpl);
+    }
     container.vm().heap.didAllocate(sizeof(WeakImpl));
-    return new (NotNull, weakImpl) WeakImpl(jsValue, weakHandleOwner, context);
-}
-
-inline void WeakBlock::finalize(WeakImpl* weakImpl)
-{
-    ASSERT(weakImpl->state() == WeakImpl::Dead);
-    weakImpl->setState(WeakImpl::Finalized);
-    ASSERT(m_deadCount);
-    --m_deadCount;
-    WeakHandleOwner* weakHandleOwner = weakImpl->weakHandleOwner();
-    if (!weakHandleOwner)
-        return;
-#if ASAN_ENABLED
-    if (JSCell* cell = weakImpl->jsValue().asCell(); Options::runsCompiledImage() && !cell->isPreciseAllocation())
-        __asan_unpoison_memory_region(cell, cell->cellSize());
-#endif
-    weakHandleOwner->finalize(Handle<Unknown>::wrapSlot(&const_cast<JSValue&>(weakImpl->jsValue())), weakImpl->context());
+    weakImpl->initialize(jsValue, weakHandleOwner, context);
+    return weakImpl;
 }
 
 } // namespace JSC

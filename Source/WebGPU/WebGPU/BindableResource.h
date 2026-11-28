@@ -25,11 +25,14 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <Metal/Metal.h>
 #import <limits>
 #import <type_traits>
 #import <utility>
-#import <wtf/GenericHashKey.h>
 #import <wtf/HashFunctions.h>
 #import <wtf/HashMap.h>
 #import <wtf/HashSet.h>
@@ -130,9 +133,24 @@ struct IndirectDrawData {
     uint64_t lastIndexGeneration { 0 };
 };
 
-using IndirectDrawForSlotContainer = HashMap<uint64_t, IndirectDrawData, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using IndirectDrawForSlotContainer = HashMap<uint64_t, IndirectDrawData>;
 
-using DrawIndexCacheContainerKey = std::array<uint32_t, 5>;
+// An indexed indirect draw whose baked ICB slot was reused rather than re-encoded, retained until commit so
+// its index buffer can be revalidated if those indices changed after the slot was baked.
+struct ReusedIndirectIndexedDraw {
+    RefPtr<Buffer> indirectBuffer;
+    uint64_t indirectOffset { 0 };
+    uint64_t indexBufferOffset { 0 };
+    uint64_t indirectGeneration { 0 };
+    uint64_t indexGeneration { 0 };
+    uint32_t minVertexCount { UINT32_MAX };
+    MTLIndexType indexType { MTLIndexTypeUInt16 };
+    MTLPrimitiveType primitiveType { MTLPrimitiveTypeTriangle };
+
+    friend bool operator==(const ReusedIndirectIndexedDraw&, const ReusedIndirectIndexedDraw&) = default;
+};
+
+using DrawIndexCacheContainerKey = std::array<uint32_t, 6>;
 inline void add(Hasher& hasher, const DrawIndexCacheContainerKey& input)
 {
     for (auto value : input)
@@ -150,6 +168,7 @@ struct DrawIndexCacheContainerValue {
             uint32_t icb2;
         };
     };
+    int32_t clampedBaseVertex { 0 };
     DrawIndexCacheContainerValue() { }
     DrawIndexCacheContainerValue(const DrawIndexCacheContainerKey& key)
         : firstIndex(key[0])
@@ -157,6 +176,7 @@ struct DrawIndexCacheContainerValue {
         , primitiveOffsetWithIndexType(key[2])
         , icb1(key[3])
         , icb2(key[4])
+        , clampedBaseVertex(static_cast<int32_t>(key[5]))
     {
     }
     uint32_t primitiveOffset() { return static_cast<MTLIndexType>(primitiveOffsetWithIndexType & 0x1); }
@@ -168,10 +188,10 @@ struct DrawIndexValidationCacheEntry {
     uint64_t indexContentsGeneration { 0 };
 };
 
-using DrawIndexCacheContainer = HashMap<GenericHashKey<DrawIndexCacheContainerKey>, DrawIndexValidationCacheEntry>;
+using DrawIndexCacheContainer = HashMap<DrawIndexCacheContainerKey, DrawIndexValidationCacheEntry>;
 using DrawIndexCacheContainerIterator = DrawIndexCacheContainer::const_iterator;
 
-using TrackedResourceContainer = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using TrackedResourceContainer = HashSet<uint64_t>;
 struct TrackedResource {
     mutable TrackedResourceContainer m_commandEncoders;
     void removeEncoder(uint64_t identifier) const

@@ -32,19 +32,23 @@ WI.CPUInstrument = class CPUInstrument extends WI.Instrument
         return WI.TimelineRecord.Type.CPU;
     }
 
-    startInstrumentation(initiatedByBackend)
+    startInstrumentation(initiatingTarget)
     {
-        if (!initiatedByBackend) {
-            let target = WI.assumingMainTarget();
-            target.CPUProfilerAgent.startTracking();
-        }
+        let target = WI.assumingMainTarget();
+        if (target === initiatingTarget)
+            return;
+
+        WI.timelineManager.willStartTrackingForTarget(target, "CPUProfiler");
+        target.CPUProfilerAgent.startTracking();
     }
 
-    stopInstrumentation(initiatedByBackend)
+    startInstrumentationForTarget(target)
     {
-        if (!initiatedByBackend) {
-            let target = WI.assumingMainTarget();
-            target.CPUProfilerAgent.stopTracking();
-        }
+        // Nothing to do, only the main target that existed when capturing started is instrumented.
+    }
+
+    stopInstrumentation()
+    {
+        // Nothing to do, TimelineManager stops every domain that is tracking.
     }
 };

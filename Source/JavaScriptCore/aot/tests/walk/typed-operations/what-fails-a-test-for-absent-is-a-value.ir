@@ -1,0 +1,42 @@
+# the front end asks a cell that may be empty with a test for `absent`, and goes on with what failed the test. That is a value, and so is what `pick` hands back
+# function pick() { return <KEPT is empty> ? "none" : KEPT; }  function make() { return { kept: pick() }; }
+# RUN: walk f2 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f2:Body
+# CHECK: [[word]]: string @{{*}} = Call
+# CHECK: = NewObject {{*}}[[word]]{{*}}layout=L0
+
+layout L0 module=m0 fields=[{key="kept" declared={type=string} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="pick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="make" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="KEPT" module=m0 declared={type=string|absent}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="one"
+    PutModuleVariable v0 variable=g2
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2 calleeName="make"
+    v4 = PropGet v3 key="kept"
+    Return v4
+}
+function f1 name="pick" module=m0 thisType={type=anything} results=[{type=string}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = TypeTest v0 testedType=absent
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = String string="none"
+    Return v3
+  b2(v4):
+    Return v4
+}
+function f2 name="make" module=m0 thisType={type=anything} results=[{type=L0}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="pick"
+    v2 = Convert v1 declared={type=string}
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Return v4
+}

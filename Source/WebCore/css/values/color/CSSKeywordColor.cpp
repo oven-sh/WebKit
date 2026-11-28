@@ -39,17 +39,16 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
-static bool LEGACY_NODELETE isVGAPaletteColor(CSSValueID id)
+NODELETE static bool isVGAPaletteColor(CSSValueID id)
 {
     // https://drafts.csswg.org/css-color-4/#named-colors
     // "16 of CSS’s named colors come from the VGA palette originally, and were then adopted into HTML"
     return id >= CSSValueID::Aqua && id <= CSSValueID::Grey;
 }
 
-static bool LEGACY_NODELETE isNonVGANamedColor(CSSValueID id)
+NODELETE static bool isNonVGANamedColor(CSSValueID id)
 {
     // https://drafts.csswg.org/css-color-4/#named-colors
     return id >= CSSValueID::Aliceblue && id <= CSSValueID::Yellowgreen;
@@ -132,6 +131,8 @@ WebCore::Color createColor(const KeywordColor& unresolved, PlatformColorResoluti
         return state.webkitFocusRingColor();
     case CSSValueID::Currentcolor:
         return state.currentColor();
+    case CSSValueID::Accentcolor:
+        return state.accentColor();
     default:
         return colorFromKeyword(unresolved.valueID, state.keywordOptions);
     }
@@ -152,5 +153,4 @@ void Serialize<KeywordColor>::operator()(StringBuilder& builder, const Serializa
     builder.append(nameLiteralForSerialization(value.valueID));
 }
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

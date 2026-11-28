@@ -31,17 +31,15 @@
 #include <WebCore/DFANode.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 // The DFA abstract a partial DFA graph in a compact form.
 struct WEBCORE_EXPORT DFA {
     static DFA empty();
 
     void minimize();
-    unsigned LEGACY_NODELETE graphSize() const;
-    size_t LEGACY_NODELETE memoryUsed() const;
+    NODELETE unsigned graphSize() const;
+    NODELETE size_t memoryUsed() const;
 
 #if CONTENT_EXTENSIONS_STATE_MACHINE_DEBUGGING
     void debugPrintDot() const;
@@ -79,7 +77,6 @@ inline void DFANode::RangeIterator::resetTarget(uint32_t newTarget)
     dfa.transitionDestinations[position] = newTarget;
 }
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

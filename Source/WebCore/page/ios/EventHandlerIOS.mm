@@ -56,6 +56,7 @@
 #import "RemoteFrame.h"
 #import "RemoteFrameGeometryTransformer.h"
 #import "RemoteFrameView.h"
+#import "RemoteUserInputEventData.h"
 #import "RenderObjectInlines.h"
 #import "RenderWidgetInlines.h"
 #import "ScrollingCoordinatorTypes.h"
@@ -66,6 +67,7 @@
 #import <wtf/NeverDestroyed.h>
 #import <wtf/Noncopyable.h>
 #import <wtf/SetForScope.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
 #import "ContentChangeObserver.h"
@@ -321,9 +323,7 @@ bool EventHandler::passMouseDownEventToWidget(Widget* pWidget)
 static bool findViewInSubviews(NSView *superview, NSView *target)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    NSEnumerator *e = [[superview subviews] objectEnumerator];
-    NSView *subview;
-    while ((subview = [e nextObject])) {
+    for (RetainPtr subview : makeVector<RetainPtr<NSView>>([superview subviews])) {
         if (subview == target || findViewInSubviews(subview, target)) {
             return true;
         }
@@ -438,7 +438,7 @@ bool EventHandler::passWheelEventToWidget(const PlatformWheelEvent& wheelEvent, 
         RefPtr frameView = dynamicDowncast<LocalFrameView>(widget);
         if (!frameView)
             return false;
-        auto [result, _] = frameView->frame().eventHandler().handleWheelEvent(wheelEvent, processingSteps);
+        auto [result, _] = protect(frameView->frame().eventHandler())->handleWheelEvent(wheelEvent, processingSteps);
         return result.wasHandled();
     }
 
@@ -673,7 +673,7 @@ IntPoint EventHandler::targetPositionInWindowForSelectionAutoscroll() const
 }
 
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
-std::optional<NodeIdentifier> EventHandler::requestInteractiveModelElementAtPoint(const IntPoint& clientPosition)
+InteractiveModelElementHitTestResult EventHandler::requestInteractiveModelElementAtPoint(const IntPoint& clientPosition, const IntPoint& interactionLocation)
 {
     Ref frame = m_frame.get();
 
@@ -691,15 +691,19 @@ std::optional<NodeIdentifier> EventHandler::requestInteractiveModelElementAtPoin
     auto adjustedClientPosition = roundedIntPoint(adjustedClientPositionAsFloatPoint);
     auto adjustedGlobalPosition = frameView->windowToContents(adjustedClientPosition);
 
-    PlatformMouseEvent syntheticMousePressEvent(adjustedClientPosition, adjustedGlobalPosition, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), 0, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    PlatformMouseEvent syntheticMousePressEvent(adjustedClientPosition, adjustedGlobalPosition, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), 0, SyntheticClickType::NoTap, MouseEventInputSource::Default);
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent };
     auto documentPoint = frameView->windowToContents(syntheticMousePressEvent.position());
     auto hitTestedMouseEvent = document->prepareMouseEvent(hitType, LayoutPoint { documentPoint }, syntheticMousePressEvent);
 
-    if (RefPtr subframe = dynamicDowncast<LocalFrame>(subframeForHitTestResult(hitTestedMouseEvent))) {
-        if (std::optional<NodeIdentifier> nodeID = subframe->eventHandler().requestInteractiveModelElementAtPoint(adjustedClientPosition))
-            return nodeID;
+    RefPtr subframe = subframeForHitTestResult(hitTestedMouseEvent);
+    if (RefPtr remoteSubframe = dynamicDowncast<RemoteFrame>(subframe)) {
+        if (auto remoteUserInputEventData = userInputEventDataForRemoteFrame(remoteSubframe.get(), hitTestedMouseEvent.hitTestResult().doublePointInInnerNodeFrame()))
+            return *remoteUserInputEventData;
     }
+
+    if (RefPtr localSubframe = dynamicDowncast<LocalFrame>(subframe))
+        return localSubframe->eventHandler().requestInteractiveModelElementAtPoint(adjustedClientPosition, interactionLocation);
 
     RefPtr targetElement = hitTestedMouseEvent.hitTestResult().targetElement();
 
@@ -707,7 +711,7 @@ std::optional<NodeIdentifier> EventHandler::requestInteractiveModelElementAtPoin
     if (CheckedPtr controller = SpatialPortalController::interactiveControllerForHitTestedElement(targetElement.get())) {
         if (RefPtr portalElement = controller->portalElement()) {
             auto transform = TransformationMatrix::identity;
-            transform.translate(clientPosition.x(), clientPosition.y());
+            transform.translate(interactionLocation.x(), interactionLocation.y());
 
             controller->beginStageModeTransform(transform);
             return portalElement->nodeIdentifier();
@@ -722,7 +726,7 @@ std::optional<NodeIdentifier> EventHandler::requestInteractiveModelElementAtPoin
                 return std::nullopt;
 #endif
             auto transform = TransformationMatrix::identity;
-            transform.translate(clientPosition.x(), clientPosition.y());
+            transform.translate(interactionLocation.x(), interactionLocation.y());
 
             modelElement->beginStageModeTransform(transform);
             return modelElement->nodeIdentifier();
@@ -848,8 +852,8 @@ void EventHandler::tryToBeginDragAtPoint(const IntPoint& clientPosition, const I
     if (RefPtr localRootView = frame->rootFrame().view())
         adjustedGlobalPosition = roundedIntPoint(localRootView->convertToRootViewAcrossIsolatedFrames(FloatPoint { adjustedClientPosition }));
 
-    PlatformMouseEvent syntheticMousePressEvent(adjustedClientPosition, adjustedGlobalPosition, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), 0, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
-    PlatformMouseEvent syntheticMouseMoveEvent(adjustedClientPosition, adjustedGlobalPosition, MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), 0, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    PlatformMouseEvent syntheticMousePressEvent(adjustedClientPosition, adjustedGlobalPosition, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), 0, SyntheticClickType::NoTap, MouseEventInputSource::Default);
+    PlatformMouseEvent syntheticMouseMoveEvent(adjustedClientPosition, adjustedGlobalPosition, MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), 0, SyntheticClickType::NoTap, MouseEventInputSource::Default);
 
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent };
     RefPtr frameView = frame->view();

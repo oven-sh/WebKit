@@ -36,12 +36,12 @@ namespace JSC {
 inline StringReplaceCache::Entry* StringReplaceCache::get(const String& subject, RegExp* regExp)
 {
     AssertNoGC assertNoGC;
-    if (!subject.impl() || !subject.impl()->isAtom())
+    if (!isCacheable(subject))
         return nullptr;
     ASSERT(regExp->global());
     ASSERT(subject.length() >= Options::thresholdForStringReplaceCache());
 
-    auto* subjectImpl = static_cast<AtomStringImpl*>(subject.impl());
+    auto* subjectImpl = subject.impl();
     unsigned index = subjectImpl->hash() & (cacheSize - 1);
     {
         auto& entry = m_entries[index];
@@ -59,10 +59,10 @@ inline StringReplaceCache::Entry* StringReplaceCache::get(const String& subject,
 inline void StringReplaceCache::set(const String& subject, RegExp* regExp, JSCellButterfly* result, MatchResult matchResult, std::span<const int> lastMatch)
 {
     AssertNoGC assertNoGC;
-    if (!subject.impl() || !subject.impl()->isAtom())
+    if (!isCacheable(subject))
         return;
 
-    auto* subjectImpl = static_cast<AtomStringImpl*>(subject.impl());
+    auto* subjectImpl = subject.impl();
     unsigned index = subjectImpl->hash() & (cacheSize - 1);
     {
         auto& entry1 = m_entries[index];

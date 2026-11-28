@@ -30,9 +30,7 @@
 #include <WebCore/ContentExtensionsDebugging.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 struct DFA;
 
@@ -128,16 +126,16 @@ public:
     }
 
     // FIXME: Stop minimizing killed nodes and add ASSERT(!isKilled()) in many functions here.
-    void LEGACY_NODELETE kill(DFA&);
+    NODELETE void kill(DFA&);
     Vector<uint64_t> actions(const DFA&) const;
-    bool LEGACY_NODELETE containsTransition(char, const DFA&) const;
+    NODELETE bool containsTransition(char, const DFA&) const;
     
     bool isKilled() const { return m_flags & IsKilled; }
     bool hasActions() const { return !!m_actionsLength; }
     uint16_t actionsLength() const { return m_actionsLength; }
     uint32_t actionsStart() const { return m_actionsStart; }
 
-    bool LEGACY_NODELETE canUseFallbackTransition(const DFA&) const;
+    NODELETE bool canUseFallbackTransition(const DFA&) const;
     uint32_t bestFallbackTarget(const DFA&) const;
 
     void setActions(uint32_t start, uint16_t length)
@@ -166,7 +164,6 @@ private:
 
 static_assert(sizeof(DFANode) <= 16, "Keep the DFANodes small");
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

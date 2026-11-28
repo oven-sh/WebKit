@@ -36,7 +36,7 @@ namespace WebCore {
 static const ASCIILiteral X25519 { "X25519"_s };
 static const ASCIILiteral Ed25519 { "Ed25519"_s };
 
-static constexpr size_t LEGACY_NODELETE keySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve)
+NODELETE static constexpr size_t keySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve)
 {
     switch (curve) {
     case CryptoKeyOKP::NamedCurve::X25519:
@@ -207,7 +207,7 @@ String CryptoKeyOKP::namedCurveString() const
 
 bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
 {
-    return algorithm == CryptoAlgorithmIdentifier::Ed25519;
+    return algorithm == CryptoAlgorithmIdentifier::Ed25519 || algorithm == CryptoAlgorithmIdentifier::X25519;
 }
 
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm

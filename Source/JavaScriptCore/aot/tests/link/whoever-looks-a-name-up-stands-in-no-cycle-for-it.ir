@@ -1,0 +1,37 @@
+# WHAT NOBODY CAN LIST HAS NO REFERRER, AND NEEDS NONE. `helper` looks the name `run` up on a value that nobody knows, and `caller`, the one function that calls it, lies under that name in an object that unseen code has.
+# With a node for each name `helper` led to `caller` and `caller` to `helper`: one cycle, in which nothing is ordered, so `helper` took nothing of what its one caller leaves. In a large program nearly every function stood in that cycle.
+# An edge is there for the unit that a mention may bring. All that is made of the body of `caller` is in the queue from the start, so whoever finds it under its name brings nothing.
+# function helper(y) { return y.run; }  function caller(x) { return helper(x); }  sink({ run: caller });
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}} in-queue-from-start
+# CHECK: referrers f0
+# CHECK: function f2 callers-known one-callee {{*}} takes-arrivals
+# CHECK: referrers f1
+# CHECK-NOT: group
+# RUN(COUNTS): link counts mechanisms=all
+# COUNTS: counts callers first | every caller known and every call with one callee 1 | of those take arrivals 1 | in the queue from the start 1 | reached functions in the largest cycle 1
+
+layout L0 module=m0 fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="caller" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0 calleeName="helper" [isNeverInlined]
+    Return v2
+}
+function f2 name="helper" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="run"
+    Return v1
+}

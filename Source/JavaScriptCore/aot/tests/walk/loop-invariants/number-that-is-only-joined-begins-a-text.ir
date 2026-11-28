@@ -1,0 +1,88 @@
+# nothing looks at the number that enters the loop but a join that gives a string whatever has entered. So the builder is begun with the text of the number
+# function numbered() { let n = 0, i = 0; do n += "k"; while (++i < 16); return n; }
+# function seen() { let n = 0, i = 0; do { sink(n); n += "k"; } while (++i < 16); return n; }   the one property that is changed: the first turn hands out the number itself
+# function summed(x) { let n = 0, i = 0; do n += x; while (++i < 16); return n; }   0 + 2 is 2: nothing says that the sum is a text
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: StringBuilderAppendInteger
+# CHECK: isLoopHead=true
+# CHECK: StringBuilderAppendConstant {{*}}string="k"
+# CHECK: StringBuilderFinish
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderBegin
+# ALL: StringBuilderAppendInteger
+# ALL: isLoopHead=true
+# RUN(SEEN): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# SEEN-LABEL: code f2:Body
+# SEEN-NOT: StringBuilder
+# RUN(SEENALL): walk f2 mechanisms=all
+# SEENALL-LABEL: code f2:Body
+# SEENALL-NOT: StringBuilder
+# RUN(SUMMED): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# SUMMED-LABEL: code f3:Body
+# SUMMED-NOT: StringBuilder
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="numbered" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = String string="k"
+    v6 = Add v2, v5
+    v7 = Increment v3
+    v8 = Integer integer=16
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(v6, v7), notTaken b2()
+  b2():
+    Return v6
+}
+function f2 name="seen" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Call v1, -, v4
+    v8 = String string="k"
+    v9 = Add v4, v8
+    v10 = Increment v5
+    v11 = Integer integer=16
+    v12 = Less v10, v11
+    Branch v12 -> taken b1(v9, v10), notTaken b2()
+  b2():
+    Return v9
+}
+function f3 name="summed" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Add v3, v0
+    v7 = Increment v4
+    v8 = Integer integer=16
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(v6, v7), notTaken b2()
+  b2():
+    Return v6
+}

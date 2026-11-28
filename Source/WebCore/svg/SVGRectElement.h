@@ -49,7 +49,7 @@ public:
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGRectElement, SVGGeometryElement>;
 
-    SVGAnimatedPropertyBase* LEGACY_NODELETE propertyForAttribute(const QualifiedName&) const;
+    NODELETE SVGAnimatedPropertyBase* propertyForAttribute(const QualifiedName&) const;
 
 private:
     SVGRectElement(const QualifiedName&, Document&);
@@ -60,7 +60,7 @@ private:
     bool isValid() const final { return SVGTests::isValid(); }
     bool selfHasRelativeLengths() const final { return true; }
 
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
 
     const Ref<SVGAnimatedLength> m_x { SVGAnimatedLength::create(this, SVGLengthMode::Width) };
     const Ref<SVGAnimatedLength> m_y { SVGAnimatedLength::create(this, SVGLengthMode::Height) };

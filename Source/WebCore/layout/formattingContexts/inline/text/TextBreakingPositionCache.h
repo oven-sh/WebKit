@@ -33,8 +33,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class TextBreakingPositionCache {
     WTF_MAKE_TZONE_ALLOCATED(TextBreakingPositionCache);
@@ -76,7 +75,7 @@ public:
 private:
     void evict();
     bool clearWidthsIfGenerationChanged();
-    static size_t LEGACY_NODELETE approximateEntrySizeBytes(const String& text, const Entry&);
+    NODELETE static size_t approximateEntrySizeBytes(const String& text, const Entry&);
 
 private:
     using TextBreakingPositionMap = HashMap<Key, std::unique_ptr<Entry>>;
@@ -86,5 +85,4 @@ private:
     Timer m_delayedEvictionTimer;
 };
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

@@ -57,7 +57,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Font);
 class Font : public FontBase, public RefCounted<Font>, public CanMakeSingleThreadWeakPtr<Font> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Font, Font);
 public:
-    WEBCORE_EXPORT static Ref<Font> create(const FontPlatformData&, Origin = Origin::Local, IsInterstitial = IsInterstitial::No, Visibility = Visibility::Visible, IsOrientationFallback = IsOrientationFallback::No, std::optional<RenderingResourceIdentifier> = std::nullopt);
+    WEBCORE_EXPORT static Ref<Font> create(const FontPlatformData&, Origin = Origin::Local, IsInterstitial = IsInterstitial::No, Visibility = Visibility::Visible, IsOrientationFallback = IsOrientationFallback::No, IsSmallCapsFace = IsSmallCapsFace::No, std::optional<RenderingResourceIdentifier> = std::nullopt);
     WEBCORE_EXPORT static Ref<Font> create(Ref<SharedBuffer>&& fontFaceData, Font::Origin, float fontSize, bool syntheticBold, bool syntheticItalic, DownloadableBinaryFontTrustedTypes);
     WEBCORE_EXPORT static Ref<Font> create(FontInternalAttributes&&, FontPlatformData&&);
 
@@ -96,6 +96,10 @@ public:
     const Font& verticalRightOrientationFont() const;
     const Font& uprightOrientationFont() const;
     const Font& invisibleFont() const;
+#if USE(CORE_TEXT)
+    // This font with the synthetic bold turned off, or this font if it has no synthetic bold.
+    const Font& nonSyntheticBoldFont() const;
+#endif
 
     FloatRect boundsForGlyph(Glyph) const;
 #if USE(CORE_TEXT) || USE(SKIA)
@@ -146,7 +150,7 @@ public:
     void deref() const final { RefCounted::deref(); }
 
 private:
-    WEBCORE_EXPORT Font(const FontPlatformData&, Origin, IsInterstitial, Visibility, IsOrientationFallback, std::optional<RenderingResourceIdentifier>);
+    WEBCORE_EXPORT Font(const FontPlatformData&, Origin, IsInterstitial, Visibility, IsOrientationFallback, IsSmallCapsFace, std::optional<RenderingResourceIdentifier>);
     Font(IsSystemFallbackFontPlaceholder);
 
     void platformGlyphInit();
@@ -156,7 +160,7 @@ private:
     void initCharWidths();
     void initZeroWidth(Glyph);
 
-    void LEGACY_NODELETE platformDestroy();
+    NODELETE void platformDestroy();
 
     RefPtr<Font> createFontWithoutSynthesizableFeatures() const;
     RefPtr<Font> createScaledFont(const FontDescription&, float scaleFactor) const;
@@ -174,7 +178,7 @@ private:
     float platformWidthForGlyph(Glyph) const;
     Path platformPathForGlyph(Glyph) const;
 
-    mutable HashMap<unsigned, RefPtr<GlyphPage>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_glyphPages;
+    mutable HashMap<unsigned, RefPtr<GlyphPage>> m_glyphPages;
     mutable GlyphMetricsMap<float> m_glyphToWidthMap;
     mutable std::unique_ptr<GlyphMetricsMap<FloatRect>> m_glyphToBoundsMap;
     // FIXME: Find a more efficient way to represent std::optional<Path>.
@@ -192,6 +196,9 @@ private:
         RefPtr<Font> verticalRightOrientationFont;
         RefPtr<Font> uprightOrientationFont;
         RefPtr<Font> invisibleFont;
+#if USE(CORE_TEXT)
+        RefPtr<Font> nonSyntheticBoldFont;
+#endif
         RefPtr<Font> halfWidthFont;
     };
 

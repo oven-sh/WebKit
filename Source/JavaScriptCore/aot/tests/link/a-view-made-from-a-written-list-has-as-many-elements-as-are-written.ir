@@ -1,0 +1,41 @@
+# function at1(view) { return view[1]; } at1(new Int32Array([given, 2, 3]));
+# function other(view) { return view[1]; } other(new Int32Array([0, 1, 1, 2]));
+# the list is written where it is handed over: nobody else holds it, and the view gets one element for each that is written, of values as of constants
+# LIBRARY: own
+# RUN: link accesses functions mechanisms=all
+# CHECK: read-off-views f1 v2 least-length=3
+# CHECK: read-off-views f2 v2 least-length=4
+# CHECK: function f1 {{*}}result=i32
+# CHECK: function f2 {{*}}result=i32
+
+data d0 root=Array{contents=anything elements=[Number{}, Number{value=1}, Number{value=1}, Number{value=2}]}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Int32Array
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = NewArray v3, v2, v3 contents=anything
+    v5 = Construct v1, -, v4 calleeName="Int32Array"
+    v6 = Call v0, -, v5 calleeName="at1"
+    v7 = NewClosure function=f2
+    v8 = Data data=d0
+    v9 = Construct v1, -, v8 calleeName="Int32Array"
+    v10 = Call v7, -, v9 calleeName="other"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="at1" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="other" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    Return v2
+}

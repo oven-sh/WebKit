@@ -48,7 +48,7 @@ class RenderBlock;
 class RenderBlockFlow;
 class RenderBox;
 class RenderLayoutState;
-class RenderListOutsideMarker;
+class RenderListItem;
 class RenderView;
 namespace Layout {
 class LayoutState;
@@ -71,7 +71,7 @@ struct UpdateScrollInfoAfterLayoutTransaction {
     SingleThreadWeakHashSet<RenderBlock> blocks;
 };
 
-class LocalFrameViewLayoutContext final : public CanMakeCheckedPtr<LocalFrameViewLayoutContext, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+class LocalFrameViewLayoutContext final : public CanMakeCheckedPtr<LocalFrameViewLayoutContext> {
     WTF_MAKE_TZONE_ALLOCATED(LocalFrameViewLayoutContext);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LocalFrameViewLayoutContext);
 public:
@@ -79,7 +79,7 @@ public:
     ~LocalFrameViewLayoutContext();
 
     WEBCORE_EXPORT void layout(bool canDeferUpdateLayerPositions = false);
-    bool LEGACY_NODELETE needsLayout(OptionSet<LayoutOptions> layoutOptions = { }) const;
+    NODELETE bool needsLayout(OptionSet<LayoutOptions> layoutOptions = { }) const;
 
     void interleavedLayout();
 
@@ -91,8 +91,8 @@ public:
     void scheduleSubtreeLayout(RenderElement& layoutRoot);
     void unscheduleLayout();
 
-    void LEGACY_NODELETE disableSetNeedsLayout();
-    void LEGACY_NODELETE enableSetNeedsLayout();
+    NODELETE void disableSetNeedsLayout();
+    NODELETE void enableSetNeedsLayout();
 
     enum class LayoutPhase : uint8_t {
         OutsideLayout,
@@ -111,9 +111,9 @@ public:
     bool isSkippedContentForLayout(const RenderElement&) const;
     bool isSkippedContentRootForLayout(const RenderBox&) const;
 
-    bool LEGACY_NODELETE isPercentHeightResolveDisabledFor(const RenderBox& flexItem);
-    bool LEGACY_NODELETE isInOrthogonalIntrinsicContributionLayout(const RenderBox&) const;
-    bool LEGACY_NODELETE isComputingIntrinsicLogicalWidthFor(const RenderBox&) const;
+    NODELETE bool isPercentHeightResolveDisabledFor(const RenderBox& flexItem);
+    NODELETE bool isInOrthogonalIntrinsicContributionLayout(const RenderBox&) const;
+    NODELETE bool isComputingIntrinsicLogicalWidthFor(const RenderBox&) const;
 
     struct TextBoxTrim {
         bool trimFirstFormattedLine { false };
@@ -122,7 +122,7 @@ public:
     std::optional<TextBoxTrim> textBoxTrim() const { return m_textBoxTrim; }
     void setTextBoxTrim(std::optional<TextBoxTrim> textBoxTrim) { m_textBoxTrim = textBoxTrim; }
 
-    RenderElement* LEGACY_NODELETE subtreeLayoutRoot() const;
+    NODELETE RenderElement* subtreeLayoutRoot() const;
     void clearSubtreeLayoutRoot() { m_subtreeLayoutRoot.clear(); }
     void convertSubtreeLayoutToFullLayout();
 
@@ -136,7 +136,7 @@ public:
     void flushPostLayoutTasks();
     void didLayout(bool canDeferUpdateLayerPositions);
 
-    void LEGACY_NODELETE requestUpdateLayerPositions(bool needsFullRepaint = false);
+    NODELETE void requestUpdateLayerPositions(bool needsFullRepaint = false);
     void flushUpdateLayerPositions();
     void markForUpdateLayerPositionsAfterSVGTransformChange();
 
@@ -150,7 +150,7 @@ public:
     // Returns true if a pending compositing layer update was done.
     bool updateCompositingLayersAfterLayoutIfNeeded();
 
-    RenderLayoutState* LEGACY_NODELETE layoutState() const LIFETIME_BOUND PURE_FUNCTION;
+    NODELETE RenderLayoutState* layoutState() const LIFETIME_BOUND PURE_FUNCTION;
     // Returns true if layoutState should be used for its cached offset and clip.
     bool isPaintOffsetCacheEnabled() const { return !m_paintOffsetCacheDisableCount && layoutState(); }
 #ifndef NDEBUG
@@ -159,8 +159,8 @@ public:
     // layoutDelta is used transiently during layout to store how far an object has moved from its
     // last layout location, in order to repaint correctly.
     // If we're doing a full repaint m_layoutState will be 0, but in that case layoutDelta doesn't matter.
-    LayoutSize LEGACY_NODELETE layoutDelta() const;
-    void LEGACY_NODELETE addLayoutDelta(const LayoutSize& delta);
+    NODELETE LayoutSize layoutDelta() const;
+    NODELETE void addLayoutDelta(const LayoutSize& delta);
 #if ASSERT_ENABLED
     bool layoutDeltaMatches(const LayoutSize& delta);
 #endif
@@ -174,15 +174,19 @@ public:
     void setSubtreeScrollbarChangesState(std::optional<SubtreeScrollbarChangesState>);
 
     UpdateScrollInfoAfterLayoutTransaction& updateScrollInfoAfterLayoutTransaction() LIFETIME_BOUND;
-    UpdateScrollInfoAfterLayoutTransaction* LEGACY_NODELETE updateScrollInfoAfterLayoutTransactionIfExists() LIFETIME_BOUND { return m_updateScrollInfoAfterLayoutTransaction.get(); }
-    void setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox&, RenderBlock& container);
-    Vector<SingleThreadWeakPtr<RenderBox>> takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBlock&);
+    NODELETE UpdateScrollInfoAfterLayoutTransaction* updateScrollInfoAfterLayoutTransactionIfExists() LIFETIME_BOUND { return m_updateScrollInfoAfterLayoutTransaction.get(); }
+    void setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox&, RenderBoxModelObject& container);
+    Vector<SingleThreadWeakPtr<RenderBox>> takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBoxModelObject&);
 
     void startTrackingLayoutUpdates() { m_layoutUpdateCount = 0; }
     unsigned layoutUpdateCount() const { return m_layoutUpdateCount; }
 
     void startTrackingRenderLayerPositionUpdates() { m_renderLayerPositionUpdateCount = 0; }
     unsigned renderLayerPositionUpdateCount() const { return m_renderLayerPositionUpdateCount; }
+
+    void incrementRenderersWithNamedPage() { ++m_renderersWithNamedPageCount; }
+    void decrementRenderersWithNamedPage() { ASSERT(m_renderersWithNamedPageCount > 0); --m_renderersWithNamedPageCount; }
+    bool hasRenderersWithNamedPage() const { return m_renderersWithNamedPageCount; }
 
     bool addToDetachedRendererList(RenderPtr<RenderObject>&& renderer) const { return m_detachedRendererList.append(WTF::move(renderer)); }
     void deleteDetachedRenderersNow() const { m_detachedRendererList.clear(); }
@@ -199,11 +203,12 @@ public:
 
     bool repaintsBlocked() const { return m_repaintsBlocked; }
 
-    using ExcludedMarkerList = Vector<SingleThreadWeakPtr<RenderListOutsideMarker>>;
-    const ExcludedMarkerList& excludedMarkers() const LIFETIME_BOUND { return m_excludedMarkers; }
+    // The list items laying out an outside marker, which their first formatted line aligns with.
+    using ListItemList = Vector<SingleThreadWeakPtr<RenderListItem>>;
+    const ListItemList& listItemsWithOutsideMarker() const LIFETIME_BOUND { return m_listItemsWithOutsideMarker; }
 
 private:
-    friend class ListItemExcludedMarkerScope;
+    friend class ListItemOutsideMarkerScope;
     friend class LayoutFrameScope;
     friend class LayoutStateMaintainer;
     friend class LayoutStateDisabler;
@@ -214,10 +219,10 @@ private:
     friend class ContentVisibilityOverrideScope;
     friend class RepaintBlocker;
 
-    bool LEGACY_NODELETE needsLayoutInternal() const;
+    NODELETE bool needsLayoutInternal() const;
 
     void performLayout(bool canDeferUpdateLayerPositions);
-    bool LEGACY_NODELETE canPerformLayout() const;
+    NODELETE bool canPerformLayout() const;
     bool isLayoutSchedulingEnabled() const { return m_layoutSchedulingIsEnabled; }
 
     bool hasPendingUpdateLayerPositions() const { return !!m_pendingUpdateLayerPositions; }
@@ -227,7 +232,7 @@ private:
     void runOrScheduleAsynchronousTasks(bool canDeferUpdateLayerPositions);
     bool inAsynchronousTasks() const { return m_inAsynchronousTasks; }
 
-    void LEGACY_NODELETE setSubtreeLayoutRoot(RenderElement&);
+    NODELETE void setSubtreeLayoutRoot(RenderElement&);
 
     void applyTextSizingIfNeeded(RenderElement& layoutRoot);
 
@@ -268,10 +273,10 @@ private:
     void allowRepaints() { m_repaintsBlocked = false; }
     void blockRepaints() { m_repaintsBlocked = true; }
 
-    LocalFrame& LEGACY_NODELETE frame() const;
-    LocalFrameView& LEGACY_NODELETE view() const;
-    RenderView* LEGACY_NODELETE renderView() const;
-    Document* LEGACY_NODELETE document() const;
+    NODELETE LocalFrame& frame() const;
+    NODELETE LocalFrameView& view() const;
+    NODELETE RenderView* renderView() const;
+    NODELETE Document* document() const;
 
     SingleThreadWeakRef<LocalFrameView> m_frameView;
     Timer m_layoutTimer;
@@ -288,7 +293,7 @@ private:
     bool m_revealedWhenFoundIgnored { false };
     bool m_updateCompositingLayersIsPending { false };
     bool m_repaintsBlocked { false };
-    ExcludedMarkerList m_excludedMarkers;
+    ListItemList m_listItemsWithOutsideMarker;
     LayoutPhase m_layoutPhase { LayoutPhase::OutsideLayout };
     enum class LayoutNestedState : uint8_t  { NotInLayout, NotNested, Nested };
     LayoutNestedState m_layoutNestedState { LayoutNestedState::NotInLayout };
@@ -296,9 +301,10 @@ private:
     unsigned m_paintOffsetCacheDisableCount { 0 };
     unsigned m_layoutUpdateCount { 0 };
     unsigned m_renderLayerPositionUpdateCount { 0 };
+    unsigned m_renderersWithNamedPageCount { 0 };
     LayoutStateStack m_layoutStateStack;
     const std::unique_ptr<UpdateScrollInfoAfterLayoutTransaction> m_updateScrollInfoAfterLayoutTransaction;
-    SingleThreadWeakHashMap<RenderBlock, Vector<SingleThreadWeakPtr<RenderBox>>> m_containersWithDescendantsNeedingTransformUpdate;
+    SingleThreadWeakHashMap<RenderBoxModelObject, Vector<SingleThreadWeakPtr<RenderBox>>> m_containersWithDescendantsNeedingTransformUpdate;
     SingleThreadWeakHashSet<RenderBox> m_percentHeightIgnoreList;
     SingleThreadWeakHashSet<RenderBox> m_boxesInOrthogonalIntrinsicContributionLayout;
     SingleThreadWeakHashSet<RenderBox> m_intrinsicLogicalWidthComputationList;
@@ -361,10 +367,10 @@ private:
     const Ref<Document> m_document;
 };
 
-class ListItemExcludedMarkerScope {
+class ListItemOutsideMarkerScope {
 public:
-    ListItemExcludedMarkerScope(LocalFrameViewLayoutContext&, RenderListOutsideMarker&);
-    ~ListItemExcludedMarkerScope();
+    ListItemOutsideMarkerScope(LocalFrameViewLayoutContext&, RenderListItem&);
+    NODELETE ~ListItemOutsideMarkerScope();
 
 private:
     const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;

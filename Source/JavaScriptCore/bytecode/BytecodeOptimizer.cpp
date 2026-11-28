@@ -328,7 +328,7 @@ private:
         unsigned via; // identifier index given to resolve_scope, or environmentVia(...) for a statically located record, or UINT_MAX for |base| itself
     };
     static unsigned environmentVia(unsigned localScopeDepth, unsigned hops) { return 0x80000000u | (localScopeDepth << 16) | hops; }
-    UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> m_scopeCacheContents; // cache register -> what it holds
+    HashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> m_scopeCacheContents; // cache register -> what it holds
     bool cacheScopeResolutions();
     bool resolveScopesStatically();
     unsigned m_staticResolves { 0 };
@@ -424,7 +424,7 @@ void BytecodeOptimizerAccess::decode()
                     break;
                 default:
                     // Operands that name the start of a register range are not individually renameable.
-                    if ((insn.opcode == op_new_array || insn.opcode == op_new_array_with_spread) && name == BytecodeOperandName::argv)
+                    if ((insn.opcode == op_new_array || insn.opcode == op_new_array_with_spread || insn.opcode == op_call_varargs_with_spread) && name == BytecodeOperandName::argv)
                         break;
                     if (insn.opcode == op_strcat && name == BytecodeOperandName::src)
                         break;
@@ -458,6 +458,32 @@ void BytecodeOptimizerAccess::replaceWith(Insn& insn, Insn::Kind kind, VirtualRe
     insn.staticScopeOffsetIsLazyFunctionSlot = false;
     computeUseDef(insn);
 }
+
+// The names and lengths of the opcodes, in their order.
+template<size_t size>
+static constexpr uint64_t addOpcodeToFingerprint(uint64_t hash, const char (&name)[size], unsigned length)
+{
+    for (char character : name)
+        hash = (hash ^ static_cast<uint8_t>(character)) * 1099511628211ull;
+    return (hash ^ length) * 1099511628211ull;
+}
+
+static constexpr uint64_t bytecodeListFingerprint()
+{
+    uint64_t hash = 14695981039346656037ull;
+#define ADD_OPCODE_TO_FINGERPRINT(name, length) hash = addOpcodeToFingerprint(hash, #name, length);
+    FOR_EACH_BYTECODE_ID(ADD_OPCODE_TO_FINGERPRINT)
+#undef ADD_OPCODE_TO_FINGERPRINT
+    return hash;
+}
+
+// The switches over opcodes in this file are written by hand, and an opcode without a case is taken to read and write
+// only the registers that it names. Upstream adds an opcode without a look at this file, and such an opcode compiles:
+// op_call_varargs_with_spread (325231@main) builds a callee frame, had no case in computeImplicitUses(), and moved the
+// opcode numbers that a bytecode cache stores. So the build stops here when the list changes. Give each new opcode its
+// cases, raise cachedTypesFormatRevision (CachedTypes.cpp) where a number moved, and then put the new value here (the
+// compiler prints it).
+static_assert(bytecodeListFingerprint() == 15177338073115851959ull, "The bytecode list changed: classify each new opcode in BytecodeOptimizer.cpp and raise cachedTypesFormatRevision in CachedTypes.cpp");
 
 void BytecodeOptimizerAccess::computeImplicitUses(Insn& insn)
 {
@@ -528,6 +554,14 @@ void BytecodeOptimizerAccess::computeImplicitUses(Insn& insn)
     case op_call_varargs:
         varargsLike(insn.instruction->as<OpCallVarargs>());
         break;
+    case op_call_varargs_with_spread: {
+        // The arguments are a range of registers, as op_new_array_with_spread has them, and the callee frame is built
+        // from firstFree on, as op_call_varargs builds it.
+        auto op = insn.instruction->as<OpCallVarargsWithSpread>();
+        range(op.m_argv, -1, op.m_argc);
+        varargsLike(op);
+        break;
+    }
     case op_tail_call_varargs:
         varargsLike(insn.instruction->as<OpTailCallVarargs>());
         break;
@@ -1182,7 +1216,7 @@ bool BytecodeOptimizerAccess::propagateCopies()
 {
     // Forward "available copies" dataflow: after `mov d, s`, uses of d can read s instead until either is
     // redefined. Meet is intersection; exception handler entry blocks start empty.
-    using CopyMap = UncheckedKeyHashMap<int, int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>>; // d.offset() -> s.offset()
+    using CopyMap = HashMap<int, int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>>; // d.offset() -> s.offset()
 
     auto killRegister = [](CopyMap& copies, VirtualRegister r) {
         if (copies.isEmpty())
@@ -1311,7 +1345,7 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
     for (auto& block : m_blocks) {
         if (!block.reachable)
             continue;
-        UncheckedKeyHashMap<int, Known, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regEnv;
+        HashMap<int, Known, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regEnv;
         for (unsigned i = block.start; i < block.end; ++i) {
             auto& insn = m_insns[i];
             if (!insn.live)
@@ -1525,8 +1559,8 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
     // removing follow their binding's first use closely, so forgetting old ones costs little.
     struct KeySet {
         enum { capacity = 256 };
-        using Keys = UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-        UncheckedKeyHashMap<int, Keys, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> byBase;
+        using Keys = HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+        HashMap<int, Keys, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> byBase;
         unsigned size { 0 };
 
         bool contains(const Key& key) const
@@ -1602,10 +1636,10 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
     auto transfer = [&](Block& block, KeySet& checked, bool apply) -> bool {
         bool changed = false;
         // Block-local knowledge about registers: which scope value / which binding's value they hold.
-        UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regScope;
-        UncheckedKeyHashMap<int, Key, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regBinding;
+        HashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regScope;
+        HashMap<int, Key, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regBinding;
         // Registers defined in this block by something that cannot produce the empty value.
-        UncheckedKeyHashSet<int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> neverEmpty;
+        HashSet<int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> neverEmpty;
 
         auto scopeValueOf = [&](VirtualRegister scope) -> ScopeValue {
             auto it = regScope.find(scope.offset());
@@ -1753,6 +1787,7 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
             case op_call:
             case op_construct:
             case op_call_varargs:
+            case op_call_varargs_with_spread:
             case op_construct_varargs:
             case op_get_by_id:
             case op_get_by_val:

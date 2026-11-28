@@ -78,7 +78,7 @@ public:
     void setFireInterval(Seconds interval) final { m_nextFireTime = MonotonicTime::now() + interval; }
     void stop() final { m_nextFireTime = MonotonicTime { }; }
 
-    bool LEGACY_NODELETE isActive() { return m_sharedTimerFunction && m_nextFireTime; }
+    NODELETE bool isActive() { return m_sharedTimerFunction && m_nextFireTime; }
     Seconds fireTimeDelay() { return std::max(0_s, m_nextFireTime - MonotonicTime::now()); }
     void fire() { m_sharedTimerFunction(); }
 
@@ -96,12 +96,12 @@ public:
     {
     }
 
-    const String LEGACY_NODELETE mode() const
+    NODELETE const String mode() const
     {
         return m_mode;
     }
 
-    bool LEGACY_NODELETE isDefaultMode() const
+    NODELETE bool isDefaultMode() const
     {
         return m_defaultMode;
     }
@@ -234,11 +234,11 @@ void WorkerDedicatedRunLoop::run(WorkerOrWorkletGlobalScope* context)
         if (currentRunLoopStatus.addRunLoopSpin() == RunLoopStatus::ShouldLogExcessiveRunLoopSpinning::No)
             continue;
 
-        RELEASE_LOG(ServiceWorker, "ServiceWorker message queue spun excessively without making web content progress for %f seconds. Shared timer firing in %f seconds. RunLoop rimers before: %s. RunLoop timers after: %s", currentRunLoopStatus.secondsSpentSpinning(), m_sharedTimer->fireTimeDelay().seconds(), result.activeRunLoopTimersBeforeFiring.utf8(), result.activeRunLoopTimersAfterFiring.utf8());
+        RELEASE_LOG(ServiceWorker, "ServiceWorker message queue spun excessively without making web content progress for %f seconds. Shared timer firing in %f seconds. RunLoop rimers before: %s. RunLoop timers after: %s", currentRunLoopStatus.secondsSpentSpinning(), m_sharedTimer->fireTimeDelay().seconds(), makeUTF8CString(result.activeRunLoopTimersBeforeFiring), makeUTF8CString(result.activeRunLoopTimersAfterFiring));
 
 #if PLATFORM(COCOA)
         if (WTF::CocoaApplication::isAppleApplication())
-            RELEASE_LOG_FAULT_WITH_PAYLOAD(ServiceWorker, "ServiceWorker message queue spun excessively without making web content progress for %f seconds. Shared timer firing in %f seconds. RunLoop rimers before: %s. RunLoop timers after: %s", currentRunLoopStatus.secondsSpentSpinning(), protect(m_sharedTimer)->fireTimeDelay().seconds(), result.activeRunLoopTimersBeforeFiring.utf8(), result.activeRunLoopTimersAfterFiring.utf8());
+            RELEASE_LOG_FAULT_WITH_PAYLOAD(ServiceWorker, "ServiceWorker message queue spun excessively without making web content progress for %f seconds. Shared timer firing in %f seconds. RunLoop rimers before: %s. RunLoop timers after: %s", currentRunLoopStatus.secondsSpentSpinning(), protect(m_sharedTimer)->fireTimeDelay().seconds(), makeUTF8CString(result.activeRunLoopTimersBeforeFiring), makeUTF8CString(result.activeRunLoopTimersAfterFiring));
 #endif
 
         // Reset status to start tracking a new sequence of spinning.
@@ -264,7 +264,7 @@ bool WorkerDedicatedRunLoop::runInMode(WorkerOrWorkletGlobalScope* context, cons
 WorkerDedicatedRunLoop::RunInModeResult WorkerDedicatedRunLoop::runInMode(WorkerOrWorkletGlobalScope* context, const ModePredicate& predicate)
 {
     ASSERT(context);
-    ASSERT(context->workerOrWorkletThread()->thread() == &Thread::currentSingleton());
+    RELEASE_ASSERT(context->workerOrWorkletThread()->thread() == &Thread::currentSingleton());
 
     AutodrainedPool pool;
 
@@ -382,7 +382,7 @@ WorkerDedicatedRunLoop::RunInModeResult WorkerDedicatedRunLoop::runInMode(Worker
 void WorkerDedicatedRunLoop::runCleanupTasks(WorkerOrWorkletGlobalScope* context)
 {
     ASSERT(context);
-    ASSERT(context->workerOrWorkletThread()->thread() == &Thread::currentSingleton());
+    RELEASE_ASSERT(context->workerOrWorkletThread()->thread() == &Thread::currentSingleton());
     ASSERT(m_messageQueue.killed());
 
     while (true) {

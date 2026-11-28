@@ -26,7 +26,6 @@
 #include "config.h"
 #include "HeapSnapshotBuilder.h"
 
-#include "AOTHeapHooks.h"
 #include "AOTRemovableFeature.h"
 #include "DeferGCInlines.h"
 #include "Heap.h"
@@ -43,10 +42,6 @@
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HeapSnapshotBuilder);
-
-NodeIdentifier HeapSnapshotBuilder::nextAvailableObjectIdentifier = 1;
-NodeIdentifier HeapSnapshotBuilder::getNextObjectIdentifier() { return nextAvailableObjectIdentifier++; }
-void HeapSnapshotBuilder::resetNextAvailableObjectIdentifier() { HeapSnapshotBuilder::nextAvailableObjectIdentifier = 1; }
 
 HeapSnapshotBuilder::HeapSnapshotBuilder(HeapProfiler& profiler, SnapshotType type)
     : HeapAnalyzer()
@@ -100,7 +95,7 @@ void HeapSnapshotBuilder::analyzeNode(JSCell* cell)
     auto addResult = m_appendedCells.add(cell);
     if (!addResult.isNewEntry)
         return;
-    m_snapshot->appendNode(HeapSnapshotNode(cell, getNextObjectIdentifier()));
+    m_snapshot->appendNode(HeapSnapshotNode(cell, m_profiler.takeNextObjectIdentifier()));
 }
 
 void HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkReason rootMarkReason)
@@ -349,20 +344,20 @@ NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
     DeferGCForAWhile deferGC(vm);
 
     // Build a node to identifier map of allowed nodes to use when serializing edges.
-    UncheckedKeyHashMap<JSCell*, NodeIdentifier> allowedNodeIdentifiers;
+    HashMap<JSCell*, NodeIdentifier> allowedNodeIdentifiers;
 
     // Build a list of used class names.
-    UncheckedKeyHashMap<String, unsigned> classNameIndexes;
+    HashMap<String, unsigned> classNameIndexes;
     classNameIndexes.set("<root>"_s, 0);
     unsigned nextClassNameIndex = 1;
 
     // Build a list of labels (this is just a string table).
-    UncheckedKeyHashMap<String, unsigned> labelIndexes;
+    HashMap<String, unsigned> labelIndexes;
     labelIndexes.set(emptyString(), 0);
     unsigned nextLabelIndex = 1;
 
     // Build a list of used edge names.
-    UncheckedKeyHashMap<UniquedStringImpl*, unsigned> edgeNameIndexes;
+    HashMap<UniquedStringImpl*, unsigned> edgeNameIndexes;
     unsigned nextEdgeNameIndex = 0;
 
     auto printJSONString = [&](const auto& value) {
@@ -372,7 +367,7 @@ NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
         if (json.hasOverflowed()) [[unlikely]]
             m_hasOverflowed = true;
         else
-            out.print(json.toString().utf8());
+            out.print(makeUTF8CString(json.toString()));
     };
 
     auto appendNodeJSON = [&] (const HeapSnapshotNode& node) {
@@ -392,9 +387,6 @@ NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
             // "Object" in snapshots and not get the name of the prototype's parent.
             JSObject* object = asObject(node.cell);
             if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
-#if ENABLE(AOT)
-                AOT::HeapHooks::LookForConstructorBySnapshot look;
-#endif
                 PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 if (!object->ordinaryGetOwnPropertySlot(globalObject, vm.propertyNames->constructor, slot))
                     className = JSObject::calculatedClassName(object);

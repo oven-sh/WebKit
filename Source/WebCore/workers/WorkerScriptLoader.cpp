@@ -81,6 +81,7 @@ std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionCo
     m_source = source;
     m_destination = FetchOptions::Destination::Script;
     m_isCOEPEnabled = scriptExecutionContext->settingsValues().crossOriginEmbedderPolicyEnabled;
+    m_credentiallessSupport = credentiallessSupport(scriptExecutionContext->settingsValues());
     m_isSecureContext = scriptExecutionContext->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No;
     m_advancedPrivacyProtections = scriptExecutionContext->advancedPrivacyProtections();
     m_globalPrivacyControlEnabled = scriptExecutionContext->settingsValues().globalPrivacyControlEnabled;
@@ -138,6 +139,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     m_source = source;
     m_destination = fetchOptions.destination;
     m_isCOEPEnabled = scriptExecutionContext.settingsValues().crossOriginEmbedderPolicyEnabled;
+    m_credentiallessSupport = credentiallessSupport(scriptExecutionContext.settingsValues());
     m_isSecureContext = scriptExecutionContext.isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No;
     m_clientIdentifier = clientIdentifier;
     m_advancedPrivacyProtections = scriptExecutionContext.advancedPrivacyProtections();
@@ -179,8 +181,10 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     } else if (auto* activeServiceWorker = scriptExecutionContext.activeServiceWorker())
         options.serviceWorkerRegistrationIdentifier = activeServiceWorker->registrationIdentifier();
 
-    if (m_destination == FetchOptions::Destination::Sharedworker)
+    if (m_destination == FetchOptions::Destination::Sharedworker) {
         m_userAgentForSharedWorker = scriptExecutionContext.userAgent(m_url);
+        m_navigatorPlatformForSharedWorker = scriptExecutionContext.navigatorPlatform();
+    }
 
     // During create, callbacks may happen which remove the last reference to this object.
     Ref<WorkerScriptLoader> protectedThis(*this);
@@ -257,7 +261,7 @@ void WorkerScriptLoader::didReceiveResponse(ScriptExecutionContextIdentifier mai
     m_isRedirected = response.isRedirected();
     m_contentSecurityPolicy = ContentSecurityPolicyResponseHeaders { response };
     if (m_isCOEPEnabled)
-        m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, m_isSecureContext, nullptr);
+        m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, m_isSecureContext, m_credentiallessSupport, nullptr);
     m_referrerPolicy = response.httpHeaderField(HTTPHeaderName::ReferrerPolicy);
 
     if (m_topOriginForServiceWorkerRegistration && response.source() == ResourceResponse::Source::MemoryCache && m_context) {

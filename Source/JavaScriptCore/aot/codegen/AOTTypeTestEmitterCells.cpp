@@ -12,17 +12,16 @@
 #include "AOTBuiltinTable.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTConstantEmitter.h"
-#include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTModuleEmitter.h"
-#include "AOTNumberLiteralStrings.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStubsValues.h"
-#include "AOTThreshold.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
+#include "JSArrayBufferView.h"
 #include "JSTypeInfo.h"
 #include <utility>
 
@@ -37,10 +36,18 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
 {
     static constexpr std::pair<uint16_t, JSType> primitives[] = { { Primitive::AnySymbol, SymbolType }, { Primitive::BigInt, HeapBigIntType } };
 
-    const Type& from = m_program.at(plan.from);
+    const Type from = types().at(plan.from);
     auto visitCellTest = [&](const CellTest& test) {
+        MarkedObjects marked = MarkedObjects::Pass;
+        if (test.kind == CellTestKind::ShapeIn && m_casesAreBranchedOn && emitter<ShapeTestEmitter>().paysForMark(test.layouts, from)) {
+            visit([&] {
+                m_nextCaseIsUnlikely = true;
+                return passesCellTest(cell, test, from, MarkedObjects::AreAskedAgain);
+            });
+            marked = MarkedObjects::PassAlone;
+        }
         visit([&] {
-            return passesCellTest(cell, test, from);
+            return passesCellTest(cell, test, from, marked);
         });
     };
 
@@ -79,29 +86,30 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
         if (test.kind == CellTestKind::IsClosureOf)
             functions.append(test.function);
     }
-    bool testsFunctionIndex = functions.size() > 1;
-    if (testsFunctionIndex) {
+    bool testsClosureNumber = functions.size() > 1 && !m_isEmittingPerFunctionBranch;
+    if (testsClosureNumber) {
         visit([&] {
+            Machine::DeclaredAccessesSuspension suspension(m_out);
             return emitter<ClosureTestEmitter>().isClosureOfAny(cell, functions.span());
         });
     }
 
     for (const CellTest& test : plan.cellTests) {
-        if (test.kind == CellTestKind::IsSymbol || (testsFunctionIndex && test.kind == CellTestKind::IsClosureOf))
+        if (test.kind == CellTestKind::IsSymbol || (testsClosureNumber && test.kind == CellTestKind::IsClosureOf))
             continue;
         if (test.kind != CellTestKind::IsCallable) {
             visitCellTest(test);
             continue;
         }
-        if (asksStubWhetherCallable()) {
-            visit([&] {
-                return isCallableByStub(cell.value());
-            });
-            continue;
-        }
         visit([&] {
             return emitter<ClosureTestEmitter>().isSlimClosureAsCreated(cell);
         });
+        if (asksStubForCallable()) {
+            visit([&] {
+                return isCallableByStub(cell);
+            });
+            continue;
+        }
         visit([&] {
             return emitter<ClosureTestEmitter>().hasFunctionCellType(cell);
         });
@@ -125,7 +133,7 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(CellPointer cell
     return cellPasses(cell, plan);
 }
 
-void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, B3::FrequentedBlock failure)
+void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, BlockEdge failure)
 {
     if (plan.everyCellPasses())
         return;
@@ -136,6 +144,7 @@ void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, B3::F
 
 Condition TypeTestEmitter::cellPasses(CellPointer cell, const TypeTestPlan& plan)
 {
+    SetForScope casesAreBranchedOn(m_casesAreBranchedOn, false);
     Condition result;
     forEachCellCase(cell, plan, [&](const auto& emitTest) {
         result = logicalOr(result, emitTest());
@@ -146,7 +155,10 @@ Condition TypeTestEmitter::cellPasses(CellPointer cell, const TypeTestPlan& plan
 Condition TypeTestEmitter::stringPasses(CellPointer cell, const TypeTestPlan& plan)
 {
     auto isOneOfLiterals = [&] {
-        return isOneOfLiteralStringWords(emitter<ConversionEmitter>().toLiteralString(cell), plan);
+        Condition result;
+        for (StringID literal : plan.stringLiterals)
+            result = logicalOr(result, callWithoutSite<Condition>(RuntimeOperation::StringEqualsLiteral, { cell, numberOf(m_mentions.add(NumberSpace::String, literal)) }));
+        return result;
     };
     if (plan.stringLiterals.isEmpty())
         return hasCellType(cell, StringType);
@@ -157,43 +169,46 @@ Condition TypeTestEmitter::stringPasses(CellPointer cell, const TypeTestPlan& pl
     });
 }
 
-Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from)
+Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from, MarkedObjects marked)
 {
+    Machine::DeclaredAccessesSuspension suspension(m_out);
     switch (test.kind) {
     case CellTestKind::IsObject:
         return isObjectCell(cell);
     case CellTestKind::IsCallable:
         return isCallable(cell);
     case CellTestKind::CellTypeIs:
+        if (m_arrayHeaderTest)
+            return emitter<ElementAccessEmitter>().passesHeaderTest(cell, *m_arrayHeaderTest);
         return hasCellTypeIn(cell, test.cellTypes);
-    case CellTestKind::ShapeIn:
-        return emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
+    case CellTestKind::ShapeIn: {
+        Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from, marked);
+        if (!test.asksForInstance)
+            return hasShape;
+        return logicalAnd(hasShape, emitter<GuardEmitter>().belongsToInstance(cell));
+    }
     case CellTestKind::InheritsClassInfo:
         return inheritsClassInfo(cell, test.builtinClass);
     case CellTestKind::IsPristine: {
-        Condition isInstance = cellPasses(cell, computeTypeTestPlanFromAnything(m_program, Type::builtinClass(test.builtinClass)));
+        Condition isInstance = emitBoolean(cell, planFor(TypeTable::cell, Representation::Cell, types().builtinClass(test.builtinClass)));
         return logicalAnd(isInstance, isPristine(cell, test.builtinClass, { PristineAspects::Storage, PristineAspects::Names }));
     }
-    // The not-taken edge removes the tested cell from the type, so the test creates a cell that does not exist yet.
     case CellTestKind::IsBuiltinCell:
         if (!isTestableBuiltin(m_builtins, test.builtin))
             return boolean(false);
         return equal(cell, emitter<ConstantEmitter>().builtinCell(test.builtin));
     case CellTestKind::IsClosureOf:
-        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function, from, m_shape);
+        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function);
     case CellTestKind::IsSymbol:
         return equal(cell, emitter<ConstantEmitter>().keyConstant(test.symbol));
     case CellTestKind::SharingModeIs:
         return hasSharingMode(cell, test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return isNamespaceOf(cell, test.module);
-    case CellTestKind::CarriesBrandOfClass:
-        return emitter<ShapeTestEmitter>().carriesBrandOfClass(cell, test.classLayout);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A buffer is made shared before it gets its wrapper, and a shared buffer is never detached.
 Condition TypeTestEmitter::hasSharingMode(CellPointer cell, ArrayBufferSharingMode sharingMode)
 {
     return selectByBranch<Condition>(hasCellType(cell, ArrayBufferType), [&] {
@@ -218,7 +233,6 @@ Condition TypeTestEmitter::isNamespaceOf(CellPointer cell, ModuleID module)
     if (modules.hasSingleNamespaceInValueWord(module))
         return equal(boxCell(cell), modules.loadModuleValue(module));
 
-    // The cell type of a namespace object never changes. A cell that leaves ObjectType is refused by the call, whichever type was read.
     Condition mayBeNamespace = hasOrHadCellType(cell, ObjectType);
     return selectByBranch<Condition>(mayBeNamespace, [&] {
         return callLeaf<Condition>(RuntimeOperation::IsNamespaceOfModule, { cell, word32(static_cast<int32_t>(module.index())) });
@@ -232,6 +246,8 @@ Condition TypeTestEmitter::isCallable(CellPointer cell)
     return selectByBranch<Condition>(emitter<ClosureTestEmitter>().isSlimClosureAsCreated(cell), [&] {
         return boolean(true);
     }, [&] {
+        if (asksStubForCallable())
+            return isCallableByStub(cell);
         return selectByBranch<Condition>(emitter<ClosureTestEmitter>().hasFunctionCellType(cell), [&] {
             return boolean(true);
         }, [&] {
@@ -240,37 +256,26 @@ Condition TypeTestEmitter::isCallable(CellPointer cell)
     });
 }
 
+bool TypeTestEmitter::asksStubForCallable()
+{
+    const OperationContext* context = generator().contextBeingGenerated();
+    return context && context->block() && !generator().runsRepeatedly(context->block());
+}
+
+Condition TypeTestEmitter::isCallableByStub(CellPointer cell)
+{
+    return asBoolean([&](BranchTargets targets) {
+        LValue operand = cell.value();
+        emitter<RuntimeCallEmitter>().callStubWithoutSiteAndBranch(isCallableCell(), singleElementSpan(operand), { }, targets);
+    });
+}
+
 Condition TypeTestEmitter::isCallableByCallData(CellPointer cell)
 {
     return either<Condition>(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), OverridesGetCallData), [&] {
         return boolean(false);
     }, [&] {
-        return isCallableByStub(cell.value());
-    });
-}
-
-// The stub refuses what is no cell, so a test that only a callable cell passes needs no other.
-bool TypeTestEmitter::isDecidedByCallableStub(const TypeTestPlan& plan) const
-{
-    return asksStubWhetherCallable() && plan.objects == ObjectsVerdict::NeedTest && !(plan.passingPrimitives & cellPrimitives)
-        && plan.cellTests.size() == 1 && plan.cellTests[0].kind == CellTestKind::IsCallable;
-}
-
-std::optional<FunctionID> TypeTestEmitter::functionDecidedByClosureStub(const TypeTestPlan& plan)
-{
-    if (plan.objects != ObjectsVerdict::NeedTest || plan.passingPrimitives & cellPrimitives || plan.cellTests.size() != 1 || plan.cellTests[0].kind != CellTestKind::IsClosureOf)
-        return std::nullopt;
-    FunctionID function = plan.cellTests[0].function;
-    if (!emitter<ClosureTestEmitter>().asksStubWhetherClosureOf(function, m_shape))
-        return std::nullopt;
-    return function;
-}
-
-Condition TypeTestEmitter::isCallableByStub(LValue cellOrOtherValue)
-{
-    return asBoolean([&](BranchTargets targets) {
-        LValue operands[] = { cellOrOtherValue };
-        emitter<RuntimeCallEmitter>().callStubWithoutSiteAndBranch(valueIsCallable(), operands, targets);
+        return callWithoutSite<Condition>(RuntimeOperation::IsCallable, { cell }, { .isOnRarePath = true });
     });
 }
 
@@ -287,7 +292,7 @@ Condition TypeTestEmitter::inheritsClassInfo(CellPointer cell, BuiltinClassID cl
     m_out.jump(loop);
 
     m_out.appendTo(loop);
-    LValue classInfo = m_out.phi(B3::pointerType(), firstClassInfo);
+    LValue classInfo = m_out.phi(Machine::pointerType(), firstClassInfo);
     ValueFromBlock found = m_out.anchor(boolean(true).value());
     m_out.branch(m_out.equal(classInfo, expected), normalEdge(continuation), normalEdge(parentClass));
 
@@ -298,27 +303,92 @@ Condition TypeTestEmitter::inheritsClassInfo(CellPointer cell, BuiltinClassID cl
     m_out.branch(m_out.isNull(parent), normalEdge(continuation), normalEdge(loop));
 
     m_out.appendTo(continuation);
-    return Condition(m_out.phi(B3::Int32, found, notFound));
+    return Condition(m_out.phi(Machine::Int32, found, notFound));
 }
 
 Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects)
 {
+    bool asksCellAlone = aspects.contains(PristineAspects::CellAlone);
+    aspects.remove(PristineAspects::CellAlone);
+    Condition isAsMade = isAsItsClassMadeIt(cell, classID, aspects);
+    if (asksCellAlone || !m_program.admitsReplacedBuiltins || !aspects.containsAny({ PristineAspects::Names, PristineAspects::InheritedNamesKept }))
+        return isAsMade;
+    return logicalAnd(isAsMade, nothingWasWrittenAbove(classID));
+}
+
+void TypeTestEmitter::branchOnPristineView(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects, BranchTargets targets)
+{
+    auto continueIfTrue = [&](Condition condition) {
+        LBasicBlock passed = newBlock();
+        branch(condition, { normalEdge(passed), targets.notTaken });
+        m_out.appendTo(passed);
+    };
+
+    bool mayKeepInheritedNames = aspects.contains(PristineAspects::InheritedNamesKept) && !aspects.containsAny(aspectsWithoutTest) && pristineTestOf(m_builtins, classID) == PristineTest::MayPass;
+    if (!mayKeepInheritedNames)
+        continueIfTrue(isPristine(cell, classID, aspects));
+    else {
+        bool asksCellAlone = aspects.contains(PristineAspects::CellAlone);
+        OptionSet<PristineAspects> aspectsOfEither = aspects - OptionSet<PristineAspects> { PristineAspects::InheritedNamesKept, PristineAspects::Storage, PristineAspects::CellAlone };
+        aspectsOfEither.add(PristineAspects::Names);
+        BuiltinClassID below = classBelowWithTestedStructure(m_builtins, classID);
+        RELEASE_ASSERT(below);
+        LBasicBlock hasNames = newBlock();
+        LBasicBlock mayBeOfClassBelow = newBlock();
+        branch(emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither), { normalEdge(hasNames), unlikelyEdge(mayBeOfClassBelow) });
+        m_out.appendTo(mayBeOfClassBelow);
+        branch(isPristine(cell, below, aspectsOfEither), { normalEdge(hasNames), targets.notTaken });
+        m_out.appendTo(hasNames);
+        if (!asksCellAlone && m_program.admitsReplacedBuiltins)
+            continueIfTrue(nothingWasWrittenAbove(classID));
+    }
+    branch(hasNoBits(loadByte(cell, m_heaps.JSArrayBufferView_sharingOfMemory), isGrowableSharedMode), targets);
+}
+
+Condition TypeTestEmitter::nothingWasWrittenAbove(BuiltinClassID classID)
+{
+    if (standsAboveClassesOfViews(m_builtins, classID)) {
+        Condition nothing = boolean(true);
+        for (uint32_t index = 0; index < m_builtins.classCount(); ++index) {
+            if (m_builtins.at(BuiltinClassID(index)).parent == classID && isTypedView(m_builtins.typedArrayTypeOf(BuiltinClassID(index))))
+                nothing = logicalAnd(nothing, nothingWasWrittenAbove(BuiltinClassID(index)));
+        }
+        return nothing;
+    }
+    Pointer classesWrittenAbove = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.classesWrittenAbove));
+    Word32 wasWrittenAbove(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), classesWrittenAbove.value(), classID.index())));
+    return isZero(wasWrittenAbove);
+}
+
+Condition TypeTestEmitter::isAsItsClassMadeIt(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects)
+{
     if (aspects.containsAny(aspectsWithoutTest))
         return boolean(false);
+    if (standsAboveClassesOfViews(m_builtins, classID)) {
+        aspects.remove(PristineAspects::Storage);
+        return aspects.contains(PristineAspects::InheritedNamesKept) ? boolean(false) : emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
+    }
     switch (pristineTestOf(m_builtins, classID)) {
     case PristineTest::NeverPasses:
         return boolean(false);
     case PristineTest::MayPass:
         if (classID == BuiltinClasses::Array)
             return emitter<ElementAccessEmitter>().isPristineArray(cell, aspects);
-        if (aspects.contains(PristineAspects::NamesKeptBelow)) {
+        if (isTypedView(m_builtins.typedArrayTypeOf(classID)))
+            aspects.remove(PristineAspects::Storage);
+        if (aspects.contains(PristineAspects::InheritedNamesKept)) {
             BuiltinClassID below = classBelowWithTestedStructure(m_builtins, classID);
             RELEASE_ASSERT(below);
-            OptionSet<PristineAspects> aspectsOfEither = aspects - PristineAspects::NamesKeptBelow;
+            OptionSet<PristineAspects> aspectsOfEither = aspects - PristineAspects::InheritedNamesKept;
             aspectsOfEither.add(PristineAspects::Names);
-            Condition isPristineArray = emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither);
-            return logicalOr(isPristineArray, isPristine(cell, below, aspectsOfEither));
+            return selectByBranch<Condition>(emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither), [&] {
+                return boolean(true);
+            }, [&] {
+                return isPristine(cell, below, aspectsOfEither);
+            });
         }
+        if (aspects.contains(PristineAspects::Names) && pristineFlagOfCellCoversElements(m_builtins.at(classID).type))
+            aspects.remove(PristineAspects::Storage);
         return emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
     case PristineTest::ClosureAsCreated:
         return emitter<GuardEmitter>().isClosureAsCreated(cell, classID, aspects);
@@ -328,53 +398,10 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
         std::optional<Receiver> receiver = receiverWithTestedStructure(classID);
         RELEASE_ASSERT(receiver);
         Word32 structureID = loadStructureID(cell);
-        return equal(structureID, loadMutable32(Instance::offsetOfReceiverStructureID(*receiver)));
+        return equal(structureID, loadFilledOnce32(Instance::offsetOfReceiverStructureID(*receiver)));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, const TypeTestPlan& plan)
-{
-    // Two literals or more are the cases of a switch, which compares and branches, or tests a bit where four or more numbers lie within 64.
-    AOT_THRESHOLD(size_t, minLiteralsForSwitch, 2);
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    Vector<uint32_t, 8> numbers;
-    for (StringID literal : plan.stringLiterals) {
-        if (inputs().literalStrings.indexOf(literal))
-            numbers.append(inputs().literalStrings.numberOf(literal));
-    }
-    bool usesSwitch = numbers.size() >= minLiteralsForSwitch;
-    Condition result;
-    if (usesSwitch) {
-        result = asBoolean([&](BranchTargets targets) {
-            bool switchesOnNumber = numbers.size() >= B3::Limits::minCasesForBitTests;
-            LValue subject = word.value();
-            if (switchesOnNumber)
-                subject = m_out.lShr(m_out.sub(subject, emptyLiteralStringWord), literalStringShift);
-            Vector<SwitchTarget, 8> cases;
-            for (uint32_t number : numbers)
-                cases.append({ static_cast<int64_t>(switchesOnNumber ? number : literalStringWord(number)), targets.taken });
-            m_out.switchOn(subject, cases.span(), targets.notTaken);
-        });
-    }
-    for (StringID literal : plan.stringLiterals) {
-        if (inputs().literalStrings.indexOf(literal)) {
-            if (!usesSwitch) {
-                std::optional<NarrowReference> narrow = narrowWordBehind(word);
-                result = logicalOr(result, narrow ? equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(inputs().literalStrings.numberOf(literal)))))) : equal(word, conversions.literalStringConstant(literal)));
-            }
-            continue;
-        }
-        if (inputs().literalStrings.isLeftOut(literal))
-            continue;
-        result = logicalOr(result, either<Condition>(conversions.isStringCell(word), [&] {
-            return callWithoutSite<Condition>(RuntimeOperation::StringEqualsLiteral, { CellPointer(word.value()), word32(literal.index()) });
-        }, [&] {
-            return boolean(false);
-        }));
-    }
-    return result ? result : boolean(false);
 }
 
 } } } // namespace JSC::AOT::Typed

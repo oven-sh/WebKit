@@ -1,0 +1,76 @@
+# class Holder { held = new Int32Array(8); masked(i) { i |= 0; const h = this.held; return h[i & 7] + h[(i >>> 3) & 7]; } wide(i) { return this.held[i & 15]; } }
+# Link says that every view the reads meet has at least eight elements. The walk asks the view once whether 7 lies below its own length, and the process stops where it does not.
+# Behind that, an index that the walk itself knows to lie from 0 to 7 finds an element: both reads give a number, and the second asks nothing. An index up to 15 is read as before.
+# LIBRARY: own
+# RUN: walk f3 f4 mechanisms=all
+# CHECK: GetTypedArrayLength
+# CHECK: Less
+# CHECK: CheckProof {{*}}checkedType=true{{*}}source=Contents
+# CHECK: i32 {{*}}= GetTypedArrayElement {{*}}isInsideView
+# CHECK-NOT: CheckProof {{*}}source=Contents
+# CHECK: i32 {{*}}= GetTypedArrayElement {{*}}isInsideView
+# CHECK: undefined|i32 {{*}}= GetTypedArrayElement
+
+layout L0 kind=Instance name="Holder" module=m0 constructor=f1 fields=[{key="held" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="masked"
+    v4 = NewClosure function=f4
+    DefineMethod v1, v4 layout=L0 index=1 key="wide"
+    v6 = FinishClass v1 layout=L0
+    v7 = Convert v6 declared={type=f1 flags=[IsFromCompiler]}
+    v8 = Construct v7 calleeName="Holder"
+    v9 = PropGet v8 key="masked"
+    v10 = Integer integer=77
+    v11 = Call v9, v8, v10 calleeKey="masked"
+    v12 = PropGet v8 key="wide"
+    v13 = Call v12, v8, v10 calleeKey="wide"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="Holder" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f2
+    Return v3
+}
+function f2 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Builtin builtin=Int32Array
+    v3 = Integer integer=8
+    v4 = Construct v2, -, v3 calleeName="Int32Array"
+    PropDefine v1, v4 key="held"
+    v6 = Undefined
+    Return v6
+}
+function f3 name="masked" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Integer integer=0
+    v3 = BitOr v1, v2
+    v4 = PropGet v0 key="held"
+    v5 = Integer integer=7
+    v6 = BitAnd v3, v5
+    v7 = ElemGet v4, v6
+    v8 = Integer integer=3
+    v9 = URShift v3, v8
+    v10 = BitAnd v9, v5
+    v11 = ElemGet v4, v10
+    v12 = Add v7, v11
+    Return v12
+}
+function f4 name="wide" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="held"
+    v3 = Integer integer=15
+    v4 = BitAnd v1, v3
+    v5 = ElemGet v2, v4
+    Return v5
+}

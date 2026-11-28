@@ -115,7 +115,7 @@ static constexpr std::array<uint8_t, maximumEscapedentityCharacter + 1> entityMa
     EntitySubstitutionIndex::Nbsp // noBreakSpace.
 };
 
-static bool LEGACY_NODELETE elementCannotHaveEndTag(const Node& node)
+NODELETE static bool elementCannotHaveEndTag(const Node& node)
 {
     using namespace ElementNames;
     auto* element = dynamicDowncast<Element>(node);
@@ -156,7 +156,7 @@ static bool LEGACY_NODELETE elementCannotHaveEndTag(const Node& node)
 // 2. Elements w/ children never self-close because they use a separate end tag.
 // 3. HTML elements which do not have a "forbidden" end tag will close with a separate end tag.
 // 4. Other elements self-close.
-static bool LEGACY_NODELETE shouldSelfClose(const Element& element, SerializationSyntax syntax)
+NODELETE static bool shouldSelfClose(const Element& element, SerializationSyntax syntax)
 {
     if (syntax != SerializationSyntax::XML)
         return false;
@@ -421,9 +421,8 @@ void MarkupAccumulator::startAppendingNode(const Node& node, Namespaces* namespa
 
             auto* documentRegistry = document.customElementRegistry();
             auto* shadowRegistry = shadowRoot->customElementRegistry();
-            bool documentHasGlobalRegistry = (documentRegistry && !documentRegistry->isScoped()) || document.window();
-            bool shadowHasGlobalRegistry = (shadowRegistry && !shadowRegistry->isScoped())
-                || (!shadowRegistry && !shadowRoot->usesNullCustomElementRegistry() && document.window());
+            bool documentHasGlobalRegistry = documentRegistry && !documentRegistry->isScoped();
+            bool shadowHasGlobalRegistry = shadowRegistry && !shadowRegistry->isScoped();
             return !(documentHasGlobalRegistry && shadowHasGlobalRegistry);
         }();
         if (shouldAppendRegistryAttribute)
@@ -473,6 +472,31 @@ void MarkupAccumulator::appendAttributeValue(StringBuilder& result, const String
 
 void MarkupAccumulator::appendCustomAttributes(StringBuilder&, const Element&, Namespaces*)
 {
+}
+
+// https://html.spec.whatwg.org/#look-up-a-custom-element-registry
+static CustomElementRegistry* lookUpCustomElementRegistry(const Node& node)
+{
+    if (auto* element = dynamicDowncast<Element>(node))
+        return CustomElementRegistry::registryForElement(*element);
+    if (node.isTreeScope())
+        return node.treeScope().customElementRegistry();
+    return nullptr;
+}
+
+// https://html.spec.whatwg.org/#serialising-html-fragments
+static bool shouldAppendCustomElementRegistryAttribute(const Element& element)
+{
+    if (!element.isHTMLElement())
+        return false;
+    if (auto* registry = CustomElementRegistry::registryForElement(element); registry && !registry->isScoped()) [[likely]]
+        return false;
+    RefPtr parent = element.parentNode();
+    if (parent && parent->isDocumentFragment() && !parent->isShadowRoot())
+        parent = nullptr;
+    if (CustomElementRegistry::registryForElement(element) == (parent ? lookUpCustomElementRegistry(*parent) : element.document().customElementRegistry()))
+        return false;
+    return !element.hasAttributeWithoutSynchronization(HTMLNames::customelementregistryAttr);
 }
 
 static bool shouldAddNamespaceElement(const Element& element)
@@ -611,7 +635,7 @@ static void appendDocumentType(StringBuilder& result, const DocumentType& docume
     );
 }
 
-static bool LEGACY_NODELETE isURLAttributeForElement(const Element& element, const Attribute& attribute)
+NODELETE static bool isURLAttributeForElement(const Element& element, const Attribute& attribute)
 {
     return element.isURLAttribute(attribute) || element.isHTMLContentAttribute(attribute);
 }
@@ -651,6 +675,9 @@ void MarkupAccumulator::appendStartTagWithURLReplacement(StringBuilder& result, 
 void MarkupAccumulator::appendStartTag(StringBuilder& result, const Element& element, Namespaces* namespaces)
 {
     appendOpenTag(result, element, namespaces);
+
+    if (shouldAppendCustomElementRegistryAttribute(element)) [[unlikely]]
+        result.append(" customelementregistry=\"\""_s);
 
     if (m_serializationContext) {
         // This function might change ordering of attributes in markup, so it should only be used for URL replacement case.
@@ -767,7 +794,7 @@ QualifiedName MarkupAccumulator::xmlAttributeSerialization(const Attribute& attr
     return prefixedName;
 }
 
-LocalFrame* MarkupAccumulator::frameForAttributeReplacement(const Element& element) const
+Frame* MarkupAccumulator::frameForAttributeReplacement(const Element& element) const
 {
     if (inXMLFragmentSerialization())
         return nullptr;
@@ -776,7 +803,7 @@ LocalFrame* MarkupAccumulator::frameForAttributeReplacement(const Element& eleme
     if (!frameElement)
         return nullptr;
 
-    return dynamicDowncast<LocalFrame>(frameElement->contentFrame());
+    return frameElement->contentFrame();
 }
 
 Attribute MarkupAccumulator::replaceAttributeIfNecessary(const Element& element, const Attribute& attribute)
@@ -785,7 +812,7 @@ Attribute MarkupAccumulator::replaceAttributeIfNecessary(const Element& element,
         return attribute;
 
     if (element.isHTMLContentAttribute(attribute)) {
-        RefPtr frame = frameForAttributeReplacement(element);
+        RefPtr frame = dynamicDowncast<LocalFrame>(frameForAttributeReplacement(element));
         if (!frame || !frame->loader().documentLoader()->response().url().isAboutSrcDoc())
             return attribute;
 

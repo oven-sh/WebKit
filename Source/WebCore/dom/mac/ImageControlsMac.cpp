@@ -57,8 +57,7 @@
 #include "UserAgentStyleSheets.h"
 #include <wtf/text/AtomString.h>
 
-namespace WebCore {
-namespace ImageControlsMac {
+namespace WebCore::ImageControlsMac {
 
 #if ENABLE(SERVICE_CONTROLS)
 
@@ -176,7 +175,7 @@ bool handleEvent(HTMLElement& element, Event& event)
     return false;
 }
 
-static bool LEGACY_NODELETE isImageMenuEnabled(HTMLElement& element)
+NODELETE static bool isImageMenuEnabled(HTMLElement& element)
 {
     if (auto* imageElement = dynamicDowncast<HTMLImageElement>(element))
         return imageElement->isImageMenuEnabled();
@@ -243,5 +242,4 @@ void destroyImageControls(HTMLElement& element)
 
 #endif // ENABLE(SERVICE_CONTROLS)
 
-} // namespace ImageControlsMac
-} // namespace WebCore
+} // namespace WebCore::ImageControlsMac

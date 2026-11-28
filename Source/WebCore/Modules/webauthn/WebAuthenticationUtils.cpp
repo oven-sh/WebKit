@@ -33,6 +33,7 @@
 #include "FidoConstants.h"
 #include "WebAuthenticationConstants.h"
 #include <pal/crypto/CryptoDigest.h>
+#include <wtf/Borrow.h>
 #include <wtf/JSONValues.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
@@ -44,7 +45,7 @@ namespace WebCore {
 Vector<uint8_t> produceRpIdHash(const String& rpId)
 {
     auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
-    auto rpIdUTF8 = rpId.utf8();
+    auto rpIdUTF8 = makeUTF8CString(rpId);
     crypto->addBytes(std::as_bytes(rpIdUTF8.span()));
     return crypto->computeHash();
 }
@@ -65,8 +66,7 @@ Vector<uint8_t> encodeES256PublicKeyAsCBOR(Vector<uint8_t>&& x, Vector<uint8_t>&
 
 Vector<uint8_t> buildAttestedCredentialData(const Vector<uint8_t>& aaguid, const Vector<uint8_t>& credentialId, const Vector<uint8_t>& coseKey)
 {
-    Vector<uint8_t> attestedCredentialData;
-    attestedCredentialData.reserveInitialCapacity(aaguidLength + credentialIdLengthLength + credentialId.size() + coseKey.size());
+    Vector<uint8_t> attestedCredentialData(ReserveCapacityTag { }, aaguidLength + credentialIdLengthLength + credentialId.size() + coseKey.size());
 
     // aaguid
     ASSERT(aaguid.size() == aaguidLength);
@@ -104,8 +104,7 @@ cbor::CBORValue::MapValue buildCredentialDescriptor(const Vector<uint8_t>& crede
 
 Vector<uint8_t> buildAuthData(const String& rpId, const uint8_t flags, const uint32_t counter, const Vector<uint8_t>& optionalAttestedCredentialData)
 {
-    Vector<uint8_t> authData;
-    authData.reserveInitialCapacity(rpIdHashLength + flagsLength + signCounterLength + optionalAttestedCredentialData.size());
+    Vector<uint8_t> authData(ReserveCapacityTag { }, rpIdHashLength + flagsLength + signCounterLength + optionalAttestedCredentialData.size());
 
     // RP ID hash
     authData.appendVector(produceRpIdHash(rpId));
@@ -135,7 +134,7 @@ cbor::CBORValue::MapValue buildAttestationMap(Vector<uint8_t>&& authData, String
     if (attestation == AttestationConveyancePreference::None) {
         const size_t aaguidOffset = rpIdHashLength + flagsLength + signCounterLength;
         if (authData.size() >= aaguidOffset + aaguidLength && shouldZero == ShouldZeroAAGUID::Yes)
-            zeroSpan(authData.mutableSpan().subspan(aaguidOffset, aaguidLength));
+            zeroSpan(borrow(authData)->mutableSpan().subspan(aaguidOffset, aaguidLength));
         format = String::fromLatin1(noneAttestationValue);
         statementMap.clear();
     }
@@ -175,7 +174,7 @@ Ref<ArrayBuffer> buildClientDataJson(ClientDataType type, const BufferSource& ch
     if (!topOrigin.isNull())
         object->setString("topOrigin"_s, topOrigin);
 
-    return ArrayBuffer::create(byteCast<uint8_t>(object->toJSONString().utf8().span()));
+    return ArrayBuffer::create(byteCast<uint8_t>(makeUTF8CString(object->toJSONString()).span()));
 }
 
 Vector<uint8_t> buildClientDataJsonHash(const ArrayBuffer& clientDataJson)
@@ -187,8 +186,7 @@ Vector<uint8_t> buildClientDataJsonHash(const ArrayBuffer& clientDataJson)
 
 Vector<uint8_t> encodeRawPublicKey(const Vector<uint8_t>& x, const Vector<uint8_t>& y)
 {
-    Vector<uint8_t> rawKey;
-    rawKey.reserveInitialCapacity(1 + x.size() + y.size());
+    Vector<uint8_t> rawKey(ReserveCapacityTag { }, 1 + x.size() + y.size());
     rawKey.append(0x04);
     rawKey.appendVector(x);
     rawKey.appendVector(y);

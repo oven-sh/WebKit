@@ -33,6 +33,7 @@ namespace WebCore {
 
 class AffineTransform;
 class FloatRect;
+class NativeImage;
 class RenderElement;
 class RenderObject;
 
@@ -48,7 +49,7 @@ public:
     {
     }
 
-    SVGRenderingContext(SVGRenderingContext&&);
+    NODELETE SVGRenderingContext(SVGRenderingContext&&);
     SVGRenderingContext(const SVGRenderingContext&) = delete;
 
     SVGRenderingContext(RenderElement& object, PaintInfo& paintinfo, NeedsGraphicsContextSave needsGraphicsContextSave = DontSaveGraphicsContext)
@@ -66,7 +67,7 @@ public:
     bool pathClippingIsEntirelyWithinRendererContents() const { return m_pathClippingIsEntirelyWithinRendererContents; }
 
     static void renderSubtreeToContext(GraphicsContext&, RenderElement&, const AffineTransform&);
-    static void clipToImageBuffer(GraphicsContext&, const FloatRect& targetRect, const FloatSize& scale, RefPtr<ImageBuffer>&, bool safeToClear);
+    static void clipToNativeImage(GraphicsContext&, const FloatRect& targetRect, const FloatSize& scale, RefPtr<NativeImage>&, bool safeToClear);
 
     static float calculateScreenFontSizeScalingFactor(const RenderObject&);
     static AffineTransform calculateTransformationToOutermostCoordinateSystem(const RenderObject&);
@@ -94,10 +95,10 @@ private:
     // List of those flags which require actions during the destructor.
     static constexpr int ActionsNeeded = RestoreGraphicsContext | EndOpacityLayer | EndFilterLayer;
 
-    RenderElement* m_renderer { nullptr };
+    CheckedPtr<RenderElement> m_renderer;
     PaintInfo* m_paintInfo { nullptr };
     GraphicsContext* m_savedContext  { nullptr };
-    LegacyRenderSVGResourceFilter* m_filter  { nullptr };
+    CheckedPtr<LegacyRenderSVGResourceFilter> m_filter;
     LayoutRect m_savedPaintRect;
     int m_renderingFlags { 0 };
     // True with path-based clipping is known to contrain the clipped area to within the renderer; used to optimize away a context clip.

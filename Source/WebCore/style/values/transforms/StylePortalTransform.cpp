@@ -34,12 +34,11 @@
 #include "StyleInterpolationContext.h"
 #include <wtf/NeverDestroyed.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Construction
 
-static const TransformList& LEGACY_NODELETE emptyTransformList()
+NODELETE static const TransformList& emptyTransformList()
 {
     static NeverDestroyed<TransformList> list;
     return list.get();
@@ -114,7 +113,7 @@ static TransformList transformListSlice(BuilderState& state, const CSSValueConta
     }) };
 }
 
-static bool LEGACY_NODELETE isAutoKeyword(const CSSValue& value)
+NODELETE static bool isAutoKeyword(const CSSValue& value)
 {
     auto* keyword = dynamicDowncast<CSSKeywordValue>(value);
     return keyword && keyword->valueID() == CSSValueID::Auto;
@@ -177,5 +176,4 @@ auto Blending<PortalTransform>::blend(const PortalTransform& from, const PortalT
     return PortalTransform::withAutoFit(Style::blend(from.beforeAutoList(), to.beforeAutoList(), context), Style::blend(from.afterAutoList(), to.afterAutoList(), context));
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

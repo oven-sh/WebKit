@@ -62,6 +62,7 @@
 #include "Page.h"
 #include "PseudoElement.h"
 #include "Region.h"
+#include "RemoteFrame.h"
 #include "RenderBoxInlines.h"
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
@@ -99,33 +100,33 @@ static constexpr auto minimumAreaRatioForElementToCoverViewport = 0.95;
 static constexpr auto minimumAreaForInterpolation = 200000;
 static constexpr auto maximumAreaForInterpolation = 800000;
 
-static float LEGACY_NODELETE linearlyInterpolatedViewportRatio(float viewportArea, float minimumValue, float maximumValue)
+NODELETE static float linearlyInterpolatedViewportRatio(float viewportArea, float minimumValue, float maximumValue)
 {
     auto areaRatio = (viewportArea - minimumAreaForInterpolation) / (maximumAreaForInterpolation - minimumAreaForInterpolation);
     return clampTo(maximumValue - areaRatio * (maximumValue - minimumValue), minimumValue, maximumValue);
 }
 
-static float LEGACY_NODELETE maximumAreaRatioForAbsolutelyPositionedContent(float viewportArea)
+NODELETE static float maximumAreaRatioForAbsolutelyPositionedContent(float viewportArea)
 {
     return linearlyInterpolatedViewportRatio(viewportArea, 0.75, 1);
 }
 
-static float LEGACY_NODELETE maximumAreaRatioForInFlowContent(float viewportArea)
+NODELETE static float maximumAreaRatioForInFlowContent(float viewportArea)
 {
     return linearlyInterpolatedViewportRatio(viewportArea, 0.5, 1);
 }
 
-static float LEGACY_NODELETE maximumAreaRatioForNearbyTargets(float viewportArea)
+NODELETE static float maximumAreaRatioForNearbyTargets(float viewportArea)
 {
     return linearlyInterpolatedViewportRatio(viewportArea, 0.25, 0.5);
 }
 
-static float LEGACY_NODELETE minimumAreaRatioForInFlowContent(float viewportArea)
+NODELETE static float minimumAreaRatioForInFlowContent(float viewportArea)
 {
     return linearlyInterpolatedViewportRatio(viewportArea, 0.005, 0.01);
 }
 
-static float LEGACY_NODELETE maximumAreaRatioForTrackingAdjustmentAreas(float viewportArea)
+NODELETE static float maximumAreaRatioForTrackingAdjustmentAreas(float viewportArea)
 {
     return linearlyInterpolatedViewportRatio(viewportArea, 0.25, 0.3);
 }
@@ -176,7 +177,7 @@ ElementTargetingController::ElementTargetingController(Page& page)
 {
 }
 
-static inline bool LEGACY_NODELETE elementAndAncestorsAreOnlyRenderedChildren(const Element& element)
+NODELETE static inline bool elementAndAncestorsAreOnlyRenderedChildren(const Element& element)
 {
     CheckedPtr renderer = element.renderer();
     if (!renderer)
@@ -270,9 +271,8 @@ static inline String computeTagAndAttributeSelector(const Element& element, cons
     static constexpr auto maximumValueLength = 150;
     static constexpr auto maximumValueLengthForExactMatch = 60;
 
-    Vector<std::pair<String, String>> attributesToCheck;
     Ref attributes = element.attributesMap();
-    attributesToCheck.reserveInitialCapacity(attributes->length());
+    Vector<std::pair<String, String>> attributesToCheck(ReserveCapacityTag { }, attributes->length());
     for (unsigned i = 0; i < attributes->length(); ++i) {
         RefPtr attribute = attributes->item(i);
         auto qualifiedName = attribute->qualifiedName();
@@ -320,8 +320,7 @@ static inline String computeTagAndClassSelector(Element& element)
         return emptyString();
 
     Ref classList = element.classList();
-    Vector<String> classes;
-    classes.reserveInitialCapacity(classList->length());
+    Vector<String> classes(ReserveCapacityTag { }, classList->length());
     for (unsigned i = 0; i < std::min<unsigned>(maximumNumberOfClasses, classList->length()); ++i)
         classes.append(classList->item(i));
 
@@ -354,8 +353,7 @@ static String selectorForElementRecursive(Element& element, ElementSelectorCache
     if (auto selector = cache.get(element))
         return *selector;
 
-    Vector<String> selectors;
-    selectors.reserveInitialCapacity(5);
+    Vector<String> selectors(ReserveCapacityTag { }, 5);
     if (auto selector = computeIDSelector(element); !selector.isEmpty())
         selectors.append(WTF::move(selector));
 
@@ -515,8 +513,7 @@ static Vector<Vector<String>> selectorsForTarget(Element& element, ElementSelect
             return { };
     }
 
-    Vector<String> selectors;
-    selectors.reserveInitialCapacity(5);
+    Vector<String> selectors(ReserveCapacityTag { }, 5);
 
     // First, try to compute a selector using only the target element and its attributes.
     if (auto selector = computeIDSelector(element); !selector.isEmpty())
@@ -569,7 +566,7 @@ TargetedElementSelectors ElementTargetingController::selectorsForElement(Element
     });
 }
 
-static inline RectEdges<bool> LEGACY_NODELETE computeOffsetEdges(const Style::ComputedStyle& style)
+NODELETE static inline RectEdges<bool> computeOffsetEdges(const Style::ComputedStyle& style)
 {
     return {
         style.top().isSpecified(),
@@ -586,6 +583,39 @@ static inline Vector<FrameIdentifier> collectChildFrameIdentifiers(const Element
         if (RefPtr frame = owner->contentFrame())
             identifiers.append(frame->frameID());
     }
+    return identifiers;
+}
+
+static Vector<FrameIdentifier> collectRemoteFrameIdentifiers(const Element& element)
+{
+    RefPtr documentFrame = element.document().frame();
+    if (!documentFrame || !documentFrame->tree().hasRemoteFrameDescendant())
+        return { };
+
+    Vector<FrameIdentifier> identifiers;
+    auto collectUnder = [&](Frame& root) {
+        for (RefPtr frame = &root; frame;) {
+            if (!is<RemoteFrame>(*frame)) {
+                frame = frame->tree().traverseNext(&root);
+                continue;
+            }
+
+            for (RefPtr descendant = frame; descendant; descendant = descendant->tree().traverseNext(frame.get()))
+                identifiers.append(descendant->frameID());
+            frame = frame->tree().traverseNextSkippingChildren(&root);
+        }
+    };
+
+    if (RefPtr owner = dynamicDowncast<HTMLFrameOwnerElement>(element)) {
+        if (RefPtr contentFrame = owner->contentFrame())
+            collectUnder(*contentFrame);
+    }
+
+    for (Ref owner : descendantsOfType<HTMLFrameOwnerElement>(element)) {
+        if (RefPtr contentFrame = owner->contentFrame())
+            collectUnder(*contentFrame);
+    }
+
     return identifiers;
 }
 
@@ -690,30 +720,26 @@ static URL urlForElement(const Element& element)
 
 static void collectMediaAndLinkURLsRecursive(const Element& element, HashSet<URL>& urls)
 {
-    auto addURLForElement = [&urls](const Element& element) {
+    auto collectForElement = [&urls](const Element& element) {
         if (auto url = urlForElement(element); !url.isEmpty() && !url.protocolIsData() && !url.protocolIsBlob())
             urls.add(WTF::move(url));
-    };
 
-    addURLForElement(element);
-
-    for (Ref descendant : descendantsOfType<Element>(element)) {
-        addURLForElement(descendant);
-
-        RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(descendant.ptr());
+        RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(element);
         if (!frameOwner)
-            continue;
+            return;
 
         RefPtr contentDocument = frameOwner->contentDocument();
         if (!contentDocument)
-            continue;
+            return;
 
-        RefPtr documentElement = contentDocument->documentElement();
-        if (!documentElement)
-            continue;
+        if (RefPtr documentElement = contentDocument->documentElement())
+            collectMediaAndLinkURLsRecursive(*documentElement, urls);
+    };
 
-        collectMediaAndLinkURLsRecursive(*documentElement, urls);
-    }
+    collectForElement(element);
+
+    for (Ref descendant : descendantsOfType<Element>(element))
+        collectForElement(descendant);
 }
 
 static HashSet<URL> collectMediaAndLinkURLs(const Element& element)
@@ -749,7 +775,7 @@ static std::optional<TargetedElementInfo> targetedElementInfo(Element& element, 
         return false;
     }();
 
-    auto [renderedText, screenReaderText, hasLargeReplacedDescendant] = TextExtraction::extractRenderedText(element);
+    auto [renderedText, screenReaderText, hasLargeReplacedDescendant, sizeInDocument] = TextExtraction::extractRenderedText(element);
     return { {
         .nodeIdentifier = element.nodeIdentifier(),
         .documentIdentifier = element.document().identifier(),
@@ -762,13 +788,15 @@ static std::optional<TargetedElementInfo> targetedElementInfo(Element& element, 
         .boundsInClientCoordinates = WTF::move(boundsInClientCoordinates),
         .positionType = positionType,
         .childFrameIdentifiers = collectChildFrameIdentifiers(element),
+        .remoteFrameIdentifiers = collectRemoteFrameIdentifiers(element),
         .mediaAndLinkURLs = collectMediaAndLinkURLs(element),
         .isNearbyTarget = isNearbyTarget == IsNearbyTarget::Yes,
         .isPseudoElement = element.isPseudoElement(),
         .isInShadowTree = element.isInShadowTree(),
         .isInVisibilityAdjustmentSubtree = isInVisibilityAdjustmentSubtree,
         .hasLargeReplacedDescendant = hasLargeReplacedDescendant,
-        .hasAudibleMedia = hasAudibleMedia(element)
+        .sizeInDocument = sizeInDocument,
+        .hasAudibleMedia = hasAudibleMedia(element),
     } };
 }
 
@@ -862,7 +890,7 @@ static inline std::optional<IntRect> inflatedClientRectForAdjustmentRegionTracki
     return { inflatedClientRect };
 }
 
-static bool LEGACY_NODELETE shouldIgnoreExistingVisibilityAdjustments(const TargetedElementRequest& request)
+NODELETE static bool shouldIgnoreExistingVisibilityAdjustments(const TargetedElementRequest& request)
 {
     return std::holds_alternative<String>(request.data) || std::holds_alternative<TargetedElementSelectors>(request.data);
 }
@@ -1179,6 +1207,27 @@ TargetedTextSearchResult ElementTargetingController::searchTextInLocalFrames(Tar
     return result;
 }
 
+static TargetedFrameContent targetedFrameContent(Document& document)
+{
+    document.updateLayoutIgnorePendingStylesheets();
+
+    RefPtr documentElement = document.documentElement();
+    return {
+        .hasAudibleMedia = documentElement && hasAudibleMedia(*documentElement),
+        .largestReplacedContentSizes = TextExtraction::extractLargestReplacedContentSizes(document),
+        .mediaAndLinkURLs = documentElement ? collectMediaAndLinkURLs(*documentElement) : HashSet<URL> { },
+    };
+}
+
+std::optional<TargetedFrameContent> ElementTargetingController::contentForLocalFrame(LocalFrame& frame)
+{
+    RefPtr document = frame.document();
+    if (!document)
+        return std::nullopt;
+
+    return targetedFrameContent(*document);
+}
+
 std::pair<Vector<Ref<Node>>, RefPtr<Element>> ElementTargetingController::findNodes(const TargetedElementSelectors& selectors)
 {
     auto [foundElement, selectorIncludingPseudo] = findElementFromSelectors(selectors);
@@ -1307,8 +1356,7 @@ Vector<TargetedElementInfo> ElementTargetingController::extractTargets(Vector<Re
 
     RefPtr onlyMainElement = findOnlyMainElement(*bodyElement);
     auto candidates = [&] {
-        Vector<Ref<Element>> elements;
-        elements.reserveInitialCapacity(nodes.size());
+        Vector<Ref<Element>> elements(ReserveCapacityTag { }, nodes.size());
         for (auto& node : nodes) {
             if (RefPtr element = dynamicDowncast<Element>(node); element && isTargetCandidate(*element, onlyMainElement.get(), innerElement.get()))
                 elements.append(element.releaseNonNull());
@@ -1428,8 +1476,7 @@ Vector<TargetedElementInfo> ElementTargetingController::extractTargets(Vector<Re
     m_recentAdjustmentClientRectsCleanUpTimer.restart();
 
     ElementSelectorCache cache;
-    Vector<TargetedElementInfo> results;
-    results.reserveInitialCapacity(targets.size());
+    Vector<TargetedElementInfo> results(ReserveCapacityTag { }, targets.size());
     for (auto iterator = targets.rbegin(); iterator != targets.rend(); ++iterator) {
         if (auto info = targetedElementInfo(*iterator, IsNearbyTarget::No, cache, m_adjustedElements)) {
             results.append(WTF::move(*info));
@@ -1508,7 +1555,7 @@ static inline Ref<Element> elementToAdjust(Element& element)
     return element;
 }
 
-static inline VisibilityAdjustment LEGACY_NODELETE adjustmentToApply(Element& element)
+NODELETE static inline VisibilityAdjustment adjustmentToApply(Element& element)
 {
     if (element.isAfterPseudoElement())
         return VisibilityAdjustment::AfterPseudo;
@@ -1573,8 +1620,7 @@ bool ElementTargetingController::adjustVisibility(Vector<TargetedElementAdjustme
     m_repeatedAdjustmentClientRegion.unite(intersect(m_adjustmentClientRegion, newAdjustmentRegion));
     m_adjustmentClientRegion.unite(newAdjustmentRegion);
 
-    Vector<Ref<Element>> elements;
-    elements.reserveInitialCapacity(adjustments.size());
+    Vector<Ref<Element>> elements(ReserveCapacityTag { }, adjustments.size());
     for (auto& [identifiers, selectors] : adjustments) {
         auto [nodeID, documentID] = identifiers;
         RefPtr element = dynamicDowncast<Element>(Node::fromIdentifier(nodeID));
@@ -1998,7 +2044,7 @@ bool ElementTargetingController::resetVisibilityAdjustments(const Vector<Targete
     m_repeatedAdjustmentClientRegion = { };
     m_adjustmentClientRegion = { };
 
-    if (changed && !m_adjustedElements.isEmptyIgnoringNullReferences()) {
+    if (changed && !m_adjustedElements.computeIsEmpty()) {
         document->updateLayoutIgnorePendingStylesheets();
         auto viewportArea = m_viewportSizeForVisibilityAdjustment.area();
         for (Ref element : m_adjustedElements) {
@@ -2034,8 +2080,7 @@ uint64_t ElementTargetingController::numberOfVisibilityAdjustmentRects()
 
     recomputeAdjustedElementsIfNeeded();
 
-    Vector<FloatRect> clientRects;
-    clientRects.reserveInitialCapacity(m_adjustedElements.computeSize());
+    Vector<FloatRect> clientRects(ReserveCapacityTag { }, m_adjustedElements.computeSize());
 
     unsigned numberOfParentedEmptyOrNonRenderedElements = 0;
     for (Ref element : m_adjustedElements) {

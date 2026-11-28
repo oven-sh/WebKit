@@ -35,14 +35,13 @@
 #include <numbers>
 #include <wtf/TinyLRUCache.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Path Caching
 
 struct CirclePathPolicy final : public TinyLRUCachePolicy<FloatRect, WebCore::Path> {
 public:
-    static bool LEGACY_NODELETE isKeyNull(const FloatRect& rect)
+    NODELETE static bool isKeyNull(const FloatRect& rect)
     {
         return rect.isEmpty();
     }
@@ -190,5 +189,4 @@ AcceleratedEffectCircleFunction Evaluation<CircleFunction, AcceleratedEffectCirc
 
 #endif
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

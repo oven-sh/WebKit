@@ -29,12 +29,34 @@
 
 #include <WebCore/DisplayList.h>
 #include <WebCore/DisplayListItems.h>
+#include <WebCore/FontCustomPlatformData.h>
+#include <WebCore/ImageBufferParameters.h>
+#include <WebCore/ShareableBitmap.h>
+#include <wtf/ArgumentCoder.h>
 #include <wtf/Vector.h>
 
 namespace WebKit {
 
-struct DrawDisplayListAtIndex {
-    uint64_t index { 0 };
+struct DisplayListDataFont {
+    WebCore::FontInternalAttributes attributes;
+    WebCore::FontPlatformDataAttributes platformData;
+    std::optional<uint64_t> customFontIndex;
+};
+
+struct DisplayListDataNativeImage {
+    WebCore::RenderingResourceIdentifier identifier;
+    WebCore::ShareableBitmapHandle handle;
+};
+
+struct DisplayListDataImageBuffer {
+    WebCore::RenderingResourceIdentifier identifier;
+    WebCore::ShareableBitmapHandle handle;
+    WebCore::ImageBufferParameters parameters;
+};
+
+struct DisplayListDataPDFDocument {
+    WebCore::RenderingResourceIdentifier identifier;
+    Ref<WebCore::SharedBuffer> data;
 };
 
 using DisplayListDataItem = Variant
@@ -48,28 +70,45 @@ using DisplayListDataItem = Variant
     , WebCore::DisplayList::ClipOutRoundedRect
     , WebCore::DisplayList::ClipOutToPath
     , WebCore::DisplayList::ClipPath
+    , WebCore::DisplayList::ClipTransformedPath
+    , WebCore::DisplayList::ClipToNativeImage
     , WebCore::DisplayList::ConcatenateCTM
+    , WebCore::DisplayList::DrawControlPart
     , WebCore::DisplayList::DrawDotsForDocumentMarker
     , WebCore::DisplayList::DrawEllipse
+    , WebCore::DisplayList::DrawFilteredImageBuffer
     , WebCore::DisplayList::DrawFocusRingPath
     , WebCore::DisplayList::DrawFocusRingRects
-    , DrawDisplayListAtIndex
+    , WebCore::DisplayList::DrawFreeformGradient
+    , WebCore::DisplayList::DrawGlyphs
+    , WebCore::DisplayList::DrawDisplayList
+    , WebCore::DisplayList::DrawImageBuffer
     , WebCore::DisplayList::DrawLine
     , WebCore::DisplayList::DrawLinesForText
+    , WebCore::DisplayList::DrawMeshGradient
+    , WebCore::DisplayList::DrawNativeImage
+    , WebCore::DisplayList::DrawPDFPage
     , WebCore::DisplayList::DrawPath
+    , WebCore::DisplayList::DrawPatternNativeImage
+    , WebCore::DisplayList::DrawPatternImageBuffer
     , WebCore::DisplayList::DrawRect
+    , WebCore::DisplayList::DrawSystemImage
     , WebCore::DisplayList::EndTransparencyLayer
     , WebCore::DisplayList::FillCompositedRect
     , WebCore::DisplayList::FillEllipse
     , WebCore::DisplayList::FillPath
     , WebCore::DisplayList::FillRect
     , WebCore::DisplayList::FillRectWithColor
+    , WebCore::DisplayList::FillRectWithGradient
+    , WebCore::DisplayList::FillRectWithGradientAndSpaceTransform
     , WebCore::DisplayList::FillRectWithRoundedHole
     , WebCore::DisplayList::FillRoundedRect
     , WebCore::DisplayList::ResetClip
     , WebCore::DisplayList::Restore
+    , WebCore::DisplayList::RestoreTransform
     , WebCore::DisplayList::Rotate
     , WebCore::DisplayList::Save
+    , WebCore::DisplayList::SaveTransform
     , WebCore::DisplayList::Scale
     , WebCore::DisplayList::SetCTM
     , WebCore::DisplayList::SetInlineFillColor
@@ -78,14 +117,11 @@ using DisplayListDataItem = Variant
     , WebCore::DisplayList::SetLineDash
     , WebCore::DisplayList::SetLineJoin
     , WebCore::DisplayList::SetMiterLimit
+    , WebCore::DisplayList::SetState
     , WebCore::DisplayList::StrokeEllipse
     , WebCore::DisplayList::StrokePath
     , WebCore::DisplayList::StrokeRect
     , WebCore::DisplayList::Translate
-#if USE(CG)
-    , WebCore::DisplayList::ApplyFillPattern
-    , WebCore::DisplayList::ApplyStrokePattern
-#endif
     , WebCore::DisplayList::BeginPage
     , WebCore::DisplayList::EndPage
     , WebCore::DisplayList::SetURLForRect
@@ -97,14 +133,30 @@ public:
     // Placeholders are drawn into the result, so whatever they draw has to be ready.
     static std::optional<DisplayListData> create(const WebCore::DisplayList::DisplayList&);
 
-    explicit DisplayListData(Vector<Vector<DisplayListDataItem>>&&);
+    DisplayListData(Vector<WebCore::FontCustomPlatformSerializedData>&& customFonts, Vector<DisplayListDataFont>&&, Vector<DisplayListDataNativeImage>&&, Vector<DisplayListDataImageBuffer>&&, Vector<DisplayListDataPDFDocument>&&, Vector<Vector<DisplayListDataItem>>&& bottomUpDisplayLists);
 
-    const Vector<Vector<DisplayListDataItem>>& displayLists() const LIFETIME_BOUND { return m_displayLists; }
+    const Vector<WebCore::FontCustomPlatformSerializedData>& customFonts() const LIFETIME_BOUND { return m_customFonts; }
+    const Vector<DisplayListDataFont>& fonts() const LIFETIME_BOUND { return m_fonts; }
+    const Vector<DisplayListDataNativeImage>& nativeImages() const LIFETIME_BOUND { return m_nativeImages; }
+    const Vector<DisplayListDataImageBuffer>& imageBuffers() const LIFETIME_BOUND { return m_imageBuffers; }
+    const Vector<DisplayListDataPDFDocument>& pdfDocuments() const LIFETIME_BOUND { return m_pdfDocuments; }
+    const Vector<Vector<DisplayListDataItem>>& bottomUpDisplayLists() const LIFETIME_BOUND { return m_bottomUpDisplayLists; }
 
-    RefPtr<const WebCore::DisplayList::DisplayList> createDisplayList() const;
+    void setOwnershipOfMemory(const WebCore::ProcessIdentity&) const;
+
+    // The GPU process must not parse PDF data, so only the print process passes a factory whose documents draw.
+    using PDFDocumentFactory = Function<Ref<WebCore::SharedPDFDocument>(Ref<WebCore::SharedBuffer>&&)>;
+    RefPtr<const WebCore::DisplayList::DisplayList> createDisplayList(bool shouldUseLockdownFontParser, NOESCAPE const PDFDocumentFactory&) &&;
 
 private:
-    Vector<Vector<DisplayListDataItem>> m_displayLists;
+    friend struct IPC::ArgumentCoder<DisplayListData>;
+
+    Vector<WebCore::FontCustomPlatformSerializedData> m_customFonts;
+    Vector<DisplayListDataFont> m_fonts;
+    Vector<DisplayListDataNativeImage> m_nativeImages;
+    Vector<DisplayListDataImageBuffer> m_imageBuffers;
+    Vector<DisplayListDataPDFDocument> m_pdfDocuments;
+    Vector<Vector<DisplayListDataItem>> m_bottomUpDisplayLists;
 };
 
 } // namespace WebKit

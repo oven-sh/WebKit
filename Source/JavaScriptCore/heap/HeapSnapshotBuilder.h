@@ -27,6 +27,7 @@
 
 #include "HeapAnalyzer.h"
 #include "JSExportMacros.h"
+#include <JavaScriptCore/HeapProfiler.h>
 #include <functional>
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
@@ -39,11 +40,8 @@
 namespace JSC {
 
 class ConservativeRoots;
-class HeapProfiler;
 class HeapSnapshot;
 class JSCell;
-
-typedef unsigned NodeIdentifier;
 
 struct HeapSnapshotNode {
     HeapSnapshotNode(JSCell* cell, unsigned identifier)
@@ -111,8 +109,6 @@ public:
     HeapSnapshotBuilder(HeapProfiler&, SnapshotType = SnapshotType::InspectorSnapshot);
     ~HeapSnapshotBuilder() final;
 
-    static void LEGACY_NODELETE resetNextAvailableObjectIdentifier();
-
     // Performs a garbage collection that builds a snapshot of all live cells.
     void buildSnapshot();
 
@@ -146,14 +142,10 @@ public:
     };
     void setClient(Client* client) { m_client = client; }
 
-    static NodeIdentifier LEGACY_NODELETE getNextObjectIdentifier();
-
 private:
-    static NodeIdentifier nextAvailableObjectIdentifier;
-
     // Finalized snapshots are not modified during building. So searching them
     // for an existing node can be done concurrently without a lock.
-    bool LEGACY_NODELETE previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
+    NODELETE bool previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
 
     String descriptionForNode(const HeapSnapshotNode&);
 
@@ -172,10 +164,10 @@ private:
     std::unique_ptr<HeapSnapshot> m_snapshot;
     Lock m_buildingEdgeMutex;
     Vector<HeapSnapshotEdge> m_edges;
-    UncheckedKeyHashMap<JSCell*, RootData> m_rootData;
-    UncheckedKeyHashMap<JSCell*, void*> m_wrappedObjectPointers;
-    UncheckedKeyHashMap<JSCell*, String> m_cellLabels;
-    UncheckedKeyHashSet<JSCell*> m_appendedCells WTF_GUARDED_BY_LOCK(m_buildingNodeMutex);
+    HashMap<JSCell*, RootData> m_rootData;
+    HashMap<JSCell*, void*> m_wrappedObjectPointers;
+    HashMap<JSCell*, String> m_cellLabels;
+    HashSet<JSCell*> m_appendedCells WTF_GUARDED_BY_LOCK(m_buildingNodeMutex);
     SnapshotType m_snapshotType;
 };
 

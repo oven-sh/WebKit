@@ -34,7 +34,9 @@ namespace WebCore {
 namespace DisplayList {
 class DisplayList;
 }
+class FreeformGradient;
 class Gradient;
+class MeshGradient;
 class NativeImage;
 class PathImpl;
 
@@ -45,6 +47,8 @@ public:
 
     virtual void willDestroyNativeImage(const NativeImage&) = 0;
     virtual void willDestroyGradient(const Gradient&) = 0;
+    virtual void willDestroyFreeformGradient(const FreeformGradient&) = 0;
+    virtual void willDestroyMeshGradient(const MeshGradient&) = 0;
     virtual void willDestroyPathImpl(const PathImpl&) = 0;
     virtual void willDestroyFilter(RenderingResourceIdentifier) = 0;
     virtual void willDestroyDisplayList(const DisplayList::DisplayList&) = 0;

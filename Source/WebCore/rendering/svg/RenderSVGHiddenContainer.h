@@ -32,7 +32,7 @@ class RenderSVGHiddenContainer : public RenderSVGContainer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGHiddenContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGHiddenContainer);
 public:
-    RenderSVGHiddenContainer(Type, SVGElement&, Style::ComputedStyle&&, OptionSet<SVGModelObjectFlag> = { });
+    RenderSVGHiddenContainer(Type, SVGElement&, UniqueRef<Style::ComputedStyle>&&, OptionSet<SVGModelObjectFlag> = { });
     virtual ~RenderSVGHiddenContainer();
 
 protected:
@@ -43,8 +43,8 @@ private:
 
     void paint(PaintInfo&, const LayoutPoint&) final { }
 
-    LayoutRect LEGACY_NODELETE clippedOverflowRect(const RenderLayerModelObject*, const VisibleRectContext&) const final;
-    std::optional<RepaintRects> LEGACY_NODELETE computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject*, const VisibleRectContext&, VisibleRectState) const final;
+    NODELETE LayoutRect clippedOverflowRect(const RenderLayerModelObject*, const VisibleRectContext&) const final;
+    NODELETE std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject*, const VisibleRectContext&, VisibleRectState) const final;
 
     void boundingRects(Vector<LayoutRect>&, const LayoutPoint&) const final { }
     void absoluteQuads(Vector<FloatQuad>&, bool*) const final { }

@@ -39,7 +39,6 @@
 
 namespace WebCore {
 
-class CurrentRenderFragmentContainerMaintainer;
 class RenderFragmentedFlow;
 class RenderFragmentContainer;
 
@@ -63,60 +62,48 @@ class RenderFragmentedFlow : public RenderBlockFlow {
 public:
     virtual ~RenderFragmentedFlow();
 
-    virtual void removeFlowChildInfo(RenderElement&);
-#ifndef NDEBUG
-    bool hasChildInfo(RenderObject* child) const
-    {
-        auto* renderBox = dynamicDowncast<RenderBox>(child);
-        return renderBox && m_fragmentRangeMap.contains(*renderBox);
-    }
-#endif
+    void removeFlowChildInfo(RenderElement&);
 
     virtual void addFragmentToThread(RenderFragmentContainer*) = 0;
     void removeFragmentFromThread(RenderFragmentContainer&);
     const RenderFragmentContainerList& renderFragmentContainerList() const LIFETIME_BOUND { return m_fragmentList; }
 
     void updateLogicalWidth() final;
-    LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const override;
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
-    bool hasFragments() const { return !m_fragmentList.isEmptyIgnoringNullReferences(); }
-    virtual void fragmentChangedWritingMode(RenderFragmentContainer*) { }
+    bool hasFragments() const { return !m_fragmentList.computeIsEmpty(); }
 
     void validateFragments();
-    void invalidateFragments(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
-    bool hasValidFragmentInfo() const { return !m_fragmentsInvalidated && !m_fragmentList.isEmptyIgnoringNullReferences(); }
+    void invalidateFragments(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
+    bool hasValidFragmentInfo() const { return !m_fragmentsInvalidated && !m_fragmentList.computeIsEmpty(); }
     
     // Called when a descendant box's layout is finished and it has been positioned within its container.
-    virtual void fragmentedFlowDescendantBoxLaidOut(RenderBox*) { }
+    virtual void fragmentedFlowDescendantBoxLaidOut(RenderBox*) = 0;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     void repaintRectangleInFragments(const LayoutRect&) const;
 
     LayoutUnit pageLogicalTopForOffset(LayoutUnit) const;
-    LayoutUnit pageLogicalWidthForOffset(LayoutUnit) const;
     LayoutUnit pageLogicalHeightForOffset(LayoutUnit) const;
     LayoutUnit pageRemainingLogicalHeightForOffset(LayoutUnit, PageBoundaryRule = IncludePageBoundary) const;
 
-    virtual void setPageBreak(const RenderBlock*, LayoutUnit /*offset*/, LayoutUnit /*spaceShortage*/) { }
-    virtual void updateMinimumPageHeight(const RenderBlock*, LayoutUnit /*offset*/, LayoutUnit /*minHeight*/) { }
+    virtual void setPageBreak(const RenderBlock*, LayoutUnit offset, LayoutUnit spaceShortage) = 0;
+    virtual void updateMinimumPageHeight(const RenderBlock*, LayoutUnit offset, LayoutUnit minHeight) = 0;
 
-    virtual void updateSpaceShortageForSizeContainment(const RenderBlock*, LayoutUnit /*offset*/, LayoutUnit /*shortage*/) { }
+    virtual void updateSpaceShortageForSizeContainment(const RenderBlock*, LayoutUnit offset, LayoutUnit shortage) = 0;
 
     virtual RenderFragmentContainer* fragmentAtBlockOffset(const RenderBox*, LayoutUnit, bool extendLastFragment = false) const;
 
-    bool fragmentsHaveUniformLogicalWidth() const { return m_fragmentsHaveUniformLogicalWidth; }
     bool fragmentsHaveUniformLogicalHeight() const { return m_fragmentsHaveUniformLogicalHeight; }
 
-    virtual RenderFragmentContainer* mapFromFlowToFragment(TransformState&) const;
+    virtual RenderFragmentContainer* mapFromFlowToFragment(TransformState&) const = 0;
 
     void logicalWidthChangedInFragmentsForBlock(const RenderBlock&, RelayoutChildren&);
 
     LayoutUnit contentLogicalWidthOfFirstFragment() const;
     LayoutUnit contentLogicalHeightOfFirstFragment() const;
-    LayoutUnit contentLogicalLeftOfFirstFragment() const;
     
     RenderFragmentContainer* firstFragment() const;
     RenderFragmentContainer* lastFragment() const;
@@ -124,42 +111,39 @@ public:
     virtual void setFragmentRangeForBox(const RenderBox&, RenderFragmentContainer*, RenderFragmentContainer*);
     bool getFragmentRangeForBox(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
     bool computedFragmentRangeForBox(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
-    bool LEGACY_NODELETE hasCachedFragmentRangeForBox(const RenderBox&) const;
+    NODELETE bool hasCachedFragmentRangeForBox(const RenderBox&) const;
 
-    // Check if the object is in fragment and the fragment is part of this flow thread.
-    bool objectInFlowFragment(const RenderObject*, const RenderFragmentContainer*) const;
-    
     // Check if the object should be painted in this fragment and if the fragment is part of this flow thread.
     bool objectShouldFragmentInFlowFragment(const RenderObject*, const RenderFragmentContainer*) const;
 
-    virtual bool addForcedFragmentBreak(const RenderBlock*, LayoutUnit, RenderBox* breakChild, bool isBefore, LayoutUnit* offsetBreakAdjustment = 0);
-    virtual void applyBreakAfterContent(LayoutUnit) { }
+    virtual bool addForcedFragmentBreak(const RenderBlock*, LayoutUnit, RenderBox* breakChild, bool isBefore, LayoutUnit* offsetBreakAdjustment = 0) = 0;
 
-    virtual bool isPageLogicalHeightKnown() const { return true; }
+    virtual bool isPageLogicalHeightKnown() const = 0;
     bool pageLogicalSizeChanged() const { return m_pageLogicalSizeChanged; }
 
     void collectLayerFragments(LayerFragments&, const LayoutRect& layerBoundingBox, const LayoutRect& dirtyRect) const;
     LayoutRect fragmentsBoundingBox(const LayoutRect& layerBoundingBox) const;
 
-    LayoutUnit offsetFromLogicalTopOfFirstFragment(const RenderBlock*) const;
-    void clearRenderBoxFragmentInfoAndCustomStyle(const RenderBox&, const RenderFragmentContainer*, const RenderFragmentContainer*, const RenderFragmentContainer*, const RenderFragmentContainer*);
+    LayoutUnit offsetFromLogicalTopOfFirstFragment(const RenderBox*) const;
+    void clearRenderBoxFragmentInfo(const RenderBox&, const RenderFragmentContainer*, const RenderFragmentContainer*, const RenderFragmentContainer*, const RenderFragmentContainer*);
 
     void addFragmentsVisualEffectOverflow(const RenderBox&);
     void addFragmentsVisualOverflowFromTheme(const RenderBlock&);
     void addFragmentsOverflowFromChild(const RenderBox&, const RenderBox&, const LayoutSize&);
-    void addFragmentsLayoutOverflow(const RenderBox&, const LayoutRect&);
     void addFragmentsVisualOverflow(const RenderBox&, const LayoutRect&);
     void clearFragmentsOverflow(const RenderBox&);
 
     LayoutRect mapFromFragmentedFlowToLocal(const RenderBox*, const LayoutRect&) const;
     LayoutRect mapFromLocalToFragmentedFlow(const RenderBox*, const LayoutRect&) const;
 
-    void LEGACY_NODELETE flipForWritingModeLocalCoordinates(LayoutRect&) const;
+    // Like RenderBox::physicalToBlockStartRelative(), but mirrors around 0 instead of a border box size. Per-fragment box overflow uses this space.
+    NODELETE void physicalToBlockStartRelativeIgnoringSize(LayoutRect&) const;
+    NODELETE void blockStartRelativeIgnoringSizeToPhysical(LayoutRect& rect) const { physicalToBlockStartRelativeIgnoringSize(rect); }
 
     // Used to estimate the maximum height of the flow thread.
     static LayoutUnit maxLogicalHeight() { return LayoutUnit::max() / 2; }
 
-    bool LEGACY_NODELETE fragmentInRange(const RenderFragmentContainer* targetFragment, const RenderFragmentContainer* startFragment, const RenderFragmentContainer* endFragment) const;
+    NODELETE bool fragmentInRange(const RenderFragmentContainer* targetFragment, const RenderFragmentContainer* startFragment, const RenderFragmentContainer* endFragment) const;
 
     bool absoluteQuadsForBox(Vector<FloatQuad>&, bool*, const RenderBox&) const;
 
@@ -167,13 +151,10 @@ public:
 
     void layout() override;
 
-    void setCurrentFragmentMaintainer(CurrentRenderFragmentContainerMaintainer* currentFragmentMaintainer) { m_currentFragmentMaintainer = currentFragmentMaintainer; }
-    RenderFragmentContainer* LEGACY_NODELETE currentFragment() const;
-
     bool cachedEnclosingFragmentedFlowNeedsUpdate() const override { return false; }
 
     // FIXME: Eventually as column and fragment flow threads start nesting, this may end up changing.
-    virtual bool shouldCheckColumnBreaks() const { return false; }
+    virtual bool shouldCheckColumnBreaks() const = 0;
 
 private:
     // Always create a RenderLayer for the RenderFragmentedFlow so that we
@@ -181,22 +162,21 @@ private:
     bool requiresLayer() const final { return true; }
 
 protected:
-    RenderFragmentedFlow(Type, Document&, Style::ComputedStyle&&);
+    RenderFragmentedFlow(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
 
     RenderFragmentedFlow* locateEnclosingFragmentedFlow() const override { return const_cast<RenderFragmentedFlow*>(this); }
 
     ASCIILiteral renderName() const override = 0;
 
-    // Overridden by columns/pages to set up an initial logical width of the page width even when
-    // no fragments have been generated yet.
-    virtual LayoutUnit initialLogicalWidth() const { return 0_lu; };
+    // The initial logical width of the page, used even when no fragments have been generated yet.
+    virtual LayoutUnit initialLogicalWidth() const = 0;
     
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const override;
 
     void updateFragmentsFragmentedFlowPortionRect();
-    bool LEGACY_NODELETE shouldRepaint(const LayoutRect&) const;
+    NODELETE bool shouldRepaint(const LayoutRect&) const;
 
-    bool LEGACY_NODELETE getFragmentRangeForBoxFromCachedInfo(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
+    NODELETE bool getFragmentRangeForBoxFromCachedInfo(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
 
     void removeRenderBoxFragmentInfo(const RenderBox&);
 
@@ -236,10 +216,7 @@ protected:
 
     FragmentIntervalTree m_fragmentIntervalTree;
 
-    CurrentRenderFragmentContainerMaintainer* m_currentFragmentMaintainer;
-
     bool m_fragmentsInvalidated : 1;
-    bool m_fragmentsHaveUniformLogicalWidth : 1;
     bool m_fragmentsHaveUniformLogicalHeight : 1;
     bool m_pageLogicalSizeChanged : 1;
 };

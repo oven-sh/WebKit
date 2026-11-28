@@ -61,6 +61,8 @@ public:
     void targetDestroyed(InspectorTarget&);
     void didCommitProvisionalTarget(const String& oldTargetID, const String& committedTargetID);
 
+    void debuggerPauseSessionChanged(const String& sessionID, bool isPaused, const Vector<String>& stoppingTargetIDs);
+
     // Target messages.
     void sendMessageFromTargetToFrontend(const String& targetId, const String& message);
 
@@ -73,7 +75,7 @@ private:
     const CheckedRef<Inspector::FrontendRouter> m_router;
     const UniqueRef<TargetFrontendDispatcher> m_frontendDispatcher;
     const Ref<TargetBackendDispatcher> m_backendDispatcher;
-    UncheckedKeyHashMap<String, InspectorTarget*> m_targets;
+    HashMap<String, InspectorTarget*> m_targets;
     bool m_isConnected { false };
     bool m_shouldPauseOnStart { false };
 };

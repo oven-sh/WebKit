@@ -74,7 +74,7 @@ CSSSelector::CSSSelector(const QualifiedName& tagQName, bool tagIsForNamespaceRu
 
 void CSSSelector::createRareData()
 {
-    ASSERT(match() != Match::Tag);
+    ASSERT_WITH_SECURITY_IMPLICATION(match() != Match::Tag);
     if (m_hasRareData)
         return;
     // Move the value to the rare data stucture.
@@ -86,11 +86,11 @@ struct SelectorSpecificity {
     unsigned specificity { 0 };
 
     SelectorSpecificity() = default;
-    SelectorSpecificity(unsigned);
-    SelectorSpecificity(SelectorSpecificityIncrement);
+    NODELETE SelectorSpecificity(unsigned);
+    NODELETE SelectorSpecificity(SelectorSpecificityIncrement);
     SelectorSpecificity& operator+=(SelectorSpecificity);
 
-    std::array<uint8_t, 3> LEGACY_NODELETE specificityTuple() const
+    NODELETE std::array<uint8_t, 3> specificityTuple() const
     {
         uint8_t a = specificity >> 16;
         uint8_t b = specificity >> 8;
@@ -358,7 +358,7 @@ std::optional<CSSSelector::PseudoElement> CSSSelector::parsePseudoElementName(St
 
     auto type = findPseudoElementName(name);
     if (!type) {
-        ASSERT_WITH_MESSAGE(!isUASheetBehavior(context.mode), "Unknown pseudo-element %s in user-agent stylesheet", name.toString().utf8());
+        ASSERT_WITH_MESSAGE(!isUASheetBehavior(context.mode), "Unknown pseudo-element %s in user-agent stylesheet", makeUTF8CString(name.toString()));
         if (name.startsWithIgnoringASCIICase("-webkit-"_s))
             return PseudoElement::WebKitUnknown;
         return type;
@@ -800,19 +800,19 @@ void CSSSelector::setNth(int a, int b)
 
 bool CSSSelector::matchNth(int count) const
 {
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->matchNth(count);
 }
 
 int CSSSelector::nthA() const
 {
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->a;
 }
 
 int CSSSelector::nthB() const
 {
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->b;
 }
 
@@ -1062,7 +1062,7 @@ bool isElementBackedPseudoElement(CSSSelector::PseudoElement pseudoElement)
     }
 }
 
-static bool LEGACY_NODELETE shouldSkipForEqualMode(const CSSSelector& simpleSelector, ComplexSelectorsEqualMode mode)
+NODELETE static bool shouldSkipForEqualMode(const CSSSelector& simpleSelector, ComplexSelectorsEqualMode mode)
 {
     if (mode == ComplexSelectorsEqualMode::IgnoreNonElementBackedPseudoElements)
         return simpleSelector.matchesPseudoElement() && !isElementBackedPseudoElement(simpleSelector.pseudoElement());
@@ -1095,7 +1095,7 @@ bool complexSelectorsEqual(const CSSSelector& complexA, const CSSSelector& compl
     return true;
 }
 
-static void LEGACY_NODELETE addSimpleSelector(Hasher& hasher, const CSSSelector& simpleSelector)
+NODELETE static void addSimpleSelector(Hasher& hasher, const CSSSelector& simpleSelector)
 {
     // This hash does try to include every possible thing in a selector.
     add(hasher, simpleSelector.match());

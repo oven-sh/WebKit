@@ -382,8 +382,7 @@ Vector<RefPtr<AccessibilityUIElement>> AccessibilityUIElementClientMac::getChild
         return { };
 
     unsigned end = std::min(location + length, static_cast<unsigned>(allChildren.size()));
-    Vector<RefPtr<AccessibilityUIElement>> result;
-    result.reserveInitialCapacity(end - location);
+    Vector<RefPtr<AccessibilityUIElement>> result(ReserveCapacityTag { }, end - location);
 
     for (unsigned i = location; i < end; i++)
         result.append(allChildren[i]);
@@ -433,6 +432,14 @@ void AccessibilityUIElementClientMac::showMenu()
     axPerformAction(m_elementToken, "AXShowMenu");
 }
 
+void AccessibilityUIElementClientMac::press()
+{
+    if (!isValid())
+        return;
+
+    axPerformAction(m_elementToken, "AXPress");
+}
+
 JSValueRef AccessibilityUIElementClientMac::uiElementsForSearchPredicate(JSContextRef context, AccessibilityUIElement* startElement, bool isDirectionNext, JSValueRef searchKey, JSStringRef searchText, bool visibleOnly, bool immediateDescendantsOnly, unsigned resultsLimit)
 {
     if (!isValid())
@@ -469,8 +476,7 @@ JSValueRef AccessibilityUIElementClientMac::uiElementsForSearchPredicate(JSConte
     WKArrayRef resultArray = static_cast<WKArrayRef>(returnData.get());
     size_t count = WKArrayGetSize(resultArray);
 
-    Vector<RefPtr<AccessibilityUIElement>> elements;
-    elements.reserveInitialCapacity(count);
+    Vector<RefPtr<AccessibilityUIElement>> elements(ReserveCapacityTag { }, count);
     for (size_t i = 0; i < count; i++) {
         WKTypeRef item = WKArrayGetItemAtIndex(resultArray, i);
         if (WKGetTypeID(item) == WKUInt64GetTypeID()) {

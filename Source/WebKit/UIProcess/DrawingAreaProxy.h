@@ -63,7 +63,7 @@ class RemotePageDrawingAreaProxy;
 class WebPageProxy;
 class WebProcessProxy;
 
-#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
+#if !USE(ACCELERATED_SURFACE) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
 struct UpdateInfo;
 #endif
 
@@ -73,10 +73,6 @@ class DrawingAreaProxy : public IPC::MessageReceiver, public IPC::MessageSender,
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DrawingAreaProxy);
 public:
     virtual ~DrawingAreaProxy();
-
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    virtual DrawingAreaType type() const = 0;
-#endif
 
     virtual bool isRemoteLayerTreeDrawingAreaProxyMac() const { return false; }
     virtual bool isRemoteLayerTreeDrawingAreaProxyIOS() const { return false; }
@@ -108,6 +104,7 @@ public:
     // (see RemoteLayerTreeDrawingAreaProxyMac::commitTransientZoom()).
     virtual void commitTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */, std::optional<WebCore::FloatPoint> /* targetScrollPosition */) { }
     virtual std::optional<double> committedTransientZoomScale() const { return std::nullopt; }
+    virtual void pageScaleWillChangeOutsideOfZoomGesture() { }
 
     virtual void viewIsBecomingVisible() { }
     virtual void viewIsBecomingInvisible() { }
@@ -138,7 +135,7 @@ public:
     virtual bool shouldCoalesceVisualEditorStateUpdates() const { return false; }
     virtual bool shouldSendWheelEventsToEventDispatcher() const { return false; }
 
-    WebPageProxy* LEGACY_NODELETE page() const;
+    NODELETE WebPageProxy* page() const;
     virtual void viewWillStartLiveResize() { };
     virtual void viewWillEndLiveResize() { };
 
@@ -171,12 +168,13 @@ private:
     virtual void sizeDidChange() = 0;
 
     // Message handlers.
+#if !PLATFORM(COCOA)
     // FIXME: These should be pure virtual.
     virtual void enterAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
     virtual void updateAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
-    virtual void didFirstLayerFlush(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
+#endif
 
-#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
+#if !USE(ACCELERATED_SURFACE) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
     virtual void update(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
     virtual void exitAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
 #endif
@@ -197,19 +195,8 @@ private:
 
 } // namespace WebKit
 
-#if ENABLE(TILED_CA_DRAWING_AREA)
-
-#define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA_PROXY(ToValueTypeName, ProxyType) \
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
-    static bool isType(const WebKit::DrawingAreaProxy& proxy) { return proxy.type() == WebKit::ProxyType; } \
-SPECIALIZE_TYPE_TRAITS_END()
-
-#else
-
 // There is only one type of DrawingArea.
 #define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA_PROXY(ToValueTypeName, ProxyType) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
     static bool isType(const WebKit::DrawingAreaProxy&) { return true; } \
 SPECIALIZE_TYPE_TRAITS_END()
-
-#endif

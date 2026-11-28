@@ -1,0 +1,22 @@
+# sink(process.mainModule.require(name));
+# process.mainModule can be written, so nobody follows what a read of it gives. The table says which object it hands out, and require above that object is a loader: a call of that name off a value that nobody follows may be a call of it.
+# OPTIONS: exclude=CodeOutsideImage
+# DIAGNOSTIC: NonConstantModuleName 1
+# RUN: causes mechanisms=all
+# CHECK: cause LoadsModuleByName ModuleRequire
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = Builtin builtin=Process
+    v4 = PropGet v3 key="mainModule"
+    v5 = PropGet v4 key="require"
+    v6 = Call v5, v4, v2 calleeKey="require" calleeName="process.mainModule.require"
+    v7 = Call v1, -, v6
+    v8 = Undefined
+    Return v8
+}

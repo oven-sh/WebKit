@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -81,6 +81,18 @@ private:
     RetainPtr<GCMouse> m_fakeMouse;
     std::unique_ptr<ClassMethodSwizzler> m_currentSwizzler;
     std::unique_ptr<ClassMethodSwizzler> m_miceSwizzler;
+};
+#endif
+
+#if PLATFORM(MAC) && ENABLE(APPLE_PAY)
+class FakePaymentUIForTesting {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FakePaymentUIForTesting);
+    WTF_MAKE_NONCOPYABLE(FakePaymentUIForTesting);
+public:
+    FakePaymentUIForTesting();
+private:
+    std::unique_ptr<ClassMethodSwizzler> m_requestViewControllerSwizzler;
+    std::unique_ptr<InstanceMethodSwizzler> m_beginSheetSwizzler;
 };
 #endif
 
@@ -294,6 +306,7 @@ public:
     void setStatisticsTopFrameUniqueRedirectTo(WKStringRef host, WKStringRef hostRedirectedTo);
     void setStatisticsTopFrameUniqueRedirectFrom(WKStringRef host, WKStringRef hostRedirectedFrom);
     void setStatisticsCrossSiteLoadWithLinkDecoration(WKStringRef fromHost, WKStringRef toHost, bool wasFiltered);
+    void setStatisticsLinkDecorationFilteringData(WKStringRef queryParameter);
 #if PLATFORM(COCOA)
     using SetStatisticsCrossSiteLoadWithLinkDecorationCallBack = void(*)(void* functionContext);
     void platformSetStatisticsCrossSiteLoadWithLinkDecoration(WKStringRef fromHost, WKStringRef toHost, bool wasFiltered, void* context, SetStatisticsCrossSiteLoadWithLinkDecorationCallBack);
@@ -341,6 +354,7 @@ public:
 
     void setPageScaleFactor(float scaleFactor, int x, int y, CompletionHandler<void(WKTypeRef)>&&);
     void updatePresentation(CompletionHandler<void(WKTypeRef)>&&);
+    void setScrollbarStyleOverride(const String&, CompletionHandler<void(WKTypeRef)>&&);
 
     void reloadFromOrigin();
 
@@ -438,8 +452,10 @@ public:
     void abortModal();
 
     bool isDoingMediaCapture() const;
+    bool isEnhancedSecurity() const;
 
     String dumpPrivateClickMeasurement();
+    String dumpBackForwardListsForAllPages();
     void clearPrivateClickMeasurement();
     void clearPrivateClickMeasurementsThroughWebsiteDataRemoval();
     void setPrivateClickMeasurementOverrideTimerForTesting(bool value);
@@ -504,9 +520,14 @@ public:
     bool useWorkQueue() const { return m_useWorkQueue; }
 
     void setHasMouseDeviceForTesting(bool);
+    void setHasFakePaymentUIForTesting(bool);
 
 #if HAVE(MOUSE_DEVICE_OBSERVATION)
     std::unique_ptr<FakeMouseDevice> m_fakeMouseDevice;
+#endif
+
+#if PLATFORM(MAC) && ENABLE(APPLE_PAY)
+    std::unique_ptr<FakePaymentUIForTesting> m_fakePaymentUI;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
@@ -523,6 +544,9 @@ public:
 #if PLATFORM(MAC)
     // Client accessibility testing support
     void initializeWebProcessAccessibility();
+    void setAXAuthenticationDeniedForTesting(bool);
+    void resetAXAuthenticationModeForTesting();
+    void terminateWebContentProcessesIfAXAuthenticationWasDenied();
     void axNotificationReceived(CFTypeRef element, CFStringRef notification, CFDictionaryRef userInfo, pid_t observedPid);
 #endif
 
@@ -584,7 +608,7 @@ private:
     void installUserScript(const TestInvocation&);
 
     void ensureViewSupportsOptionsForTest(const TestInvocation&);
-    TestOptions testOptionsForTest(const TestCommand&) const;
+    TestOptions testOptionsForTest(const TestCommand&, TestFeatures testHeaderFeatures) const;
     TestFeatures platformSpecificFeatureDefaultsForTest(const TestCommand&) const;
     TestFeatures platformSpecificFeatureOverridesDefaultsForTest(const TestCommand&) const;
 
@@ -792,6 +816,7 @@ private:
     bool m_enableAllExperimentalFeatures { true };
     std::vector<std::string> m_paths;
     std::set<std::string> m_allowedHosts;
+    std::set<std::string> m_disabledKeys;
     std::set<std::string> m_localhostAliases;
     TestFeatures m_globalFeatures;
 
@@ -981,6 +1006,7 @@ private:
     HashMap<uint64_t, RetainPtr<CFTypeRef>> m_axElementTokens WTF_GUARDED_BY_LOCK(m_axElementTokensLock);
     RetainPtr<CFTypeRef> m_axWebContentElement WTF_GUARDED_BY_LOCK(m_axElementTokensLock);
     RefPtr<WorkQueue> m_axRequestQueue;
+    bool m_didDenyAXAuthenticationForTesting { false };
     // One AXObserver per observed web content process, keyed by pid, with the application element it
     // observes. Non-empty only while a client-mode test has a notification listener installed.
     struct AXApplicationObserver {

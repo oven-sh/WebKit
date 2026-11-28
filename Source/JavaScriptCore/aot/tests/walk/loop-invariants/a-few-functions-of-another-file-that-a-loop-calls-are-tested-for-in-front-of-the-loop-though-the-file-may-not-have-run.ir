@@ -1,0 +1,63 @@
+# lib.cjs     exports.add = function low(a, b) { return a - b; }; exports.add = function add(a, b) { return a + b; };
+# main.cjs    let s = 0; for (let i = 0; i < Number("3"); i++) { const lib = require("./lib.cjs"); s = lib.add(s, i); } sink(s);
+# The twin of a-function-of-another-file-that-a-loop-calls-is-tested-for-once-in-front-of-the-loop.ir for a variable in which a FEW functions were seen.
+# Link proves that the variable is filled wherever the text reads it: each such read stands behind the require. The read in front of the loop is no read of the text, and here the require stands IN THE TURN:
+# in front of the loop the file has not run and the word is undefined. So the read gives the word as it lies, and a TEST stands behind it, no check: it fails, and the loop runs as written.
+# An executable died of it (139; with the proofs checked: "what a variable holds is not of the type that the compiler has proven of it. It is: undefined").
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 {{*}}filled
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:
+# WALK: = GetModuleVariable variable=g0 [returnsRawSlot]
+# WALK-NEXT: TypeTest {{*}}testedType=f2|f3
+# RUN(SHELL): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.sink = value => print("said " + value);
+# SHELL: said 3
+
+variable g0 name="add" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2: anything, v3: anything):
+    LoopHint
+    v5 = Builtin builtin=Number
+    v6 = String string="3"
+    v7 = Call v5, -, v6 calleeName="Number"
+    v8 = Less v3, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v2, v3 calleeName="add"
+    v12 = Increment v3
+    Jump -> next b1(v11, v12)
+  b3():
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="sink" [isFreeName]
+    v15 = Call v14, -, v2 calleeName="sink"
+    v16 = Undefined
+    Return v16
+}
+function f1 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    PutModuleVariable v2 variable=g0
+    v4 = Undefined
+    Return v4
+}
+function f2 name="low" module=m1 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    Return v2
+}
+function f3 name="add" module=m1 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}

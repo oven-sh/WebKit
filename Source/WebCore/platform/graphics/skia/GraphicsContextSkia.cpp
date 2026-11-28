@@ -190,14 +190,15 @@ void GraphicsContextSkia::save(GraphicsContextState::Purpose purpose)
     m_canvas.save();
 }
 
-void GraphicsContextSkia::restore(GraphicsContextState::Purpose purpose)
+bool GraphicsContextSkia::restore(GraphicsContextState::Purpose purpose)
 {
-    if (!stackSize())
-        return;
+    if (!canRestore(purpose))
+        return false;
 
     GraphicsContext::restore(purpose);
     m_canvas.restore();
     popSkiaState();
+    return true;
 }
 
 // Draws a filled rectangle with a stroked border.
@@ -268,7 +269,7 @@ sk_sp<SkImage> GraphicsContextSkia::imageForCurrentThread(const sk_sp<SkImage>& 
     return imageInThisThread->makeRasterImage(grContext);
 }
 
-void GraphicsContextSkia::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void GraphicsContextSkia::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     auto image = nativeImage.platformImage();
     if (!image)
@@ -318,12 +319,8 @@ void GraphicsContextSkia::drawNativeImage(const NativeImage& nativeImage, const 
 
     // 'imageInThisThread' is either the incoming 'image', or a wrapper around the 'image' accessible in the current thread.
     auto imageInThisThread = imageForCurrentThread(image);
-#if USE(TEXTURE_MAPPER)
-    trackAcceleratedRenderingFenceIfNeeded(imageInThisThread, nativeImage.grContext());
-#else
     if (m_threadSafeGrContext)
         imageInThisThread = SkiaUtilities::createPromiseImageIfNeeded(imageInThisThread, m_threadSafeGrContext);
-#endif
 
     // 'imageForDrawing' references the incoming image (or if it's not directly accessible in this thread the 'imageInThisThread' which is).
     // However, if we have to make a raster copy (see the hasDropShadow() case below), then imageForDrawing will point to the raster copy instead.
@@ -608,9 +605,6 @@ void GraphicsContextSkia::setupFillSource(SkPaint& paint)
     if (auto fillPattern = fillBrush().pattern()) {
         paint.setShader(fillPattern->createPlatformPattern(toSkSamplingOptions(imageInterpolationQuality()), m_threadSafeGrContext));
         paint.setAlphaf(alpha());
-#if USE(TEXTURE_MAPPER)
-        trackAcceleratedRenderingFenceIfNeeded(*fillPattern);
-#endif
     } else if (auto fillGradient = fillBrush().gradient())
         paint.setShader(fillGradient->shader(alpha(), fillBrush().gradientSpaceTransform()));
     else
@@ -633,12 +627,9 @@ SkPaint GraphicsContextSkia::createStrokePaint() const
 
 void GraphicsContextSkia::setupStrokeSource(SkPaint& paint)
 {
-    if (auto strokePattern = strokeBrush().pattern()) {
+    if (auto strokePattern = strokeBrush().pattern())
         paint.setShader(strokePattern->createPlatformPattern(toSkSamplingOptions(imageInterpolationQuality()), m_threadSafeGrContext));
-#if USE(TEXTURE_MAPPER)
-        trackAcceleratedRenderingFenceIfNeeded(*strokePattern);
-#endif
-    } else if (auto strokeGradient = strokeBrush().gradient())
+    else if (auto strokeGradient = strokeBrush().gradient())
         paint.setShader(strokeGradient->shader(alpha(), strokeBrush().gradientSpaceTransform()));
     else
         setPaintColor(paint, strokeBrush().color().colorWithAlphaMultipliedBy(alpha()));
@@ -677,7 +668,7 @@ void GraphicsContextSkia::fillRect(const FloatRect& boundaries, const Color& fil
     drawSkiaRect(boundaries, paint);
 }
 
-void GraphicsContextSkia::fillRect(const FloatRect& boundaries, Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
+void GraphicsContextSkia::fillRect(const FloatRect& boundaries, const Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
 {
     if (!makeGLContextCurrentIfNeeded())
         return;
@@ -732,35 +723,41 @@ void GraphicsContextSkia::clipPath(const Path& path, WindRule clipRule)
     m_canvas.clipPath(*pathForClip, true);
 }
 
+void GraphicsContextSkia::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule clipRule)
+{
+    // The clip is stored in device space, so the matrix can be restored afterwards without affecting it.
+    auto matrix = m_canvas.getLocalToDevice();
+    m_canvas.concat(pathTransform);
+    clipPath(path, clipRule);
+    m_canvas.setMatrix(matrix);
+}
+
 IntRect GraphicsContextSkia::clipBounds() const
 {
     return enclosingIntRect(m_canvas.getLocalClipBounds());
 }
 
-void GraphicsContextSkia::clipToImageBuffer(ImageBuffer& buffer, const FloatRect& destRect)
+void GraphicsContextSkia::clipToNativeImage(const NativeImage& nativeImage, const FloatRect& destRect)
 {
-    if (auto nativeImage = nativeImageForDrawing(buffer)) {
-        auto image = nativeImage->platformImage();
-#if USE(TEXTURE_MAPPER)
-        trackAcceleratedRenderingFenceIfNeeded(image, nativeImage->grContext());
-#else
-        if (m_threadSafeGrContext)
-            image = SkiaUtilities::createPromiseImageIfNeeded(image, m_threadSafeGrContext);
-#endif
-        auto shader = image->makeShader(SkTileMode::kDecal, SkTileMode::kDecal, { }, SkMatrix::Translate(SkFloatToScalar(destRect.x()), SkFloatToScalar(destRect.y())));
+    auto image = nativeImage.platformImage();
+    if (!image)
+        return;
+    if (m_threadSafeGrContext)
+        image = SkiaUtilities::createPromiseImageIfNeeded(image, m_threadSafeGrContext);
 
-        recordClipIfNeeded({
-            .type = ClipRecord::Type::Shader,
-            .matrix = m_canvas.getTotalMatrix(),
-            .op = SkClipOp::kIntersect,
-            .antialias = false,
-            .rect = { },
-            .path = { },
-            .shader = shader,
-        });
+    auto shader = image->makeShader(SkTileMode::kDecal, SkTileMode::kDecal, { }, SkMatrix::Translate(SkFloatToScalar(destRect.x()), SkFloatToScalar(destRect.y())));
 
-        m_canvas.clipShader(WTF::move(shader));
-    }
+    recordClipIfNeeded({
+        .type = ClipRecord::Type::Shader,
+        .matrix = m_canvas.getTotalMatrix(),
+        .op = SkClipOp::kIntersect,
+        .antialias = false,
+        .rect = { },
+        .path = { },
+        .shader = shader,
+    });
+
+    m_canvas.clipShader(WTF::move(shader));
 }
 
 void GraphicsContextSkia::drawFocusRing(const Path& path, float, const Color& color, float)
@@ -869,10 +866,6 @@ void GraphicsContextSkia::drawDotsForDocumentMarker(const FloatRect& boundaries,
 void GraphicsContextSkia::translate(float x, float y)
 {
     m_canvas.translate(SkFloatToScalar(x), SkFloatToScalar(y));
-}
-
-void GraphicsContextSkia::didUpdateState(GraphicsContextState&)
-{
 }
 
 void GraphicsContextSkia::concatCTM(const AffineTransform& ctm)
@@ -1132,7 +1125,7 @@ static sk_sp<SkSurface> createAcceleratedSurface(const IntSize& size)
     return surface;
 }
 
-void GraphicsContextSkia::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void GraphicsContextSkia::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;
@@ -1172,12 +1165,10 @@ void GraphicsContextSkia::drawPattern(const NativeImage& nativeImage, const Floa
             repeatX = imageSampledRect.x() < 0 || std::trunc(imageSampledRect.right()) > size.width();
             repeatY = imageSampledRect.y() < 0 || std::trunc(imageSampledRect.bottom()) > size.height();
         }
-#if USE(TEXTURE_MAPPER)
-        trackAcceleratedRenderingFenceIfNeeded(image, nativeImage.grContext());
-#else
+
         if (m_threadSafeGrContext)
             image = SkiaUtilities::createPromiseImageIfNeeded(image, m_threadSafeGrContext);
-#endif
+
         paint.setShader(image->makeShader(repeatX ? SkTileMode::kRepeat : SkTileMode::kClamp, repeatY ? SkTileMode::kRepeat : SkTileMode::kClamp, samplingOptions, &shaderMatrix));
     } else {
         auto tileFloatRectWithSpacing = FloatRect(0, 0, tileRect.width() + spacing.width() / patternTransform.a(), tileRect.height() + spacing.height() / patternTransform.d());
@@ -1188,14 +1179,10 @@ void GraphicsContextSkia::drawPattern(const NativeImage& nativeImage, const Floa
             if (auto surface = createAcceleratedSurface({ clipRect.width(), clipRect.height() })) {
                 surface->getCanvas()->drawImageRect(image, tileRect, dstRect, samplingOptions, nullptr, SkCanvas::kStrict_SrcRectConstraint);
                 auto tileImage = surface->makeImageSnapshot();
-#if USE(TEXTURE_MAPPER)
-                auto* recordingContext = surface->recordingContext();
-                auto* grContext = recordingContext ? recordingContext->asDirectContext() : nullptr;
-                trackAcceleratedRenderingFenceIfNeeded(tileImage, grContext);
-#else
+
                 if (m_threadSafeGrContext)
                     tileImage = SkiaUtilities::createPromiseImageIfNeeded(tileImage, m_threadSafeGrContext);
-#endif
+
                 paint.setShader(tileImage->makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, samplingOptions, &shaderMatrix));
             }
         } else {
@@ -1221,9 +1208,7 @@ void GraphicsContextSkia::beginRecording(RecordingMode recordingMode, const sk_s
     case RecordingMode::Tile:
         m_contextMode = ContextMode::TileRecordingMode;
         if (m_renderingMode == RenderingMode::Accelerated) {
-#if !USE(TEXTURE_MAPPER)
             ASSERT(threadSafeGrContext);
-#endif
             m_threadSafeGrContext = threadSafeGrContext;
             m_atlasLayoutBuilder = makeUnique<SkiaImageAtlasLayoutBuilder>();
         } else
@@ -1259,15 +1244,12 @@ SkiaRecordingData GraphicsContextSkia::endRecording()
             imageSetFingerprint = m_atlasLayoutBuilder->imageSetFingerprint();
             m_atlasLayoutBuilder = nullptr;
         }
-#if USE(TEXTURE_MAPPER)
-        return { WTF::move(m_imageToFenceMap), WTF::move(atlasLayouts), imageSetFingerprint };
-#else
+
         if (m_renderingMode == RenderingMode::Accelerated) {
             ASSERT(m_threadSafeGrContext);
             m_threadSafeGrContext = nullptr;
         }
         return { WTF::move(atlasLayouts), imageSetFingerprint };
-#endif
     }
     case ContextMode::CanvasRecordingMode:
         ASSERT(!m_threadSafeGrContext);
@@ -1310,36 +1292,6 @@ void GraphicsContextSkia::replayStateOnCanvas(SkCanvas& canvas) const
     }
     canvas.setMatrix(m_canvas.getTotalMatrix());
 }
-
-#if USE(TEXTURE_MAPPER)
-void GraphicsContextSkia::trackAcceleratedRenderingFenceIfNeeded(const sk_sp<SkImage>& image, GrDirectContext* grContext)
-{
-    ASSERT(!m_threadSafeGrContext);
-
-    if (m_contextMode != ContextMode::TileRecordingMode)
-        return;
-
-    if (!image || !image->isTextureBacked())
-        return;
-
-    if (auto fence = SkiaUtilities::flushAndSubmitImageWithFence(grContext, image))
-        m_imageToFenceMap.add(image.get(), WTF::move(fence));
-}
-
-void GraphicsContextSkia::trackAcceleratedRenderingFenceIfNeeded(Pattern& pattern)
-{
-    ASSERT(!m_threadSafeGrContext);
-
-    if (m_contextMode != ContextMode::TileRecordingMode)
-        return;
-
-    auto nativeImage = pattern.tileNativeImage();
-    if (!nativeImage)
-        return;
-
-    trackAcceleratedRenderingFenceIfNeeded(nativeImage->platformImage(), nativeImage->grContext());
-}
-#endif
 
 void GraphicsContextSkia::drawSkiaText(const sk_sp<SkTextBlob>& blob, SkScalar x, SkScalar y, bool enableAntialias, bool isVertical)
 {

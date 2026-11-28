@@ -51,9 +51,9 @@ public:
     }
 
 private:
-    void didStartProvisionalNavigation(WebPageProxy&, const ResourceRequest&, API::Navigation*, API::Object* /* userData */) override
+    void didStartProvisionalNavigation(WebPageProxy&, const ResourceRequest&, API::Navigation* navigation, API::Object* /* userData */) override
     {
-        webkitWebViewLoadChanged(m_webView, WEBKIT_LOAD_STARTED);
+        webkitWebViewLoadChanged(m_webView, WEBKIT_LOAD_STARTED, navigation);
     }
 
     void didReceiveServerRedirectForProvisionalNavigation(WebPageProxy&, API::Navigation*, API::Object* /* userData */) override
@@ -66,8 +66,8 @@ private:
         RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
         if (!frame || !frame->isMainFrame())
             return;
-        GUniquePtr<GError> error(g_error_new_literal(gQuarkFromString(resourceError.domain().utf8()),
-            toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().legacyCStringPointer()));
+        GUniquePtr<GError> error(g_error_new_literal(gQuarkFromString(makeUTF8CString(resourceError.domain())),
+            toWebKitError(resourceError.errorCode()), makeUTF8CString(resourceError.localizedDescription()).legacyCStringPointer()));
         if (resourceError.tlsErrors()) {
             webkitWebViewLoadFailedWithTLSErrors(m_webView, resourceError.failingURL().string(), error.get(),
                 static_cast<GTlsCertificateFlags>(resourceError.tlsErrors()), resourceError.certificate());
@@ -90,8 +90,8 @@ private:
         RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
         if (!frame || !frame->isMainFrame())
             return;
-        GUniquePtr<GError> error(g_error_new_literal(gQuarkFromString(resourceError.domain().utf8()),
-            toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().legacyCStringPointer()));
+        GUniquePtr<GError> error(g_error_new_literal(gQuarkFromString(makeUTF8CString(resourceError.domain())),
+            toWebKitError(resourceError.errorCode()), makeUTF8CString(resourceError.localizedDescription()).legacyCStringPointer()));
         webkitWebViewLoadFailed(m_webView, WEBKIT_LOAD_COMMITTED, resourceError.failingURL().string(), error.get());
     }
 

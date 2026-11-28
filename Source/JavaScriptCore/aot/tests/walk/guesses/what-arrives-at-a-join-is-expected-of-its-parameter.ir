@@ -1,0 +1,35 @@
+# the source declares nothing of `t`, so its parameter of the join has no type. Both edges bring a parameter that is declared a Point: that is expected of `t`
+# function pick(c, a: Point, b: Point) { const t = c ? a : b; return t.x; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[t]]: anything{{*}}):
+# CHECK-NEXT: = GetSlot [[t]] key="x" receivers=[L0] level=Expected
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    Return v8
+}
+function f1 name="pick" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=L0}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: L0, v2: L0):
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4):
+    v5 = PropGet v4 key="x"
+    Return v5
+}

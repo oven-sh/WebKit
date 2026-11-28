@@ -37,7 +37,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLPadded);
 
-RenderMathMLPadded::RenderMathMLPadded(MathMLPaddedElement& element, Style::ComputedStyle&& style)
+RenderMathMLPadded::RenderMathMLPadded(MathMLPaddedElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLRow(Type::MathMLPadded, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLPadded());
@@ -91,7 +91,7 @@ LayoutUnit RenderMathMLPadded::mpaddedDepth(LayoutUnit contentDepth) const
     return std::max(0_lu, toUserUnits(depthAttr, protect(style()), 0));
 }
 
-void RenderMathMLPadded::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMathMLPadded::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
@@ -99,15 +99,7 @@ void RenderMathMLPadded::computeIntrinsicLogicalWidthContributions()
     // We parse it using the preferred width of the content as its default value.
     LayoutUnit preferredWidth = preferredLogicalWidthOfRowItems();
     preferredWidth = mpaddedWidth(preferredWidth);
-    m_minContentLogicalWidthContribution = preferredWidth;
-    m_maxContentLogicalWidthContribution = preferredWidth;
-
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
-    adjustContentLogicalWidthsForBorderAndPadding();
-
-    clearContentLogicalWidthsInvalidation();
+    return intrinsicLogicalWidthContributionsForMathContent(preferredWidth);
 }
 
 void RenderMathMLPadded::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit)

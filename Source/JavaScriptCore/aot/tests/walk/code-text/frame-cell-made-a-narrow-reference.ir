@@ -1,0 +1,17 @@
+# a reference of 32 bits counts from the base of the cage of cells: the address of a cell of the frame has no such form
+# RUN: verify-code
+# CHECK: {{*}}the address of a cell of the frame is made a 32-bit reference
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: Array @Cell = CreateRest firstArgument=0 storage=Frame
+#     v2: Array @Cell32 = Compress v1
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keeps" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+entry module=m0

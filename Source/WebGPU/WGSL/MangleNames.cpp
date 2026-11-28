@@ -92,7 +92,7 @@ private:
     void introduceVariable(AST::Identifier&, MangledName::Kind);
     void readVariable(AST::Identifier&) const;
 
-    MangledName LEGACY_NODELETE makeMangledName(const String&, MangledName::Kind);
+    NODELETE MangledName makeMangledName(const String&, MangledName::Kind);
 
     void visitVariableDeclaration(AST::Variable&, MangledName::Kind);
 
@@ -172,7 +172,7 @@ void NameManglerVisitor::visit(AST::FieldAccessExpression& access)
     RELEASE_ASSERT(structMapIt != m_structFieldMapping.end());
 
     auto fieldIt = structMapIt->value.find(access.fieldName());
-    ASSERT(fieldIt != structMapIt->value.end());
+    RELEASE_ASSERT(fieldIt != structMapIt->value.end());
     m_shaderModule.replace(&access.fieldName(), AST::Identifier::makeWithSpan(access.fieldName().span(), fieldIt->value.toString()));
 }
 

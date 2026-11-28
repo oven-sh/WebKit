@@ -1,0 +1,52 @@
+# The variable of a function that nobody stores into has no word: it is the cell of the function in the closure table, wherever Link reaches the function
+# function qqq..() { }  function zzz..() { }  function keep(value: number) { if (typeof value === "string") qqq..(); return value; }  hold(zzz.., keep(1));
+# Link reaches the first, and the walk rules the call out: no code mentions its closure, so it has no cell, a heap snapshot has no row for its variable, and no table holds the name
+# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else. A text that is only shown is coded and printed as it reads.
+# RUN(KEPT): image Text mechanisms=all
+# KEPT: coded zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+# RUN(GONE): image Text mechanisms=all
+# GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+# RUN(LINK): link functions
+# LINK-NOT: function f1 unreached
+# RUN(PLAN): plan variables mechanisms=all
+# PLAN: variable g0 ClosureTable
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="keep" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hold" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = Integer integer=1
+    v5 = Call v3, -, v4 calleeName="keep"
+    v6 = Call v1, -, v2, v5 calleeName="hold"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="keep" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2
+    Jump -> next b2()
+  b2():
+    Return v0
+}

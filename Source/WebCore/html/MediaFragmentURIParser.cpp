@@ -54,7 +54,7 @@ static String collectDigits(std::span<const Latin1Character> input, unsigned& po
     return digits.toString();
 }
 
-static StringView LEGACY_NODELETE collectFraction(std::span<const Latin1Character> input, unsigned& position)
+NODELETE static StringView collectFraction(std::span<const Latin1Character> input, unsigned& position)
 {
     // http://www.ietf.org/rfc/rfc2326.txt
     // [ "." *DIGIT ]
@@ -140,11 +140,11 @@ void MediaFragmentURIParser::parseFragments()
         //     name or value are not valid UTF-8 strings, then remove the name-value pair from the list.
         bool validUTF8 = false;
         if (!name.isEmpty() && !value.isEmpty()) {
-            name = name.utf8(StrictConversion);
+            name = makeUTF8CString(name, ConversionMode::Strict);
             validUTF8 = !name.isEmpty();
 
             if (validUTF8) {
-                value = value.utf8(StrictConversion);
+                value = makeUTF8CString(value, ConversionMode::Strict);
                 validUTF8 = !value.isEmpty();
             }
         }

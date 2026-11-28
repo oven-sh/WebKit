@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "common/Optional.h"
+#include "common/SimpleMutex.h"
 #include "libANGLE/renderer/gl/DisplayGL.h"
 
 #include "libANGLE/renderer/gl/glx/FunctionsGLX.h"
@@ -34,10 +35,11 @@ class DisplayGLX : public DisplayGL, public ThreadSafeDisplayGL
     egl::Error initialize(egl::Display *display) override;
     void terminate() override;
 
-    egl::Error makeCurrent(egl::Display *display,
-                           egl::Surface *drawSurface,
+    egl::Error makeCurrent(egl::Surface *drawSurface,
                            egl::Surface *readSurface,
                            gl::Context *context) override;
+    egl::Error beforeDestroyContext(const gl::Context *context) override;
+    egl::Error afterDestroyContext() override;
 
     SurfaceImpl *createWindowSurface(const egl::SurfaceState &state,
                                      EGLNativeWindowType window,
@@ -96,6 +98,7 @@ class DisplayGLX : public DisplayGL, public ThreadSafeDisplayGL
                               bool makeNewContextCurrent,
                               std::shared_ptr<RendererGLX> *outRenderer);
     RendererGL *getRenderer() const override;
+    void destroyNativeContext(glx::Context context);
 
     angle::NativeWindowSystem getWindowSystem() const override;
 
@@ -127,9 +130,11 @@ class DisplayGLX : public DisplayGL, public ThreadSafeDisplayGL
     glx::FBConfig mContextConfig;
     struct NativeContext
     {
-        glx::Context context;
-        glx::Drawable drawable;
+        glx::Context context   = nullptr;
+        glx::Drawable drawable = 0;
+        bool needsRestore      = false;
     };
+    angle::SimpleMutex mCurrentNativeContextsMutex;
     angle::HashMap<uint64_t, NativeContext> mCurrentNativeContexts;
 
     bool mUsesNewXDisplay;

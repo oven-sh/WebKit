@@ -15,10 +15,12 @@
 #include <stdio.h>
 
 #include "common/MemoryBuffer.h"
+#include "common/mathutil.h"
 #include "common/string_utils.h"
 #include "common/system_utils.h"
 #include "common/unsafe_buffers.h"
 #include "gpu_info_util/SystemInfo_internal.h"
+#include "libANGLE/ErrorStrings.h"
 #include "libANGLE/histogram_macros.h"
 #include "libANGLE/renderer/metal/ContextMtl.h"
 #include "libANGLE/renderer/metal/DisplayMtl.h"
@@ -248,7 +250,6 @@ void StopFrameCapture()
 namespace mtl
 {
 
-constexpr char kANGLEPrintMSLEnv[]        = "ANGLE_METAL_PRINT_MSL_ENABLE";
 constexpr char kANGLEMSLVersionMajorEnv[] = "ANGLE_MSL_VERSION_MAJOR";
 constexpr char kANGLEMSLVersionMinorEnv[] = "ANGLE_MSL_VERSION_MINOR";
 
@@ -402,12 +403,39 @@ static angle::Result InitializeCompressedTextureContents(const gl::Context *cont
     return angle::Result::Continue;
 }
 
+// The number of bytes from which writing a texture that the GPU does not use is faster through a
+// staging buffer or a GPU clear than on the CPU, on Apple GPUs. The driver writes on the CPU more
+// slowly the smaller the texels are, while a staged upload costs the same per byte for any texel
+// size, after a fixed cost per upload. A GPU clear, which initializes the texture, copies nothing,
+// but costs more up front than a staged upload.
+size_t StagingThreshold(size_t texelBytes, StagingPurpose purpose)
+{
+    if (purpose == StagingPurpose::Initialization)
+    {
+        return texelBytes <= 2 ? 256 * 1024 : 512 * 1024;
+    }
+    if (texelBytes <= 1)
+    {
+        return 16 * 1024;
+    }
+    if (texelBytes <= 2)
+    {
+        return 32 * 1024;
+    }
+    if (texelBytes <= 4)
+    {
+        return 512 * 1024;
+    }
+    return std::numeric_limits<size_t>::max();
+}
+
 }  // namespace
 
 bool PreferStagedTextureUploads(const gl::Context *context,
                                 const TextureRef &texture,
                                 const Format &textureObjFormat,
-                                StagingPurpose purpose)
+                                StagingPurpose purpose,
+                                size_t byteCount)
 {
     // Compressed textures cannot be uploaded from staging textures.
     const gl::InternalFormat &intendedInternalFormat = textureObjFormat.intendedInternalFormat();
@@ -450,8 +478,24 @@ bool PreferStagedTextureUploads(const gl::Context *context,
         }
     }
 
-    return (texture->hasIOSurface() && features.uploadDataToIosurfacesWithStagingBuffers.enabled) ||
-           features.alwaysPreferStagedTextureUploads.enabled;
+    if ((texture->hasIOSurface() && features.uploadDataToIosurfacesWithStagingBuffers.enabled) ||
+        features.alwaysPreferStagedTextureUploads.enabled)
+    {
+        return true;
+    }
+
+    // The thresholds are measured on Apple GPUs.
+    if (!contextMtl->getDisplay()->supportsAppleGPUFamily(1))
+    {
+        return false;
+    }
+    // Writing a texture on the CPU while the GPU uses it waits for all the GPU work queued before
+    // the use. A staged write is ordered after the use instead.
+    if (texture->isBeingUsedByGPU(contextMtl))
+    {
+        return true;
+    }
+    return byteCount >= StagingThreshold(textureObjFormat.actualAngleFormat().pixelBytes, purpose);
 }
 
 angle::Result InitializeTextureContents(const gl::Context *context,
@@ -467,15 +511,22 @@ angle::Result InitializeTextureContents(const gl::Context *context,
 
     const gl::InternalFormat &intendedInternalFormat = textureObjFormat.intendedInternalFormat();
 
-    bool preferGPUInitialization = PreferStagedTextureUploads(context, texture, textureObjFormat,
-                                                              StagingPurpose::Initialization);
-
     // This function is called in many places to initialize the content of a texture.
     // So it's better we do the initial check here instead of let the callers do it themselves:
     if (!textureObjFormat.valid())
     {
         return angle::Result::Continue;
     }
+
+    gl::Extents size = texture->size(index);
+
+    angle::CheckedNumeric<size_t> byteCount = textureObjFormat.actualAngleFormat().pixelBytes;
+    byteCount *= size.width;
+    byteCount *= size.height;
+    byteCount *= size.depth;
+    ANGLE_CHECK_ASSERT(contextMtl, byteCount.IsValid());
+    bool preferGPUInitialization = PreferStagedTextureUploads(
+        context, texture, textureObjFormat, StagingPurpose::Initialization, byteCount.ValueOrDie());
 
     if ((textureObjFormat.hasDepthOrStencilBits() && !textureObjFormat.getCaps().depthRenderable) ||
         !textureObjFormat.getCaps().colorRenderable)
@@ -484,8 +535,6 @@ angle::Result InitializeTextureContents(const gl::Context *context,
         // to use GPU initialization (clears for initialization).
         preferGPUInitialization = false;
     }
-
-    gl::Extents size = texture->size(index);
 
     // Intiialize the content to black
     GLint layer, startDepth;
@@ -835,161 +884,57 @@ uint32_t GetDeviceVendorId(id<MTLDevice> metalDevice)
     return vendorId;
 }
 
-// MTLLanguageVersion3_x is available in the macOS 15 / iOS 18 SDKs and later.
-#if (TARGET_OS_OSX && __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000) ||                             \
-    ((TARGET_OS_IOS || TARGET_OS_MACCATALYST) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 180000) || \
-    (TARGET_OS_TV && __TV_OS_VERSION_MAX_ALLOWED >= 180000) ||                                 \
-    (TARGET_OS_VISION && __VISION_OS_VERSION_MAX_ALLOWED >= 20000) ||                          \
-    (TARGET_OS_WATCH && __WATCH_OS_VERSION_MAX_ALLOWED >= 110000)
-#    define ANGLE_MTL_HAS_MSL_3_X_SDK 1
-#else
-#    define ANGLE_MTL_HAS_MSL_3_X_SDK 0
-#endif
-
-// MTLLanguageVersion4_0 is available in the macOS 26 / iOS 26 SDKs and later.
-#if (TARGET_OS_OSX && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000) ||                             \
-    ((TARGET_OS_IOS || TARGET_OS_MACCATALYST) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 260000) || \
-    (TARGET_OS_TV && __TV_OS_VERSION_MAX_ALLOWED >= 260000) ||                                 \
-    (TARGET_OS_VISION && __VISION_OS_VERSION_MAX_ALLOWED >= 260000) ||                         \
-    (TARGET_OS_WATCH && __WATCH_OS_VERSION_MAX_ALLOWED >= 260000)
-#    define ANGLE_MTL_HAS_MSL_4_0_SDK 1
-#else
-#    define ANGLE_MTL_HAS_MSL_4_0_SDK 0
-#endif
-
-// Decodes the MSL version set in the environment. Returns nullopt if the version is not set or
-// is not supported.
-static std::optional<MTLLanguageVersion> DecodeUserSetMSLVersion()
+static MTLLanguageVersion GetUserSetOrHighestMSLVersion(const MTLLanguageVersion currentVersion)
 {
     const std::string major_str = angle::GetEnvironmentVar(kANGLEMSLVersionMajorEnv);
     const std::string minor_str = angle::GetEnvironmentVar(kANGLEMSLVersionMinorEnv);
-    if (major_str == "" || minor_str == "")
+    if (major_str != "" && minor_str != "")
     {
-        return std::nullopt;
-    }
-    const int major = std::stoi(major_str);
-    const int minor = std::stoi(minor_str);
+        const int major = std::stoi(major_str);
+        const int minor = std::stoi(minor_str);
 #if !defined(NDEBUG)
-    NSLog(@"Forcing MSL Version: MTLLanguageVersion%d_%d\n", major, minor);
+        NSLog(@"Forcing MSL Version: MTLLanguageVersion%d_%d\n", major, minor);
 #endif
-    switch (major)
-    {
-        case 1:
-            switch (minor)
-            {
-                case 0:
+        switch (major)
+        {
+            case 1:
+                switch (minor)
+                {
+                    case 0:
 #if !defined(NDEBUG)
-                    NSLog(@"MSL 1.0 is deprecated, using MSL 1.1 instead\n");
+                        NSLog(@"MSL 1.0 is deprecated, using MSL 1.1 instead\n");
 #endif
-                    return MTLLanguageVersion1_1;
-                case 1:
-                    return MTLLanguageVersion1_1;
-                case 2:
-                    return MTLLanguageVersion1_2;
-                default:
-                    assert(0 && "Unsupported MSL Minor Language Version.");
-            }
-            break;
-        case 2:
-            switch (minor)
-            {
-                case 0:
-                    return MTLLanguageVersion2_0;
-                case 1:
-                    return MTLLanguageVersion2_1;
-                case 2:
-                    return MTLLanguageVersion2_2;
-                case 3:
-                    return MTLLanguageVersion2_3;
-                case 4:
-                    return MTLLanguageVersion2_4;
-                default:
-                    assert(0 && "Unsupported MSL Minor Language Version.");
-            }
-            break;
-#if ANGLE_MTL_HAS_MSL_3_X_SDK
-        case 3:
-            switch (minor)
-            {
-                case 0:
-                    if (@available(macOS 13.0, iOS 16.0, *))
-                    {
-                        return MTLLanguageVersion3_0;
-                    }
-                    break;
-                case 1:
-                    if (@available(macOS 14.0, iOS 17.0, *))
-                    {
-                        return MTLLanguageVersion3_1;
-                    }
-                    break;
-                case 2:
-                    if (@available(macOS 15.0, iOS 18.0, *))
-                    {
-                        return MTLLanguageVersion3_2;
-                    }
-                    break;
-                default:
-                    assert(0 && "Unsupported MSL Minor Language Version.");
-            }
-            break;
-#endif
-#if ANGLE_MTL_HAS_MSL_4_0_SDK
-        case 4:
-            switch (minor)
-            {
-                case 0:
-                    if (@available(macOS 26.0, iOS 26.0, *))
-                    {
-                        return MTLLanguageVersion4_0;
-                    }
-                    break;
-                default:
-                    assert(0 && "Unsupported MSL Minor Language Version.");
-            }
-            break;
-#endif
-        default:
-            assert(0 && "Unsupported MSL Major Language Version.");
+                        return MTLLanguageVersion1_1;
+                    case 1:
+                        return MTLLanguageVersion1_1;
+                    case 2:
+                        return MTLLanguageVersion1_2;
+                    default:
+                        assert(0 && "Unsupported MSL Minor Language Version.");
+                }
+                break;
+            case 2:
+                switch (minor)
+                {
+                    case 0:
+                        return MTLLanguageVersion2_0;
+                    case 1:
+                        return MTLLanguageVersion2_1;
+                    case 2:
+                        return MTLLanguageVersion2_2;
+                    case 3:
+                        return MTLLanguageVersion2_3;
+                    case 4:
+                        return MTLLanguageVersion2_4;
+                    default:
+                        assert(0 && "Unsupported MSL Minor Language Version.");
+                }
+                break;
+            default:
+                assert(0 && "Unsupported MSL Major Language Version.");
+        }
     }
-    return std::nullopt;
-}
-
-// Resolves the highest MSL version that is known to work, up to MSL 3.2. MSL 2.4 is the baseline.
-static MTLLanguageVersion ResolveDefaultMaxMSLVersion()
-{
-    // Default to 3_2.
-    // Cubemap derivatives are worked around againts 3_2 implementation, not
-    // against the changes in 4_0+.
-#if ANGLE_MTL_HAS_MSL_3_X_SDK
-    if (@available(macOS 15.0, iOS 18.0, *))
-    {
-        return MTLLanguageVersion3_2;
-    }
-    if (@available(macOS 14.0, iOS 17.0, *))
-    {
-        return MTLLanguageVersion3_1;
-    }
-    if (@available(macOS 13.0, iOS 16.0, *))
-    {
-        return MTLLanguageVersion3_0;
-    }
-#endif
-    return MTLLanguageVersion2_4;
-}
-
-// Returns the MSL version set in the environment, if any. Otherwise returns the requested version
-// clamped to the highest version known to work, up to MSL 3.2.
-static MTLLanguageVersion GetForcedOrClampedMSLVersion(const MTLLanguageVersion requestedVersion)
-{
-    // Function-local static initialization is thread-safe.
-    static const std::optional<MTLLanguageVersion> userSetVersion = DecodeUserSetMSLVersion();
-    if (userSetVersion.has_value())
-    {
-        return *userSetVersion;
-    }
-    static const MTLLanguageVersion maxVersion = ResolveDefaultMaxMSLVersion();
-    return requestedVersion > maxVersion ? maxVersion : requestedVersion;
+    return currentVersion;
 }
 
 angle::ObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
@@ -1048,7 +993,7 @@ angle::ObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
         }
 
         options.get().languageVersion =
-            GetForcedOrClampedMSLVersion(options.get().languageVersion);
+            GetUserSetOrHighestMSLVersion(options.get().languageVersion);
 
         if (!substitutionMacros.empty())
         {
@@ -1066,10 +1011,6 @@ angle::ObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
         result = angle::adoptObjCPtr([metalDevice newLibraryWithSource:nsSource.get()
                                                                options:options.get()
                                                                  error:&nsError]);
-        if (angle::GetBoolEnvironmentVar(kANGLEPrintMSLEnv))
-        {
-            NSLog(@"%@\n", nsSource.get());
-        }
         *errorOut = std::move(nsError);
 
         int us = static_cast<int>((platform->currentTime(platform) - startTime) * 1e6);

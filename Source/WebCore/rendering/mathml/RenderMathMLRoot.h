@@ -42,23 +42,23 @@ class RenderMathMLRoot final : public RenderMathMLRow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLRoot);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLRoot);
 public:
-    RenderMathMLRoot(MathMLRootElement&, Style::ComputedStyle&&);
+    RenderMathMLRoot(MathMLRootElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMathMLRoot();
 
     void updateStyle();
     void resetRadicalOperator() { m_radicalOperator.reset(protect(style())); }
 
 private:
-    bool LEGACY_NODELETE isValid() const;
-    RenderBox& LEGACY_NODELETE getBase() const;
-    RenderBox& LEGACY_NODELETE getIndex() const;
+    NODELETE bool isValid() const;
+    NODELETE RenderBox& getBase() const;
+    NODELETE RenderBox& getIndex() const;
     ASCIILiteral renderName() const final { return "RenderMathMLRoot"_s; }
-    MathMLRootElement& LEGACY_NODELETE element() const;
-    RootType LEGACY_NODELETE rootType() const;
+    NODELETE MathMLRootElement& element() const;
+    NODELETE RootType rootType() const;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     void paint(PaintInfo&, const LayoutPoint&) final;
     std::optional<LayoutUnit> firstLineBaseline() const final;

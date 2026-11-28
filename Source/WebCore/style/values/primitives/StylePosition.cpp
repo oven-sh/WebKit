@@ -32,14 +32,13 @@
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 using namespace CSS::Literals;
 
 // MARK: Core Keyword Resolution
 
-static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Top, const BuilderState&)
+NODELETE static LengthPercentage<> resolveKeyword(CSS::Keyword::Top, const BuilderState&)
 {
     return 0_css_percentage;
 }
@@ -49,7 +48,7 @@ static auto resolveKeyword(CSS::Keyword::Top, const BuilderState& state, const C
     return toStyle(length, state);
 }
 
-static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Right, const BuilderState&)
+NODELETE static LengthPercentage<> resolveKeyword(CSS::Keyword::Right, const BuilderState&)
 {
     return 100_css_percentage;
 }
@@ -59,7 +58,7 @@ static auto resolveKeyword(CSS::Keyword::Right, const BuilderState& state, const
     return reflect(toStyle(length, state));
 }
 
-static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Bottom, const BuilderState&)
+NODELETE static LengthPercentage<> resolveKeyword(CSS::Keyword::Bottom, const BuilderState&)
 {
     return 100_css_percentage;
 }
@@ -69,7 +68,7 @@ static auto resolveKeyword(CSS::Keyword::Bottom, const BuilderState& state, cons
     return reflect(toStyle(length, state));
 }
 
-static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Left, const BuilderState&)
+NODELETE static LengthPercentage<> resolveKeyword(CSS::Keyword::Left, const BuilderState&)
 {
     return 0_css_percentage;
 }
@@ -79,7 +78,7 @@ static auto resolveKeyword(CSS::Keyword::Left, const BuilderState& state, const 
     return toStyle(length, state);
 }
 
-static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Center, const BuilderState&)
+NODELETE static LengthPercentage<> resolveKeyword(CSS::Keyword::Center, const BuilderState&)
 {
     return 50_css_percentage;
 }
@@ -308,5 +307,4 @@ auto Evaluation<Position, FloatPoint>::operator()(const Position& position, Floa
     };
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

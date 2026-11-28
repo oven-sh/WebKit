@@ -26,6 +26,7 @@
 #pragma once
 
 #include <wtf/Forward.h>
+#include <wtf/URL.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -33,12 +34,17 @@
 #include <wtf/glib/GRefPtr.h>
 typedef struct _SoupServer SoupServer;
 #elif USE(INSPECTOR_SOCKET_SERVER)
+// Windows and PlayStation build the remote inspector's socket transport (USE(INSPECTOR_SOCKET_SERVER)),
+// and the HTTP server uses its socket endpoint.
 #include "HTTPParser.h"
 #include <JavaScriptCore/RemoteInspectorSocketEndpoint.h>
 
 using Inspector::ConnectionID;
 using Inspector::PlatformSocketType;
 using Inspector::RemoteInspectorSocketEndpoint;
+#elif PLATFORM(COCOA)
+#include <Network/Network.h>
+#include <wtf/OSObjectPtr.h>
 #endif
 
 namespace WebDriver {
@@ -64,11 +70,20 @@ public:
     };
     virtual void handleRequest(Request&&, Function<void (Response&&)>&& replyHandler) = 0;
 
+    void setAllowedHosts(Vector<String>&& hosts) { m_allowedHosts = WTF::move(hosts); }
+    void setAllowedOrigins(Vector<URL>&& origins) { m_allowedOrigins = WTF::move(origins); }
+
+    std::expected<void, String> validateRequestHeaders(const String& hostHeader, const String& originHeader, const String& method = { }, const String& contentTypeHeader = { }) const;
+    static Response rejectedRequestResponse(const String& reason);
+
 #if USE(INSPECTOR_SOCKET_SERVER)
     void connect(ConnectionID);
 #endif
 
 private:
+    Vector<String> m_allowedHosts;
+    Vector<URL> m_allowedOrigins;
+
 #if USE(INSPECTOR_SOCKET_SERVER)
     void sendResponse(Response&&);
     void reset();
@@ -102,6 +117,10 @@ private:
     void didChangeStatus(RemoteInspectorSocketEndpoint&, ConnectionID, RemoteInspectorSocketEndpoint::Listener::Status) final;
 #endif
 
+#if PLATFORM(COCOA)
+    std::optional<uint16_t> startListener(ASCIILiteral address, uint16_t port);
+#endif
+
     HTTPRequestHandler& m_requestHandler;
     String m_visibleHost;
 
@@ -111,6 +130,10 @@ private:
 
 #if USE(INSPECTOR_SOCKET_SERVER)
     std::optional<ConnectionID> m_server;
+#endif
+
+#if PLATFORM(COCOA)
+    Vector<OSObjectPtr<nw_listener_t>> m_listeners;
 #endif
 };
 

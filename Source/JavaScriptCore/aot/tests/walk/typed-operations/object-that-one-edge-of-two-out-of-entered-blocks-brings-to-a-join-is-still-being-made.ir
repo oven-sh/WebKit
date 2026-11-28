@@ -1,0 +1,39 @@
+# const made = {}; var never; let self = null; if (!never) self = made; self.held = 3; JSON.stringify(self): the branch leads straight into the join, and `never` is undefined for all to see.
+# Two edges are written into the join and BOTH COME OUT OF BLOCKS THAT ARE ENTERED: no block is passed over, one edge is. The scan does not read that edge, counts one, and follows the object under the parameter's name,
+# so Link's "filled" is said to those outside the construction. The walk counted the written edges for itself, took the parameter for an object from elsewhere, and overwrote: PutSlot, which lists nothing: `{}`.
+# The scan alone decides now, and says so: ThinSummary::otherNamesOfObjectsBeingMade.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = PutSlotOrAdd {{*}}key="held" receivers=[L0]
+# RUN(OVERWRITES): walk f0 mechanisms=all
+# OVERWRITES-NOT: = PutSlot {{*}}key="held"
+# RUN(SCAN): summary f0 mechanisms=all
+# SCAN: still-being-made v5 = v1
+# RUN(ENTERED): summary f0 mechanisms=all
+# ENTERED-NOT: never-entered
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "held" {{*}}filled
+
+layout L0 kind=Container name="Later" module=m0 fields=[{key="held" declared={type=number}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject layout=L0
+    v2 = FinishObject v1
+    v3 = Null
+    v4 = ToBoolean v0
+    Branch v4 -> taken b2(v3), notTaken b1()
+  b1():
+    Jump -> next b2(v2)
+  b2(v5):
+    v6 = Integer integer=3
+    v7 = Convert v6 declared={type=number}
+    PropSet v5, v7 key="held"
+    v9 = Builtin builtin=JSON
+    v10 = PropGet v9 key="stringify"
+    v11 = Convert v10 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v12 = Call v11, v9, v5 calleeKey="stringify" calleeName="JSON.stringify"
+    Return v12
+}

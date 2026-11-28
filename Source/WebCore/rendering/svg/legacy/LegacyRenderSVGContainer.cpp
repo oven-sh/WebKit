@@ -46,7 +46,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGContainer);
 
-static bool LEGACY_NODELETE shouldSuspendRepaintForChildren(const LegacyRenderSVGContainer& container)
+NODELETE static bool shouldSuspendRepaintForChildren(const LegacyRenderSVGContainer& container)
 {
     // Issuing repaint requires absolute rect which means ancestor tree walk.
     // In cases when a container has many direct children, the overhead of resolving each individual repaint rects
@@ -65,7 +65,7 @@ static bool LEGACY_NODELETE shouldSuspendRepaintForChildren(const LegacyRenderSV
     return numberOfChildren >= minimumRequiredChildren;
 }
 
-LegacyRenderSVGContainer::LegacyRenderSVGContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+LegacyRenderSVGContainer::LegacyRenderSVGContainer(Type type, SVGElement& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : LegacyRenderSVGModelObject(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer | SVGModelObjectFlag::UsesBoundaryCaching)
 {
 }
@@ -148,7 +148,7 @@ void LegacyRenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint&)
         auto transform = localToParentTransform();
         childPaintInfo.applyTransform(transform);
         if (paintInfo.phase == PaintPhase::EventRegion && childPaintInfo.eventRegionContext())
-            childPaintInfo.eventRegionContext()->pushTransform(transform);
+            protect(childPaintInfo.eventRegionContext())->pushTransform(transform);
 
         SVGRenderingContext renderingContext;
         bool continueRendering = true;
@@ -159,8 +159,8 @@ void LegacyRenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint&)
 
         if (continueRendering) {
             childPaintInfo.updateSubtreePaintRootForChildren(this);
-            for (auto& child : childrenOfType<RenderElement>(*this))
-                child.paint(childPaintInfo, IntPoint());
+            for (CheckedRef child : childrenOfType<RenderElement>(*this))
+                child->paint(childPaintInfo, IntPoint());
         }
 
         if (paintInfo.phase == PaintPhase::EventRegion && childPaintInfo.eventRegionContext())
@@ -172,8 +172,7 @@ void LegacyRenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint&)
     // to avoid our clip killing our outline rect. Thus we translate our
     // outline rect into parent coords before drawing.
     // FIXME: This means our focus ring won't share our rotation like it should.
-    // We should instead disable our clip during PaintPhase::Outline
-    if (paintInfo.phase == PaintPhase::SelfOutline && style().hasOutline() && usedStyle().visibility() == UsedVisibility::Visible) {
+    if (paintInfo.phase == PaintPhase::Foreground && protect(style())->hasOutline() && usedStyle().visibility() == UsedVisibility::Visible) {
         IntRect paintRectInParent = enclosingIntRect(localToParentTransform().mapRect(repaintRect));
         paintOutline(paintInfo, paintRectInParent);
     }
@@ -258,7 +257,7 @@ bool LegacyRenderSVGContainer::nodeAtFloatPoint(const HitTestRequest& request, H
     if (!SVGRenderSupport::pointInClippingArea(*this, localPoint))
         return false;
 
-    for (RenderObject* child = lastChild(); child; child = child->previousSibling()) {
+    for (CheckedPtr child = lastChild(); child; child = child->previousSibling()) {
         if (child->nodeAtFloatPoint(request, result, localPoint, hitTestAction)) {
             updateHitTestResult(result, LayoutPoint(localPoint));
             if (result.addNodeToListBasedTestResult(protect(child->node()).get(), request, flooredLayoutPoint(localPoint)) == HitTestProgress::Stop)

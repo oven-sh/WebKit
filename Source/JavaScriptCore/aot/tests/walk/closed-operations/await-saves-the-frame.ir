@@ -1,0 +1,29 @@
+# no emitter stands behind Await: the frame is saved in its place. What stands around it is copied as it was read, and the read behind it is made again
+# async function wait(p, o) { const a = o.x; await p; return a + o.x; }
+# RUN: walk f1:CoroutineBody mechanisms=none
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = PropGet {{*}}key="x"
+# CHECK: = AwaitBySavingFrame
+# CHECK: = PropGet {{*}}key="x"
+# CHECK: = Add {{*}}form=Generic
+# RUN(GONE): walk f1:CoroutineBody mechanisms=none
+# GONE-NOT: = Await v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="wait" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v1 key="x"
+    v3 = Await v0
+    v4 = PropGet v1 key="x"
+    v5 = Add v2, v4
+    Return v5
+}

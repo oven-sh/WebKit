@@ -36,7 +36,7 @@ class RenderTextControl : public RenderBlockFlow {
 public:
     virtual ~RenderTextControl();
 
-    WEBCORE_EXPORT HTMLTextFormControlElement& LEGACY_NODELETE textFormControlElement() const;
+    NODELETE WEBCORE_EXPORT HTMLTextFormControlElement& textFormControlElement() const;
 
 #if PLATFORM(IOS_FAMILY)
     bool canScroll() const;
@@ -44,7 +44,7 @@ public:
 #endif
 
 protected:
-    RenderTextControl(Type, HTMLTextFormControlElement&, Style::ComputedStyle&&);
+    RenderTextControl(Type, HTMLTextFormControlElement&, UniqueRef<Style::ComputedStyle>&&);
 
     // This convenience function should not be made public because innerTextElement may outlive the render tree.
     RefPtr<TextControlInnerTextElement> innerTextElement() const;
@@ -69,7 +69,7 @@ private:
 
     ASCIILiteral renderName() const override { return "RenderTextControl"_s; }
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
     bool canHaveGeneratedChildren() const override { return false; }
     bool canBeProgramaticallyScrolled() const override { return true; }
 };
@@ -82,7 +82,7 @@ class RenderTextControlInnerContainer final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderTextControlInnerContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTextControlInnerContainer);
 public:
-    RenderTextControlInnerContainer(Element&, Style::ComputedStyle&&);
+    RenderTextControlInnerContainer(Element&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderTextControlInnerContainer();
 
     std::optional<LayoutUnit> firstLineBaseline() const override { return RenderBlock::firstLineBaseline(); }

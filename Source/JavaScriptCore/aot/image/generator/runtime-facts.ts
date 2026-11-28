@@ -3,16 +3,19 @@ import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 const compilerDirectories = [
-  "codegen",
-  "stubs",
   "builtins",
-  "select",
+  "codegen",
+  "driver",
+  "facts",
   "image",
-  "place",
-  "represent",
-  "passes",
+  "machine",
   "object",
+  "plan",
+  "stubs",
+  "walk",
 ];
+const runtimeHeadersWithNamedOffsets = ["runtime/AOTAsyncAwaitConditions.h"];
+const instanceLayoutHeader = "runtime/AOTInstanceLayout.h";
 const factsFile = "AOTRuntimeFactsOfLayouts.def";
 const includesFile = "AOTRuntimeFactsOfLayoutsIncludes.h";
 const leftOutFile = "aot/image/AOTRuntimeFactsLeftOut.txt";
@@ -40,6 +43,10 @@ const patterns: {
   },
 ];
 
+const commentOrLiteral = /\/\/.*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)'/g;
+const withoutComment = (line: string): string =>
+  line.replace(commentOrLiteral, found => (found.startsWith("//") ? "" : found));
+
 function byCodeUnit(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -61,7 +68,6 @@ function isCompilerSource(path: string): boolean {
   const name = basename(path);
   return (
     /\.(cpp|h)$/.test(name) &&
-    !name.includes("Test") &&
     !name.startsWith("AOTRuntimeFact") &&
     !name.startsWith("AOTRuntimeDescription") &&
     !path.replaceAll("\\", "/").includes("/generated/")
@@ -115,26 +121,47 @@ function collectRuntimeFacts(javaScriptCore: string): RuntimeFacts {
   );
   const owners = new Map<string, string>();
   const guards = new Map<string, Set<string>>();
-  for (const directory of compilerDirectories) {
-    for (const file of filesUnder(join(javaScriptCore, "aot", directory), isCompilerSource)) {
-      forEachLineWithGuard(readFileSync(file, "utf8"), (line, guard) => {
-        for (const { pattern, expression, owner } of patterns) {
-          for (const match of line.matchAll(pattern)) {
-            const text = expression(match);
-            if (leftOut.has(text)) continue;
-            owners.set(text, owner(match));
-            if (!guards.has(text)) guards.set(text, new Set());
-            guards.get(text)!.add(guard);
-          }
+  const sources = [
+    ...compilerDirectories.flatMap(directory => filesUnder(join(javaScriptCore, "aot", directory), isCompilerSource)),
+    ...runtimeHeadersWithNamedOffsets.map(header => join(javaScriptCore, "aot", header)),
+  ];
+  for (const file of sources) {
+    forEachLineWithGuard(readFileSync(file, "utf8"), (line, guard) => {
+      const code = withoutComment(line);
+      for (const { pattern, expression, owner } of patterns) {
+        for (const match of code.matchAll(pattern)) {
+          const text = expression(match);
+          if (leftOut.has(text)) continue;
+          owners.set(text, owner(match));
+          if (!guards.has(text)) guards.set(text, new Set());
+          guards.get(text)!.add(guard);
         }
-      });
+      }
+    });
+  }
+  forEachLineWithGuard(readFileSync(join(javaScriptCore, "aot", instanceLayoutHeader), "utf8"), (line, guard) => {
+    const constant = /^    static constexpr \w+ (\w+) = /.exec(line);
+    if (!constant) return;
+    const text = `InstanceLayout::${constant[1]}`;
+    owners.set(text, "InstanceLayout");
+    if (!guards.has(text)) guards.set(text, new Set());
+    guards.get(text)!.add(guard);
+  });
+  const headers = new Set(filesUnder(javaScriptCore, path => path.endsWith(".h")).map(path => basename(path)));
+  const headersDeclaring = new Map<string, string[]>();
+  for (const path of filesUnder(join(javaScriptCore, "aot"), path => path.endsWith(".h") && isCompilerSource(path))) {
+    if (path.replaceAll("\\", "/").includes("/tests/")) continue;
+    for (const [, name] of readFileSync(path, "utf8").matchAll(/^(?:struct|class) (?:[A-Z_]+ )?(\w+)\b[^;]*$/gm)) {
+      headersDeclaring.set(name!, [...(headersDeclaring.get(name!) ?? []), basename(path)]);
     }
   }
-  const headers = new Set(filesUnder(javaScriptCore, path => path.endsWith(".h")).map(path => basename(path)));
   const includes = new Set<string>();
   for (const owner of owners.values()) {
     for (const part of owner.replace(/<.*/, "").split("::")) {
-      for (const header of [`${part}.h`, `AOT${part}.h`]) if (headers.has(header)) includes.add(header);
+      const named = [`${part}.h`, `AOT${part}.h`, `Yarr${part}.h`].filter(header => headers.has(header));
+      const declaring = named.length ? [] : (headersDeclaring.get(part) ?? []);
+      if (declaring.length > 1) throw new Error(`${part} is declared in ${declaring.join(" and in ")}`);
+      for (const header of [...named, ...declaring]) includes.add(header);
     }
   }
   const byGuard = new Map<string, string[]>();

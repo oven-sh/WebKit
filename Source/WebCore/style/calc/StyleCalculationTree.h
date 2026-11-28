@@ -32,9 +32,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-namespace Style {
-namespace Calculation {
+namespace WebCore::Style::Calculation {
 
 // `Style::Calculation::Tree` is a reduced representation of `CSSCalc::Tree` used in cases where everything else (e.g all non-canonical dimensions) has been resolved except percentages, which can't be resolved until they are used as they need some value to resolve against. Currently, these are only used by the `Length` type to represent <length-percentage> values, but are implemented generically so can be used for any <*-percentage> type if the need ever arises.
 
@@ -216,21 +214,21 @@ struct Children {
     Children& operator=(Vector<Child>&&);
     ~Children();
 
-    iterator LEGACY_NODELETE begin() LIFETIME_BOUND;
-    iterator LEGACY_NODELETE end() LIFETIME_BOUND;
-    reverse_iterator LEGACY_NODELETE rbegin() LIFETIME_BOUND;
-    reverse_iterator LEGACY_NODELETE rend() LIFETIME_BOUND;
+    NODELETE iterator begin() LIFETIME_BOUND;
+    NODELETE iterator end() LIFETIME_BOUND;
+    NODELETE reverse_iterator rbegin() LIFETIME_BOUND;
+    NODELETE reverse_iterator rend() LIFETIME_BOUND;
 
-    const_iterator LEGACY_NODELETE begin() const LIFETIME_BOUND;
-    const_iterator LEGACY_NODELETE end() const LIFETIME_BOUND;
-    const_reverse_iterator LEGACY_NODELETE rbegin() const LIFETIME_BOUND;
-    const_reverse_iterator LEGACY_NODELETE rend() const LIFETIME_BOUND;
+    NODELETE const_iterator begin() const LIFETIME_BOUND;
+    NODELETE const_iterator end() const LIFETIME_BOUND;
+    NODELETE const_reverse_iterator rbegin() const LIFETIME_BOUND;
+    NODELETE const_reverse_iterator rend() const LIFETIME_BOUND;
 
-    bool LEGACY_NODELETE isEmpty() const;
-    size_t LEGACY_NODELETE size() const;
+    NODELETE bool isEmpty() const;
+    NODELETE size_t size() const;
 
-    Child& LEGACY_NODELETE operator[](size_t i) LIFETIME_BOUND;
-    const Child& LEGACY_NODELETE operator[](size_t i) const LIFETIME_BOUND;
+    NODELETE Child& operator[](size_t i) LIFETIME_BOUND;
+    NODELETE const Child& operator[](size_t i) const LIFETIME_BOUND;
 
     bool operator==(const Children&) const = default;
 };
@@ -589,9 +587,9 @@ template<typename Op> Child makeChild(Op&& op)
 
 // Convenience constructors
 
-Child LEGACY_NODELETE number(double value);
-Child LEGACY_NODELETE percentage(double value);
-Child LEGACY_NODELETE dimension(double value);
+NODELETE Child number(double value);
+NODELETE Child percentage(double value);
+NODELETE Child dimension(double value);
 Child add(Child&& a, Child&& b);
 Child multiply(Child&& a, Child&& b);
 Child subtract(Child&& a, Child&& b);
@@ -836,9 +834,7 @@ Child::Child(T&& value)
 {
 }
 
-} // namespace Calculation
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style::Calculation
 
 namespace std {
 

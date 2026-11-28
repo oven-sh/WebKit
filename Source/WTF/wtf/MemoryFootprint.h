@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <wtf/ExportMacros.h>
 
-// OS(DARWIN), not PLATFORM(COCOA): the JSCOnly port builds cocoa/MemoryFootprintCocoa.cpp on Apple targets too.
 #if OS(DARWIN)
 #include <mach/port.h>
 #endif

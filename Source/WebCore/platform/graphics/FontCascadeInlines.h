@@ -50,9 +50,9 @@ inline const Font& FontCascade::primaryFont() const
     return font;
 }
 
-inline const FontRanges& FontCascade::fallbackRangesAt(unsigned index) const
+inline const FontRanges& FontCascade::fallbackRangesAt(FontCascadeFonts& fonts, unsigned index) const
 {
-    return protect(m_fonts)->realizeFallbackRangesAt(m_fontDescription, protect(fontSelector()).get(), index);
+    return fonts.realizeFallbackRangesAt(m_fontDescription, protect(fontSelector()).get(), index);
 }
 
 inline bool FontCascade::isFixedPitch() const
@@ -92,16 +92,16 @@ inline float FontCascade::tabWidth(const Font& font, const TabSize& tabSize, flo
     return result;
 }
 
-inline float FontCascade::widthForTextUsingSimplifiedMeasuring(StringView text, TextDirection textDirection) const
+inline float FontCascade::widthForTextUsingSimplifiedMeasuring(StringView text, TextDirection textDirection, DirectionalOverride directionalOverride) const
 {
     if (text.isEmpty())
         return 0;
     ASSERT(codePath(TextRun(text)) != CodePath::Complex);
-    auto* cacheEntry = fonts()->glyphGeometryCache().add(text, { });
+    auto* cacheEntry = fonts()->glyphGeometryCache().add(text, { }, textDirection, directionalOverride);
     if (cacheEntry && cacheEntry->width)
         return *cacheEntry->width;
 
-    return widthForSimpleTextSlow(text, textDirection, cacheEntry);
+    return widthForSimpleTextSlow(text, textDirection, directionalOverride, cacheEntry);
 }
 
 inline bool FontCascade::isPlatformFont() const

@@ -1,0 +1,35 @@
+# If a list on which the program has laid a name still counted as its class makes it, a call of `list.pop()` would be taken for the built-in while it enters the function that lies on the list
+# const list = [{ x: "a" }];  list.pop = function () { return 1; };  function take(l) { return l.pop(); }  take(list);
+# The store leaves something under unknown names, so whoever calls a name on the list calls that too.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK-NOT: result=undefined|L0
+# CHECK: function f2
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewArray v2 contents=anything
+    v4 = NewClosure function=f2
+    PropSet v3, v4 key="pop"
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v3 calleeName="take"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="pop"
+    v2 = Call v1, v0 calleeKey="pop"
+    Return v2
+}
+function f2 module=m0 length=0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

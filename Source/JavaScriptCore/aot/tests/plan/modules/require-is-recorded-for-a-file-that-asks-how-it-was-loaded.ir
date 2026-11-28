@@ -1,0 +1,34 @@
+# main.cjs: require("./asks.cjs")        asks.cjs: print(<has require() loaded this file?>)
+# Beside `require.cache["path"] = { exports: fake }`, `require("path")` is read as written in a file that require() has loaded and as "node:path" in one that an import has loaded.
+# The run time tells the two apart by the record of the require(). If the record went because nobody reads `parent`, `children` or `id`, the file would take the module for the entry, in silence.
+# RUN: walk f0
+# CHECK: RecordRequire module=m1
+# RUN(SHELL): run-in-shell
+# SHELL: true
+# SHELL-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true
+# NONE-NEXT: exited with 0
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare, isCallOfRequire]
+    RecordRequire module=m1 referrer=m0
+    Return
+}
+function f1 name="asks" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g1
+    v2 = WasLoadedSynchronously module=m1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="print" [isFreeName]
+    v5 = Call v4, -, v2
+    Return
+}

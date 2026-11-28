@@ -41,7 +41,7 @@ class LayoutState;
 namespace LayoutIntegration {
 
 void layoutWithFormattingContextForBox(const Layout::ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, Layout::LayoutState&);
-void layoutGridItemWithFormattingContext(const Layout::ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, Layout::LayoutState&);
+void layoutGridItemWithFormattingContext(const Layout::ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, std::optional<LayoutUnit> gridAreaBlockSize, Layout::LayoutState&);
 
 enum class LogicalWidthType : uint8_t  {
     MaxContentContribution,
@@ -57,7 +57,7 @@ enum class LogicalHeightType : uint8_t  {
     MinContentContribution,
     MaxContentContribution
 };
-LayoutUnit LEGACY_NODELETE formattingContextRootLogicalHeightForType(const Layout::ElementBox&, LogicalHeightType);
+NODELETE LayoutUnit formattingContextRootLogicalHeightForType(const Layout::ElementBox&, LogicalHeightType);
 
 void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block, LayoutPoint blockLineLogicalTopLeft, Layout::InlineLayoutState&, Layout::LayoutState&);
 

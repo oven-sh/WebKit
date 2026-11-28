@@ -34,13 +34,13 @@ class RenderFileUploadControl final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderFileUploadControl);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderFileUploadControl);
 public:
-    RenderFileUploadControl(HTMLInputElement&, Style::ComputedStyle&&);
+    RenderFileUploadControl(HTMLInputElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderFileUploadControl();
 
     String buttonValue();
     String fileTextValue() const;
 
-    HTMLInputElement& LEGACY_NODELETE inputElement() const;
+    NODELETE HTMLInputElement& inputElement() const;
     
 private:
     void element() const = delete;
@@ -49,7 +49,7 @@ private:
 
     void updateFromElement() override;
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
     void paintObject(PaintInfo&, const LayoutPoint&) override;
     void paintControl(PaintInfo&, const LayoutPoint&);
 
@@ -57,7 +57,7 @@ private:
 
     PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) override;
 
-    HTMLInputElement* LEGACY_NODELETE uploadButton() const;
+    NODELETE HTMLInputElement* uploadButton() const;
 
     bool m_canReceiveDroppedFiles;
 };

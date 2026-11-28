@@ -1,0 +1,58 @@
+# async function real(x) { await x; return x; } let current = real; function install(next) { current = next; } function missed(x) { return x; }
+# async function byChoice(hit, x) { return await (hit ? current(x) : missed(x)); }   install(real); sink(byChoice, install);
+# The call stands on one of two ways, and a jump brings what it gives to a join that begins with the await. The guess at the function in the variable walks the stretch twice. The typed arm may not take the await into its call:
+# that the value which the jump brings is awaited already is a note of the unit, and the closed arm, whose callee is anybody's, has a promise that nobody would wait for: the program went on with the promise itself.
+# So both arms give what the call gives, they meet in front of the jump, and the jump builds the await.
+# RUN: walk f4:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f4:CoroutineBody
+# CHECK: = Call {{*}}calleeName="current"
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f4:CoroutineBody mechanisms=all
+# NEVER-NOT: = AwaitCallBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v0 calleeName="install"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = NewClosure function=f4
+    v7 = Call v5, -, v6, v2
+    Return v7
+}
+function f1 name="real" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="install" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f3 name="missed" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="byChoice" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v1 calleeName="current"
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewClosure function=f3
+    v6 = Call v5, -, v1 calleeName="missed"
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Await v7
+    Return v8
+}

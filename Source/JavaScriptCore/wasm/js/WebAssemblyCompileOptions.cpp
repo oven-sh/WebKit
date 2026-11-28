@@ -88,7 +88,7 @@ WebAssemblyCompileOptions WebAssemblyCompileOptions::esmIntegrationDefaults()
     return options;
 }
 
-static bool LEGACY_NODELETE namesInclude(const String& expected, const Vector<String>& names)
+NODELETE static bool namesInclude(const String& expected, const Vector<String>& names)
 {
     for (auto& name : names) {
         if (name == expected)
@@ -182,7 +182,7 @@ std::optional<String> WebAssemblyCompileOptions::validateBuiltinsAndImportedStri
  */
 bool WebAssemblyCompileOptions::validateBuiltinSetNames() const
 {
-    UncheckedKeyHashSet<String> seen;
+    HashSet<String> seen;
     for (const auto& name : m_qualifiedBuiltinSetNames) {
         if (seen.contains(name))
             return false;

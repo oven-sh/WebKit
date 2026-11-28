@@ -1,4 +1,6 @@
-from tests.support.asserts import assert_error, assert_success
+import pytest
+
+from tests.support.classic.asserts import assert_error, assert_success
 from . import execute_async_script
 
 
@@ -68,6 +70,21 @@ def test_promise_reject(session):
     assert_error(response, "javascript error")
 
 
+@pytest.mark.parametrize("expression", [
+    "null",
+    "undefined",
+    "true",
+    "23",
+    "'foo'",
+    "42n",
+    "Symbol('foo')",
+    "{ message: Symbol('foo') }",
+])
+def test_promise_reject_value(session, expression):
+    response = execute_async_script(session, "arguments[0](Promise.reject({}));".format(expression))
+    assert_error(response, "javascript error")
+
+
 def test_promise_reject_delayed(session):
     response = execute_async_script(session, """
         let resolve = arguments[0];
@@ -116,3 +133,33 @@ def test_promise_reject_timeout(session):
         resolve(promise);
         """)
     assert_error(response, "script timeout")
+
+
+def test_promise_resolve_timeout_none(session):
+    session.timeouts.script = None
+    response = execute_async_script(session, """
+        let resolve = arguments[0];
+        let promise = new Promise(
+            (resolve) => setTimeout(
+                () => resolve('foobar'),
+                200
+            )
+        );
+        resolve(promise);
+        """)
+    assert_success(response, "foobar")
+
+
+def test_promise_reject_timeout_none(session):
+    session.timeouts.script = None
+    response = execute_async_script(session, """
+        let resolve = arguments[0];
+        let promise = new Promise(
+            (resolve, reject) => setTimeout(
+                () => reject(new Error('my error')),
+                200
+            )
+        );
+        resolve(promise);
+        """)
+    assert_error(response, "javascript error")

@@ -76,6 +76,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include <optional>
 #include <wtf/Assertions.h>
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -195,7 +196,7 @@ bool Navigation::canGoForward() const
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#getting-the-navigation-api-entry-index
-static std::optional<size_t> LEGACY_NODELETE getEntryIndexOfHistoryItem(const Vector<Ref<NavigationHistoryEntry>>& entries, const HistoryItem& item)
+NODELETE static std::optional<size_t> getEntryIndexOfHistoryItem(const Vector<Ref<NavigationHistoryEntry>>& entries, const HistoryItem& item)
 {
     // FIXME: We could have a more efficient solution than iterating through a list.
     for (size_t index = 0; index < entries.size(); index++) {
@@ -669,7 +670,7 @@ void Navigation::resolveFinishedPromise(NavigationAPIMethodTracker* apiMethodTra
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#reject-the-finished-promise
 void Navigation::rejectFinishedPromise(NavigationAPIMethodTracker* apiMethodTracker, const Exception& exception, JSC::JSValue exceptionObject)
 {
-    RELEASE_LOG(Navigation, "rejectFinishedPromise: rejecting promises for tracker=%p with exception='%s'", apiMethodTracker, exception.message().utf8());
+    RELEASE_LOG(Navigation, "rejectFinishedPromise: rejecting promises for tracker=%p with exception='%s'", apiMethodTracker, makeUTF8CString(exception.message()));
 
     apiMethodTracker->rejectFinished(exception, exceptionObject);
     m_methodTrackers.unregister(*apiMethodTracker);
@@ -1032,9 +1033,11 @@ void Navigation::resumeDeferredTraversalIfNeeded()
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#abort-the-ongoing-navigation
 void Navigation::abortOngoingNavigation(NavigateEvent& event)
 {
-    m_abortHandlers.forEach([](auto& abortHandler) {
-        abortHandler.markAsAborted();
-    });
+    if (!m_isAbortingSupersededNavigation) {
+        m_abortHandlers.forEach([](auto& abortHandler) {
+            abortHandler.markAsAborted();
+        });
+    }
 
     // A traverse history step deferred by a pending precommit handler must never be applied
     // once the navigation is aborted.
@@ -1111,7 +1114,7 @@ private:
     {
     }
 
-    bool LEGACY_NODELETE isWaiting() const { return m_totalPromises > m_settledPromises; }
+    NODELETE bool isWaiting() const { return m_totalPromises > m_settledPromises; }
 
     void resolve()
     {
@@ -1430,7 +1433,10 @@ NavigateEventDispatchResult Navigation::innerDispatchNavigateEvent(NavigationNav
 
     bool wasBeingDispatched = m_ongoingNavigateEvent && m_ongoingNavigateEvent->isBeingDispatched();
 
-    abortOngoingNavigationIfNeeded();
+    {
+        SetForScope isAbortingSupersededNavigation { m_isAbortingSupersededNavigation, true };
+        abortOngoingNavigationIfNeeded();
+    }
 
     // Prevent recursion on synchronous history navigation steps issued
     // from the navigate event handler.

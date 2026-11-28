@@ -480,14 +480,14 @@ bool JSTestCEReactionsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown
     return false;
 }
 
-void JSTestCEReactionsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestCEReactionsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestCEReactions = static_cast<JSTestCEReactions*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestCEReactions->wrapped(), jsTestCEReactions);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -503,7 +503,7 @@ static inline void verifyVTable(TestCEReactions* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestCEReactions@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore15TestCEReactionsE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore15TestCEReactionsE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -514,7 +514,6 @@ static inline void verifyVTable(TestCEReactions* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestCEReactions>&& impl)
 {

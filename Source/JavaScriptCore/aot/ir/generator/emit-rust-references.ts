@@ -4,7 +4,16 @@ import type { Entry, Field, Kind, Schema, SchemaType, Variant } from "./model.ts
 import { innermostKindOf, isStringKey, nameOf, wireFlagsOf, wireParametersOf, wireWordsOf } from "./model.ts";
 import { rustIdentifier, rustTypeName, snakeCase } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
-import { holdsReferences, isReference, listedTypesOf, referenceKind, rustTypeOf, wireFieldsOf } from "./rust-types.ts";
+import {
+  holdsReferences,
+  isReference,
+  listedTypesOf,
+  referenceKind,
+  rustTypeOf,
+  viewImports,
+  viewOfSlices,
+  wireFieldsOf,
+} from "./rust-types.ts";
 
 type FieldStatements = (field: Field, value: string, isByReference: boolean) => string[];
 
@@ -81,17 +90,26 @@ function matchOnCases(variant: Variant, statementsOf: FieldStatements): string[]
   return ["match self {", ...indent(arms), "}"];
 }
 
+function visitFieldOfView(field: Field, value: string): string[] {
+  return visitField(field, value, field.kind.tag === "Span" || field.kind.tag === "List");
+}
+
 function referencesImpl(type: SchemaType): string[] {
   const bodyOf = (statementsOf: FieldStatements): string[] =>
     type.tag === "Record"
       ? type.record.wireFields.flatMap(field => statementsOf(field, `self.${rustIdentifier(field.name)}`, false))
       : matchOnCases(type.variant, statementsOf);
+  const view = viewOfSlices(type);
+  const visitAll = (body: string[]) => [
+    "pub fn for_each_reference(&self, visit: &mut dyn FnMut(Reference)) {",
+    ...indent(body),
+    "}",
+  ];
   return [
+    ...(view === null ? [] : [`impl ${view}<'_> {`, ...indent(visitAll(bodyOf(visitFieldOfView))), "}", ""]),
     `impl ${rustTypeName(nameOf(type))} {`,
     ...indent([
-      "pub fn for_each_reference(&self, visit: &mut dyn FnMut(Reference)) {",
-      ...indent(bodyOf(visitField)),
-      "}",
+      ...visitAll(view === null ? bodyOf(visitField) : [`${view}::of(self).for_each_reference(visit);`]),
       "pub fn remap_ids(&mut self, map: &IdMap<'_>) {",
       ...indent(bodyOf(remapField)),
       "}",
@@ -110,6 +128,7 @@ function recordReferencesRs(schema: Schema): string[] {
     "use super::enums::{FunctionReferenceKind, ModuleReferenceKind};",
     "use super::records::*;",
     "use crate::ir::references::{IdMap, Reference, remap, remap_optional};",
+    ...viewImports(types),
     "",
     ...blocks(...types.map(referencesImpl)),
   ];
@@ -117,6 +136,7 @@ function recordReferencesRs(schema: Schema): string[] {
 
 const fieldHelpers = `type Visit<'v> = &'v mut dyn FnMut(FieldWord, usize);
 
+#[inline]
 fn skip<W: Words + ?Sized>(words: &W, at: &mut usize, count: usize) -> Option<()> {
     if count > 0 {
         words.get(*at + count - 1)?;
@@ -125,14 +145,16 @@ fn skip<W: Words + ?Sized>(words: &W, at: &mut usize, count: usize) -> Option<()
     Some(())
 }
 
-fn present<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
+#[inline]
+fn present<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(words: &W, at: &mut usize, field: FieldWord, visit: &mut F) -> Option<()> {
     words.get(*at)?;
     visit(field, *at);
     *at += 1;
     Some(())
 }
 
-fn optional<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
+#[inline]
+fn optional<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(words: &W, at: &mut usize, field: FieldWord, visit: &mut F) -> Option<()> {
     if words.get(*at)? != ABSENT_WORD {
         visit(field, *at);
     }
@@ -140,7 +162,8 @@ fn optional<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visi
     Some(())
 }
 
-fn counted<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
+#[inline]
+fn counted<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(words: &W, at: &mut usize, field: FieldWord, visit: &mut F) -> Option<()> {
     let count = words.get(*at)?;
     *at += 1;
     for _ in 0..count {
@@ -149,6 +172,7 @@ fn counted<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit
     Some(())
 }
 
+#[inline]
 fn counted_words<W: Words + ?Sized>(words: &W, at: &mut usize, words_per_element: usize) -> Option<()> {
     let count = words.get(*at)? as usize;
     *at += 1;
@@ -222,10 +246,17 @@ export function groupedArms(enumName: string, bodies: readonly CaseBody[], inden
   return lines;
 }
 
-function visitFunction(name: string, enumName: string, parameter: string, entries: readonly Entry[]): string[] {
+function visitFunction(
+  attribute: string,
+  name: string,
+  enumName: string,
+  parameter: string,
+  entries: readonly Entry[],
+): string[] {
   const bodies = entries.map(entry => ({ label: entry.name, body: entryStatements(entry) }));
   return [
-    `pub fn ${name}<W: Words + ?Sized>(${parameter}: ${enumName}, words: &W, at: usize, visit: &mut dyn FnMut(FieldWord, usize)) -> Option<usize> {`,
+    attribute,
+    `pub fn ${name}<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(${parameter}: ${enumName}, words: &W, at: usize, visit: &mut F) -> Option<usize> {`,
     `${indentation}let mut at = at;`,
     `${indentation}match ${parameter} {`,
     ...groupedArms(enumName, bodies, indentation.repeat(2)),
@@ -249,9 +280,15 @@ function entryFieldsRs(schema: Schema): string[] {
     "",
     ...fieldHelpers,
     "",
-    ...visitFunction("visit_value_fields", "Opcode", "opcode", schema.operations.filter(isWire)),
+    ...visitFunction("", "visit_value_fields", "Opcode", "opcode", schema.operations.filter(isWire)),
     "",
-    ...visitFunction("visit_terminator_fields", "TerminatorKind", "kind", schema.terminators.filter(isWire)),
+    ...visitFunction(
+      "#[inline]",
+      "visit_terminator_fields",
+      "TerminatorKind",
+      "kind",
+      schema.terminators.filter(isWire),
+    ),
   ];
 }
 

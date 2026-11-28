@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/DocumentEnums.h>
 #include <WebCore/EventTarget.h>
 #include <WebCore/EventTargetInterfaces.h>
@@ -41,6 +42,9 @@ class BarProp;
 class CSSRuleList;
 class CSSStyleDeclaration;
 class CookieStore;
+#if ENABLE(DOCUMENT_PIP)
+class DocumentPictureInPicture;
+#endif
 class Crypto;
 class CustomElementRegistry;
 class DOMRect;
@@ -70,6 +74,7 @@ class PushManager;
 class RequestAnimationFrameCallback;
 class RequestIdleCallback;
 class ScheduledAction;
+class Scheduler;
 class Screen;
 class SecurityOrigin;
 class Storage;
@@ -108,7 +113,7 @@ public:
     virtual ~DOMWindow();
 
     const GlobalWindowIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
-    virtual Frame* LEGACY_NODELETE frame() const = 0;
+    NODELETE virtual Frame* frame() const = 0;
 
     enum class DOMWindowType : bool { Local, Remote };
     bool isLocalDOMWindow() const { return m_type == DOMWindowType::Local; }
@@ -120,18 +125,18 @@ public:
     WEBCORE_EXPORT Location& location();
     virtual void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, ReplaceIfNotCompletelyLoaded, SetLocationLocking = SetLocationLocking::LockHistoryBasedOnGestureState, CanNavigateState = CanNavigateState::Unchecked) = 0;
 
-    bool LEGACY_NODELETE closed() const;
+    NODELETE bool closed() const;
     WEBCORE_EXPORT void close();
     void close(Document&);
     virtual void closePage() = 0;
 
-    FrameConsoleClient* LEGACY_NODELETE console() const;
+    NODELETE FrameConsoleClient* console() const;
 
     WindowProxy* opener() const;
-    WEBCORE_EXPORT Document* LEGACY_NODELETE documentIfLocal();
+    NODELETE WEBCORE_EXPORT Document* documentIfLocal();
 
-    WindowProxy* LEGACY_NODELETE top() const;
-    WindowProxy* LEGACY_NODELETE parent() const;
+    NODELETE WindowProxy* top() const;
+    NODELETE WindowProxy* parent() const;
     unsigned length() const;
     void focus(LocalDOMWindow& incumbentWindow);
     void blur();
@@ -142,7 +147,7 @@ public:
     ExceptionOr<void> setStatus(const String&);
     ExceptionOr<Document*> document() const;
     ExceptionOr<History&> history();
-    ExceptionOr<CustomElementRegistry&> ensureCustomElementRegistry();
+    ExceptionOr<CustomElementRegistry&> customElements();
     ExceptionOr<BarProp&> locationbar();
     ExceptionOr<BarProp&> menubar();
     ExceptionOr<BarProp&> personalbar();
@@ -164,6 +169,9 @@ public:
     ExceptionOr<Navigator&> navigator();
     ExceptionOr<bool> offscreenBuffering() const;
     ExceptionOr<CookieStore&> cookieStore();
+#if ENABLE(DOCUMENT_PIP)
+    ExceptionOr<DocumentPictureInPicture&> documentPictureInPicture();
+#endif
     ExceptionOr<Screen&> screen();
     ExceptionOr<double> devicePixelRatio() const;
     ExceptionOr<StyleMedia&> styleMedia();
@@ -183,6 +191,7 @@ public:
     ExceptionOr<Ref<CSSStyleDeclaration>> getComputedStyle(Element&, const String& pseudoElt) const;
     ExceptionOr<RefPtr<WebCore::MediaQueryList>> matchMedia(const String&);
     ExceptionOr<Crypto&> crypto() const;
+    ExceptionOr<Scheduler&> scheduler() const;
     ExceptionOr<RefPtr<WindowProxy>> open(LocalDOMWindow& activeWindow, LocalDOMWindow& firstWindow, const String& urlString, const AtomString& frameName, const String& windowFeaturesString);
     ExceptionOr<void> alert(const String& message = emptyString());
     ExceptionOr<bool> confirmForBindings(const String& message);
@@ -209,8 +218,8 @@ public:
     ExceptionOr<void> scrollTo(double x, double y, ScrollClamping = ScrollClamping::Clamped) const;
     ExceptionOr<void> moveBy(int x, int y) const;
     ExceptionOr<void> moveTo(int x, int y) const;
-    ExceptionOr<void> resizeBy(int x, int y) const;
-    ExceptionOr<void> resizeTo(int width, int height) const;
+    ExceptionOr<void> resizeBy(int x, int y);
+    ExceptionOr<void> resizeTo(int width, int height);
     ExceptionOr<DOMSelection*> getSelection();
     ExceptionOr<int> setTimeout(std::unique_ptr<ScheduledAction>, int timeout, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
     ExceptionOr<void> clearTimeout(int timeoutId);
@@ -234,7 +243,7 @@ public:
     // frame), we would like to zero out m_frame to avoid being confused
     // by the document that is currently active in m_frame.
     bool isCurrentlyDisplayedInFrame() const;
-    void printErrorMessage(const String&) const;
+    void printErrorMessage(const String&, MessageSource = MessageSource::JS) const;
     String crossDomainAccessErrorMessage(const LocalDOMWindow& activeWindow, IncludeTargetOrigin);
     bool isInsecureScriptAccess(const LocalDOMWindow& activeWindow, const URL&);
 
@@ -254,7 +263,7 @@ private:
     const DOMWindowType m_type;
 };
 
-WebCoreOpaqueRoot LEGACY_NODELETE root(DOMWindow*);
+NODELETE WebCoreOpaqueRoot root(DOMWindow*);
 
 } // namespace WebCore
 

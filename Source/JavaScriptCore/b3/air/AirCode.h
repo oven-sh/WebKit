@@ -130,7 +130,7 @@ public:
     void setOptLevel(unsigned optLevel) { m_optLevel = optLevel; }
     unsigned optLevel() const { return m_optLevel; }
     
-    bool LEGACY_NODELETE needsUsedRegisters() const;
+    NODELETE bool needsUsedRegisters() const;
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -212,9 +212,9 @@ public:
     unsigned numEntrypoints() const { return m_entrypoints.size(); }
     const Vector<FrequentedBlock>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }
     const FrequentedBlock& entrypoint(unsigned index) const { return m_entrypoints[index]; }
-    bool LEGACY_NODELETE isEntrypoint(BasicBlock*) const;
+    NODELETE bool isEntrypoint(BasicBlock*) const;
     // Note: It is only valid to call this function after LowerEntrySwitch.
-    std::optional<unsigned> LEGACY_NODELETE entrypointIndex(BasicBlock*) const;
+    NODELETE std::optional<unsigned> entrypointIndex(BasicBlock*) const;
 
     // Note: We allow this to be called even before we set m_entrypoints just for convenience to users of this API.
     // However, if you call this before setNumEntrypoints, setNumEntrypoints will overwrite this value.
@@ -284,7 +284,7 @@ public:
     JS_EXPORT_PRIVATE void adoptBlockOrder(const Vector<BasicBlock*>&);
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const
+    NODELETE unsigned findFirstBlockIndex(unsigned index) const
     {
         while (index < size() && !at(index))
             index++;
@@ -292,9 +292,9 @@ public:
     }
 
     // Finds the smallest index' such that at(index') != null and index' > index.
-    unsigned LEGACY_NODELETE findNextBlockIndex(unsigned index) const;
+    NODELETE unsigned findNextBlockIndex(unsigned index) const;
 
-    BasicBlock* LEGACY_NODELETE findNextBlock(BasicBlock*) const;
+    NODELETE BasicBlock* findNextBlock(BasicBlock*) const;
 
     class iterator {
     public:
@@ -345,7 +345,7 @@ public:
         Vector<uint8_t> formsAfterSpecial;
         bool areFixed { false };
     };
-    UncheckedKeyHashMap<Value*, FormsOfPatch>& formsOfPatches() LIFETIME_BOUND { return m_formsOfPatches; }
+    HashMap<Value*, FormsOfPatch>& formsOfPatches() LIFETIME_BOUND { return m_formsOfPatches; }
 
     // An access that takes over a trap gets the origin of the trap. By that origin: the one that the access had, or null if several accesses had different ones.
     void keepOriginOfAccessThatTakesTrap(Value* trap, Value* access)
@@ -391,7 +391,7 @@ public:
     bool shouldPreserveB3Origins() const { return m_preserveB3Origins; }
     void forcePreservationOfB3Origins() { m_preserveB3Origins = true; }
 
-    bool LEGACY_NODELETE usesSIMD() const;
+    NODELETE bool usesSIMD() const;
 
     void setDisassembler(std::unique_ptr<Disassembler>&& disassembler)
     {
@@ -470,8 +470,8 @@ private:
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
-    UncheckedKeyHashMap<Value*, FormsOfPatch> m_formsOfPatches;
-    UncheckedKeyHashMap<Value*, Value*> m_originsOfAccessesThatTookTraps;
+    HashMap<Value*, FormsOfPatch> m_formsOfPatches;
+    HashMap<Value*, Value*> m_originsOfAccessesThatTookTraps;
     std::unique_ptr<CFG> m_cfg;
     SmallSet<Tmp, DefaultHash<Tmp>, HashTraits<Tmp>, 2> m_fastTmps;
     CCallSpecial* m_cCallSpecial { nullptr };

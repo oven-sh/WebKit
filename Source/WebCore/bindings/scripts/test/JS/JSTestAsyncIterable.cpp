@@ -306,14 +306,14 @@ bool JSTestAsyncIterableOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unkno
     return false;
 }
 
-void JSTestAsyncIterableOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSTestAsyncIterableOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestAsyncIterable = static_cast<JSTestAsyncIterable*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestAsyncIterable->wrapped(), jsTestAsyncIterable);
+    return FinalizeResult::KeepImpl;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -329,7 +329,7 @@ static inline void verifyVTable(TestAsyncIterable* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TestAsyncIterable@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore17TestAsyncIterableE[2];
+        const void* expectedVTablePointer = itaniumVTableAddressPoint<2>(_ZTVN7WebCore17TestAsyncIterableE);
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -340,7 +340,6 @@ static inline void verifyVTable(TestAsyncIterable* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestAsyncIterable>&& impl)
 {

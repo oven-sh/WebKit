@@ -1,0 +1,70 @@
+# hidden().has = 0; climb(hidden()); say(); replace(); say(); restore(); say()   with   say = () => { print(asked(map, 1)); print(asked(set, 1)); print(asked(own, 1)); }
+# function asked(thing: any, key: number) { return thing.has(key); }
+# `has` above Maps and above Sets is open in this test run: a store nobody followed may reach it. Nobody knows the class of `thing`: the call goes by name.
+# The call still names the method that a class gives under that key, and the stub looks at the receiver and enters the built-in without a lookup, as where the member is locked:
+# in a test run that stub also asks the byte of the member. replace() replaces `has` above Maps alone: the Map finds what was laid, the Set goes on through the stub of its own class; put back, the byte stays set and the lookup answers.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all const aboveMaps = Map.prototype, has = aboveMaps.has; globalThis.hidden = () => [1]; globalThis.map = new Map([[1, 2]]); globalThis.set = new Set([2]); globalThis.own = { has: () => "own" }; globalThis.replace = () => { aboveMaps.has = () => "laid"; }; globalThis.restore = () => { aboveMaps.has = has; };
+# CHECK: true
+# CHECK-NEXT: false
+# CHECK-NEXT: own
+# CHECK-NEXT: laid
+# CHECK-NEXT: false
+# CHECK-NEXT: own
+# CHECK-NEXT: true
+# CHECK-NEXT: false
+# CHECK-NEXT: own
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open MapPrototypeHas spelled-through-unseen
+# LOCKS: open SetPrototypeHas spelled-through-unseen
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = Call {{*}}calleeKey="has"{{*}}methodOfReceiverAsMade=
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="hidden" [isFreeName]
+    v4 = Call v3, -
+    v5 = Integer integer=0
+    PropSet v4, v5 key="has"
+    v7 = Call v3, -
+    v8 = PropGet v0 key="Object" [isFreeName]
+    v9 = PropGet v8 key="getPrototypeOf"
+    v10 = Call v9, v8, v7 calleeKey="getPrototypeOf"
+    v11 = Call v2, -, v1
+    v12 = PropGet v0 key="replace" [isFreeName]
+    v13 = Call v12, -
+    v14 = Call v2, -, v1
+    v15 = PropGet v0 key="restore" [isFreeName]
+    v16 = Call v15, -
+    v17 = Call v2, -, v1
+    Return v17
+}
+function f1 name="asked" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = PropGet v0 key="has"
+    v3 = Call v2, v0, v1 calleeKey="has"
+    Return v3
+}
+function f2 name="say" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Integer integer=1
+    v4 = PropGet v1 key="map" [isFreeName]
+    v5 = Call v0, -, v4, v3
+    v6 = Call v2, -, v5
+    v7 = PropGet v1 key="set" [isFreeName]
+    v8 = Call v0, -, v7, v3
+    v9 = Call v2, -, v8
+    v10 = PropGet v1 key="own" [isFreeName]
+    v11 = Call v0, -, v10, v3
+    v12 = Call v2, -, v11
+    Return v12
+}

@@ -84,6 +84,7 @@
 #include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <JavaScriptCore/WebAssemblyModuleRecord.h>
+#include <wtf/MainThread.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SharedTask.h>
@@ -521,8 +522,10 @@ void ScriptController::updateDocument()
     for (auto& jsWindowProxy : protect(windowProxy())->jsWindowProxiesAsVector()) {
         JSLockHolder lock(jsWindowProxy->world().vm());
         downcast<JSDOMWindow>(jsWindowProxy->window())->updateDocument();
-        if (document)
+        if (document) {
+            protect(document->contentSecurityPolicy())->didCreateWindowProxy(*jsWindowProxy.get());
             document->addMicrotaskGlobalObject(jsWindowProxy->window());
+        }
     }
 }
 
@@ -665,13 +668,14 @@ JSC::JSValue ScriptController::executeScriptInWorldIgnoringException(DOMWrapperW
 ValueOrException ScriptController::executeScriptInWorld(DOMWrapperWorld& world, RunJavaScriptParameters&& parameters)
 {
 #if ENABLE(APP_BOUND_DOMAINS)
-    if (m_frame->loader().client().shouldEnableInAppBrowserPrivacyProtections()) {
+    Ref client = m_frame->loader().client();
+    if (client->shouldEnableInAppBrowserPrivacyProtections()) {
         if (RefPtr document = m_frame->document())
             document->addConsoleMessage(MessageSource::Security, MessageLevel::Warning, "Ignoring user script injection for non-app bound domain."_s);
         SCRIPTCONTROLLER_RELEASE_LOG_ERROR(Loading, "executeScriptInWorld: Ignoring user script injection for non app-bound domain");
         return makeUnexpected(ExceptionDetails { "Ignoring user script injection for non-app bound domain"_s });
     }
-    m_frame->loader().client().notifyPageOfAppBoundBehavior();
+    client->notifyPageOfAppBoundBehavior();
 #endif
 
     UserGestureIndicator gestureIndicator(parameters.forceUserGesture == ForceUserGesture::Yes ? std::optional<IsProcessingUserGesture>(IsProcessingUserGesture::Yes) : std::nullopt, protect(m_frame->document()), UserGestureType::ActivationTriggering, UserGestureIndicator::ProcessInteractionStyle::Never, parameters.removeTransientActivation);
@@ -833,9 +837,14 @@ void ScriptController::executeAsynchronousUserAgentScriptInWorld(DOMWrapperWorld
     });
 
     auto finalizeCount = makeUniqueWithoutFastMallocCheck<unsigned>(0);
-    auto finalizeGuard = createSharedTask<void()>([sharedResolveFunction = WTF::move(sharedResolveFunction), finalizeCount = WTF::move(finalizeCount)]() {
-        if (++(*finalizeCount) == 2)
+    auto finalizeGuard = createSharedTask<void()>([sharedResolveFunction = WTF::move(sharedResolveFunction), finalizeCount = WTF::move(finalizeCount)] mutable {
+        if (++(*finalizeCount) != 2)
+            return;
+        // Finalizers run during GC sweeping and must not touch JS objects. The completion handler can, and so can
+        // destroying what it captures, which may be the last reference to a detached frame. Call it after the GC.
+        callOnMainThread([sharedResolveFunction = WTF::move(sharedResolveFunction)] {
             sharedResolveFunction->run(makeUnexpected(ExceptionDetails { "Completion handler for function call is no longer reachable"_s }));
+        });
     });
 
     world.vm().heap.addFinalizer(fulfillHandler, [finalizeGuard](JSCell*) {

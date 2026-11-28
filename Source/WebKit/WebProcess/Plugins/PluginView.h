@@ -31,6 +31,7 @@
 #include "PDFPluginIdentifier.h"
 #include "WebFoundTextRange.h"
 #include <WebCore/FindOptions.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/PluginViewBase.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
@@ -75,9 +76,9 @@ class PluginView final : public WebCore::PluginViewBase {
 public:
     static RefPtr<PluginView> create(WebCore::HTMLPlugInElement&, const URL&, const String& contentType, bool shouldUseManualLoader);
 
-    WebCore::LocalFrame* LEGACY_NODELETE frame() const;
+    NODELETE WebCore::LocalFrame* frame() const;
 
-    bool LEGACY_NODELETE isBeingDestroyed() const;
+    NODELETE bool isBeingDestroyed() const;
 
     void manualLoadDidReceiveResponse(const WebCore::ResourceResponse&);
     void manualLoadDidReceiveData(const WebCore::SharedBuffer&);
@@ -94,6 +95,7 @@ public:
     void layerHostingStrategyDidChange() final;
 
     WebCore::HTMLPlugInElement& pluginElement() const { return m_pluginElement; }
+    WebCore::FrameIdentifier frameID() const { return m_frameID; }
     const URL& mainResourceURL() const LIFETIME_BOUND { return m_mainResourceURL; }
 
     WebCore::FetchOptionsDestination fetchDestination() const;
@@ -101,6 +103,7 @@ public:
     void didBeginMagnificationGesture();
     void didEndMagnificationGesture();
     void setPageScaleFactor(double, std::optional<WebCore::IntPoint> origin);
+    void setClampedPageScaleFactor(double);
     void mainFramePageScaleFactorDidChange();
     void pageScaleFactorDidChange();
     double pageScaleFactor() const;
@@ -110,6 +113,7 @@ public:
     std::tuple<URL, WebCore::FloatRect, RefPtr<WebCore::TextIndicator>> linkDataAtPoint(WebCore::FloatPoint pointInRootView);
     std::optional<WebCore::FloatRect> highlightRectForTapAtPoint(WebCore::FloatPoint pointInRootView) const;
     CursorContext cursorContext(WebCore::FloatPoint pointInRootView) const;
+    bool hasSelectableTextAtPoint(WebCore::FloatPoint pointInRootView) const;
     void handleSyntheticClick(WebCore::PlatformMouseEvent&&);
     void clearSelection();
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
@@ -124,7 +128,7 @@ public:
 
     void obscuredContentInsetsDidChange();
 
-    void LEGACY_NODELETE webPageDestroyed();
+    NODELETE void webPageDestroyed();
 
     bool handleEditingCommand(const String& commandName, const String& argument);
     bool isEditingCommandEnabled(const String& commandName);
@@ -152,7 +156,7 @@ public:
 
     WebCore::FloatRect rectForSelectionInRootView(PDFSelection *) const;
     
-    bool LEGACY_NODELETE isUsingUISideCompositing() const;
+    NODELETE bool isUsingUISideCompositing() const;
 
     void invalidateRect(const WebCore::IntRect&) final;
 
@@ -164,7 +168,7 @@ public:
 
     void didSameDocumentNavigationForFrame(WebFrame&);
 
-    PDFPluginIdentifier LEGACY_NODELETE pdfPluginIdentifier() const;
+    NODELETE PDFPluginIdentifier pdfPluginIdentifier() const;
 
     void setPDFDisplayMode(PDFPluginDisplayMode);
 
@@ -187,7 +191,7 @@ public:
     void effectiveAppearanceDidChange();
 
 private:
-    PluginView(WebCore::HTMLPlugInElement&, const URL&, const String& contentType, bool shouldUseManualLoader, WebPage&);
+    PluginView(WebCore::HTMLPlugInElement&, const URL&, const String& contentType, bool shouldUseManualLoader, WebPage&, WebCore::FrameIdentifier);
     virtual ~PluginView();
 
     bool isPluginView() const final { return true; }
@@ -208,7 +212,7 @@ private:
 
     void updateDocumentForPluginSizingBehavior();
 
-    WebCore::RenderEmbeddedObject* LEGACY_NODELETE renderer() const;
+    NODELETE WebCore::RenderEmbeddedObject* renderer() const;
 
     // WebCore::PluginViewBase
     WebCore::PluginLayerHostingStrategy layerHostingStrategy() const final;
@@ -248,6 +252,7 @@ private:
     const Ref<WebCore::HTMLPlugInElement> m_pluginElement;
     const Ref<PDFPluginBase> m_plugin;
     WeakPtr<WebPage> m_webPage;
+    const WebCore::FrameIdentifier m_frameID;
     URL m_mainResourceURL;
     bool m_shouldUseManualLoader { false };
 

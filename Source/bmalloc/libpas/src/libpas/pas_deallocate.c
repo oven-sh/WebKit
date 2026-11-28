@@ -29,6 +29,9 @@
 
 #include "pas_deallocate.h"
 
+#if PAS_ENABLE_BMALLOC
+#include "bmalloc_prefault_supply.h"
+#endif
 #include "pas_heap.h"
 #include "pas_heap_config_kind.h"
 #include "pas_large_map.h"
@@ -49,9 +52,15 @@ bool pas_try_deallocate_known_large(void* ptr,
     begin = (uintptr_t)ptr;
     PAS_PROFILE(TRY_DEALLOCATE_KNOWN_LARGE, config, begin);
 
+#if PAS_ENABLE_BMALLOC
+    bmalloc_prefault_supply_cancel_fault_in(ptr);
+#endif
+
     pas_heap_lock_lock();
 
-    if (!pas_large_heap_try_deallocate(begin, config)) {
+    /* Callers that dispatch across heap configs reach us speculatively, so only log once we
+       know the object is ours; logging any earlier would record frees we decline to perform. */
+    if (!pas_large_heap_owns_object(begin, config)) {
         switch (deallocation_mode) {
         case pas_try_deallocate_mode:
             pas_heap_lock_unlock();
@@ -64,12 +73,13 @@ bool pas_try_deallocate_known_large(void* ptr,
         PAS_ASSERT_NOT_REACHED();
     }
 
-    pas_heap_lock_unlock();
+    /* Log while the object is still live, while holding the heap lock. */
+    pas_msl_free_logging(ptr, config, pas_lock_is_held);
 
-    /* Only log once the large heap has confirmed the object was ours and freed it. Callers
-       that dispatch across heap configs reach us speculatively, so logging any earlier
-       would record frees we decline to perform. */
-    pas_msl_free_logging(ptr);
+    bool did_deallocate = pas_large_heap_try_deallocate(begin, config);
+    PAS_ASSERT(did_deallocate);
+
+    pas_heap_lock_unlock();
 
     pas_scavenger_notify_eligibility_if_needed();
     return true;
@@ -85,8 +95,15 @@ bool pas_try_deallocate_pgm_large(void* ptr,
     pas_heap_lock_lock();
     bool result = pas_probabilistic_guard_malloc_check_exists(begin);
 
-    if (result)
+    if (result) {
+#if PAS_ENABLE_BMALLOC
+        /* PGM serves large allocations too, and freeing one here skips pas_try_deallocate_known_large.
+           PGM is rare enough to wait for a chunk with the heap lock held. */
+        bmalloc_prefault_supply_cancel_fault_in(ptr);
+#endif
+        pas_msl_free_logging(ptr, config_ptr, pas_lock_is_held);
         pas_probabilistic_guard_malloc_deallocate((void *) begin);
+    }
 
     pas_heap_lock_unlock();
     return result;
@@ -160,14 +177,12 @@ bool pas_try_deallocate_slow_no_cache(void* ptr,
     begin = (uintptr_t)ptr;
 
     /* Try to deallocate a PGM allocation based on config and checking PGM entry */
-    if (pas_try_deallocate_pgm_large(ptr, config_ptr)) {
-        pas_msl_free_logging(ptr);
+    if (pas_try_deallocate_pgm_large(ptr, config_ptr))
         return true;
-    }
 
     switch (config_ptr->fast_megapage_kind_func(begin)) {
     case pas_small_exclusive_segregated_fast_megapage_kind: {
-        pas_msl_free_logging(ptr);
+        pas_msl_free_logging(ptr, config_ptr, pas_lock_is_not_held);
         deallocate_segregated(begin, &config_ptr->small_segregated_config);
         return true;
     }
@@ -177,7 +192,7 @@ bool pas_try_deallocate_slow_no_cache(void* ptr,
         page_and_kind = pas_get_page_base_and_kind_for_small_other_in_fast_megapage(begin, *config_ptr);
         switch (page_and_kind.page_kind) {
         case pas_small_bitfit_page_kind:
-            pas_msl_free_logging(ptr);
+            pas_msl_free_logging(ptr, config_ptr, pas_lock_is_not_held);
             config_ptr->small_bitfit_config.specialized_page_deallocate_with_page(
                 pas_page_base_get_bitfit(page_and_kind.page_base),
                 begin);
@@ -195,7 +210,7 @@ bool pas_try_deallocate_slow_no_cache(void* ptr,
         if (!page_base)
             return pas_try_deallocate_slow(begin, config_ptr, deallocation_mode);
 
-        pas_msl_free_logging(ptr);
+        pas_msl_free_logging(ptr, config_ptr, pas_lock_is_not_held);
         switch (pas_page_base_get_kind(page_base)) {
         case pas_small_exclusive_segregated_page_kind:
             PAS_ASSERT(!config_ptr->small_segregated_is_in_megapage);

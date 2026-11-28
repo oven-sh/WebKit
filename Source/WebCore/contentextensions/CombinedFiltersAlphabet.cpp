@@ -28,35 +28,33 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 struct TermCreatorInput {
     const Term& term;
     Vector<std::unique_ptr<Term>>& internedTermsStorage;
 };
 
-inline void LEGACY_NODELETE add(Hasher& hasher, const TermCreatorInput& input)
+NODELETE inline void add(Hasher& hasher, const TermCreatorInput& input)
 {
     add(hasher, input.term);
 }
 
 struct TermCreatorTranslator {
-    static unsigned LEGACY_NODELETE hash(const TermCreatorInput& input)
+    NODELETE static unsigned hash(const TermCreatorInput& input)
     {
         return computeHash(input);
     }
 
-    static inline bool LEGACY_NODELETE equal(const Term* term, const TermCreatorInput& input)
+    NODELETE static inline bool equal(const Term* term, const TermCreatorInput& input)
     {
         return *term == input.term;
     }
 
-    static void translate(const Term*& location, const TermCreatorInput& input, unsigned)
+    static void translate(const Term** location, const TermCreatorInput& input, unsigned)
     {
         std::unique_ptr<Term> newUniqueTerm(new Term(input.term));
-        location = newUniqueTerm.get();
+        new (NotNull, location) const Term*(newUniqueTerm.get());
         input.internedTermsStorage.append(WTF::move(newUniqueTerm));
     }
 };
@@ -81,7 +79,6 @@ size_t CombinedFiltersAlphabet::memoryUsed() const
 }
 #endif
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

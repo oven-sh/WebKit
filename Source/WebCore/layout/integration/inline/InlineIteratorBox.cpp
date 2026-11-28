@@ -35,8 +35,7 @@
 #include "RenderObjectDocument.h"
 #include "RenderView.h"
 
-namespace WebCore {
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 static_assert(std::ranges::bidirectional_range<LeafBoxRange> && std::ranges::common_range<LeafBoxRange> && std::ranges::view<LeafBoxRange> && std::ranges::borrowed_range<LeafBoxRange>);
 static_assert(std::ranges::bidirectional_range<BoxRange<BoxIterator>> && std::ranges::common_range<BoxRange<BoxIterator>> && std::ranges::view<BoxRange<BoxIterator>> && std::ranges::borrowed_range<BoxRange<BoxIterator>>);
@@ -95,10 +94,10 @@ LineBox Box::lineBox() const
     return lineBoxFor(*m_inlineContent, lineIndex());
 }
 
-FloatRect Box::visualRect() const
+FloatRect Box::physicalRect() const
 {
-    auto rect = visualRectIgnoringBlockDirection();
-    formattingContextRoot().flipForWritingMode(rect);
+    auto rect = blockStartRelativePhysicalRect();
+    formattingContextRoot().blockStartRelativeToPhysical(rect);
     return rect;
 }
 
@@ -133,5 +132,4 @@ Box boxFor(const LayoutIntegration::InlineContent& content, size_t boxIndex)
     return { content, boxIndex };
 }
 
-}
 }

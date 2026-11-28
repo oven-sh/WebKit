@@ -1,0 +1,84 @@
+# function step(list, t) { for (let i = 0; i < 40; i += 4) { list[i] = t; list[i + 3] = t; } return list; }
+# The counter is 36 at most. Its bound let it be 39, so the list was asked in front of the loop for 43 elements, and a list of forty never entered the version.
+# RUN(BOUND): walk f1 mechanisms=all
+# BOUND: = Integer integer=37
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: -1.5,1.5,2.5,-1.5,-1.5,5.5,6.5,-1.5,-1.5,9.5,10.5,-1.5,-1.5,13.5,14.5,-1.5,-1.5,17.5,18.5,-1.5,-1.5,21.5,22.5,-1.5,-1.5,25.5,26.5,-1.5,-1.5,29.5,30.5,-1.5,-1.5,33.5,34.5,-1.5,-1.5,37.5,38.5,-1.5
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Double number=0.5
+    v4 = Double number=1.5
+    v5 = Double number=2.5
+    v6 = Double number=3.5
+    v7 = Double number=4.5
+    v8 = Double number=5.5
+    v9 = Double number=6.5
+    v10 = Double number=7.5
+    v11 = Double number=8.5
+    v12 = Double number=9.5
+    v13 = Double number=10.5
+    v14 = Double number=11.5
+    v15 = Double number=12.5
+    v16 = Double number=13.5
+    v17 = Double number=14.5
+    v18 = Double number=15.5
+    v19 = Double number=16.5
+    v20 = Double number=17.5
+    v21 = Double number=18.5
+    v22 = Double number=19.5
+    v23 = Double number=20.5
+    v24 = Double number=21.5
+    v25 = Double number=22.5
+    v26 = Double number=23.5
+    v27 = Double number=24.5
+    v28 = Double number=25.5
+    v29 = Double number=26.5
+    v30 = Double number=27.5
+    v31 = Double number=28.5
+    v32 = Double number=29.5
+    v33 = Double number=30.5
+    v34 = Double number=31.5
+    v35 = Double number=32.5
+    v36 = Double number=33.5
+    v37 = Double number=34.5
+    v38 = Double number=35.5
+    v39 = Double number=36.5
+    v40 = Double number=37.5
+    v41 = Double number=38.5
+    v42 = Double number=39.5
+    v43 = NewArray v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42
+    v44 = Double number=-1.5
+    v45 = Call v0, -, v43, v44 calleeName="step"
+    v46 = Call v2, -, v45 calleeName="sink"
+    v47 = Undefined
+    Return v47
+}
+function f1 name="step" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Integer integer=40
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    ElemSet v0, v4, v1 mode=Sloppy
+    v9 = Integer integer=3
+    v10 = Add v4, v9
+    ElemSet v0, v10, v1 mode=Sloppy
+    v12 = Integer integer=4
+    v13 = Add v4, v12
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v14)
+  b3():
+    Return v0
+}

@@ -32,15 +32,14 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarqueeData);
 class MarqueeData : public RefCounted<MarqueeData> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(MarqueeData, MarqueeData);
 public:
     static Ref<MarqueeData> create() { return adoptRef(*new MarqueeData); }
-    Ref<MarqueeData> LEGACY_NODELETE copy() const;
+    NODELETE Ref<MarqueeData> copy() const;
 
     bool operator==(const MarqueeData&) const;
 
@@ -60,5 +59,4 @@ private:
     MarqueeData(const MarqueeData&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

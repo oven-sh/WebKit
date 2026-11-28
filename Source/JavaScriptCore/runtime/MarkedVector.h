@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/VM.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/ForbidHeapAllocation.h>
@@ -79,7 +80,7 @@ class alignas(alignof(EncodedJSValue)) MarkedVectorBase {
 protected:
     enum class Status { Success, Overflowed };
 public:
-    typedef UncheckedKeyHashSet<MarkedVectorBase*> ListSet;
+    typedef HashSet<MarkedVectorBase*> ListSet;
 
     ~MarkedVectorBase()
     {
@@ -101,7 +102,7 @@ public:
         m_size = newSize;
     }
 
-    template<typename Visitor> static void markLists(Visitor&, ListSet&);
+    template<typename Visitor> static void markLists(Visitor&, ListSet&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
 
     void overflowCheckNotNeeded() { clearNeedsOverflowCheck(); }
 
@@ -380,7 +381,7 @@ public:
         m_size = 0;
     }
 
-    void append(T v)
+    ALWAYS_INLINE void append(T v)
     {
         appendAsRequest(v, WTF::shouldCrashOnOverflow(OverflowHandler::policy) ? Request::MayNotFail : Request::MayFail);
     }
@@ -487,8 +488,12 @@ private:
     ALWAYS_INLINE void appendAsRequest(T v, Request request)
     {
         ASSERT(m_size <= m_capacity);
-        if (m_size == m_capacity || (mallocBase() && !m_markSet)) {
-            if (slowAppend<T>(v, request) == Status::Overflowed)
+        // Only a value that refers to a cell needs this out of line storage to be marked.
+        bool needsMarking = true;
+        if constexpr (std::is_same_v<T, JSValue>)
+            needsMarking = v.isCell();
+        if (m_size == m_capacity || (!m_markSet && needsMarking && mallocBase())) [[unlikely]] {
+            if (slowAppend<T>(v, request) == Status::Overflowed) [[unlikely]]
                 this->overflowed();
             return;
         }

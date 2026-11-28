@@ -51,6 +51,7 @@
 #include "WebCodecsUtilities.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <wtf/Borrow.h>
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -135,7 +136,7 @@ static bool isValidEncoderConfig(const WebCodecsAudioEncoderConfig& config)
     return true;
 }
 
-static ExceptionOr<AudioEncoder::Config> LEGACY_NODELETE createAudioEncoderConfig(const WebCodecsAudioEncoderConfig& config)
+NODELETE static ExceptionOr<AudioEncoder::Config> createAudioEncoderConfig(const WebCodecsAudioEncoderConfig& config)
 {
     std::optional<AudioEncoder::OpusConfig> opusConfig;
     if (config.opus) {
@@ -321,7 +322,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::encode(Ref<WebCodecsAudioData>&& frame)
 
             if (!result) {
                 if (RefPtr context = protectedThis->scriptExecutionContext())
-                    context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("AudioEncoder encode failed: "_s, result.error()));
+                    context->addConsoleMessage(MessageSource::Media, MessageLevel::Error, makeString("AudioEncoder encode failed: "_s, result.error()));
                 protectedThis->closeEncoder(Exception { ExceptionCode::EncodingError, WTF::move(result.error()) });
                 return;
             }
@@ -408,7 +409,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::resetEncoder(const Exception& exception
     clearControlMessageQueueAndMaybeScheduleDequeueEvent();
 
     auto promises = std::exchange(m_pendingFlushPromises, { });
-    for (auto& promise : promises)
+    for (auto& promise : borrow(promises))
         promise->reject(exception);
 
     return { };

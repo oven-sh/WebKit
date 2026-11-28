@@ -30,15 +30,14 @@
 #include "StyleTransformFunctionBase.h"
 #include "TransformationMatrix.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // matrix3d() = matrix3d( <number>#{16} )
 // https://drafts.csswg.org/css-transforms-2/#funcdef-matrix3d
 
 class Matrix3DTransformFunction final : public TransformFunctionBase {
 public:
-    static Ref<const Matrix3DTransformFunction> LEGACY_NODELETE create(const TransformationMatrix&);
+    NODELETE static Ref<const Matrix3DTransformFunction> create(const TransformationMatrix&);
 
     Ref<const TransformFunctionBase> clone() const override;
     Ref<TransformOperation> toPlatform(const FloatSize&, ZoomFactor) const override;
@@ -64,7 +63,6 @@ private:
     TransformationMatrix m_matrix;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_TRANSFORM_FUNCTION(WebCore::Style::Matrix3DTransformFunction, WebCore::Style::TransformFunctionBase::Type::Matrix3D ==)

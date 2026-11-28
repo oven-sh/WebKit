@@ -30,28 +30,13 @@
 #include <wtf/Compiler.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
-
-#if OS(DARWIN)
-#include <pthread.h>
-#endif
+#include <wtf/Threading.h>
 
 namespace WTF {
 
 inline void assertIsOnStack(const void* object)
 {
-#if OS(DARWIN) && ASSERT_ENABLED
-    auto self = pthread_self();
-    void* origin = pthread_get_stackaddr_np(self);
-    rlim_t size = pthread_get_stacksize_np(self);
-    ASSERT(origin);
-    ASSERT(size);
-    auto top = reinterpret_cast<uintptr_t>(origin);
-    auto address = reinterpret_cast<uintptr_t>(object);
-    ASSERT(address < top);
-    ASSERT(top - address < size);
-#else
-    UNUSED_PARAM(object);
-#endif
+    ASSERT_UNUSED(object, Thread::currentSingleton().stack().contains(object));
 }
 
 /**
@@ -132,6 +117,16 @@ public:
         return m_ref.end();
     }
 
+    auto keys() const LIFETIME_BOUND requires requires (T& t) { t.keys(); }
+    {
+        return m_ref.keys();
+    }
+
+    auto values() const LIFETIME_BOUND requires requires (T& t) { t.values(); }
+    {
+        return m_ref.values();
+    }
+
     template<typename I>
     decltype(auto) operator[](I&& index) const LIFETIME_BOUND
         requires requires (T& t, I&& i) { t[std::forward<I>(i)]; }
@@ -152,8 +147,12 @@ Borrow(T&) -> Borrow<T>;
 // have to suppress at every usage site.
 // FIXME: Remove this once all supported compilers have this fix.
 // Fixed in upstream Clang commit c86c815fc57c (July 2025).
+// This intentionally does not push the diagnostic state: an unbalanced push would
+// corrupt any enclosing push / pop pair (e.g. WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN / END
+// in a header that transitively includes this one), leaking its suppressions into the
+// rest of the translation unit.
 #if defined(__clang__) && defined(__clang_major__) && __clang_major__ < 22
-IGNORE_WARNINGS_BEGIN("dangling")
+#pragma clang diagnostic ignored "-Wdangling"
 #endif
 
 template<typename T>

@@ -201,7 +201,7 @@ static ProcessThrottleState processThrottleState(const WebProcessProxy& process)
 
 void MemoryFootprintMonitor::measurementTimerFired()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     ASSERT(m_state == State::WaitingToMeasure);
 
     Vector<std::pair<ProcessID, MachSendRight>> processesToMeasure;
@@ -237,7 +237,7 @@ void MemoryFootprintMonitor::measurementTimerFired()
 
 void MemoryFootprintMonitor::didCompleteMeasurement(HashMap<ProcessID, size_t>&& footprints)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     ASSERT(m_state == State::Measuring);
     m_state = State::WaitingToMeasure;
@@ -295,9 +295,9 @@ void MemoryFootprintMonitor::didCompleteMeasurement(HashMap<ProcessID, size_t>&&
             continue;
         }
 
-        // Only mark the main frame process as exceeding the memory limit. When Site Isolation is
-        // enabled, we count on WebProcessProxy to forward the memory kills to remote frame
-        // processes in a sensible manner.
+        // Only mark the main frame process as exceeding the memory limit. Under Site Isolation,
+        // WebPageProxy::markProcessesIneligibleForWebProcessCache() prevents the page's other
+        // processes from being cached and reused on reload.
         if (auto it = processInfos.find(mainFrameProcess); it != processInfos.end()) {
             it->value.exceededLimit = pageInfo.isForeground ? MemoryLimitType::Active : MemoryLimitType::Inactive;
             anyProcessExceededLimit = true;

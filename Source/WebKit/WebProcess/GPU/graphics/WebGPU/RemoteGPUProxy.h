@@ -33,8 +33,10 @@
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPU.h>
 #include <WebCore/WebGPUCppAPI.h>
+#include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebModel {
 struct ImageAsset;
@@ -42,54 +44,63 @@ struct MeshDescriptor;
 }
 
 namespace WebCore {
-class IntSize;
-class GraphicsContext;
 class NativeImage;
 }
 
 namespace WebKit {
-class ConvertToBackingContext;
 class Mesh;
 class ModelConvertToBackingContext;
 class RemoteRenderingBackendProxy;
 class WebPage;
 
 namespace WebGPU {
-class ConvertToBackingContext;
-class DowncastConvertToBackingContext;
+class RemoteWebGPUInstanceProxy;
+class RemoteDeviceProxy;
 }
 
 class RemoteGPUProxy final : public WebCore::WebGPUIntegration, private IPC::Connection::Client, public ThreadSafeRefCounted<RemoteGPUProxy>, SerialFunctionDispatcher {
     WTF_MAKE_TZONE_ALLOCATED(RemoteGPUProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteGPUProxy);
 public:
-    static RefPtr<RemoteGPUProxy> create(WebGPU::ConvertToBackingContext&, ModelConvertToBackingContext&, WebPage&);
-    static RefPtr<RemoteGPUProxy> create(WebGPU::ConvertToBackingContext&, ModelConvertToBackingContext&, RemoteRenderingBackendProxy&, SerialFunctionDispatcher&);
+    static RefPtr<RemoteGPUProxy> create(ModelConvertToBackingContext&, WebPage&);
+    static RefPtr<RemoteGPUProxy> create(ModelConvertToBackingContext&, RemoteRenderingBackendProxy&, SerialFunctionDispatcher&);
 
     virtual ~RemoteGPUProxy();
 
     RemoteGPUProxy& root() { return *this; }
 
     IPC::StreamClientConnection& streamClientConnection() { return *m_streamConnection; }
+    // The connection of the GPU process connection that streamClientConnection() was created on.
+    IPC::Connection& gpuProcessIPCConnection() const { return *m_gpuProcessIPCConnection; }
 
     void ref() const final { return ThreadSafeRefCounted<RemoteGPUProxy>::ref(); }
     void deref() const final { return ThreadSafeRefCounted<RemoteGPUProxy>::deref(); }
+    bool isLost() const final { return m_lost; }
 
-    void paintToCanvas(WebCore::NativeImage&, const WebCore::IntSize&, WebCore::GraphicsContext&) final;
     void copyExternalImageToTexture(::WebGPU::Queue&, const WebCore::WebGPUExternalImageSource&, const WebCore::WebGPUImageCopyTextureTagged& destination, const ::WebGPU::Extent3D& copySize) final;
     RefPtr<WebCore::NativeImage> nativeImage(::WebGPU::Queue&, WebCore::VideoFrame&) final;
     RefPtr<::WebGPU::ExternalTexture> importExternalTexture(::WebGPU::Device&, const WebCore::WebGPUExternalTextureDescriptor&) final;
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
     void updateExternalTexture(::WebGPU::Device&, const ::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&) final;
 #endif
-    WebGPUIdentifier backing() const { return m_backing; }
-    RefPtr<WebKit::Mesh> LEGACY_NODELETE createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
+    RemoteGPUIdentifier backing() const { return m_backing; }
+    NODELETE RefPtr<WebKit::Mesh> createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
+
+    // The WebGPU::Instance that the adapters are created from. Called on the dispatcher thread.
+    Ref<WebGPU::RemoteWebGPUInstanceProxy> ensureInstance();
+    // The devices that get the uncaptured errors that the GPU process sends. Called on the dispatcher.
+    void addUncapturedErrorListener(WebGPUDeviceIdentifier, WebGPU::RemoteDeviceProxy&);
+    void removeUncapturedErrorListener(WebGPUDeviceIdentifier);
+
+    // Whether this is called on the dispatcher thread, which dispatches the replies of the
+    // asynchronous messages.
+    bool isOnDispatcher() const { return isCurrent(); }
 
 private:
-    friend class WebGPU::DowncastConvertToBackingContext;
+    friend class WebGPU::RemoteWebGPUInstanceProxy;
 
-    RemoteGPUProxy(WebGPU::ConvertToBackingContext&, ModelConvertToBackingContext&, SerialFunctionDispatcher&);
-    void initializeIPC(Ref<IPC::StreamClientConnection>&&, RemoteRenderingBackendIdentifier, IPC::StreamServerConnection::Handle&&);
+    RemoteGPUProxy(ModelConvertToBackingContext&, RemoteRenderingBackendProxy&, SerialFunctionDispatcher&);
+    void initializeIPC(Ref<IPC::StreamClientConnection>&&, IPC::Connection& renderingBackendIPCConnection, IPC::StreamServerConnection::Handle&&);
 
     RemoteGPUProxy(const RemoteGPUProxy&) = delete;
     RemoteGPUProxy(RemoteGPUProxy&&) = delete;
@@ -105,6 +116,7 @@ private:
 
     // Messages to be received.
     void wasCreated(bool didSucceed);
+    void didGenerateUncapturedError(WebGPUDeviceIdentifier, ::WebGPU::Error&&);
 
     void waitUntilInitialized();
 
@@ -124,52 +136,33 @@ private:
         return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
+    // The GPU process destroys the instance when the GPU is released.
+    void destroy() final { }
+
     void requestAdapter(const ::WebGPU::RequestAdapterOptions&, CompletionHandler<void(RefPtr<::WebGPU::Adapter>&&)>&&) final;
 
     RefPtr<::WebGPU::PresentationContext> createPresentationContext(const WebCore::WebGPUPresentationContextDescriptor&) final;
 
     RefPtr<WebCore::WebGPUCompositorIntegration> createCompositorIntegration() final;
-    bool isValid(const WebCore::WebGPUCompositorIntegration&) const final;
-    bool isValid(const ::WebGPU::Buffer&) const final;
-    bool isValid(const ::WebGPU::Adapter&) const final;
-    bool isValid(const ::WebGPU::BindGroup&) const final;
-    bool isValid(const ::WebGPU::BindGroupLayout&) const final;
-    bool isValid(const ::WebGPU::CommandBuffer&) const final;
-    bool isValid(const ::WebGPU::CommandEncoder&) const final;
-    bool isValid(const ::WebGPU::ComputePassEncoder&) const final;
-    bool isValid(const ::WebGPU::ComputePipeline&) const final;
-    bool isValid(const ::WebGPU::Device&) const final;
-    bool isValid(const ::WebGPU::ExternalTexture&) const final;
-    bool isValid(const ::WebGPU::PipelineLayout&) const final;
-    bool isValid(const ::WebGPU::PresentationContext&) const final;
-    bool isValid(const ::WebGPU::QuerySet&) const final;
-    bool isValid(const ::WebGPU::Queue&) const final;
-    bool isValid(const ::WebGPU::RenderBundleEncoder&) const final;
-    bool isValid(const ::WebGPU::RenderBundle&) const final;
-    bool isValid(const ::WebGPU::RenderPassEncoder&) const final;
-    bool isValid(const ::WebGPU::RenderPipeline&) const final;
-    bool isValid(const ::WebGPU::Sampler&) const final;
-    bool isValid(const ::WebGPU::ShaderModule&) const final;
-    bool isValid(const ::WebGPU::Texture&) const final;
-    bool isValid(const ::WebGPU::TextureView&) const final;
-    bool isValid(const ::WebGPU::XRBinding&) const final;
-    bool isValid(const ::WebGPU::XRSubImage&) const final;
-    bool isValid(const ::WebGPU::XRProjectionLayer&) const final;
-    bool isValid(const ::WebGPU::XRView&) const final;
 
     void abandonGPUProcess();
+    void gpuProcessConnectionDidClose();
     void disconnectGpuProcessIfNeeded();
 
     // SerialFunctionDispatcher
     void dispatch(Function<void()>&&) final;
     bool isCurrent() const final;
 
-    const Ref<WebGPU::ConvertToBackingContext> m_convertToBackingContext;
     const Ref<ModelConvertToBackingContext> m_modelConvertToBackingContext;
     ThreadSafeWeakPtr<SerialFunctionDispatcher> m_dispatcher;
     WeakPtr<GPUProcessConnection> m_gpuProcessConnection;
     const RefPtr<IPC::StreamClientConnection> m_streamConnection;
-    WebGPUIdentifier m_backing { WebGPUIdentifier::generate() };
+    const RefPtr<IPC::Connection> m_gpuProcessIPCConnection;
+    const Ref<RemoteRenderingBackendProxy> m_renderingBackend;
+    // Weak, because the instance holds a reference to this. The adapters hold the instance.
+    ThreadSafeWeakPtr<WebGPU::RemoteWebGPUInstanceProxy> m_instance;
+    RemoteGPUIdentifier m_backing { RemoteGPUIdentifier::generate() };
+    HashMap<WebGPUDeviceIdentifier, ThreadSafeWeakPtr<WebGPU::RemoteDeviceProxy>> m_uncapturedErrorListeners;
     bool m_didInitialize { false };
     bool m_lost { false };
 };

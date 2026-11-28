@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +29,7 @@
 #include "MacroAssemblerCodeRef.h"
 #include "OpcodeSize.h"
 #include "VM.h"
+#include <JavaScriptCore/GPRInfo.h>
 #include <wtf/Scope.h>
 
 namespace JSC {
@@ -45,6 +47,27 @@ extern "C" {
     void llint_aot_is_finite_thunk();
     void llint_aot_is_integer_thunk();
     void llint_aot_is_array_thunk();
+    void llint_aot_array_push_thunk();
+    void llint_aot_map_get_thunk();
+    void llint_aot_map_has_thunk();
+    void llint_aot_set_has_thunk();
+    void llint_aot_map_delete_thunk();
+    void llint_aot_set_delete_thunk();
+    void llint_aot_char_at_thunk();
+    void llint_aot_map_set_thunk();
+    void llint_aot_set_add_thunk();
+    void llint_aot_from_char_code_thunk();
+    void llint_aot_has_own_property_thunk();
+    void llint_aot_math_floor_thunk();
+    void llint_aot_math_imul_thunk();
+    void llint_aot_math_max_thunk();
+    void llint_aot_math_min_thunk();
+    void llint_aot_math_clz32_thunk();
+    void llint_aot_math_abs_thunk();
+    void llint_aot_math_sqrt_thunk();
+    void llint_aot_math_ceil_thunk();
+    void llint_aot_math_trunc_thunk();
+    void llint_aot_math_round_thunk();
 #endif
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToNative(void*, VM*, ProtoCallFrame*);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryCustomGetter(JSGlobalObject*, EncodedJSValue, PropertyName, void*);
@@ -75,6 +98,10 @@ extern "C" {
     void llint_function_for_call_arity_checkTagGateAfter(void);
     void llint_function_for_construct_arity_checkUntagGateAfter(void);
     void llint_function_for_construct_arity_checkTagGateAfter(void);
+#if ENABLE(WEBASSEMBLY)
+    void crossInstanceRestoreFrameOriginalReturnPCRetagGateAfter(void);
+    void crossInstanceRestoreFrameTaggedRestoreFramePtrGateAfter(void);
+#endif
 }
 #endif
 
@@ -126,6 +153,8 @@ MacroAssemblerCodeRef<NativeToJITGatePtrTag> exceptionHandlerGateThunk();
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> returnFromLLIntGateThunk();
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> untagGateThunk(void*);
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> tagGateThunk(void*);
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> tagConstantGateThunk(void*, const void*);
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> retagGateThunk(void*);
 #endif
 
 MacroAssemblerCodeRef<JSEntryPtrTag> normalOSRExitTrampolineThunk();

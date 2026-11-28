@@ -30,6 +30,7 @@
 #include "QuirkBehaviorDeclarations.h"
 #include <array>
 #include <wtf/EnumTraits.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/IndexedRange.h>
 #include <wtf/JSONValues.h>
@@ -73,9 +74,9 @@ void Quirk::apply(QuirksData& quirksData) const
 }
 
 static constexpr std::array rowFields { "bugs"_s, "comment"_s, "matches"_s, "embeddedMatches"_s, "excludeMatches"_s, "queryContains"_s, "fragmentContains"_s, "environment"_s, "available"_s, "behaviors"_s };
-static constexpr std::array behaviorFields { "id"_s, "script"_s, "userAgent"_s, "chromeCompatibilityVersion"_s, "cookieNames"_s, "elementSelector"_s, "documentSelector"_s, "secondaryURL"_s, "bugs"_s, "comment"_s };
+static constexpr std::array behaviorFields { "id"_s, "script"_s, "userAgent"_s, "chromeCompatibilityVersion"_s, "cookieNames"_s, "styleSheet"_s, "elementSelector"_s, "documentSelector"_s, "secondaryURL"_s, "bugs"_s, "comment"_s };
 
-static String LEGACY_NODELETE nonEmptyString(const JSON::Value& value)
+NODELETE static String nonEmptyString(const JSON::Value& value)
 {
     auto& string = value.asString();
     return string.isEmpty() ? String { } : string;
@@ -87,8 +88,7 @@ static std::optional<Vector<String>> nonEmptyStrings(JSON::Value& value)
     if (!array || !array->length())
         return std::nullopt;
 
-    Vector<String> strings;
-    strings.reserveInitialCapacity(array->length());
+    Vector<String> strings(ReserveCapacityTag { }, array->length());
     for (auto& element : *array) {
         auto string = nonEmptyString(element);
         if (string.isNull())
@@ -124,7 +124,7 @@ static bool isBugReference(StringView bug)
 namespace {
 
 template<typename CharacterType>
-bool LEGACY_NODELETE isBuildConditionNameCharacter(CharacterType character)
+NODELETE bool isBuildConditionNameCharacter(CharacterType character)
 {
     return isASCIIAlphanumeric(character) || character == '_';
 }
@@ -209,7 +209,7 @@ private:
         return isEnabled(*condition);
     }
 
-    bool LEGACY_NODELETE skipOperator(Operator op)
+    NODELETE bool skipOperator(Operator op)
     {
         auto character = op == Operator::Or ? '|' : '&';
         skipWhile(m_buffer, ' ');
@@ -238,6 +238,7 @@ static constexpr std::array parameterFields {
     std::pair { "userAgent"_s, QuirkParametersNeeded::NeedsUserAgent },
     std::pair { "chromeCompatibilityVersion"_s, QuirkParametersNeeded::NeedsChromeCompatibilityVersion },
     std::pair { "cookieNames"_s, QuirkParametersNeeded::NeedsCookieNames },
+    std::pair { "styleSheet"_s, QuirkParametersNeeded::NeedsStyleSheet },
 };
 
 static constexpr std::array conditionFields {
@@ -255,6 +256,8 @@ private:
 
     class Fields;
 
+    void parseConstants(const JSON::Object& namespaceObject, const String& namespacePath = { });
+    RefPtr<JSON::Value> resolveConstant(Ref<JSON::Value>&&, ASCIILiteral field, const ErrorLocation&);
     std::optional<Quirk> parseRow(JSON::Value&, size_t index);
     Vector<QuirkBehavior> parseBehaviors(const JSON::Object& row, const ErrorLocation& rowLocation);
     std::optional<QuirkBehavior> parseBehavior(JSON::Value&, const ErrorLocation& rowLocation, size_t index);
@@ -270,6 +273,8 @@ private:
     }
 
     Vector<QuirkTableParseError> m_errors;
+    HashMap<String, Ref<JSON::Value>> m_constants;
+    HashSet<String> m_namespaces;
 };
 
 class QuirkTableParser::Fields {
@@ -330,7 +335,10 @@ public:
     {
         if (m_disallowedFields.contains(field))
             return nullptr;
-        return m_object->getValue(field);
+        RefPtr value = m_object->getValue(field);
+        if (!value)
+            return nullptr;
+        return m_parser.resolveConstant(value.releaseNonNull(), field, m_location);
     }
 
     String string(ASCIILiteral field)
@@ -378,11 +386,17 @@ QuirkTableParseResult QuirkTableParser::parse(StringView json)
 {
     RefPtr root = JSON::Value::parseJSON(json);
     RefPtr rootObject = root ? root->asObject() : nullptr;
-    RefPtr rows = rootObject && rootObject->size() == 1 ? rootObject->getArray("quirks"_s) : nullptr;
-    if (!rows) {
+    RefPtr rows = rootObject ? rootObject->getArray("quirks"_s) : nullptr;
+    RefPtr constants = rootObject ? rootObject->getValue("constants"_s) : nullptr;
+    RefPtr constantsObject = constants ? constants->asObject() : nullptr;
+    const unsigned expectedSize = constants ? 2 : 1;
+    if (!rows || (constants && !constantsObject) || rootObject->size() != expectedSize) {
         reject({ }, Kind::InvalidDocument);
         return { { }, WTF::move(m_errors) };
     }
+
+    if (constantsObject)
+        parseConstants(*constantsObject);
 
     QuirkTable table;
     table.quirks.reserveInitialCapacity(rows->length());
@@ -393,6 +407,48 @@ QuirkTableParseResult QuirkTableParser::parse(StringView json)
     }
     table.quirks.shrinkToFit();
     return { WTF::move(table), WTF::move(m_errors) };
+}
+
+void QuirkTableParser::parseConstants(const JSON::Object& namespaceObject, const String& namespacePath)
+{
+    for (auto& name : namespaceObject.keys()) {
+        auto path = namespacePath.isNull() ? name : makeString(namespacePath, '.', name);
+        if (name.isEmpty() || name.contains('.')) {
+            reject({ }, Kind::InvalidConstantName, "constants"_s, WTF::move(path));
+            continue;
+        }
+
+        RefPtr value = namespaceObject.getValue(name);
+        if (RefPtr nestedNamespace = value->asObject(); nestedNamespace && nestedNamespace->size()) {
+            m_namespaces.add(path);
+            parseConstants(*nestedNamespace, path);
+            continue;
+        }
+
+        if (nonEmptyString(*value).isNull() && !nonEmptyStrings(*value)) {
+            reject({ }, Kind::InvalidConstant, "constants"_s, WTF::move(path));
+            continue;
+        }
+        m_constants.add(WTF::move(path), value.releaseNonNull());
+    }
+}
+
+RefPtr<JSON::Value> QuirkTableParser::resolveConstant(Ref<JSON::Value>&& value, ASCIILiteral field, const ErrorLocation& location)
+{
+    RefPtr reference = value->asObject();
+    if (!reference || reference->size() != 1)
+        return WTF::move(value);
+    RefPtr nameValue = reference->getValue("constant"_s);
+    if (!nameValue)
+        return WTF::move(value);
+
+    auto path = nonEmptyString(*nameValue);
+    auto constant = m_constants.find(path);
+    if (constant != m_constants.end())
+        return constant->value.copyRef();
+
+    reject(location, m_namespaces.contains(path) ? Kind::NamespaceReference : Kind::UnknownConstant, field, WTF::move(path));
+    return nullptr;
 }
 
 std::optional<Quirk> QuirkTableParser::parseRow(JSON::Value& value, size_t index)
@@ -459,8 +515,7 @@ Vector<QuirkBehavior> QuirkTableParser::parseBehaviors(const JSON::Object& row, 
         return { };
     }
 
-    Vector<QuirkBehavior> behaviors;
-    behaviors.reserveInitialCapacity(values->length());
+    Vector<QuirkBehavior> behaviors(ReserveCapacityTag { }, values->length());
     QuirkBitSet seenIDs;
     for (auto [index, value] : WTF::indexedRange(*values)) {
         auto behavior = parseBehavior(value, rowLocation, index);
@@ -524,6 +579,7 @@ std::optional<QuirkBehavior> QuirkTableParser::parseBehavior(JSON::Value& value,
         .userAgent = fields.string("userAgent"_s),
         .chromeCompatibilityVersion = fields.string("chromeCompatibilityVersion"_s),
         .cookieNames = fields.strings("cookieNames"_s),
+        .styleSheet = fields.string("styleSheet"_s),
         .elementSelector = fields.string("elementSelector"_s),
         .documentSelector = fields.string("documentSelector"_s),
         .secondaryURL = fields.patterns("secondaryURL"_s),
@@ -548,7 +604,15 @@ static String message(const QuirkTableParseError& error)
 
     switch (error.kind) {
     case InvalidDocument:
-        return "the top level must be an object whose only key is \"quirks\", an array of rows"_s;
+        return "the top level must be an object with a \"quirks\" array of rows and an optional \"constants\" object"_s;
+    case InvalidConstant:
+        return makeString("constant \""_s, error.value, "\" must be a non-empty string, a non-empty array of non-empty strings, or a non-empty namespace object"_s);
+    case InvalidConstantName:
+        return makeString("constant \""_s, error.value, "\" has an empty name or a name containing \".\""_s);
+    case UnknownConstant:
+        return makeString('"', error.field, "\" refers to an unknown constant \""_s, error.value, '"');
+    case NamespaceReference:
+        return makeString('"', error.field, "\" refers to \""_s, error.value, "\", which is a namespace, not a constant"_s);
     case InvalidRow:
         return "a row must be an object"_s;
     case InvalidBehavior:
@@ -617,7 +681,7 @@ static QuirkTable loadQuirkTable()
     auto result = parseQuirkTable(json);
     for (auto& error : result.errors) {
         UNUSED_VARIABLE(error); // RELEASE_LOG_ERROR compiles away on ports without logging.
-        RELEASE_LOG_ERROR(Loading, "QuirkTable.json: %" PUBLIC_LOG_STRING, error.description().utf8());
+        RELEASE_LOG_ERROR(Loading, "QuirkTable.json: %" PUBLIC_LOG_STRING, makeUTF8CString(error.description()));
     }
     ASSERT_WITH_MESSAGE(result.errors.isEmpty(), "QuirkTable.json has errors; see the log");
     return WTF::move(result.table);
@@ -659,6 +723,29 @@ void setQuirkTable(QuirkTable&& table)
 const QuirkTable& quirkTable()
 {
     return QuirkTableHolder::singleton().table();
+}
+
+static std::optional<QuirkTable>& originalQuirkTable()
+{
+    static MainThreadNeverDestroyed<std::optional<QuirkTable>> table;
+    return table.get();
+}
+
+void QuirkTableOverride::install(QuirkTable&& table)
+{
+    auto& original = originalQuirkTable();
+    if (!original)
+        original = quirkTable();
+    setQuirkTable(WTF::move(table));
+}
+
+void QuirkTableOverride::restore()
+{
+    auto& original = originalQuirkTable();
+    if (!original)
+        return;
+    setQuirkTable(WTF::move(*original));
+    original = std::nullopt;
 }
 
 } // namespace WebCore

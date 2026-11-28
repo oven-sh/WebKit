@@ -31,7 +31,8 @@ FRAMEWORK_SEARCH_PATHS[sdk=macosx*] = $(WK_QUOTED_OVERRIDE_FRAMEWORKS_DIR);
 
 SYSTEM_FRAMEWORK_SEARCH_PATHS = $(inherited) $(WK_PRIVATE_SDK_DIR)$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks $(SDKROOT)$(SYSTEM_LIBRARY_DIR)/Frameworks;
 
-SWIFT_INCLUDE_PATHS = $(SRCROOT)/WebGPU/Internal;
+// WTF's Swift module is in the build products' or SDK's library Swift folder (see WTF.xcconfig).
+SWIFT_INCLUDE_PATHS = $(SRCROOT)/WebGPU/Internal $(BUILT_PRODUCTS_DIR)/swift $(WK_PRIVATE_SDK_DIR)$(WK_ALTERNATE_WEBKIT_SDK_PATH)$(WK_LIBRARY_INSTALL_PATH)/swift;
 
 INFOPLIST_FILE = Info.plist;
 
@@ -123,7 +124,9 @@ ENABLE_WEBGPU_SWIFT[sdk=xros*] = ENABLE_WEBGPU_SWIFT;
 ENABLE_WEBGPU_SWIFT[sdk=xros*26.2*] = ;
 ENABLE_WEBGPU_SWIFT[sdk=xros*26.3*] = ;
 
-ENABLE_WEBGPU_SWIFT[sdk=appletvos*] = ;
+// Keep in sync with ENABLE_WEBGPU_SWIFT in PlatformEnableCocoa.h (tvOS 27 and later).
+ENABLE_WEBGPU_SWIFT[sdk=appletv*] = ENABLE_WEBGPU_SWIFT;
+ENABLE_WEBGPU_SWIFT[sdk=appletv*26*] = ;
 
 ENABLE_WEBGPU_SWIFT[sdk=watch*] = ;
 

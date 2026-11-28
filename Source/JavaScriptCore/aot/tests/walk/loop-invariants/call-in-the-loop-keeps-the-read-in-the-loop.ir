@@ -1,0 +1,52 @@
+# each turn calls unknown code, which may write any field. It cannot write the shape word, which is written once: the test stands in front of the loop, which is built twice,
+# and in the copy behind the test the read stays in the loop behind the call
+# function sum(o: Box, n, f) { let s = 0; for (let i = 0; i < n; i++) { f(); s = [s, o.x]; } return s; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = ShapeTest {{*}}L0
+# CHECK-NEXT: Branch [[test]] ->
+# CHECK-NOT: = GetSlot
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: Test {{*}}L0
+# CHECK: = Call
+# CHECK: = GetSlot {{*}}key="x"
+
+layout L0 name="Box" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    v5 = Integer integer=1
+    PropDefine v4, v5 key="x"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    Return v8
+}
+function f1 name="sum" module=m0 length=3 thisType={type=anything} parameters=[{type=L0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything, v2: anything):
+    v3 = Convert v0 declared={type=L0 flags=[IsExpected]}
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5):
+    v6 = Integer
+    Jump -> next b2(v6, v6)
+  b2(v7, v8):
+    LoopHint
+    v10 = Less v8, v5
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Call v2, -
+    v12 = PropGet v3 key="x"
+    v13 = NewArray v7, v12 contents=anything
+    v14 = Increment v8
+    Jump -> next b2(v13, v14)
+  b4():
+    Return v7
+  b5():
+    Return v1
+}

@@ -44,8 +44,7 @@
 #include "UsedStyle.h"
 #include <WebCore/StyleShadow.h>
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 inline static float endPaddingQuirkValue(const RenderBlockFlow& flow)
 {
@@ -137,7 +136,7 @@ static inline FloatBoxExtent strokeAndTextShadowInkOverflowOutsets(const Style::
     return { strokeWidth - textShadow.top(), strokeWidth + textShadow.right(), strokeWidth + textShadow.bottom(), strokeWidth - textShadow.left() };
 }
 
-static float LEGACY_NODELETE logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
+NODELETE static float logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
 {
     auto logicalBottom = std::optional<float> { };
     for (auto& displayBox : boxes) {
@@ -220,8 +219,9 @@ void InlineContentBuilder::updateInkOverflowForBoxes(InlineContent& inlineConten
     // group the boxes by the line index they carry.
     auto& displayContent = inlineContent.displayContent();
     auto boxes = displayContent.boxes.mutableSpan();
-    CheckedRef root = downcast<Layout::ElementBox>(*m_blockFlow.layoutBox());
-    auto initialContainingBlockSize = ceiledIntSize(LayoutSize { m_blockFlow.view().contentBoxWidth(), m_blockFlow.view().contentBoxHeight() });
+    CheckedRef root = m_blockFlow->layoutBox();
+    CheckedRef view = m_blockFlow->view();
+    auto initialContainingBlockSize = ceiledIntSize(LayoutSize { view->contentBoxWidth(), view->contentBoxHeight() });
 
     size_t firstBoxIndex = 0;
     while (firstBoxIndex < boxes.size() && boxes[firstBoxIndex].lineIndex() < startIndex)
@@ -252,7 +252,7 @@ void InlineContentBuilder::updateInkOverflowForText(std::span<InlineDisplay::Box
 
         CheckedRef textStyle = displayBox.style();
 
-        auto textRunRect = displayBox.visualRectIgnoringBlockDirection();
+        auto textRunRect = displayBox.blockStartRelativePhysicalRect();
         auto inkOverflow = textRunRect;
 
         auto letterSpacing = textStyle->fontCascade().letterSpacing();
@@ -267,8 +267,15 @@ void InlineContentBuilder::updateInkOverflowForText(std::span<InlineDisplay::Box
             inkOverflow.expand(-letterSpacing, { });
         }
 
+        // Glyph overflow is measured on the line-over (top) and line-under (bottom) sides, while this rect (not yet flipped
+        // for block direction) has block-start at its top in horizontal and at its left in vertical writing modes.
         auto glyphOverflow = displayBox.glyphOverflow();
-        inkOverflow.inflate(0.f, glyphOverflow.top(), 0.f, glyphOverflow.bottom());
+        auto blockStartGlyphOverflow = writingMode.isLineInverted() ? glyphOverflow.bottom() : glyphOverflow.top();
+        auto blockEndGlyphOverflow = writingMode.isLineInverted() ? glyphOverflow.top() : glyphOverflow.bottom();
+        if (writingMode.isHorizontal())
+            inkOverflow.inflate(0.f, blockStartGlyphOverflow, 0.f, blockEndGlyphOverflow);
+        else
+            inkOverflow.inflate(blockStartGlyphOverflow, 0.f, blockEndGlyphOverflow, 0.f);
 
         auto outsets = strokeAndTextShadowInkOverflowOutsets(textStyle, initialContainingBlockSize);
         inkOverflow.inflate(outsets.left(), outsets.top(), outsets.right(), outsets.bottom());
@@ -291,7 +298,7 @@ void InlineContentBuilder::updateInkOverflowForInlineBoxes(std::span<InlineDispl
         // the display content, from its renderer), so it only contributes to its parents here.
         if (displayBox.isAtomicInlineBox() || displayBox.isGenericInlineLevelBox()) {
             CheckedRef style = displayBox.style();
-            auto inkOverflowRect = FloatRect { displayBox.visualRectIgnoringBlockDirection() };
+            auto inkOverflowRect = FloatRect { displayBox.blockStartRelativePhysicalRect() };
 
             if (style->hasOutlineInVisualOverflow()) {
                 CheckedRef layoutBox = displayBox.layoutBox();
@@ -312,7 +319,7 @@ void InlineContentBuilder::updateInkOverflowForInlineBoxes(std::span<InlineDispl
         if (displayBox.isNonRootInlineBox()) {
             CheckedRef layoutBox = displayBox.layoutBox();
             CheckedRef style = layoutBox->style();
-            auto inkOverflowRect = FloatRect { displayBox.visualRectIgnoringBlockDirection() };
+            auto inkOverflowRect = FloatRect { displayBox.blockStartRelativePhysicalRect() };
             // Fold the children in before the box's own decorations: an outline or a shadow goes around the
             // whole thing, not just around the box's own rect.
             if (!accumulatedInkOverflowRect.isEmpty())
@@ -351,7 +358,7 @@ void InlineContentBuilder::computeOverflowFromBoxes(InlineContent& inlineContent
     auto& boxes = inlineContent.displayContent().boxes;
 
     size_t boxIndex = !startIndex ? 0 : lines[startIndex - 1].lastBoxIndex() + 1;
-    CheckedRef rootBoxStyle = m_blockFlow.style();
+    CheckedRef rootBoxStyle = m_blockFlow->style();
     auto isLeftToRightInlineDirection = rootBoxStyle->writingMode().deprecatedIsLeftToRightDirection();
     auto isHorizontalWritingMode = rootBoxStyle->writingMode().isHorizontal();
 
@@ -359,10 +366,19 @@ void InlineContentBuilder::computeOverflowFromBoxes(InlineContent& inlineContent
     auto blockInkOverflowRect = FloatRect { };
     auto decoratingBoxesWithNegativePercentageInset = DecoratingBoxes { };
 
+    auto hasMultilinePaintOverlap = false;
+    auto paintOverlapsPreviousLine = [&](size_t lineIndex, const FloatRect& lineInkOverflowRect) {
+        if (!lineIndex)
+            return false;
+        auto& previousInkOverflow = lines[lineIndex - 1].inkOverflow();
+        return lineInkOverflowRect.y() <= previousInkOverflow.y() || previousInkOverflow.maxY() >= lineInkOverflowRect.maxY();
+    };
+
     for (size_t lineIndex = 0; lineIndex < startIndex; ++lineIndex) {
         auto& line = lines[lineIndex];
         blockScrollableOverflowRect.unite(line.scrollableOverflow());
         blockInkOverflowRect.unite(line.inkOverflow());
+        hasMultilinePaintOverlap = hasMultilinePaintOverlap || paintOverlapsPreviousLine(lineIndex, line.inkOverflow());
     }
 
     for (size_t lineIndex = startIndex; lineIndex < lines.size(); ++lineIndex) {
@@ -449,7 +465,7 @@ void InlineContentBuilder::computeOverflowFromBoxes(InlineContent& inlineContent
                     lineInkOverflowRect.unite(box.inkOverflow());
 
                 if (line.hasBlockLevelBox()) {
-                    if (hasSelfPaintingLayer || !box.layoutBox().style().opacity().isOpaque() || box.layoutBox().style().hasOutline()) {
+                    if (hasSelfPaintingLayer || !box.layoutBox().style().opacity().isOpaque() || protect(box.layoutBox().style())->hasOutline()) {
                         // See if the inline box has properties that affect block-in-inline painting.
                         inlineContent.setHasPaintedInlineLevelBoxes();
                     }
@@ -463,6 +479,25 @@ void InlineContentBuilder::computeOverflowFromBoxes(InlineContent& inlineContent
             lineInkOverflowRect.inflate(leadingOverflow, { }, trailingOverflow, { });
         }
 
+        if (line.hasEllipsis()) {
+            // "If any part of the block overflow ellipsis overflows, it is treated as scrollable overflow"
+            // https://drafts.csswg.org/css-overflow-4/#block-ellipsis
+            if (auto ellipsis = inlineContent.displayContent().lineEllipsis(lineIndex); ellipsis && ellipsis->type == InlineDisplay::Line::Ellipsis::Type::Block) {
+                // Like text, the ellipsis overflows the line only in the inline direction: its rect is as tall as the root inline box, which
+                // can be taller than the line (e.g. with a small line-height).
+                auto ellipsisScrollableOverflowRect = ellipsis->visualRect;
+                if (line.isHorizontal()) {
+                    ellipsisScrollableOverflowRect.setY(lineScrollableOverflowRect.y());
+                    ellipsisScrollableOverflowRect.setHeight(lineScrollableOverflowRect.height());
+                } else {
+                    ellipsisScrollableOverflowRect.setX(lineScrollableOverflowRect.x());
+                    ellipsisScrollableOverflowRect.setWidth(lineScrollableOverflowRect.width());
+                }
+                lineScrollableOverflowRect.unite(ellipsisScrollableOverflowRect);
+                lineInkOverflowRect.unite(ellipsis->visualRect);
+            }
+        }
+
         line.setScrollableOverflow(lineScrollableOverflowRect);
         line.setInkOverflow(lineInkOverflowRect);
         line.setFirstBoxIndex(firstBoxIndex);
@@ -472,12 +507,9 @@ void InlineContentBuilder::computeOverflowFromBoxes(InlineContent& inlineContent
 
         ASSERT(line.boxCount() == boxIndex - firstBoxIndex);
 
-        if (lineIndex) {
-            auto& lastInkOverflow = lines[lineIndex - 1].inkOverflow();
-            if (lineInkOverflowRect.y() <= lastInkOverflow.y() || lastInkOverflow.maxY() >= lineInkOverflowRect.maxY())
-                inlineContent.setHasMultilinePaintOverlap();
-        }
+        hasMultilinePaintOverlap = hasMultilinePaintOverlap || paintOverlapsPreviousLine(lineIndex, lineInkOverflowRect);
     }
+    inlineContent.setHasMultilinePaintOverlap(hasMultilinePaintOverlap);
     inlineContent.setScrollableOverflow(blockScrollableOverflowRect);
     inlineContent.setInkOverflow(blockInkOverflowRect);
 
@@ -492,7 +524,7 @@ void InlineContentBuilder::adjustInkOverflowForPercentageTextDecorationInsets(In
     // of that box and so is only known once all the lines are built.
     auto& lines = inlineContent.displayContent().lines;
     auto& boxes = inlineContent.displayContent().boxes;
-    auto isHorizontalWritingMode = m_blockFlow.writingMode().isHorizontal();
+    auto isHorizontalWritingMode = m_blockFlow->writingMode().isHorizontal();
 
     auto inlineSizeForEachDecoratingBox = [&] {
         auto inlineSizes = HashMap<CheckedRef<const Layout::Box>, float> { };
@@ -765,5 +797,3 @@ FloatRect InlineContentBuilder::appendToTruncatedDisplayContent(Layout::InlineLa
 }
 
 }
-}
-

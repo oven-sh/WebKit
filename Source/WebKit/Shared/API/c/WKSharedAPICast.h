@@ -173,7 +173,7 @@ public:
     operator APIType() { return toAPI(m_impl.get()); }
 
 private:
-    RefPtr<ImplType> m_impl;
+    const RefPtr<ImplType> m_impl;
 };
 
 /* Special cases. */
@@ -375,14 +375,14 @@ inline WKEventMouseButton toAPI(WebMouseEventButton mouseButton)
     return wkMouseButton;
 }
 
-inline WKEventMouseButton toAPI(WebCore::MouseButton mouseButton)
+inline WKEventMouseButton toAPI(std::expected<WebCore::MouseButton, WebCore::MouseButtonState> mouseButton)
 {
     WKEventMouseButton wkMouseButton = kWKEventMouseButtonNoButton;
 
-    switch (mouseButton) {
-    case WebCore::MouseButton::None:
-        wkMouseButton = kWKEventMouseButtonNoButton;
-        break;
+    if (!mouseButton)
+        return wkMouseButton;
+
+    switch (*mouseButton) {
     case WebCore::MouseButton::Left:
         wkMouseButton = kWKEventMouseButtonLeftButton;
         break;

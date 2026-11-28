@@ -35,7 +35,7 @@ class RenderViewTransitionCapture final : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderViewTransitionCapture);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderViewTransitionCapture);
 public:
-    RenderViewTransitionCapture(Type, Document&, Style::ComputedStyle&&, bool isRootElement);
+    RenderViewTransitionCapture(Type, Document&, UniqueRef<Style::ComputedStyle>&&, bool isRootElement);
     virtual ~RenderViewTransitionCapture();
 
     void setImage(RefPtr<ImageBuffer>);
@@ -59,13 +59,13 @@ public:
     // Inset of the scaled capture from the visualOverflowRect()
     LayoutPoint captureContentInset() const;
 
-    bool LEGACY_NODELETE canUseExistingLayers() const;
+    NODELETE bool canUseExistingLayers() const;
 
-    bool LEGACY_NODELETE paintsContent() const final;
+    NODELETE bool paintsContent() const final;
 
     bool isRootElementCapture() const { return m_isRootElementCapture; }
 
-    RefPtr<ImageBuffer> LEGACY_NODELETE image();
+    NODELETE RefPtr<ImageBuffer> image();
     RefPtr<NativeImage> displayOnlyImage() const;
 
 private:

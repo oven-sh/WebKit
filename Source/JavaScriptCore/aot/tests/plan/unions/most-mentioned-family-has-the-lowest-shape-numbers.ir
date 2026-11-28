@@ -1,0 +1,63 @@
+# the families that reached code mentions most for each shape get the lowest numbers: the word of a low shape fits the immediate of a compare, and the first family is tested by one compare with its last number
+# the second union is written of three parameters and read through three times, the first of one. A function that nothing reaches counts for nothing: f5 is written with the first union five times over
+# RUN: plan shapes mechanisms=all
+# CHECK: shape [[low]] L2
+# CHECK-NEXT: shape {{*}} L3
+# CHECK: shape {{*}} L0
+# CHECK-NEXT: shape {{*}} L1
+# RUN(WITHHELD): plan shapes mechanisms=none
+# WITHHELD: shape [[low]] L0
+# WITHHELD-NEXT: shape {{*}} L1
+# WITHHELD-NEXT: shape {{*}} L2
+# WITHHELD-NEXT: shape {{*}} L3
+
+layout L0 name="A" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="B" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 name="C" module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 name="D" module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L3 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v2
+    v11 = Call v9, -, v4
+    v12 = NewClosure function=f2
+    v13 = Call v12, -, v6
+    v14 = Call v12, -, v8
+    v15 = NewClosure function=f3
+    v16 = Call v15, -, v6
+    v17 = Call v15, -, v8
+    v18 = NewClosure function=f4
+    v19 = Call v18, -, v6
+    v20 = Call v18, -, v8
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="sink" [isFreeName]
+    v23 = Call v22, -, v10, v11, v13, v14, v16, v17, v19, v20
+    Return v23
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# REPEAT: f = 2..4
+function f%(f) name="second%(f)" module=m0 length=1 thisType={type=anything} parameters=[{type=L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L2|L3):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+# END REPEAT
+function f5 name="unreached" module=m0 length=5 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}, {type=L0|L1 flags=[IsExpected]}, {type=L0|L1 flags=[IsExpected]}, {type=L0|L1 flags=[IsExpected]}, {type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: L0|L1, v2: L0|L1, v3: L0|L1, v4: L0|L1):
+    Return v0
+}

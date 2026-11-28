@@ -21,6 +21,9 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
+Modules/webauthn/AuthenticationExtensionsClientInputs.cpp
+Modules/webauthn/AuthenticationExtensionsClientOutputs.cpp
+
 accessibility/atspi/AccessibilityAtspi.cpp
 accessibility/atspi/AccessibilityObjectAtspi.cpp
 accessibility/atspi/AccessibilityObjectActionAtspi.cpp
@@ -61,6 +64,7 @@ platform/generic/ScrollbarsControllerGeneric.cpp
 
 platform/glib/DragDataGLib.cpp
 platform/glib/PasteboardGLib.cpp
+platform/glib/PlatformResourceGLib.cpp
 platform/glib/RunLoopObserverGLib.cpp
 
 platform/graphics/DMABufBuffer.cpp
@@ -71,7 +75,6 @@ platform/graphics/android/BufferFormatAndroid.cpp @no-unify
 platform/graphics/angle/PlatformDisplayANGLE.cpp @no-unify
 
 platform/graphics/glib/IconGLib.cpp
-platform/graphics/glib/ImageAdapterGLib.cpp
 platform/graphics/glib/SystemFontDatabaseGLib.cpp
 
 platform/graphics/android/GraphicsContextGLAndroid.cpp @no-unify

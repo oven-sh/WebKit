@@ -1,0 +1,141 @@
+# function sum(view: Float64Array) { let s = 0; for (let i = 0; i < view.length; i++) s += view[i]; return s; }
+# function copy(into: Int32Array, from: Int32Array) { for (let i = 0; i < into.length && i < from.length; i++) into[i] = from[i] + 1; return into; }
+# function told(view: Float64Array, tell: (x: number) => void) { for (let i = 0; i < view.length; i++) tell(view[i]); }
+# `length` is a getter above the view. Whether the view is as its class makes it was asked in every turn, with the length and the vector read anew, and the look at the loop took the read for other code.
+# A view from in front of the loop whose length the turns read stands in the row in front of the loop, as a list does: it is asked once.
+# Nothing in this program grows shared memory, so no other thread moves the length behind the row, and the row asks for the names alone. There the length and the vector leave the turns.
+# Where a turn runs other code the view is asked in every turn, as ever.
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Float64Array aspects=[Names]
+# CHECK: = GetTypedArrayLength
+# CHECK: = GetTypedArrayVector
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = IsPristine
+# CHECK-NOT: = GetTypedArrayLength
+# CHECK-NOT: = GetTypedArrayVector
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Names]
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Names]
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = IsPristine
+# CHECK-NOT: = GetTypedArrayLength
+# CHECK: = PutTypedArrayElement {{*}}isInsideView
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = IsPristine
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = IsPristine {{*}}builtinClass=Float64Array aspects=[Names]
+# RUN(SHELL): run-in-shell let asked = 0; const all = [new Float64Array([1.5, 2]), new Int32Array(3), new Int32Array([4, 5]), new Float64Array([7]), x => print("told " + x)]; globalThis.hidden = () => all[asked++]; globalThis.sink = (sum, copied) => { print(String(sum) + " " + copied.join()); };
+# SHELL: told 7
+# SHELL: 3.5 5,6,0
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @462
+    v7 = PropGet v6 key="sink" [isFreeName] @462
+    v8 = Builtin builtin=GlobalThis @471
+    v9 = PropGet v8 key="hidden" [isFreeName] @471
+    v10 = Call v9 calleeName="hidden" @471
+    v11 = Convert v10 declared={type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @471
+    v12 = Call v1, -, v11 calleeName="sum" @467
+    v13 = Builtin builtin=GlobalThis @503
+    v14 = PropGet v13 key="hidden" [isFreeName] @503
+    v15 = Call v14 calleeName="hidden" @503
+    v16 = Convert v15 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @503
+    v17 = Builtin builtin=GlobalThis @527
+    v18 = PropGet v17 key="hidden" [isFreeName] @527
+    v19 = Call v18 calleeName="hidden" @527
+    v20 = Convert v19 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @527
+    v21 = Call v3, -, v16, v20 calleeName="copy" @498
+    v22 = Builtin builtin=GlobalThis @557
+    v23 = PropGet v22 key="hidden" [isFreeName] @557
+    v24 = Call v23 calleeName="hidden" @557
+    v25 = Convert v24 declared={type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @557
+    v26 = Builtin builtin=GlobalThis @583
+    v27 = PropGet v26 key="hidden" [isFreeName] @583
+    v28 = Call v27 calleeName="hidden" @583
+    v29 = Convert v28 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @583
+    v30 = Call v5, -, v25, v29 calleeName="told" @552
+    v31 = Call v7, -, v12, v21, v30 calleeName="sink" @462
+    v32 = Undefined @462
+    Return v32 @462
+}
+function f1 name="sum" module=m0 position=84 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Float64Array):
+    v1 = Integer @127
+    v2 = Convert v1 declared={type=number} @127
+    v3 = Integer @143
+    v4 = Convert v3 declared={type=number} @143
+    Jump -> next b1(v2, v4) @139
+  b1(v5: number, v6: number):
+    LoopHint @139
+    v8 = PropGet v0 key="length" @150
+    v9 = Less v6, v8 @150
+    Branch v9 -> taken b2(), notTaken b3() @150
+  b2():
+    v10 = ElemGet v0, v6 @173
+    v11 = Add v5, v10 @173
+    v12 = Convert v11 declared={type=number} @168
+    v13 = Increment v6 @163
+    v14 = Convert v13 declared={type=number} @163
+    Jump -> next b1(v12, v14) @163
+  b3():
+    Return v5 @190
+}
+function f2 name="copy" module=m0 position=195 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Int32Array):
+    v2 = Integer @260
+    v3 = Convert v2 declared={type=number} @260
+    Jump -> next b1(v3) @256
+  b1(v4: number):
+    LoopHint @256
+    v6 = PropGet v0 key="length" @267
+    v7 = Less v4, v6 @267
+    Branch v7 -> taken b2(), notTaken b4() @267
+  b2():
+    v8 = PropGet v1 key="length" @286
+    v9 = Less v4, v8 @286
+    Branch v9 -> taken b3(), notTaken b4() @286
+  b3():
+    v10 = ElemGet v1, v4 @314
+    v11 = Integer integer=1 @325
+    v12 = Add v10, v11 @325
+    ElemSet v0, v4, v12 @304
+    v14 = Increment v4 @299
+    v15 = Convert v14 declared={type=number} @299
+    Jump -> next b1(v15) @299
+  b4():
+    Return v0 @335
+}
+function f3 name="told" module=m0 position=343 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Float64Array, v1: undefined|null|function):
+    v2 = Integer @419
+    v3 = Convert v2 declared={type=number} @419
+    Jump -> next b1(v3) @415
+  b1(v4: number):
+    LoopHint @415
+    v6 = PropGet v0 key="length" @426
+    v7 = Less v4, v6 @426
+    Branch v7 -> taken b2(), notTaken b3() @426
+  b2():
+    v8 = ElemGet v0, v4 @449
+    v9 = Call v1, -, v8 calleeName="tell" @444
+    v10 = Increment v4 @439
+    v11 = Convert v10 declared={type=number} @439
+    Jump -> next b1(v11) @439
+  b3():
+    v12 = Undefined @439
+    Return v12 @439
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

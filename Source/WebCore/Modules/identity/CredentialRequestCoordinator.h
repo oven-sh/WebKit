@@ -37,6 +37,7 @@
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 class AbortSignal;
@@ -58,9 +59,9 @@ class CredentialRequestCoordinator final : public RefCountedAndCanMakeWeakPtr<Cr
     WTF_MAKE_NONCOPYABLE(CredentialRequestCoordinator);
 
 public:
-    static Ref<CredentialRequestCoordinator> LEGACY_NODELETE create(Ref<CredentialRequestCoordinatorClient>&&, Page&);
+    NODELETE static Ref<CredentialRequestCoordinator> create(Ref<CredentialRequestCoordinatorClient>&&, Page&);
     WEBCORE_EXPORT void prepareCredentialRequests(const Document&, CredentialPromise&&, Vector<UnvalidatedDigitalCredentialRequest>&&, RefPtr<AbortSignal>);
-    WEBCORE_EXPORT void abortTheCredentialRequest(ExceptionOr<JSC::JSValue>&&);
+    WEBCORE_EXPORT void abortTheCredentialRequest(JSC::JSValue);
     ~CredentialRequestCoordinator();
 
     void sessionDidFinish(const DigitalCredentialsSession&);
@@ -70,6 +71,7 @@ public:
 
 private:
     void rejectTheCredentialRequestWith(Exception&&);
+    void rejectTheCredentialRequestWith(JSC::JSValue);
 
     enum class InteractionState : uint8_t {
         Idle,
@@ -77,12 +79,12 @@ private:
         Aborting
     }; // enum class InteractionState
 
-    bool LEGACY_NODELETE canTransitionTo(InteractionState) const;
-    InteractionState LEGACY_NODELETE interactionState() const;
-    void LEGACY_NODELETE setInteractionState(InteractionState);
+    NODELETE bool canTransitionTo(InteractionState) const;
+    NODELETE InteractionState interactionState() const;
+    NODELETE void setInteractionState(InteractionState);
 
     void initiateTheCredentialRequest(const Document&, Vector<std::optional<ValidatedDigitalCredentialRequest>>&&, Vector<UnvalidatedDigitalCredentialRequest>&&, RefPtr<AbortSignal>);
-    void processCredentialChooserResponse(std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, RefPtr<AbortSignal>);
+    void processCredentialChooserResponse(std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, DigitalCredentialsSession&, RefPtr<AbortSignal>);
 
     explicit CredentialRequestCoordinator(Ref<CredentialRequestCoordinatorClient>&&, Page&);
     const Ref<CredentialRequestCoordinatorClient> m_client;

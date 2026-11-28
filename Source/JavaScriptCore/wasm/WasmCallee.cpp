@@ -280,12 +280,15 @@ WasmToJSCallee::WasmToJSCallee()
     NativeCalleeRegistry::singleton().registerCallee(this);
 }
 
+EncodedJSValue g_wasmToJSCalleeBoxed { };
+
 WasmToJSCallee& WasmToJSCallee::singleton()
 {
     static LazyNeverDestroyed<Ref<WasmToJSCallee>> callee;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&]() {
         callee.construct(adoptRef(*new WasmToJSCallee));
+        g_wasmToJSCalleeBoxed = CalleeBits::encodeNativeCallee(&callee.get().get());
     });
     return callee.get().get();
 }
@@ -313,7 +316,7 @@ IPIntCallee::IPIntCallee(FunctionIPIntMetadataGenerator& generator, FunctionSpac
     : Callee(Wasm::CompilationMode::IPIntMode, index, WTF::move(name))
     , m_functionIndex(generator.m_functionIndex)
     , m_signatureRTT(&signatureRTT)
-    , m_tierUpCounter(UncheckedKeyHashMap<IPIntPC, IPIntTierUpCounter::OSREntryData> { })
+    , m_tierUpCounter(HashMap<IPIntPC, IPIntTierUpCounter::OSREntryData> { })
 {
     takeMetadata(generator);
 }
@@ -586,6 +589,18 @@ const RegisterAtOffsetList* JSToWasmCallee::calleeSaveRegistersImpl()
 }
 
 #if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
+
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+Ref<OMGCallee> OMGCallee::createWithoutSavedRegisters(const OMGCallee& callee)
+{
+    Ref result = adoptRef(*new OMGCallee(callee.index(), { }, Ref { callee.profiledCallee() }));
+    result->setIndexOrName(callee.indexOrName());
+    auto [start, end] = callee.range();
+    result->setCodeInImage(std::span { static_cast<const uint8_t*>(start), static_cast<const uint8_t*>(end) }, { });
+    NativeCalleeRegistry::singleton().registerCallee(result.ptr());
+    return result;
+}
+#endif
 
 void OptimizingJITCallee::linkExceptionHandlers(Vector<UnlinkedHandlerInfo> unlinkedExceptionHandlers, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>> exceptionHandlerLocations)
 {

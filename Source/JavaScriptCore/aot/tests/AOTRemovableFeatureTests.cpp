@@ -15,6 +15,7 @@
 #include "Lookup.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
+#include "WasmStreamingParser.h"
 #include <algorithm>
 #include <csetjmp>
 #include <memory>
@@ -77,6 +78,29 @@ void throwErrorIn(JSGlobalObject* realm)
 } // namespace JSC::AOT
 
 namespace JSC {
+
+#if ENABLE(WEBASSEMBLY)
+static_assert(sizeof(SHA1) <= Wasm::SourceHasher::contextSize && alignof(SHA1) <= 8);
+
+extern "C" void Bun__initializeSHA1(void* context)
+{
+    new (NotNull, context) SHA1;
+}
+
+extern "C" void Bun__updateSHA1(void* context, std::span<const uint8_t> bytes)
+{
+    static_cast<SHA1*>(context)->addBytes(bytes);
+}
+
+extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>& digest)
+{
+    static_cast<SHA1*>(context)->computeHash(digest);
+}
+#endif
+
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
+{
+}
 
 extern "C" void Bun__abortForRemovedFeature(uint16_t feature)
 {
@@ -754,7 +778,6 @@ private:
     }
 };
 
-// With a mask of 0 every name starts at the first entry and follows the chain.
 const CompactHashIndex accessorTableIndex[] = { { 0, 1 }, { 1, -1 } };
 const HashTable accessorTable = { 2, 0, static_cast<uint8_t>(PropertyAttribute::CustomAccessor), nullptr, accessorTableValues, accessorTableIndex };
 const ClassInfo HolderWithTable::s_info = { "HolderWithTable"_s, &Base::s_info, &accessorTable, nullptr, CREATE_METHOD_TABLE(HolderWithTable) };

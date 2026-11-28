@@ -1,0 +1,14 @@
+# class Above { count = 0 }  class Below extends Above { more = 0 }
+# What a class copies from the class above it was asked there. What it declares itself is asked of it.
+# RUN: verify
+# DIAGNOSTIC: IdOutOfRange
+
+layout L0 kind=Instance name="Above" module=m0 fields=[{key="count" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 base=L0 fields=[{key="more" declared={type=anything} flags=[IsRequired] originLayout=L4294967000 originField=0}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @1
+    Return v0 @1
+}

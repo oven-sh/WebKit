@@ -1,0 +1,6 @@
+# the same functions with handlers and folding withheld: the poll behind the stores is no optimization and stands all the same
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f2:Body
+# CHECK: PutSlotOrAdd {{*}}key="z"
+# CHECK: = LoopHint [throwsOwedError]
+# PROGRAM-OF: store-that-adds-a-field-under-a-handler-is-polled-at-once.ir

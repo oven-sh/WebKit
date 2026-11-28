@@ -28,13 +28,12 @@
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 namespace Calculation {
 class Value;
 struct Child;
-Ref<Value> CLANG_POINTER_CONVERSION LEGACY_NODELETE protect(Value&);
+NODELETE Ref<Value> CLANG_POINTER_CONVERSION protect(Value&);
 }
 
 struct ZoomFactor;
@@ -54,7 +53,7 @@ public:
     WEBCORE_EXPORT ~UnevaluatedCalculationBase();
 
     Calculation::Value& calculation() const { return m_calc; }
-    [[nodiscard]] Calculation::Value& LEGACY_NODELETE leakRef();
+    NODELETE [[nodiscard]] Calculation::Value& leakRef();
 
     bool equal(const UnevaluatedCalculationBase&) const;
 
@@ -115,8 +114,7 @@ template<CSS::Numeric CSSType> struct UnevaluatedCalculation : UnevaluatedCalcul
 
 WTF::TextStream& operator<<(WTF::TextStream&, const UnevaluatedCalculationBase&);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 namespace WTF {
 template<WebCore::CSS::Numeric CSSType> struct IsSmartPtr<WebCore::Style::UnevaluatedCalculation<CSSType>> {

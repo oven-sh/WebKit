@@ -1,0 +1,45 @@
+# Link calls the field filled for whoever gets the object from outside. The body behind ToThis is the body that makes it: its read reckons with an empty slot, and its stores create the fields. If they overwrote instead, the keys would never be listed.
+# function P(v) { this.early = this.x; this.x = v; }  function get(p) { return p.x; }  get(new P("a"));
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "early" {{*}}filled
+# CHECK: field L0.1 "x" proven=string {{*}}filled read-by-its-makers-while-empty
+# RUN(MAKER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# MAKER-LABEL: code f1:Body
+# MAKER: = GetSlotOrUndefined {{*}}key="x"
+# MAKER: PutSlotOrAdd {{*}}key="early"
+# MAKER: PutSlotOrAdd {{*}}key="x"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# NEVER-NOT: = GetSlot v
+# NEVER-NOT: PutSlot v
+# RUN(OUTSIDE): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# OUTSIDE-LABEL: code f2:Body
+# OUTSIDE: : string {{*}} = GetSlot {{*}}key="x"
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="early" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="a"
+    v2 = Construct v0, -, v1
+    v3 = NewClosure function=f2
+    v4 = Call v3, -, v2 calleeName="get"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="P" module=m0 flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = ToThis v0
+    v3 = Convert v2 declared={type=L0 flags=[IsExpected]}
+    v4 = PropGet v3 key="x"
+    PropSet v3, v4 key="early" mode=Sloppy
+    PropSet v3, v1 key="x" mode=Sloppy
+    v7 = Undefined
+    Return v7
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

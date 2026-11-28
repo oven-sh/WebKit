@@ -106,7 +106,6 @@ enum class LockBackForwardList : bool;
 enum class FromDownloadAttribute : bool { No , Yes };
 enum class IsSameDocumentNavigation : bool { No, Yes };
 enum class ShouldGoToHistoryItem : uint8_t { No, Yes, ItemUnknown };
-enum class ProcessSwapDisposition : uint8_t;
 enum class IFrameUnloadReason : bool { ResourceMonitor, MemoryMonitor };
 
 struct BackForwardFrameItemIdentifierType;
@@ -122,7 +121,7 @@ class WEBCORE_EXPORT LocalFrameLoaderClient : public FrameLoaderClient {
 public:
     ~LocalFrameLoaderClient();
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
 
     virtual bool isWebLocalFrameLoaderClient() const { return false; }

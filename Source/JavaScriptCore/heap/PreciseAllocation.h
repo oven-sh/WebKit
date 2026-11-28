@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -84,10 +84,10 @@ public:
     void setIndexInSpace(unsigned indexInSpace) { m_indexInSpace = indexInSpace; }
     
     void clearNewlyAllocated() { m_isNewlyAllocated = false; }
-    void LEGACY_NODELETE flip();
+    NODELETE void flip();
     
     bool isNewlyAllocated() const { return m_isNewlyAllocated; }
-    ALWAYS_INLINE bool isMarked() { return m_isMarked.load(std::memory_order_relaxed); }
+    ALWAYS_INLINE bool isMarked() { return m_isMarked.load<MemoryOrder::Relaxed>(); }
     ALWAYS_INLINE bool isMarked(HeapCell*) { return isMarked(); }
     ALWAYS_INLINE bool isMarked(HeapCell*, Dependency) { return isMarked(); }
     ALWAYS_INLINE bool isMarked(HeapVersion, HeapCell*) { return isMarked(); }
@@ -95,7 +95,7 @@ public:
     
     bool hasValidCell() const { return m_hasValidCell; }
     
-    bool LEGACY_NODELETE isEmpty();
+    NODELETE bool isEmpty();
     
     size_t cellSize() const { return m_cellSize; }
 

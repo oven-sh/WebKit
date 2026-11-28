@@ -28,8 +28,7 @@
 #include <WebCore/FontSelectionAlgorithm.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'font-weight'> = normal | bold | bolder | lighter | <number [1,1000]>
 // NOTE: Computed value is always resolved to a <number [1,1000]>.
@@ -72,10 +71,9 @@ template<> struct CSSValueConversion<FontWeight> { auto operator()(BuilderState&
 // MARK: - Blending
 
 template<> struct Blending<FontWeight> {
-    FontWeight LEGACY_NODELETE blend(const FontWeight&, const FontWeight&, const BlendingContext&);
+    NODELETE FontWeight blend(const FontWeight&, const FontWeight&, const BlendingContext&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::FontWeight)

@@ -1,0 +1,34 @@
+# let x = t0; do { r = b(x); t = r === undefined; n = !t; if (t) door(n); x = n; } while (r === null); return a;
+# As its twin, but the value that the door asks about goes round the loop to a call: that is found late. The door comes back, so its way does something, and the branch stays with it.
+# RUN: sweep-code
+# CHECK: Branch v5 -> taken b2(), notTaken b3()
+# CHECK: v7 @Void = CheckProof v6
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Jump -> next b1(v2)
+#   b1(v3: boolean @Boolean) isInLoop=true isLoopHead=true:
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: boolean @Boolean = TypeTest v4 testedType=undefined
+#     v6: boolean @Boolean = LogicalNot v5
+#     Branch v5 -> taken b2(), notTaken b3()
+#   b2() isInLoop=true:
+#     v7 @Void = CheckProof v6 checkedType=false typeWithoutProof=boolean source=Field [goesWithItsValue]
+#     Jump -> next b3()
+#   b3() isInLoop=true:
+#     v8: boolean @Boolean = TypeTest v4 testedType=null
+#     Branch v8 -> taken b1(v6), notTaken b4()
+#   b4():
+#     Return v0
+# }
+# -- end of code

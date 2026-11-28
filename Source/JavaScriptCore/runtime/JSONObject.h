@@ -61,8 +61,7 @@ private:
 JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, StringView);
 // Bytes that are all ASCII are parsed where they are. Empty without an exception for any other bytes: they are parsed as a string.
 JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, std::span<const char8_t> utf8);
-enum class CompiledJSONParser : bool { Try, Skip };
-JSValue JSONParseWithException(JSGlobalObject*, StringView, CompiledJSONParser = CompiledJSONParser::Try);
+JSValue JSONParseWithException(JSGlobalObject*, StringView);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, JSValue space);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, unsigned indent);
 

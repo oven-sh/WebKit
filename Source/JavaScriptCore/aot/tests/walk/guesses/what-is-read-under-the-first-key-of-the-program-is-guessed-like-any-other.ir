@@ -1,0 +1,35 @@
+# what the walk remembers of a set of layouts goes by a number for the question, the set and one more word. The question "which shapes have these layouts" bore a number that the question "what is read by name off them" reached too,
+# under the key numbered 0, which is the first key of this file: whoever asked first answered for both, and the guess at b.p or at b.q was lost
+# interface Holder { p; q }  Box = { p, q }  Crate = { p, q, lid }  Point = { x }  function read(b: Holder) { return [b.p.x, b.q.x]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-COUNT-2: key="x" receivers=
+layout L0 name="Holder" module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] flags=[IsNeverAllocated]
+layout L1 name="Box" module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Crate" module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}, {key="lid" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=7
+    v4 = NewObject -, v3 layout=L3 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v5, v5 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v5, v5, v3 layout=L2 fields=[0, 1, 2]
+    v9 = FinishObject v8
+    v10 = Call v1, -, v2, v7, v9 calleeName="sink"
+    Return v10
+}
+function f1 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="p"
+    v2 = PropGet v1 key="x"
+    v3 = PropGet v0 key="q"
+    v4 = PropGet v3 key="x"
+    v5 = NewArray v2, v4
+    Return v5
+}

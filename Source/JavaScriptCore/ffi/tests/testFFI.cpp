@@ -1241,6 +1241,14 @@ static void testConversions()
             if (slot)
                 FFI_CHECK(!strcmp(reinterpret_cast<const char*>(slot), utf8Sample));
         }
+
+        // The cache lets a string go that was not used since the collection before.
+        FFI_CHECK(ffiContext().cachedUTF8(*nonASCII.impl()));
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+        FFI_CHECK(ffiContext().cachedUTF8(*nonASCII.impl()));
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+        FFI_CHECK(!ffiContext().cachedUTF8(*nonASCII.impl()));
         JSString* concatenated = jsString(vm, makeString("ro"_s, "pe "_s, 12345));
         if (convertToSlot(T::CString, concatenated, slot, ExpectThrow::No)) {
             FFI_CHECK(slot);

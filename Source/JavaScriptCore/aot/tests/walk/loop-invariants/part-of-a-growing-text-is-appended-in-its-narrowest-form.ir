@@ -1,0 +1,57 @@
+# each part of a growing text is appended in the narrowest form that its proven type allows: digits of an integer, a number, a boolean, a string, a string or nothing, and any other primitive is told apart at run time
+# function repeated(n, part) { if (typeof part === "..") { let s = ""; for (let i = 0; i < n; i++) s += part; return s; } return part; }   six times, with another test in front each time
+# the functions are handed to code that nobody has seen, so the test in front of the loop is all that is known of the part
+# RUN: walk f1 f2 f3 f4 f5 f6 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# REPEAT: n = 1..6; form = Integer Number Boolean String StringOrNullish Value
+# CHECK-LABEL: code f%(n):Body
+# CHECK: StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: StringBuilderAppend%(form) [[builder%(n)]]
+# CHECK: StringBuilderFinish
+# END REPEAT
+# RUN(ALL): walk f1 f2 f3 f4 f5 f6 mechanisms=all
+# REPEAT: n = 1..6; form = Integer Number Boolean String StringOrNullish Value
+# ALL-LABEL: code f%(n):Body
+# ALL: isLoopHead=true
+# ALL: StringBuilderAppend%(form) [[builderOfAll%(n)]]
+# END REPEAT
+# RUN(NARROW): walk f1 f2 f3 f4 f5 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NARROW-NOT: StringBuilderAppendValue
+# RUN(DIGITS): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# DIGITS-NOT: StringBuilderAppendNumber
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+# REPEAT: n = 1..6
+    v%(n+1) = NewClosure function=f%(n)
+# END REPEAT
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+# REPEAT: n = 1..6; type = i32 number boolean string undefined|null|string number|string
+function f%(n) name="repeated%(n)" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=%(type)
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = String string=""
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Add v6, v3
+    v11 = Increment v7
+    Jump -> next b2(v10, v11)
+  b4():
+    Return v6
+  b5():
+    Return v1
+}
+# END REPEAT

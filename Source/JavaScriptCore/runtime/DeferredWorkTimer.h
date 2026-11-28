@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/JSRunLoopTimer.h>
 #include <JavaScriptCore/WeakInlines.h>
 
@@ -59,7 +60,7 @@ public:
         inline static Ref<Ticket> create(WorkType, JSObject* scriptExecutionOwner, Vector<JSCell*>&& dependencies);
 
         WorkType type() const { return m_type; }
-        inline VM& LEGACY_NODELETE vm();
+        NODELETE inline VM& vm();
         JSObject* target();
         JS_EXPORT_PRIVATE bool isTargetObject();
         inline const FixedVector<JSCell*>& dependencies(bool mayBeCancelled = false);
@@ -86,11 +87,11 @@ public:
     // Tickets are strongly held by the timer and should be weakly held by the caller and global object.
     // This allows detached global objects, most commonly iframes / Workers, to cancel tickets without leaking memory.
     JS_EXPORT_PRIVATE WeakTicket addPendingWork(WorkType, VM&, JSObject* target, Vector<JSCell*>&& dependencies);
-    void cancelPendingWork(VM&);
+    void cancelPendingWork(VM&) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE hasAnyPendingWork() const;
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE hasImminentlyScheduledWork() const;
-    bool LEGACY_NODELETE hasPendingWork(Ticket&);
+    NODELETE JS_EXPORT_PRIVATE bool hasAnyPendingWork() const;
+    NODELETE JS_EXPORT_PRIVATE bool hasImminentlyScheduledWork() const;
+    NODELETE bool hasPendingWork(Ticket&);
     bool hasDependencyInPendingWork(Ticket&, JSCell* dependency);
     bool cancelPendingWork(Ticket&);
     void cancelPendingWorkSafe(JSGlobalObject*);
@@ -124,7 +125,7 @@ private:
     bool m_shouldStopRunLoopWhenAllTicketsFinish { false };
     bool m_currentlyRunningTask { false };
     Deque<std::tuple<Ref<Ticket>, Task>> m_tasks WTF_GUARDED_BY_LOCK(m_taskLock);
-    UncheckedKeyHashSet<Ref<Ticket>> m_pendingTickets;
+    HashSet<Ref<Ticket>> m_pendingTickets;
 };
 
 // target() reads m_dependencies, which cancelAndClear() can free concurrently.

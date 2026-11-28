@@ -1,0 +1,65 @@
+# The guards of a class that may be evaluated again never begin: nobody answers for what stands above its objects, so a store that may create a field has no typed form on them, nor on a set of layouts that they are among.
+# If `this` of Base were tested for all that is expected of it, the layouts of Base and of Below, every store of Base would stay closed, for the objects of Base too: 46 stores a request in node:http's ServerResponse,
+# below which light-my-request lays a function of its own in a module that may run again. The test asks for the part that has typed forms, and the objects of Below go through the closed arm.
+# function Base(a) { this.a = a; }  function make() { return function Below(a) { Base.call(this, a); }; }  publish(Base, new (make())(2), new (make())(3), new Base(1));
+# The test stands in the guard of the parameters: it is asked once a call, the body gets `this` as an object of Base, and what fails it goes through the slow version. Without the guards it stands in the body.
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:SlowBody
+# CHECK: unit f1:ParameterGuard {{*}} tests (L0, -)
+# RUN(BODY): walk f1:Body mechanisms=all
+# BODY-LABEL: code f1:Body
+# BODY: (v0: L0{{*}}entry=0
+# BODY-NOT: ShapeTest
+# BODY: PutSlotOrAdd {{*}} key="a" receivers=[L0]
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW-LABEL: code f1:SlowBody
+# SLOW: PropSet v0, v1 key="a"
+# SLOW-NOT: PutSlotOrAdd
+# RUN(INSIDE): walk f1 mechanisms=all-ParameterGuards
+# INSIDE-LABEL: code f1:Body
+# INSIDE: ShapeTest v0 layouts=[L0]
+# INSIDE: PropSet {{*}} key="a"
+# INSIDE: PutSlotOrAdd {{*}} key="a" receivers=[L0]
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    v3 = Call v2, -
+    v4 = Integer integer=2
+    v5 = Construct v3, v4
+    v6 = Call v2, -
+    v7 = Integer integer=3
+    v8 = Construct v6, v7
+    v9 = Integer integer=1
+    v10 = Construct v0, v9
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="publish" [isFreeName]
+    v13 = Call v12, -, v0, v5, v8, v10
+    Return v13
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Below" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}

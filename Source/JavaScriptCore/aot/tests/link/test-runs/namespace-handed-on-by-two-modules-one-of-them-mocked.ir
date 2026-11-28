@@ -1,0 +1,43 @@
+# a mock that is laid over a module which hands an object on gives what it likes in its place TO EVERY MODULE THAT HANDS IT ON: also to one that nobody mocks
+# space.js: export const inner = "real inner"   lib.js, which a test mocks: export * as space from "./space.js"   again.js: export * as again from "./space.js"
+# main.test.js: import * as ns from "./again.js"; out = ns.again.inner
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link variables mechanisms=all
+# CHECK-NOT: variable g1 proven=
+# RUN(MOCKS): test-run
+# MOCKS: through-mock m1 "space"
+# MOCKS: through-mock m3 "again"
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/lib.js" displayPath="lib.js" flags=[MayBeMocked] body=f1 requests=[{target=m2 completes=true}] exports=[{name="space" kind=Namespace module=m2}]
+module m2 path="/space.js" displayPath="space.js" body=f2 exports=[{name="inner" variable=g0}]
+module m3 path="/again.js" displayPath="again.js" body=f3 requests=[{target=m2 completes=true}] exports=[{name="again" kind=Namespace module=m2}]
+entry module=m0
+variable g0 name="inner" module=m2 declared={type=anything}
+variable g1 name="out" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m3
+    v1 = PropGet v0 key="again"
+    v2 = PropGet v1 key="inner"
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real inner"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

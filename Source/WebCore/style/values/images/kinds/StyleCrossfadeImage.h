@@ -65,8 +65,8 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const final;
     bool currentFrameIsComplete(const RenderElement*) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
     bool containsCurrentColor() const final;
@@ -78,6 +78,7 @@ private:
 
     // CachedImageClient.
     void imageChanged(WebCore::CachedImage*, const IntRect*) final;
+    void scheduleRenderingUpdateForImage(WebCore::CachedImage&) final;
 
     void drawCrossfade(GraphicsContext&, const RenderElement&, ConcreteObjectSize, bool isForFirstLine) const;
     void normalizePercentages();

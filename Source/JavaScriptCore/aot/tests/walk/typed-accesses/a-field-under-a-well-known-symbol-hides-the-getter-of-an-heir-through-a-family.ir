@@ -1,0 +1,180 @@
+# A FIELD UNDER A WELL-KNOWN SYMBOL HIDES AN ACCESSOR OF THE CLASS, AND NO LAYOUT LISTS SUCH A FIELD.
+# class Base { [Symbol.toStringTag] = "own"; }
+# class Loud extends Base { get [Symbol.toStringTag]() { return "getter"; } }
+# class First extends Base { }   class Second extends Base { }   class Third extends Base { }   class Fourth extends Base { }
+# function tagOf(loud) { return loud[Symbol.toStringTag]; }
+# export const others = [new First(), new Second(), new Third(), new Fourth()];
+# export const answer = tagOf(new Loud());
+# The answer is "own". The walk found the getter above objects of Loud and took its answer without a look at the object: "getter".
+# One layout at a time Link lets a layout go where a definition finds an accessor and no listed field. FIVE LAYOUTS AND MORE ARE A FAMILY: the definition in Base's initializer is tied to each of them as a store is,
+# and the tie knew nothing of definitions. Now a store or a definition through a family or through lost objects, under a well-known symbol that the layout does not list, lets the layout go where its class has an accessor under the key.
+# Nothing unknown is called here: a call of `print` would let every class go, and the faulty build would answer rightly.
+# OPTIONS: mechanisms=all exclude=CodeOutsideImage
+# RUN: walk f0
+# CHECK-NOT: String string="getter"
+# CHECK: = PropGet {{*}}key=@@toStringTag
+# CHECK-NOT: String string="getter"
+module m0 path="seed1.js" displayPath="seed1.js" body=f0 exports=[{name="answer" variable=g0}, {name="others" variable=g1}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f2
+layout L1 kind=Instance name="Loud" module=m0 position=51 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="First" module=m0 position=127 base=L0 constructor=f5 supertypes=[L0] flags=[HasHeritage]
+layout L3 kind=Instance name="Second" module=m0 position=156 base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage]
+layout L4 kind=Instance name="Third" module=m0 position=186 base=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage]
+layout L5 kind=Instance name="Fourth" module=m0 position=215 base=L0 constructor=f8 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="answer" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="others" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=string|symbol flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g2 @0
+    v5 = Builtin builtin=SymbolToStringTag @13
+    PutModuleVariable v5 variable=g3 @13
+    v7 = FinishClass v3 layout=L0 @0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v10 = ResolveHeritage v9 @64
+    v11 = NewClosure function=f3 @45
+    v12 = NewClass v11, v9, v10 layout=L1 @45
+    PutModuleVariable v12 variable=g4 @45
+    v14 = NewClosure function=f4 @75
+    DefineMethod v12, v14 layout=L1 methodKind=Getter key=@@toStringTag @75
+    v16 = FinishClass v12 layout=L1 @45
+    v17 = Convert v16 declared={type=f3 flags=[IsFromCompiler]} @45
+    v18 = Convert v16 declared={type=f3 flags=[IsFromCompiler]} @45
+    v19 = ResolveHeritage v9 @141
+    v20 = NewClosure function=f5 @121
+    v21 = NewClass v20, v9, v19 layout=L2 @121
+    PutModuleVariable v21 variable=g5 @121
+    v23 = FinishClass v21 layout=L2 @121
+    v24 = Convert v23 declared={type=f5 flags=[IsFromCompiler]} @121
+    v25 = Convert v23 declared={type=f5 flags=[IsFromCompiler]} @121
+    v26 = ResolveHeritage v9 @171
+    v27 = NewClosure function=f6 @150
+    v28 = NewClass v27, v9, v26 layout=L3 @150
+    PutModuleVariable v28 variable=g6 @150
+    v30 = FinishClass v28 layout=L3 @150
+    v31 = Convert v30 declared={type=f6 flags=[IsFromCompiler]} @150
+    v32 = Convert v30 declared={type=f6 flags=[IsFromCompiler]} @150
+    v33 = ResolveHeritage v9 @200
+    v34 = NewClosure function=f7 @180
+    v35 = NewClass v34, v9, v33 layout=L4 @180
+    PutModuleVariable v35 variable=g7 @180
+    v37 = FinishClass v35 layout=L4 @180
+    v38 = Convert v37 declared={type=f7 flags=[IsFromCompiler]} @180
+    v39 = Convert v37 declared={type=f7 flags=[IsFromCompiler]} @180
+    v40 = ResolveHeritage v9 @230
+    v41 = NewClosure function=f8 @209
+    v42 = NewClass v41, v9, v40 layout=L5 @209
+    PutModuleVariable v42 variable=g8 @209
+    v44 = FinishClass v42 layout=L5 @209
+    v45 = Convert v44 declared={type=f8 flags=[IsFromCompiler]} @209
+    v46 = Convert v44 declared={type=f8 flags=[IsFromCompiler]} @209
+    v47 = Construct v25 calleeName="First" @324
+    v48 = Construct v32 calleeName="Second" @337
+    v49 = Construct v39 calleeName="Third" @351
+    v50 = Construct v46 calleeName="Fourth" @364
+    v51 = NewArray v47, v48, v49, v50 contents=anything @319
+    PutModuleVariable v51 variable=g1 @310
+    v53 = Construct v18 calleeName="Loud" @407
+    v54 = Call v1, -, v53 calleeName="tagOf" @397
+    PutModuleVariable v54 variable=g0 @388
+    v56 = Undefined @388
+    Return v56 @388
+}
+function f1 name="tagOf" module=m0 position=239 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol|bigint|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|symbol|bigint|L1):
+    v1 = PropGet v0 key=@@toStringTag @269
+    Return v1 @269
+}
+function f2 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    v4 = CallDirect v3 function=f9 @6
+    Return v3 @6
+}
+function f3 name="Loud" module=m0 position=51 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @51
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @51
+    v5 = Convert v4 declared={type=L1} @51
+    Return v5 @51
+}
+function f4 name="[Symbol.toStringTag]" module=m0 position=71 kind=Getter flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="getter" @107
+    Return v0 @107
+}
+function f5 name="First" module=m0 position=127 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @127
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @127
+    v5 = Convert v4 declared={type=L2} @127
+    Return v5 @127
+}
+function f6 name="Second" module=m0 position=156 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @156
+    v4 = SuperConstructList v3, v1, v2 layout=L3 @156
+    v5 = Convert v4 declared={type=L3} @156
+    Return v5 @156
+}
+function f7 name="Third" module=m0 position=186 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @186
+    v4 = SuperConstructList v3, v1, v2 layout=L4 @186
+    v5 = Convert v4 declared={type=L4} @186
+    Return v5 @186
+}
+function f8 name="Fourth" module=m0 position=215 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @215
+    v4 = SuperConstructList v3, v1, v2 layout=L5 @215
+    v5 = Convert v4 declared={type=L5} @215
+    Return v5 @215
+}
+function f9 module=m0 position=6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @6
+    v2 = String string="own" @36
+    PropDefine v1, v2 key=@@toStringTag @13
+    v4 = Undefined @6
+    Return v4 @6
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f16 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private

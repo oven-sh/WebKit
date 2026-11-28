@@ -80,15 +80,15 @@ enum class ClearSiteDataValue : uint8_t {
 
 enum class RangeAllowWhitespace : bool { No, Yes };
 
-bool LEGACY_NODELETE isValidReasonPhrase(const String&);
-WEBCORE_EXPORT bool LEGACY_NODELETE isValidHTTPHeaderValue(const String&);
-bool LEGACY_NODELETE isValidAcceptHeaderValue(const String&);
-bool LEGACY_NODELETE isValidLanguageHeaderValue(const String&);
+NODELETE bool isValidReasonPhrase(const String&);
+NODELETE WEBCORE_EXPORT bool isValidHTTPHeaderValue(const String&);
+NODELETE bool isValidAcceptHeaderValue(const String&);
+NODELETE bool isValidLanguageHeaderValue(const String&);
 #if USE(GLIB)
 WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const String&);
 #endif
-WEBCORE_EXPORT bool LEGACY_NODELETE isValidHTTPToken(const String&);
-bool LEGACY_NODELETE isValidHTTPToken(StringView);
+NODELETE WEBCORE_EXPORT bool isValidHTTPToken(const String&);
+NODELETE bool isValidHTTPToken(StringView);
 std::optional<WallTime> parseHTTPDate(const String&);
 StringView filenameFromHTTPContentDisposition(StringView value LIFETIME_BOUND);
 WEBCORE_EXPORT String extractMIMETypeFromMediaType(const String&);
@@ -129,6 +129,12 @@ String normalizeHTTPMethod(const String&);
 bool isSafeMethod(const String&);
 
 WEBCORE_EXPORT CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(StringView);
+
+// The delimiter placed between values when appending to a request header, or nullopt if appending isn't supported.
+WEBCORE_EXPORT std::optional<ASCIILiteral> requestHeaderAppendDelimiter(const String& header);
+
+// Request headers, and header values, that an extension can't set or append to, because the network stack manages them.
+WEBCORE_EXPORT bool isRequestHeaderUnsafeToModify(const String& header, StringView value);
 
 template<class HashType>
 bool addToAccessControlAllowList(const String& string, unsigned start, unsigned end, HashSet<String, HashType>& set)

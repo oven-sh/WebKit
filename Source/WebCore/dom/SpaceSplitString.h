@@ -45,7 +45,7 @@ public:
         return std::ranges::find(tokens, string) != tokens.end();
     }
 
-    bool LEGACY_NODELETE containsAll(const SpaceSplitStringData&) const;
+    NODELETE bool containsAll(const SpaceSplitStringData&) const;
 
     unsigned size() const { return m_size; }
     static constexpr ptrdiff_t sizeMemoryOffset() { return OBJECT_OFFSETOF(SpaceSplitStringData, m_size); }
@@ -54,15 +54,15 @@ public:
 
     void ref()
     {
-        ASSERT(isMainThread());
-        ASSERT(m_refCount);
+        ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
+        ASSERT_WITH_SECURITY_IMPLICATION(m_refCount);
         ++m_refCount;
     }
 
     void deref()
     {
-        ASSERT(isMainThread());
-        ASSERT(m_refCount);
+        ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
+        ASSERT_WITH_SECURITY_IMPLICATION(m_refCount);
         unsigned tempRefCount = m_refCount - 1;
         if (!tempRefCount) {
             destroy(this);

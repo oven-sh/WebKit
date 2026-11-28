@@ -294,7 +294,7 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 
 #if ENABLE(JIT)
 
-static ECMAMode LEGACY_NODELETE ecmaModeFor(PutByKind putByKind)
+NODELETE static ECMAMode ecmaModeFor(PutByKind putByKind)
 {
     switch (putByKind) {
     case PutByKind::ByIdSloppy:
@@ -374,7 +374,7 @@ static InlineCacheAction actionForCell(VM& vm, JSCell* cell)
     return AttemptToCache;
 }
 
-static bool LEGACY_NODELETE forceICFailure(JSGlobalObject*)
+NODELETE static bool forceICFailure(JSGlobalObject*)
 {
     return Options::forceICFailure();
 }
@@ -441,7 +441,7 @@ static std::optional<NonStringPrimitiveKeyInfo> nonStringPrimitiveKeyInfoForUID(
     return std::nullopt;
 }
 
-inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByOptimizeFunction(GetByKind kind)
+NODELETE inline CodePtr<CFunctionPtrTag> appropriateGetByOptimizeFunction(GetByKind kind)
 {
     switch (kind) {
     case GetByKind::ById:
@@ -462,7 +462,7 @@ inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByOptimizeFunction
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByGaveUpFunction(GetByKind kind)
+NODELETE inline CodePtr<CFunctionPtrTag> appropriateGetByGaveUpFunction(GetByKind kind)
 {
     switch (kind) {
     case GetByKind::ById:
@@ -628,7 +628,7 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                     return GiveUpOnCache;
 
                 if (structure->isDictionary()) {
-                    if (structure->hasBeenFlattenedBefore())
+                    if (!structure->canFlattenForCaching())
                         return GiveUpOnCache;
                     structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
                     return RetryCacheLater; // We may have changed property offsets.
@@ -680,8 +680,8 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                 }
             }
 
-            // Fresh dictionaries were flattened above, but one that has already been flattened once is not
-            // re-flattened and stays a dictionary. A custom with no backing property in the slot base's structure
+            // Dictionaries were flattened above, except one that canFlattenForCaching() rejects, which stays a
+            // dictionary. A custom with no backing property in the slot base's structure
             // (invalidOffset, such as one served from a static property table) is shadowed by adding that
             // property, which on a dictionary happens in place with no structure transition, leaving the
             // constant custom getter recorded here stale.
@@ -784,6 +784,12 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
             break;
         case GetByKind::ByValWithThis:
             repatchSlowPathCall(codeBlock, propertyCache, operationGetByValWithThisMegamorphic);
+            break;
+        case GetByKind::PrivateName:
+            repatchSlowPathCall(codeBlock, propertyCache, operationGetPrivateNameMegamorphic);
+            break;
+        case GetByKind::PrivateNameById:
+            repatchSlowPathCall(codeBlock, propertyCache, operationGetPrivateNameByIdMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -968,7 +974,7 @@ void repatchArrayGetByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
     }
 }
 
-static CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriatePutByGaveUpFunction(PutByKind putByKind)
+NODELETE static CodePtr<CFunctionPtrTag> appropriatePutByGaveUpFunction(PutByKind putByKind)
 {
     switch (putByKind) {
     case PutByKind::ByIdStrict:
@@ -1009,7 +1015,7 @@ void repatchPutBySlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& propert
     repatchSlowPathCall(codeBlock, propertyCache, appropriatePutByGaveUpFunction(kind));
 }
 
-static CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriatePutByOptimizeFunction(PutByKind putByKind)
+NODELETE static CodePtr<CFunctionPtrTag> appropriatePutByOptimizeFunction(PutByKind putByKind)
 {
     switch (putByKind) {
     case PutByKind::ByIdStrict:
@@ -1207,6 +1213,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 case PutByKind::DefinePrivateNameById:
                 case PutByKind::DefinePrivateNameByVal:
                     ASSERT(ident.isPrivateName());
+                    if (!oldStructure->privateElementAdditionsAreCacheable())
+                        return RetryCacheLater;
                     break;
                 case PutByKind::ByIdDirectStrict:
                 case PutByKind::ByIdDirectSloppy:
@@ -1231,7 +1239,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 if (!cacheStatus)
                     return GiveUpOnCache;
 
-                // prepareChainForCaching leaves a dictionary that has already been flattened once as a dictionary.
+                // prepareChainForCaching leaves a dictionary that canFlattenForCaching() rejects as a dictionary.
                 // A custom with no backing property in the base's structure (invalidOffset, such as one served from
                 // a static property table) is shadowed by adding that property, which on a dictionary happens in
                 // place with no structure transition, leaving this cache stale.
@@ -1615,7 +1623,7 @@ void repatchDeleteBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, DeleteP
     }
 }
 
-inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateInByOptimizeFunction(InByKind kind)
+NODELETE inline CodePtr<CFunctionPtrTag> appropriateInByOptimizeFunction(InByKind kind)
 {
     switch (kind) {
     case InByKind::ById:
@@ -1628,7 +1636,7 @@ inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateInByOptimizeFunction(
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateInByGaveUpFunction(InByKind kind)
+NODELETE inline CodePtr<CFunctionPtrTag> appropriateInByGaveUpFunction(InByKind kind)
 {
     switch (kind) {
     case InByKind::ById:
@@ -1780,8 +1788,8 @@ void repatchInBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSObject* b
         case InByKind::ByVal:
             repatchSlowPathCall(codeBlock, propertyCache, operationInByValMegamorphic);
             break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
+        case InByKind::PrivateName:
+            repatchSlowPathCall(codeBlock, propertyCache, operationHasPrivateNameMegamorphic);
             break;
         }
         break;
@@ -1896,6 +1904,9 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         if (oldStructure->isDictionary())
             return RetryCacheLater;
 
+        if (!oldStructure->privateElementAdditionsAreCacheable())
+            return RetryCacheLater;
+
         InlineCacheAction action = actionForCell(vm, base);
         if (action != AttemptToCache)
             return action;
@@ -1904,6 +1915,8 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         if (!newStructure)
             return RetryCacheLater;
         if (newStructure->isDictionary())
+            return GiveUpOnCache;
+        if (base->structureID() != newStructure->id())
             return GiveUpOnCache;
         ASSERT(newStructure->previousID() == oldStructure);
         ASSERT(newStructure->transitionKind() == TransitionKind::SetBrand);

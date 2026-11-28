@@ -1,0 +1,32 @@
+# If the walk still took such a field for one of the layout, a store under a text that flows to the key would go where the run time puts it and the read to a slot that nothing ever fills
+# interface Settings { kept: number; late?: number }  const settings: Settings = { kept: 1 };  const name = "late";  settings[name] = 2;  print(settings[name], Object.keys(settings).join());
+# No operation spells the name: it comes as a text. Link may take the text for a name. Store and read find the same property, whoever answers them.
+# RUN: run-in-shell
+# CHECK: 2 kept,late
+# CHECK-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2 kept,late
+# NONE-NEXT: exited with 0
+
+layout L0 fields=[{key="kept" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=undefined|number} flags=[IsNeverWritten]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = String string="late"
+    v3 = Integer integer=2
+    ElemSet v1, v2, v3
+    v5 = ElemGet v1, v2
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Object" [isFreeName]
+    v8 = PropGet v7 key="keys"
+    v9 = Call v8, v7, v1 calleeName="Object.keys"
+    v10 = PropGet v9 key="join"
+    v11 = Call v10, v9 calleeName="join"
+    v12 = PropGet v6 key="print" [isFreeName]
+    v13 = Call v12, -, v5, v11 calleeName="print"
+    v14 = Undefined
+    Return v14
+}

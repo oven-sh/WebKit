@@ -1,0 +1,34 @@
+# Object.defineProperty(Object.prototype, "madeUp", { configurable: true, get() { return this.fround; } });      Math[chosen] = 1;
+# The key may spell the name that the run has opened on Object.prototype: a setter that the test laid there is handed `Math` as `this`. (A read under such a key loses the object already.)
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link lookups mechanisms=all
+# CHECK: lookup let-go Math
+# CHECK: lookup at-unseen Math
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+layout L0 module=m0 position=60 fields=[{key="configurable" declared={type=anything} flags=[IsRequired]}, {key="get" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectDefineProperty @10
+    v1 = Builtin builtin=Object @10
+    v2 = Builtin builtin=ObjectPrototype @20
+    v3 = String string="madeUp" @30
+    v4 = Boolean boolean=true @40
+    v5 = NewClosure function=f1 @50
+    v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1] @60
+    v7 = FinishObject v6 @60
+    v8 = Call v0, v1, v2, v3, v7 calleeName="Object.defineProperty" @70
+    v9 = Builtin builtin=GlobalThis @80
+    v10 = PropGet v9 key="Math" [isFreeName] @80
+    v11 = Integer integer=1 @85
+    v12 = PropGet v9 key="chosen" [isFreeName] @86
+    ElemSet v10, v12, v11 @90
+    Return v11 @100
+}
+function f1 name="get" module=m0 position=50 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="fround" @55
+    Return v1 @56
+}
+openedname holder=ObjectPrototype name="madeUp"

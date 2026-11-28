@@ -31,6 +31,7 @@
 #include <JavaScriptCore/GenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
@@ -74,7 +75,7 @@ bool CompressionStreamEncoder::didDeflateFinish(int result) const
 }
 
 // See https://www.zlib.net/manual.html#Constants
-static bool LEGACY_NODELETE didDeflateFail(int result)
+NODELETE static bool didDeflateFail(int result)
 {
     return result != Z_OK && result != Z_STREAM_END && result != Z_BUF_ERROR;
 }
@@ -88,7 +89,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> CompressionStreamEncoder::compress(std::span<
     return compressZlib(input);
 }
 
-static ZStream::Algorithm LEGACY_NODELETE compressionAlgorithm(Formats::CompressionFormat format)
+NODELETE static ZStream::Algorithm compressionAlgorithm(Formats::CompressionFormat format)
 {
     switch (format) {
     case Formats::CompressionFormat::Brotli:
@@ -147,7 +148,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> CompressionStreamEncoder::compressZlib(std::s
                 allocateSize *= 2;
         }
 
-        storage.append(output);
+        storage.append(borrow(output)->span());
     }
 
     RefPtr compressedData = storage.takeBufferAsArrayBuffer();

@@ -33,8 +33,7 @@
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 #include "StylePrimitiveNumericTypes+CSSValueCreation.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Conversion
 
@@ -58,15 +57,15 @@ Ref<CSSValue> CSSValueCreation<Clip>::operator()(CSSValuePool&, const Style::Com
 // MARK: - Blending
 
 template<> struct Blending<ClipEdge> {
-    bool LEGACY_NODELETE canBlend(const ClipEdge&, const ClipEdge&);
-    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const ClipEdge&, const ClipEdge&);
-    ClipEdge LEGACY_NODELETE blend(const ClipEdge&, const ClipEdge&, const BlendingContext&);
+    NODELETE bool canBlend(const ClipEdge&, const ClipEdge&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const ClipEdge&, const ClipEdge&);
+    NODELETE ClipEdge blend(const ClipEdge&, const ClipEdge&, const BlendingContext&);
 };
 
 template<> struct Blending<ClipRect> {
-    bool LEGACY_NODELETE canBlend(const ClipRect&, const ClipRect&);
-    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const ClipRect&, const ClipRect&);
-    ClipRect LEGACY_NODELETE blend(const ClipRect&, const ClipRect&, const BlendingContext&);
+    NODELETE bool canBlend(const ClipRect&, const ClipRect&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const ClipRect&, const ClipRect&);
+    NODELETE ClipRect blend(const ClipRect&, const ClipRect&, const BlendingContext&);
 };
 
 auto Blending<ClipEdge>::canBlend(const ClipEdge& a, const ClipEdge& b) -> bool
@@ -136,5 +135,4 @@ auto Blending<Clip>::blend(const Clip& a, const Clip& b, const BlendingContext& 
     );
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

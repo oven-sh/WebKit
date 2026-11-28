@@ -55,11 +55,14 @@ public:
     bool setupAndCallYouTubeQuirkJS(NOESCAPE const JSSetupFunction&);
     bool setupAndCallCNNQuirkJS(NOESCAPE const JSSetupFunction&);
 
+    bool hasBuiltMediaControls() const { return m_hasBuiltMediaControls; }
+    void didBuildMediaControls() { m_hasBuiltMediaControls = true; }
+
 private:
     bool isDocumentMediaElement() const final { return true; }
     static ASCIILiteral supplementName();
 
-    Document& LEGACY_NODELETE document() const;
+    NODELETE Document& document() const;
 
     DOMWrapperWorld& ensureIsolatedWorld();
     bool ensureMediaControlsScript();
@@ -73,6 +76,7 @@ private:
     bool m_haveParsedMediaControlsScript { false };
     bool m_haveParsedYouTubeQuirkScript { false };
     bool m_haveParsedCNNQuirkScript { false };
+    bool m_hasBuiltMediaControls { false };
 };
 
 }

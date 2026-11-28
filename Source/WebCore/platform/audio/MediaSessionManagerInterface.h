@@ -142,6 +142,8 @@ public:
     // restricted mediaType (e.g., Video → VideoAudio after audio metadata loads).
     void enforceConcurrentPlaybackRestriction(PlatformMediaSessionInterface& newSession);
 
+    virtual void sessionCanProduceAudioChangedWhilePlaying(PlatformMediaSessionInterface&);
+
     virtual void configureWirelessTargetMonitoring() { }
 #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
     virtual void ensureMediaDeviceRouteControllerMonitoring() { }
@@ -176,7 +178,8 @@ public:
     virtual void removeSupportedCommand(PlatformMediaSessionRemoteControlCommandType) { };
     virtual PlatformMediaSessionRemoteCommandsSet supportedCommands() const { return { }; };
 
-    virtual void scheduleSessionStatusUpdate() { }
+    void scheduleSessionStatusUpdate();
+    unsigned sessionStatusUpdateCountForTesting() const;
     virtual void resetSessionState() { };
 
     virtual bool isMediaSessionManagerGLib() const;
@@ -210,6 +213,8 @@ protected:
 
     void scheduleUpdateSessionState();
     virtual void updateSessionState() { }
+
+    virtual void performSessionStatusUpdate();
 
     std::optional<PageIdentifier> pageIdentifier() const { return m_pageIdentifier; }
 
@@ -255,11 +260,15 @@ private:
     bool m_processIsSuspended { false };
     bool m_alreadyScheduledSessionStatedUpdate { false };
     bool m_hasScheduledSessionStateUpdate { false };
+    bool m_sessionStatusUpdateIsPending { false };
+    unsigned m_sessionStatusUpdateCountForTesting { 0 };
     mutable bool m_isApplicationInBackground { false };
 #if USE(AUDIO_SESSION)
     bool m_becameActive { false };
 #endif
 };
+
+inline unsigned MediaSessionManagerInterface::sessionStatusUpdateCountForTesting() const { return m_sessionStatusUpdateCountForTesting; }
 
 #if !RELEASE_LOG_DISABLED
 inline const Logger& MediaSessionManagerInterface::logger() const { return m_logger; }

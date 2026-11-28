@@ -86,9 +86,10 @@ float FixedTableLayout::calcWidthArray()
     // iterate over all <col> elements
     unsigned nEffCols = m_table->numEffCols();
     m_width.fill(Style::PreferredSize { CSS::Keyword::Auto { } }, nEffCols);
+    m_columnBorderPadding.fill(0, nEffCols);
 
     unsigned currentEffectiveColumn = 0;
-    for (RenderTableCol* col = m_table->firstColumn(); col; col = col->nextColumn()) {
+    for (CheckedPtr col = m_table->firstColumn(); col; col = col->nextColumn()) {
         // RenderTableCols don't have the concept of preferred logical width, but we need to clear their dirty bits
         // so that if we call setContentWidthsDirty(true) on a col or one of its descendants, we'll mark it's
         // ancestors as dirty.
@@ -113,12 +114,14 @@ float FixedTableLayout::calcWidthArray()
                 m_table->appendColumn(span);
                 nEffCols++;
                 m_width.append(CSS::Keyword::Auto { });
+                m_columnBorderPadding.append(0);
                 spanInCurrentEffectiveColumn = span;
             } else {
                 if (span < m_table->spanOfEffCol(currentEffectiveColumn)) {
                     m_table->splitColumn(currentEffectiveColumn, span);
                     nEffCols++;
                     m_width.append(CSS::Keyword::Auto { });
+                    m_columnBorderPadding.append(0);
                 }
                 spanInCurrentEffectiveColumn = m_table->spanOfEffCol(currentEffectiveColumn);
             }
@@ -135,21 +138,20 @@ float FixedTableLayout::calcWidthArray()
     }
 
     // Iterate over the first row in case some are unspecified.
-    RenderTableSection* section = m_table->topNonEmptySection();
+    CheckedPtr section = m_table->topNonEmptySection();
     if (!section)
         return usedWidth;
 
     unsigned currentColumn = 0;
 
-    RenderTableRow* firstRow = section->firstRow();
-    for (RenderTableCell* cell = firstRow->firstCell(); cell; cell = cell->nextCell()) {
+    for (CheckedPtr cell = protect(section->firstRow())->firstCell(); cell; cell = cell->nextCell()) {
         auto [ logicalWidth, usedZoom ] = cell->styleOrColLogicalWidth();
         unsigned span = cell->colSpan();
         float fixedBorderBoxLogicalWidth = 0;
         // FIXME: Support other length types. If the width is non-auto, it should probably just use
         // RenderBox::computeLogicalWidthInFragmentUsing to compute the width.
         if (auto fixedLogicalWidth = logicalWidth.tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-            fixedBorderBoxLogicalWidth = cell->adjustBorderBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+            fixedBorderBoxLogicalWidth = cell->adjustBorderBoxLogicalWidthForBoxSizing(logicalWidth, LayoutUnit { fixedLogicalWidth->resolveZoom(cell->style().usedZoomForLength()) }, 0_lu);
             logicalWidth = Style::PreferredSize::Fixed { fixedBorderBoxLogicalWidth };
         } else if (logicalWidth.isCalculated())
             logicalWidth = CSS::Keyword::Auto { };
@@ -162,10 +164,18 @@ float FixedTableLayout::calcWidthArray()
                 if (auto fixedLogicalWidth = logicalWidth.tryFixed()) {
                     // Zoom was applied when we called adjustBorderBoxLogicalWidthForBoxSizing
                     m_width[currentColumn] = Style::PreferredSize::Fixed { fixedLogicalWidth->resolveZoom(Style::ZoomFactor { 1.0f }) * eSpan / span };
-                }
-                else if (auto percentageLogicalWidth = logicalWidth.tryPercentage())
+                    usedWidth += fixedBorderBoxLogicalWidth * eSpan / span;
+                } else if (auto percentageLogicalWidth = logicalWidth.tryPercentage()) {
                     m_width[currentColumn] = Style::PreferredSize::Percentage { percentageLogicalWidth->value * eSpan / span };
-                usedWidth += fixedBorderBoxLogicalWidth * eSpan / span;
+                    // A percentage resolves against the table width and gives the content-box
+                    // size; the cell's border and padding must be reserved on top of it. With
+                    // box-sizing: border-box the percentage is already the border-box size.
+                    // Cells spanning multiple columns distribute only their width, not their
+                    // border and padding.
+                    float borderPadding = span == 1 && cell->style().boxSizing() == BoxSizing::ContentBox ? cell->borderAndPaddingLogicalWidth().toFloat() : 0;
+                    m_columnBorderPadding[currentColumn] = borderPadding * eSpan / span;
+                    usedWidth += borderPadding * eSpan / span;
+                }
             }
             usedSpan += eSpan;
             ++currentColumn;
@@ -190,8 +200,13 @@ std::pair<LayoutUnit, LayoutUnit> FixedTableLayout::computeIntrinsicLogicalWidth
 void FixedTableLayout::applyContentLogicalWidthQuirks(LayoutUnit& minWidth, LayoutUnit& maxWidth) const
 {
     auto& tableLogicalWidth = m_table->style().logicalWidth();
-    if (auto fixedTableLogicalWidth = tableLogicalWidth.tryFixed(); fixedTableLogicalWidth && fixedTableLogicalWidth->isPositive())
-        minWidth = maxWidth = std::max(minWidth, LayoutUnit(fixedTableLogicalWidth->resolveZoom(m_table->style().usedZoomForLength())) - m_table->bordersPaddingAndSpacingInRowDirection());
+    if (auto fixedTableLogicalWidth = tableLogicalWidth.tryFixed(); fixedTableLogicalWidth && fixedTableLogicalWidth->isPositive()) {
+        auto tableFixedWidth = LayoutUnit { fixedTableLogicalWidth->resolveZoom(m_table->style().usedZoomForLength()) };
+        // A stretch() takes its margins off, resolved against zero as the contributions resolve them.
+        if (tableLogicalWidth.isStretchFunction())
+            tableFixedWidth = m_table->adjustBorderBoxLogicalWidthForBoxSizing(tableLogicalWidth, tableFixedWidth, 0_lu);
+        minWidth = maxWidth = std::max(minWidth, tableFixedWidth - m_table->bordersPaddingAndSpacingInRowDirection());
+    }
 
     /*
         <table style="width:100%; background-color:red"><tr><td>
@@ -241,7 +256,7 @@ void FixedTableLayout::layout()
             calcWidth[i] = Style::evaluate<float>(*fixedWidth, Style::ZoomFactor { 1.0f });
             totalFixedWidth += calcWidth[i];
         } else if (auto percentageWidth = m_width[i].tryPercentage()) {
-            calcWidth[i] = Style::evaluate<float>(*percentageWidth, tableLogicalWidth);
+            calcWidth[i] = Style::evaluate<float>(*percentageWidth, tableLogicalWidth) + m_columnBorderPadding[i];
             totalPercentWidth += calcWidth[i];
             totalPercent += percentageWidth->value;
         } else if (m_width[i].isAuto()) {
@@ -267,10 +282,17 @@ void FixedTableLayout::layout()
                 }
             }
             if (totalPercent) {
+                // Distribute the space left after fixed columns to the percentage columns in
+                // proportion to their desired width (the resolved percentage plus any reserved
+                // border and padding). When no border/padding is reserved this reduces to
+                // scaling by the raw percentage.
+                float remainingForPercent = tableLogicalWidth - totalFixedWidth;
+                // calcWidth already holds each percentage column's desired width.
+                float totalPercentDesired = totalPercentWidth;
                 totalPercentWidth = 0;
                 for (unsigned i = 0; i < nEffCols; i++) {
-                    if (auto percentageWidth = m_width[i].tryPercentage()) {
-                        calcWidth[i] = percentageWidth->value * (tableLogicalWidth - totalFixedWidth) / totalPercent;
+                    if (m_width[i].tryPercentage()) {
+                        calcWidth[i] = totalPercentDesired ? calcWidth[i] * remainingForPercent / totalPercentDesired : 0;
                         totalPercentWidth += calcWidth[i];
                     }
                 }
@@ -323,6 +345,20 @@ void FixedTableLayout::layout()
     auto colPositionsSize = m_table->columnPositions().size();
     if (colPositionsSize > 0)
         m_table->setColumnPosition(colPositionsSize - 1, LayoutUnit(pos));
+
+    if (!m_table->collapseBorders())
+        return;
+
+    float deviceScaleFactor = m_table->style().deviceScaleFactor();
+    bool isInlineFlipped = m_table->writingMode().isInlineFlipped();
+    LayoutUnit endPosition { pos };
+    for (unsigned i = 1; i < nEffCols; i++) {
+        LayoutUnit position = m_table->columnPositions()[i];
+        if (isInlineFlipped)
+            m_table->setColumnPosition(i, endPosition - LayoutUnit(floorToDevicePixel(endPosition - position, deviceScaleFactor)));
+        else
+            m_table->setColumnPosition(i, LayoutUnit(floorToDevicePixel(position, deviceScaleFactor)));
+    }
 }
 
 } // namespace WebCore

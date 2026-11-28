@@ -1,0 +1,35 @@
+# function same(a, b) { return a === b; }
+# function pick(a, b) { if (a === b) return 1; return 0; }
+# function count(next, x, times) { let found = 0; for (let i = 0; i < times; i++) if (next() === x) found++; return found; }
+# publish(same, pick, count);
+# Nothing is known of the two operands. Outside of loops one call of the stub that answers for any two values is all there is: the site looks at neither operand.
+# Whoever only branches on the answer takes it from the flags, and whoever keeps it takes it from the result register.
+# In a loop the ways that decide without the contents of a cell stand in line, and so do the two tests and the call for two strings: there the stub for any two values would find out again, at every turn, what the site knows.
+# PROGRAM-OF: ../answers/strict-equality-of-unknown-values.ir
+# RUN(CODE): walk f1:Body f2:Body f3:Body
+# CODE-LABEL: code f1:Body
+# CODE: = StrictEq {{*}}form=Generic
+# CODE-LABEL: code f2:Body
+# CODE: = StrictEq {{*}}form=Generic
+# CODE-LABEL: code f3:Body
+# CODE: = StrictEq {{*}}form=Generic
+# RUN: bytes f1:Body f2:Body f3:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: StringsAreEqual
+# CHECK: {{*}} Equal.Strict
+# CHECK-NOT: InFlags
+# CHECK-NOT: StringsAreEqual
+# CHECK-LABEL: unit f2:Body
+# CHECK-NOT: StringsAreEqual
+# CHECK: {{*}} Equal.StrictInFlags
+# CHECK-NOT: StringsAreEqual
+# CHECK-LABEL: unit f3:Body
+# CHECK: Stub DistinctStringsAreEqual
+# RUN(EMIT): emit f2:Body
+# EMIT-LABEL: unit f2:Body
+# EMIT-NOT: = Load
+# EMIT-NOT: = Equal(
+# EMIT: = Patch(
+# EMIT-NOT: = Load
+# EMIT-NOT: = Equal(
+# EMIT-NOT: = Patch(

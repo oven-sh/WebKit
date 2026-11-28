@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTNarrowCopy.h"
 #include "AOTRecordTypes.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
@@ -30,6 +31,7 @@
 #include "RegExpGlobalData.h"
 #include "RegExpMatchesArray.h"
 #include "RegExpObject.h"
+#include "YarrInterpreter.h"
 #include "YarrJIT.h"
 #include <array>
 #include <optional>
@@ -55,41 +57,63 @@ struct MatchOperands {
     std::array<GPRReg, 2> all() const { return { regExpObject, string }; }
 };
 
-// Whoever creates the array of a match reads the VM's. Code that asks for Found reads the RegExp's, where operationAOTRegExpFind leaves the offsets too.
-enum class OffsetVectorOwner : bool { VM, RegExp };
-
 struct MatchAnswers {
     Entry generic;
-    // Without one the answer is the array of the match.
     std::optional<int64_t> match;
     int64_t miss;
-    OffsetVectorOwner offsetVectorOwner;
 };
 
-StubSignature signatureOfRegExpMatch(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
-StubSignature signatureOfStringMatchRegExp(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
-StubSignature signatureOfStringReplaceRegExpMayNotMatch(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
+StubSignature signatureOfRegExpMatch(StubKey key)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+    if (static_cast<RegExpMatchResult>(key.form()) == RegExpMatchResult::Record) {
+        signature.addOperand(gprOf(StubRegister::A3));
+        signature.addOperand(gprOf(StubRegister::A4));
+        signature.addOperand(gprOf(StubRegister::T9));
+    }
+    if (static_cast<RegExpMatchResult>(key.form()) == RegExpMatchResult::PartsInFrame)
+        signature.addOperand(gprOf(StubRegister::A3));
+    return signature;
+}
+
+StubSignature signatureOfStringReplaceRegExpMayNotMatch(StubKey key)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+    if (static_cast<ReplacementOfMatches>(key.form()) != ReplacementOfMatches::NothingForLength)
+        signature.addOperand(gprOf(StubRegister::A3));
+    return signature;
+}
 StubSignature signatureOfNewRegExpLiteral(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::T9) }); }
 
 StubSignature signatureOfFinishRegExpExec(StubKey key)
 {
     StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
-    if (static_cast<FinishRegExpExecForm>(key.form()) == FinishRegExpExecForm::WithoutObject)
+    if (!finishesWithObject(static_cast<FinishRegExpExecForm>(key.form())))
         signature.addOperand(gprOf(StubRegister::T9));
     return signature;
 }
+
+static_assert(noMatch == -1);
+static constexpr TrustedImm32 noMatchImmediate { -1 };
 
 static MatchAnswers answersOf(RegExpMatchResult result)
 {
     switch (result) {
     case RegExpMatchResult::Array:
-        return { Entry::operationAOTRegExpExec, std::nullopt, JSValue::encode(jsNull()), OffsetVectorOwner::VM };
+        return { Entry::operationAOTRegExpExec, std::nullopt, JSValue::encode(jsNull()) };
     case RegExpMatchResult::Boolean:
-        return { Entry::operationAOTRegExpTest, 1, 0, OffsetVectorOwner::VM };
-    case RegExpMatchResult::Found:
-        return { Entry::operationAOTRegExpFind, 1, 0, OffsetVectorOwner::RegExp };
+        return { Entry::operationAOTRegExpTest, 1, 0 };
     case RegExpMatchResult::BoxedBoolean:
-        return { Entry::operationAOTRegExpTestBoxed, JSValue::encode(jsBoolean(true)), JSValue::encode(jsBoolean(false)), OffsetVectorOwner::VM };
+        return { Entry::operationAOTRegExpTestBoxed, JSValue::encode(jsBoolean(true)), JSValue::encode(jsBoolean(false)) };
+    case RegExpMatchResult::Parts:
+    case RegExpMatchResult::PartsInFrame:
+        return { Entry::operationAOTRegExpMatchInParts, JSValue::encode(jsBoolean(true)), JSValue::encode(jsBoolean(false)) };
+    case RegExpMatchResult::ArrayForStringMatch:
+        return { Entry::operationAOTStringMatchRegExp, std::nullopt, JSValue::encode(jsNull()) };
+    case RegExpMatchResult::IndexForStringSearch:
+        return { Entry::operationAOTStringSearchRegExp, std::nullopt, JSValue::encode(jsNumber(-1)) };
+    case RegExpMatchResult::Record:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -108,20 +132,6 @@ static MatchRegisters allocateMatchRegisters(StubAssembler& jit)
         .length = jit.result(),
 #endif
     };
-}
-
-static void loadOffsetVector(StubAssembler& jit, OffsetVectorOwner owner, GPRReg regExp, GPRReg output)
-{
-    switch (owner) {
-    case OffsetVectorOwner::VM:
-        loadMatchOutput(jit, output);
-        return;
-    case OffsetVectorOwner::RegExp:
-        jit.loadPtr(Address(regExp, RegExp::offsetOfOvector() + FixedVector<int>::offsetOfStorage()), output);
-        jit.addPtr(TrustedImm32(FixedVector<int>::Storage::offsetOfData()), output);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 [[nodiscard]] static Jump loadFlatSubject(StubAssembler& jit, const MatchRegisters& registers, GPRReg string)
@@ -146,39 +156,104 @@ static void loadRegExpAndFlags(StubAssembler& jit, const MatchRegisters& registe
     return jit.branch8(CCallHelpers::NotEqual, Address(regExp, RegExp::offsetOfState()), TrustedImm32(RegExp::stateWithImageCode()));
 }
 
-static void loadMatchingCode(StubAssembler& jit, const MatchRegisters& registers, JumpList& slowCases)
+static void narrowSubject(StubAssembler& jit, const MatchRegisters& registers, RegisterSet kept, JumpList& misses, JumpList& slowCases)
+{
+    slowCases.append(jit.branch32(CCallHelpers::Above, registers.subjectLength, TrustedImm32(maxLengthCopiedAsLatin1)));
+    RegisterSet lostToLeaf = registersClobberedByPreserveMostLeaves();
+    for (unsigned index = 0; index < 3; ++index)
+        lostToLeaf.add(leafArgumentGPR(index), IgnoreVectors);
+    kept.merge(RegisterSet(registers.regExp, registers.subjectLength));
+    kept.filter(lostToLeaf);
+    Vector<GPRReg, 8> saved;
+    kept.forEach([&](Reg reg) {
+        saved.append(reg.gpr());
+    });
+    RELEASE_ASSERT(noOverlap(registers.subjectLength, leafArgumentGPR(0), leafArgumentGPR(1)) && registers.characters == leafArgumentGPR(0));
+    jit.preserving(saved.span(), [&] {
+        jit.recordClobbers(RegisterSet { leafArgumentGPR(1), leafArgumentGPR(2) });
+        jit.move(registers.characters, leafArgumentGPR(1));
+        jit.move(registers.subjectLength, leafArgumentGPR(2));
+        jit.move(instanceGPR, leafArgumentGPR(0));
+        jit.callLeaf(Entry::operationAOTNarrowSubject, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
+        jit.move(GPRInfo::returnValueGPR, registers.characters);
+    });
+    misses.append(jit.branchTestPtr(CCallHelpers::Zero, registers.characters));
+}
+
+static void loadMatchingCode(StubAssembler& jit, const MatchRegisters& registers, JumpList& isWideUnderUnicode, JumpList& slowCases, JumpList* misses = nullptr, RegisterSet keptToNarrow = { })
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
     jit.loadPtr(Address(regExp, RegExp::offsetOfRegExpJITCode()), scratch);
-    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
-    jit.loadPtr(Address(scratch, Yarr::YarrCodeBlock::offsetOf8BitCode()), scratch);
-    Jump is8Bit = jit.jump();
-    is16Bit.link(&jit);
-    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(unicodeFlags)));
+    Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    isWideUnderUnicode.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(unicodeFlags)));
     jit.loadPtr(Address(scratch, Yarr::YarrCodeBlock::offsetOf16BitCode()), scratch);
+    Jump is16Bit;
+    if (misses) {
+        is16Bit = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
+        narrowSubject(jit, registers, keptToNarrow, *misses, slowCases);
+        jit.loadPtr(Address(regExp, RegExp::offsetOfRegExpJITCode()), scratch);
+    } else
+        is16Bit = jit.jump();
     is8Bit.link(&jit);
+    jit.loadPtr(Address(scratch, Yarr::YarrCodeBlock::offsetOf8BitCode()), scratch);
+    is16Bit.link(&jit);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
 }
 
-static void callMatchingCode(StubAssembler& jit, const MatchRegisters& registers, std::span<const GPRReg> savedOperands, std::optional<GPRReg> start, OffsetVectorOwner owner)
+static void callMatchingCode(StubAssembler& jit, const MatchRegisters& registers, std::span<const GPRReg> savedOperands, std::optional<GPRReg> start)
 {
     ASSERT(registers.characters == gprOf(StubRegister::A0));
     callMatchingCodeInFrame(jit, savedOperands, registers.subjectLength, start, registers.scratch, [&](GPRReg output) {
-        loadOffsetVector(jit, owner, registers.regExp, output);
+        loadMatchOutput(jit, output);
     }, [&] {
         jit.call(registers.scratch, Yarr8BitPtrTag);
     });
 }
 
-static void loadAtom(StubAssembler& jit, const MatchRegisters& registers, JumpList& hasNoAtom, JumpList& slowCases)
+void rejectMatchInsidePair(StubAssembler& jit, const WideMatchRegisters& registers, Label isSearched, JumpList& slowCases)
+{
+    const auto [answer, string, impl, characters, length] = registers;
+    const GPRReg unit = length;
+    jit.branch64(CCallHelpers::LessThanOrEqual, answer, TrustedImm32(0)).linkTo(isSearched, &jit);
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
+    jit.loadPtr(Address(impl, StringImpl::dataOffset()), characters);
+    jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), length);
+    Jump hasCharacters = jit.jump();
+    isRope.link(&jit);
+    loadSubstringCharacters(jit, string, impl, characters, length, slowCases);
+    hasCharacters.link(&jit);
+    jit.branch32(CCallHelpers::AboveOrEqual, answer, length).linkTo(isSearched, &jit);
+    jit.load16(BaseIndex(characters, answer, CCallHelpers::TimesTwo), unit);
+    jit.and32(TrustedImm32(0xfc00), unit);
+    jit.branch32(CCallHelpers::NotEqual, unit, TrustedImm32(0xdc00)).linkTo(isSearched, &jit);
+    slowCases.append(jit.jump());
+}
+
+static void matchWideUnicodeText(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, JumpList& isWideUnderUnicode, Label isSearched, JumpList& slowCases)
+{
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    isWideUnderUnicode.link(&jit);
+    jit.loadPtr(Address(scratch, Yarr::YarrCodeBlock::offsetOf16BitCode()), scratch);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    callMatchingCode(jit, registers, operands.all(), std::nullopt);
+    rejectMatchInsidePair(jit, { .answer = scratch, .string = operands.string, .impl = impl, .characters = characters, .length = subjectLength }, isSearched, slowCases);
+}
+
+static void loadAtom(StubAssembler& jit, const MatchRegisters& registers, JumpList& hasNoAtom, JumpList& slowCases, JumpList& isInNoNarrowText)
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg atom = scratch;
     jit.loadPtr(Address(regExp, RegExp::offsetOfAtom()), atom);
     hasNoAtom.append(jit.branchTestPtr(CCallHelpers::Zero, atom));
     slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(atom, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    Jump atomIsNarrow = jit.branchTest32(CCallHelpers::NonZero, Address(atom, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.loadPtr(Address(atom, StringImpl::dataOffset()), atom);
+    jit.load16(Address(atom), atom);
+    isInNoNarrowText.append(jit.branch32(CCallHelpers::Above, atom, TrustedImm32(0xff)));
+    slowCases.append(jit.jump());
+    atomIsNarrow.link(&jit);
 }
 
 static void searchForAtom(StubAssembler& jit, const MatchRegisters& registers, std::span<const GPRReg> savedOperands)
@@ -219,26 +294,102 @@ static void matchFromLastIndex(StubAssembler& jit, const MatchRegisters& registe
     const GPRReg flags = length;
     const GPRReg start = jit.reuseScratch(StubRegister::A3);
     slowCases.append(jit.branchIfNotInt32(lastIndex));
-    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(unicodeFlags)));
+    Jump isNotUnicode = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(unicodeFlags));
+    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    isNotUnicode.link(&jit);
     slowCases.append(branchIfReadOnlyLastIndex(jit, regExpObject));
     jit.zeroExtend32ToWord(lastIndex, start);
     slowCases.append(jit.branch32(CCallHelpers::Above, start, subjectLength));
     slowCases.append(branchIfNotCompiled(jit, regExp));
-    loadMatchingCode(jit, registers, slowCases);
+    loadMatchingCode(jit, registers, slowCases, slowCases);
     jit.sub32(subjectLength, start, length);
     Jump restIsTooShort = jit.branch32(CCallHelpers::Below, length, Address(regExp, RegExp::offsetOfMinimumSize()));
-    callMatchingCode(jit, registers, operands.all(), start, answers.offsetVectorOwner);
-    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
+    callMatchingCode(jit, registers, operands.all(), start);
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
     restIsTooShort.link(&jit);
     resetLastIndex(jit, regExpObject);
     returnResult(jit, TrustedImm64(answers.miss));
 
     didNotMiss.link(&jit);
-    slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
+    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
     jit.jump().linkTo(hasFound, &jit);
 }
 
-// A pattern made at run time has no code. Most of them run on a flat program, which needs nothing of the VM.
+static void matchWholeTexts(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, GPRReg slot, JumpList& isMiss, Label hasFound)
+{
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const GPRReg program = scratch;
+    const GPRReg index = length;
+    const GPRReg units = regExp;
+    const GPRReg expectedUnit = scratch;
+    const GPRReg unit = impl;
+    RELEASE_ASSERT(noOverlap(program, slot, index, unit, units, characters, subjectLength, operands.regExpObject, operands.string));
+    static_assert(sizeof(Yarr::FlatProgram::WholeTextSlot) == 16);
+    JumpList isNotAnswered;
+    isNotAnswered.append(jit.branchTestPtr(CCallHelpers::Zero, Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, firstWholeTextSlot))));
+    isNotAnswered.append(jit.branchTest32(CCallHelpers::Zero, subjectLength));
+    isMiss.append(jit.branch32(CCallHelpers::Above, subjectLength, Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, maxWholeTextLength))));
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    auto search = [&](bool is8Bit) {
+        auto loadUnit = [&](auto address, GPRReg result) {
+            if (is8Bit)
+                jit.load8(address, result);
+            else
+                jit.load16(address, result);
+        };
+        auto scale = is8Bit ? CCallHelpers::TimesOne : CCallHelpers::TimesTwo;
+        loadUnit(Address(characters), slot);
+        jit.mul32(TrustedImm32(31), slot, slot);
+        loadUnit(BaseIndex(characters, subjectLength, scale, is8Bit ? -1 : -2), index);
+        jit.add32(index, slot);
+        jit.mul32(TrustedImm32(31), slot, slot);
+        jit.add32(subjectLength, slot);
+        static_assert(Yarr::FlatProgram::numberOfWholeTextBits == 4 * 64);
+        jit.urshift32(slot, TrustedImm32(6), index);
+        jit.and32(TrustedImm32(3), index);
+        jit.load64(BaseIndex(program, index, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Yarr::FlatProgram, wholeTextBits)), index);
+#if CPU(X86_64)
+        isMiss.append(jit.branchTestBit64(CCallHelpers::Zero, index, slot));
+#else
+        jit.urshift64(slot, index);
+        isMiss.append(jit.branchTest64(CCallHelpers::Zero, index, TrustedImm32(1)));
+#endif
+        jit.and32(Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, wholeTextSlotMask)), slot);
+        jit.lshift32(TrustedImm32(4), slot);
+        jit.loadPtr(Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, firstWholeTextSlot)), index);
+        jit.addPtr(index, slot);
+
+        Label nextSlot = jit.label();
+        jit.load32(Address(slot, OBJECT_OFFSETOF(Yarr::FlatProgram::WholeTextSlot, length)), index);
+        isMiss.append(jit.branchTest32(CCallHelpers::Zero, index));
+        JumpList isOther;
+        isOther.append(jit.branch32(CCallHelpers::NotEqual, index, subjectLength));
+        jit.loadPtr(Address(slot, OBJECT_OFFSETOF(Yarr::FlatProgram::WholeTextSlot, units)), units);
+        jit.move(TrustedImm32(0), index);
+        Label nextUnit = jit.label();
+        jit.load16(BaseIndex(units, index, CCallHelpers::TimesTwo), expectedUnit);
+        loadUnit(BaseIndex(characters, index, scale), unit);
+        isOther.append(jit.branch32(CCallHelpers::NotEqual, expectedUnit, unit));
+        jit.add32(TrustedImm32(1), index);
+        jit.branch32(CCallHelpers::Below, index, subjectLength).linkTo(nextUnit, &jit);
+
+        const GPRReg output = slot;
+        loadMatchOutput(jit, output);
+        jit.store32(TrustedImm32(0), matchOutputEntry(output, 0));
+        jit.store32(subjectLength, matchOutputEntry(output, 1));
+        jit.move(TrustedImm32(0), scratch);
+        jit.jump().linkTo(hasFound, &jit);
+
+        isOther.link(&jit);
+        jit.addPtr(TrustedImm32(sizeof(Yarr::FlatProgram::WholeTextSlot)), slot);
+        jit.jump().linkTo(nextSlot, &jit);
+    };
+    search(true);
+    is16Bit.link(&jit);
+    search(false);
+    isNotAnswered.link(&jit);
+}
+
 static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers, JumpList& slowCases, Label hasFound)
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
@@ -247,71 +398,83 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     const GPRReg charactersArgument = jit.reuseScratch(StubRegister::A1);
     const GPRReg lengthArgument = jit.reuseScratch(StubRegister::A2);
     const GPRReg output = jit.reuseScratch(StubRegister::A3);
-    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
+    const GPRReg instanceArgument = jit.reuseScratch(StubRegister::A4);
+    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3) && leafArgumentGPR(4) == gprOf(StubRegister::A4));
     static_assert(sizeof(std::unique_ptr<Yarr::BytecodePattern>) == sizeof(void*) && sizeof(std::unique_ptr<Yarr::FlatProgram>) == sizeof(void*));
     ASSERT(characters == programArgument);
     RELEASE_ASSERT(noOverlap(impl, programArgument, charactersArgument, lengthArgument, output));
+    RELEASE_ASSERT(noOverlap(programArgument, charactersArgument, lengthArgument, output, instanceArgument, instanceGPR));
 
     slowCases.append(jit.branch8(CCallHelpers::NotEqual, Address(regExp, RegExp::offsetOfState()), TrustedImm32(RegExp::stateWithBytecode())));
-    if (answers.offsetVectorOwner == OffsetVectorOwner::VM)
-        slowCases.append(jit.branch32(CCallHelpers::Above, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(VMState::maxGroupsInRegExpMatchOutput)));
+    slowCases.append(jit.branch32(CCallHelpers::Above, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(VMState::maxGroupsInRegExpMatchOutput)));
     const GPRReg bytecode = length;
     jit.loadPtr(Address(regExp, RegExp::offsetOfRegExpBytecode()), bytecode);
     jit.loadPtr(Address(bytecode, Yarr::BytecodePattern::offsetOfFlatProgram()), program);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, program));
-    bumpRuntimeCounter(jit, RuntimeCounterID::RegExpMatchesInterpreted, length);
-    Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
+    JumpList isMiss;
+    matchWholeTexts(jit, registers, operands, output, isMiss, hasFound);
 
     pushMatchFrame(jit, operands.all());
     jit.move(subjectLength, lengthArgument);
     jit.move(characters, charactersArgument);
-    loadOffsetVector(jit, answers.offsetVectorOwner, regExp, output);
+    loadMatchOutput(jit, output);
     jit.move(program, programArgument);
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.move(instanceGPR, instanceArgument);
     jit.callLeaf(Entry::operationAOTRegExpMatchFlatProgram8, bytesPushedInMatchFrame);
     Jump isSearched = jit.jump();
     is16Bit.link(&jit);
+    jit.move(instanceGPR, instanceArgument);
     jit.callLeaf(Entry::operationAOTRegExpMatchFlatProgram16, bytesPushedInMatchFrame);
     isSearched.link(&jit);
     popMatchFrame(jit, scratch, operands.all());
-    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
-    isTooShort.link(&jit);
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
+    isMiss.link(&jit);
     returnResult(jit, TrustedImm64(answers.miss));
 
     didNotMiss.link(&jit);
-    slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
+    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
     jit.jump().linkTo(hasFound, &jit);
 }
 
-static void matchSubstringForArray(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers, JumpList& needsFlatSubject, JumpList& slowCases, Label hasFound)
+static void matchSubstringForArray(StubAssembler& jit, RegExpMatchResult form, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers, JumpList& needsFlatSubject, JumpList& slowCases)
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
+    const FinishRegExpExecForm finish = FinishRegExpExecForm::OnSubstringWithObject;
     jit.load64(Address(operands.regExpObject, RegExpObject::offsetOfLastIndex()), scratch);
     slowCases.append(jit.branchIfNotNumber(scratch));
     loadRegExpAndFlags(jit, registers, operands.regExpObject);
     slowCases.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag)));
-    Jump hasNoCode = branchIfNotCompiled(jit, regExp);
-    loadMatchingCode(jit, registers, slowCases);
     Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
-    callMatchingCode(jit, registers, operands.all(), std::nullopt, answers.offsetVectorOwner);
+    Jump hasNoCode = branchIfNotCompiled(jit, regExp);
+    JumpList isWideUnderUnicode;
+    loadMatchingCode(jit, registers, isWideUnderUnicode, slowCases);
+    callMatchingCode(jit, registers, operands.all(), std::nullopt);
     Label isSearched = jit.label();
-    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
     isTooShort.link(&jit);
     Label isMiss = jit.label();
     returnResult(jit, TrustedImm64(answers.miss));
 
-    // Whoever creates the array takes a string that is no rope. The offsets of the match are the same in the flat string.
     didNotMiss.link(&jit);
-    slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
-    flattenSubject(jit, operands.string, { operands.regExpObject, operands.string }, hasFound);
+    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
+    if (form == RegExpMatchResult::ArrayForStringMatch) {
+        jit.swap(operands.regExpObject, operands.string);
+        checkStubOperands(finishRegExpExec(finish), { operands.string, operands.regExpObject });
+    } else
+        checkStubOperands(finishRegExpExec(finish), { operands.regExpObject, operands.string });
+    jit.jumpToStub(finishRegExpExec(finish));
+
+    matchWideUnicodeText(jit, registers, operands, isWideUnderUnicode, isSearched, slowCases);
 
     hasNoCode.link(&jit);
     JumpList hasNoAtom;
-    loadAtom(jit, registers, hasNoAtom, slowCases);
+    JumpList isInNoNarrowText;
+    loadAtom(jit, registers, hasNoAtom, slowCases, isInNoNarrowText);
+    isInNoNarrowText.linkTo(isMiss, &jit);
     searchForAtom(jit, registers, operands.all());
-    jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(noMatch)).linkTo(isMiss, &jit);
-    // The search leaves no offsets.
+    jit.branch64(CCallHelpers::Equal, scratch, noMatchImmediate).linkTo(isMiss, &jit);
     needsFlatSubject.append(jit.jump());
 
     hasNoAtom.link(&jit);
@@ -323,9 +486,11 @@ static void matchAtom(StubAssembler& jit, const MatchRegisters& registers, const
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg output = regExp;
     JumpList hasNoAtom;
-    loadAtom(jit, registers, hasNoAtom, slowCases);
+    JumpList isInNoNarrowText;
+    loadAtom(jit, registers, hasNoAtom, slowCases, isInNoNarrowText);
     searchForAtom(jit, registers, operands.all());
-    Jump isFound = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
+    Jump isFound = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
+    isInNoNarrowText.link(&jit);
     returnResult(jit, TrustedImm64(answers.miss));
 
     isFound.link(&jit);
@@ -333,7 +498,7 @@ static void matchAtom(StubAssembler& jit, const MatchRegisters& registers, const
     jit.loadPtr(Address(regExp, RegExp::offsetOfAtom()), length);
     jit.load32(Address(length, StringImpl::lengthMemoryOffset()), length);
     jit.add32(scratch, length);
-    loadOffsetVector(jit, answers.offsetVectorOwner, regExp, output);
+    loadMatchOutput(jit, output);
     jit.store32(scratch, matchOutputEntry(output, 0));
     jit.store32(length, matchOutputEntry(output, 1));
     jit.jump().linkTo(hasFound, &jit);
@@ -342,23 +507,22 @@ static void matchAtom(StubAssembler& jit, const MatchRegisters& registers, const
     matchOnFlatProgram(jit, registers, operands, answers, slowCases, hasFound);
 }
 
-void recordMatch(StubAssembler& jit, const MatchRecordRegisters& registers)
-{
-    constexpr ptrdiff_t cachedResult = JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult();
-    constexpr ptrdiff_t matchResult = cachedResult + RegExpCachedResult::offsetOfResult();
-    static_assert(sizeof(MatchResult::start) == sizeof(uint64_t) && sizeof(MatchResult::end) == sizeof(uint64_t));
-    const auto [regExp, string, offsets, globalObject, scratch] = registers;
-    RELEASE_ASSERT(noOverlap(regExp, string, offsets, globalObject, scratch, instanceGPR));
+static constexpr ptrdiff_t offsetOfCachedResult = JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult();
+static constexpr ptrdiff_t offsetOfRecordedBounds = offsetOfCachedResult + RegExpCachedResult::offsetOfResult();
+static_assert(sizeof(MatchResult::start) == sizeof(uint64_t) && sizeof(MatchResult::end) == sizeof(uint64_t));
 
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), globalObject);
-    jit.storePtr(regExp, Address(globalObject, cachedResult + RegExpCachedResult::offsetOfLastRegExp()));
-    jit.storePtr(string, Address(globalObject, cachedResult + RegExpCachedResult::offsetOfLastInput()));
-    jit.load32(matchOutputEntry(offsets, 0), scratch);
-    jit.store64(scratch, Address(globalObject, matchResult + OBJECT_OFFSETOF(MatchResult, start)));
-    jit.load32(matchOutputEntry(offsets, 1), scratch);
-    jit.store64(scratch, Address(globalObject, matchResult + OBJECT_OFFSETOF(MatchResult, end)));
-    jit.store8(TrustedImm32(0), Address(globalObject, cachedResult + RegExpCachedResult::offsetOfReified()));
-    jit.store8(TrustedImm32(0), Address(globalObject, cachedResult + RegExpCachedResult::offsetOfOneCharacterMatch()));
+struct RecordedBoundsRegisters {
+    GPRReg regExp;
+    GPRReg string;
+    GPRReg globalObject;
+    GPRReg start;
+    GPRReg end;
+};
+
+static void finishRecordOfMatch(StubAssembler& jit, GPRReg globalObject, GPRReg scratch)
+{
+    jit.store8(TrustedImm32(0), Address(globalObject, offsetOfCachedResult + RegExpCachedResult::offsetOfReified()));
+    jit.store8(TrustedImm32(0), Address(globalObject, offsetOfCachedResult + RegExpCachedResult::offsetOfOneCharacterMatch()));
 
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, globalObject, scratch);
     Label isRecorded = jit.label();
@@ -372,29 +536,88 @@ void recordMatch(StubAssembler& jit, const MatchRecordRegisters& registers)
     });
 }
 
-static void advanceLastIndexAndRecordMatch(StubAssembler& jit, GPRReg regExpObject, GPRReg flags, const MatchRecordRegisters& registers, OffsetVectorOwner owner)
+void recordMatch(StubAssembler& jit, const MatchRecordRegisters& registers)
+{
+    const auto [regExp, string, offsets, globalObject, scratch] = registers;
+    RELEASE_ASSERT(noOverlap(regExp, string, offsets, globalObject, scratch, instanceGPR));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), globalObject);
+    jit.storePtr(regExp, Address(globalObject, offsetOfCachedResult + RegExpCachedResult::offsetOfLastRegExp()));
+    jit.storePtr(string, Address(globalObject, offsetOfCachedResult + RegExpCachedResult::offsetOfLastInput()));
+    jit.load32(matchOutputEntry(offsets, 0), scratch);
+    jit.store64(scratch, Address(globalObject, offsetOfRecordedBounds + OBJECT_OFFSETOF(MatchResult, start)));
+    jit.load32(matchOutputEntry(offsets, 1), scratch);
+    jit.store64(scratch, Address(globalObject, offsetOfRecordedBounds + OBJECT_OFFSETOF(MatchResult, end)));
+    finishRecordOfMatch(jit, globalObject, scratch);
+}
+
+static void recordBoundsOfMatch(StubAssembler& jit, const RecordedBoundsRegisters& registers)
+{
+    const auto [regExp, string, globalObject, start, end] = registers;
+    RELEASE_ASSERT(noOverlap(regExp, string, globalObject, start, end, instanceGPR));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), globalObject);
+    jit.storePtr(regExp, Address(globalObject, offsetOfCachedResult + RegExpCachedResult::offsetOfLastRegExp()));
+    jit.storePtr(string, Address(globalObject, offsetOfCachedResult + RegExpCachedResult::offsetOfLastInput()));
+    jit.store64(start, Address(globalObject, offsetOfRecordedBounds + OBJECT_OFFSETOF(MatchResult, start)));
+    jit.store64(end, Address(globalObject, offsetOfRecordedBounds + OBJECT_OFFSETOF(MatchResult, end)));
+    finishRecordOfMatch(jit, globalObject, start);
+}
+
+static void advanceLastIndexAndRecordMatch(StubAssembler& jit, GPRReg regExpObject, GPRReg flags, const MatchRecordRegisters& registers)
 {
     loadRegExp(jit, regExpObject, registers.regExp);
     jit.load16(Address(registers.regExp, RegExp::offsetOfFlags()), flags);
-    loadOffsetVector(jit, owner, registers.regExp, registers.offsets);
-    // Whoever starts at lastIndex has seen that it is writable.
+    loadMatchOutput(jit, registers.offsets);
     Jump keepsLastIndex = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(globalFlag | stickyFlag));
     storeEndOfMatchInLastIndex(jit, regExpObject, registers.offsets, registers.scratch);
     keepsLastIndex.link(&jit);
+    if (jit.options().recordsLastMatch)
+        recordMatch(jit, registers);
+}
+
+static void recordMatchThatKeepsLastIndex(StubAssembler& jit, GPRReg regExpObject, const MatchRecordRegisters& registers)
+{
+    if (!jit.options().recordsLastMatch)
+        return;
+    loadRegExp(jit, regExpObject, registers.regExp);
+    loadMatchOutput(jit, registers.offsets);
     recordMatch(jit, registers);
 }
 
-static void finishMatchAndReturn(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers)
+static void finishMatchAndReturn(StubAssembler& jit, RegExpMatchResult form, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers, bool keepsLastIndex)
 {
-    if (!answers.match) {
-        RELEASE_ASSERT(answers.offsetVectorOwner == OffsetVectorOwner::VM);
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const MatchRecordRegisters record { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch };
+    switch (form) {
+    case RegExpMatchResult::ArrayForStringMatch:
+        jit.swap(operands.regExpObject, operands.string);
+        checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithObject), { operands.string, operands.regExpObject });
+        jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithObject));
+        return;
+    case RegExpMatchResult::Array:
         checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithObject), { operands.regExpObject, operands.string });
         jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithObject));
         return;
+    case RegExpMatchResult::IndexForStringSearch:
+        recordMatchThatKeepsLastIndex(jit, operands.regExpObject, record);
+        loadMatchOutput(jit, jit.result());
+        jit.load32(matchOutputEntry(jit.result(), 0), jit.result());
+        boxInt32(jit, jit.result(), jit.result());
+        jit.returnToCaller();
+        return;
+    case RegExpMatchResult::Boolean:
+    case RegExpMatchResult::BoxedBoolean:
+    case RegExpMatchResult::Parts:
+    case RegExpMatchResult::PartsInFrame:
+        if (keepsLastIndex)
+            recordMatchThatKeepsLastIndex(jit, operands.regExpObject, record);
+        else
+            advanceLastIndexAndRecordMatch(jit, operands.regExpObject, length, record);
+        returnResult(jit, TrustedImm64(*answers.match));
+        return;
+    case RegExpMatchResult::Record:
+        break;
     }
-    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
-    advanceLastIndexAndRecordMatch(jit, operands.regExpObject, length, { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch }, answers.offsetVectorOwner);
-    returnResult(jit, TrustedImm64(*answers.match));
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static constexpr size_t offsetOfButterflyInMatchArrayStorage = initialOutOfLineCapacity * sizeof(EncodedJSValue) + sizeof(IndexingHeader);
@@ -419,8 +642,7 @@ static Address matchArrayProperty(GPRReg butterfly, PropertyOffset offset)
     return Address(butterfly, static_cast<int32_t>(offsetInButterfly(offset) * static_cast<intptr_t>(sizeof(EncodedJSValue))));
 }
 
-// start arrives with the number of groups. Nothing here calls anything, so the collector sees either the whole array or none of its parts. Leaves 0 in array when an allocator has no room.
-static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& registers)
+static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& registers, bool isOnSubstring)
 {
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
     constexpr unsigned wordsBesideGroups = offsetOfButterflyInMatchArrayStorage / sizeof(EncodedJSValue) + 1;
@@ -429,9 +651,12 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     const GPRReg numberOfElements = start;
     const GPRReg scratch = array;
     const GPRReg header = piece;
+    const Address offsetInBase(MacroAssembler::stackPointerRegister);
     JumpList fails;
     JumpList tookNoPart;
 
+    if (isOnSubstring)
+        jit.subPtr(TrustedImm32(stackAlignmentBytes()), MacroAssembler::stackPointerRegister);
     jit.add32(TrustedImm32(wordsBesideGroups + 1), start, scratch);
     jit.urshift32(TrustedImm32(1), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
@@ -452,6 +677,11 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     for (PropertyOffset unused = RegExpMatchesArrayGroupsPropertyOffset + 1; unused < endOfMatchArrayProperties; ++unused)
         jit.store64(TrustedImm32(0), matchArrayProperty(butterfly, unused));
 
+    if (isOnSubstring) {
+        loadSubstringBaseAndOffset(jit, string, piece, start);
+        jit.store32(start, offsetInBase);
+        jit.move(piece, string);
+    }
     jit.move(TrustedImm32(0), index);
     Label next = jit.label();
     jit.load32(BaseIndex(offsets, index, CCallHelpers::TimesEight), start);
@@ -459,6 +689,8 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     jit.move(TrustedImm32(JSValue::ValueUndefined), piece);
     tookNoPart.append(jit.branch32(CCallHelpers::LessThan, start, TrustedImm32(0)));
     tookNoPart.append(jit.branchSub32(CCallHelpers::Signed, start, length));
+    if (isOnSubstring)
+        jit.add32(offsetInBase, start);
     AssemblyHelpers::FreeListRefill pieceRefill = makeSubstringOfFlatString(jit, { .string = string, .start = start, .length = length, .result = piece, .firstScratch = allocator, .secondScratch = array, .alsoKept = RegisterSet(butterfly, offsets, index) }, fails);
     tookNoPart.link(&jit);
     jit.store64(piece, BaseIndex(butterfly, index, CCallHelpers::TimesEight));
@@ -468,7 +700,7 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator)), allocator);
     AssemblyHelpers::FreeListRefill arrayRefill = allocateCellWithLateRefill(jit, array, allocator, header, fails);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header)), header);
-    jit.storePair64(header, butterfly, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, header, butterfly, array);
     fenceAfterAllocation(jit);
     Jump isCreated = jit.jump();
 
@@ -478,6 +710,8 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     fails.link(&jit);
     jit.move(TrustedImm32(0), array);
     isCreated.link(&jit);
+    if (isOnSubstring)
+        jit.addPtr(TrustedImm32(stackAlignmentBytes()), MacroAssembler::stackPointerRegister);
 }
 
 void generateFinishRegExpExec(StubAssembler& jit)
@@ -486,22 +720,29 @@ void generateFinishRegExpExec(StubAssembler& jit)
     static_assert(operationArgumentGPR(3) == gprOf(StubRegister::A3) && operationArgumentGPR(4) == gprOf(StubRegister::A4));
     static_assert(JSObject::butterflyOffset() == sizeof(JSCell) && sizeof(JSArray) == sizeof(JSCell) + sizeof(void*));
     constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::RegExpMatchesArray);
-    const bool hasObject = static_cast<FinishRegExpExecForm>(jit.key().form()) == FinishRegExpExecForm::WithObject;
+    const auto form = static_cast<FinishRegExpExecForm>(jit.key().form());
+    const bool hasObject = finishesWithObject(form);
+    const bool isOnSubstring = finishesOnSubstring(form);
     const GPRReg objectOrRecord = jit.clobberOperand(0);
-    const GPRReg string = jit.operand(1);
+    const GPRReg string = isOnSubstring ? jit.clobberOperand(1) : jit.operand(1);
     const GPRReg scratch = hasObject ? jit.allocateScratch(StubRegister::T9) : jit.clobberOperand(2);
     const GPRReg globalObject = jit.allocateScratch(StubRegister::T10);
     const GPRReg regExp = jit.allocateScratch(StubRegister::T11);
     const GPRReg flags = jit.allocateScratch(StubRegister::T12);
     const GPRReg array = jit.allocateScratch(StubRegister::A3);
-    const GPRReg butterfly = gprOf(StubRegister::T13);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T13);
     const GPRReg numberOfGroups = scratch;
     JumpList needsOperation;
 
+    if (form == FinishRegExpExecForm::WithoutObject) {
+        jit.loadPtr(Address(string, JSString::offsetOfValue()), butterfly);
+        Jump isFlat = jit.branchTestPtr(CCallHelpers::Zero, butterfly, TrustedImm32(JSString::isRopeInPointer));
+        jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::OnSubstringWithoutObject));
+        isFlat.link(&jit);
+    }
     if (hasObject) {
         loadRegExp(jit, objectOrRecord, regExp);
         needsOperation.append(jit.branchTest16(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfFlags()), TrustedImm32(hasIndicesFlag)));
-        // Only a RegExp with rare data has named groups.
         needsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfRareData())));
         jit.load32(Address(regExp, RegExp::offsetOfNumSubpatterns()), numberOfGroups);
     }
@@ -509,11 +750,11 @@ void generateFinishRegExpExec(StubAssembler& jit)
     needsOperation.append(branchIfHavingABadTime(jit));
     needsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator))));
 
-    // A thunk of a literal, which jumps here, is known to lose no more registers than an operation does.
-    jit.preserving({ objectOrRecord, butterfly }, [&] {
+    const std::array saved { objectOrRecord, string };
+    jit.preserving(std::span(saved).first(isOnSubstring ? 2 : 1), [&] {
         tryCreateMatchArray(jit, {
             .string = string,
-            .butterfly = jit.reuseScratch(StubRegister::T13),
+            .butterfly = butterfly,
             .offsets = regExp,
             .index = objectOrRecord,
             .piece = jit.result(),
@@ -521,11 +762,11 @@ void generateFinishRegExpExec(StubAssembler& jit)
             .length = globalObject,
             .allocator = flags,
             .array = array,
-        });
+        }, isOnSubstring);
     });
     needsOperation.append(jit.branchTest64(CCallHelpers::Zero, array));
     if (hasObject)
-        advanceLastIndexAndRecordMatch(jit, objectOrRecord, flags, { .regExp = regExp, .string = string, .offsets = jit.result(), .globalObject = globalObject, .scratch = scratch }, OffsetVectorOwner::VM);
+        advanceLastIndexAndRecordMatch(jit, objectOrRecord, flags, { .regExp = regExp, .string = string, .offsets = jit.result(), .globalObject = globalObject, .scratch = scratch });
     returnResult(jit, array);
 
     needsOperation.link(&jit);
@@ -540,68 +781,186 @@ void generateFinishRegExpExec(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteral, { });
 }
 
+static void checkOriginalRegExp(StubAssembler& jit, GPRReg regExpObject, GPRReg scratch, JumpList& slowCases)
+{
+    jit.load32(Address(regExpObject, JSCell::structureIDOffset()), scratch);
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
+}
+
+static void generateRecordOfMatch(StubAssembler& jit)
+{
+    const GPRReg regExpObject = jit.clobberOperand(0);
+    const GPRReg string = jit.clobberOperand(1);
+    const GPRReg start = jit.clobberOperand(2);
+    const GPRReg end = jit.clobberOperand(3);
+    const GPRReg characters = jit.operand(4);
+    const GPRReg globalObject = jit.allocateScratch(StubRegister::A0);
+    const GPRReg regExp = jit.allocateScratch(StubRegister::T11);
+    jit.subPtr(characters, start);
+    jit.subPtr(characters, end);
+    if (jit.options().recordsLastMatch) {
+        loadRegExp(jit, regExpObject, regExp);
+        recordBoundsOfMatch(jit, { .regExp = regExp, .string = string, .globalObject = globalObject, .start = start, .end = end });
+    }
+    returnResult(jit, TrustedImm64(JSValue::encode(jsBoolean(true))));
+}
+
+static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, GPRReg frame, const MatchAnswers& answers, JumpList& misses, JumpList& slowCases)
+{
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const std::array saved { operands.regExpObject, operands.string, frame };
+    slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfRareData())));
+    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(maxFrameMatchParts)));
+    callMatchingCodeInFrame(jit, saved, subjectLength, std::nullopt, scratch, [&](GPRReg output) {
+        ASSERT_UNUSED(output, output == frame);
+        jit.addPtr(TrustedImm32(sizeof(uint64_t)), frame);
+    }, [&] {
+        jit.call(scratch, Yarr8BitPtrTag);
+    });
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
+    misses.link(&jit);
+    returnResult(jit, TrustedImm64(answers.miss));
+
+    didNotMiss.link(&jit);
+    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
+    loadRegExp(jit, operands.regExpObject, regExp);
+    jit.load32(Address(regExp, RegExp::offsetOfNumSubpatterns()), scratch);
+    jit.add32(TrustedImm32(1), scratch);
+    jit.store64(scratch, Address(frame));
+    if (jit.options().recordsLastMatch) {
+        jit.addPtr(TrustedImm32(sizeof(uint64_t)), frame, characters);
+        recordMatch(jit, { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch });
+    }
+    returnResult(jit, TrustedImm64(matchIsInFrame));
+}
+
+static void branchIfRopeCannotMatch(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, JumpList& cannotMatch)
+{
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const GPRReg flags = length;
+    const GPRReg record = scratch;
+    JumpList mayMatch;
+    mayMatch.append(branchIfSurvivedCollection(jit, operands.string));
+    jit.load64(Address(operands.regExpObject, RegExpObject::offsetOfLastIndex()), scratch);
+    mayMatch.append(jit.branchIfNotNumber(scratch));
+    loadRegExpAndFlags(jit, registers, operands.regExpObject);
+    mayMatch.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag)));
+    jit.load16SignedExtendTo32(Address(regExp, RegExp::offsetOfImageRecordNumber()), record);
+    mayMatch.append(jit.branchSub32(CCallHelpers::Signed, TrustedImm32(1), record));
+    static_assert(sizeof(ImageRegExp) == 32);
+    jit.lshift32(TrustedImm32(5), record);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.regExps)), record);
+    mayMatch.append(branchIfHasNoFirstCharacters(jit, record));
+    loadFirstCharactersOfRope(jit, operands.string, impl, characters, subjectLength, mayMatch);
+    branchUnlessMatchCanBegin(jit, record, subjectLength, characters, impl, cannotMatch);
+    mayMatch.link(&jit);
+}
+
 void generateRegExpMatch(StubAssembler& jit)
 {
     const auto form = static_cast<RegExpMatchResult>(jit.key().form());
+    if (form == RegExpMatchResult::Record) {
+        generateRecordOfMatch(jit);
+        return;
+    }
     const MatchAnswers answers = answersOf(form);
-    const MatchOperands operands { .regExpObject = jit.clobberOperand(0), .string = jit.clobberOperand(1) };
+    const bool stringIsInFront = takesStringInFrontOfRegExp(form);
+    const MatchOperands operands { .regExpObject = jit.clobberOperand(stringIsInFront ? 1 : 0), .string = jit.clobberOperand(stringIsInFront ? 0 : 1) };
     const auto [regExpObject, string] = operands;
     const MatchRegisters registers = allocateMatchRegisters(jit);
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
+    const bool fillsFrame = form == RegExpMatchResult::PartsInFrame;
+    const GPRReg frame = fillsFrame ? jit.clobberOperand(2) : InvalidGPRReg;
     JumpList slowCases;
 
+    if (stringIsInFront)
+        checkOriginalRegExp(jit, regExpObject, scratch, slowCases);
     Label begin = jit.label();
     Jump isRope = loadFlatSubject(jit, registers, string);
     Label hasCharacters = jit.label();
     jit.load64(Address(regExpObject, RegExpObject::offsetOfLastIndex()), scratch);
-    slowCases.append(jit.branchIfNotNumber(scratch));
+    if (form == RegExpMatchResult::IndexForStringSearch)
+        slowCases.append(jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(JSValue::encode(jsNumber(0)))));
+    else
+        slowCases.append(jit.branchIfNotNumber(scratch));
     loadRegExpAndFlags(jit, registers, regExpObject);
     Jump usesLastIndex = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag));
+    JumpList misses;
+    misses.append(jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize())));
     Jump hasNoCode = branchIfNotCompiled(jit, regExp);
-    loadMatchingCode(jit, registers, slowCases);
-    Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
-    callMatchingCode(jit, registers, operands.all(), std::nullopt, answers.offsetVectorOwner);
-    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
-    isTooShort.link(&jit);
-    returnResult(jit, TrustedImm64(answers.miss));
+    JumpList isWideUnderUnicode;
+    RegisterSet kept(regExpObject, string);
+    if (fillsFrame)
+        kept.add(frame, IgnoreVectors);
+    loadMatchingCode(jit, registers, isWideUnderUnicode, slowCases, &misses, kept);
+    Label isSearched;
+    if (fillsFrame) {
+        matchIntoFrame(jit, registers, operands, frame, answers, misses, slowCases);
+        slowCases.append(isWideUnderUnicode);
+    } else {
+        callMatchingCode(jit, registers, operands.all(), std::nullopt);
+        isSearched = jit.label();
+        Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
+        misses.link(&jit);
+        returnResult(jit, TrustedImm64(answers.miss));
 
-    didNotMiss.link(&jit);
-    slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
+        didNotMiss.link(&jit);
+        slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
+        if (answers.match)
+            finishMatchAndReturn(jit, form, registers, operands, answers, true);
+    }
     Label hasFound = jit.label();
-    finishMatchAndReturn(jit, registers, operands, answers);
+    finishMatchAndReturn(jit, form, registers, operands, answers, false);
+    if (!fillsFrame)
+        matchWideUnicodeText(jit, registers, operands, isWideUnderUnicode, isSearched, slowCases);
 
     isRope.link(&jit);
     JumpList isNotSubstring;
     loadSubstringCharacters(jit, string, impl, characters, subjectLength, isNotSubstring);
     switch (form) {
     case RegExpMatchResult::Array:
-        matchSubstringForArray(jit, registers, operands, answers, isNotSubstring, slowCases, hasFound);
+    case RegExpMatchResult::ArrayForStringMatch:
+        matchSubstringForArray(jit, form, registers, operands, answers, isNotSubstring, slowCases);
         break;
     case RegExpMatchResult::Boolean:
-    case RegExpMatchResult::Found:
     case RegExpMatchResult::BoxedBoolean:
+    case RegExpMatchResult::IndexForStringSearch:
+    case RegExpMatchResult::Parts:
+    case RegExpMatchResult::PartsInFrame:
         jit.jump().linkTo(hasCharacters, &jit);
         break;
+    case RegExpMatchResult::Record:
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     isNotSubstring.link(&jit);
-    flattenSubject(jit, string, { regExpObject, string }, begin);
+    JumpList cannotMatch;
+    if (form != RegExpMatchResult::IndexForStringSearch)
+        branchIfRopeCannotMatch(jit, registers, operands, cannotMatch);
+    if (fillsFrame)
+        flattenSubject(jit, string, { regExpObject, string, frame }, begin);
+    else
+        flattenSubject(jit, string, { regExpObject, string }, begin);
+    if (form != RegExpMatchResult::IndexForStringSearch) {
+        cannotMatch.link(&jit);
+        returnResult(jit, TrustedImm64(answers.miss));
+    }
 
-    usesLastIndex.link(&jit);
-    matchFromLastIndex(jit, registers, operands, answers, slowCases, hasFound);
+    if (form == RegExpMatchResult::IndexForStringSearch)
+        slowCases.append(usesLastIndex);
+    else {
+        usesLastIndex.link(&jit);
+        if (form == RegExpMatchResult::ArrayForStringMatch)
+            slowCases.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag)));
+        matchFromLastIndex(jit, registers, operands, answers, slowCases, hasFound);
+    }
 
     hasNoCode.link(&jit);
     matchAtom(jit, registers, operands, answers, slowCases, hasFound);
 
     slowCases.link(&jit);
     jit.callOperationAndReturn(answers.generic, { });
-}
-
-static void checkOriginalRegExp(StubAssembler& jit, GPRReg regExpObject, GPRReg scratch, JumpList& slowCases)
-{
-    jit.load32(Address(regExpObject, JSCell::structureIDOffset()), scratch);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
 }
 
 static void resetLastIndexIfGlobal(StubAssembler& jit, GPRReg flags, GPRReg regExpObject)
@@ -611,16 +970,36 @@ static void resetLastIndexIfGlobal(StubAssembler& jit, GPRReg flags, GPRReg regE
     isNotGlobal.link(&jit);
 }
 
+static void loadLengthOfString(StubAssembler& jit, GPRReg string, GPRReg impl, GPRReg length)
+{
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
+    loadStringLength(jit, string, impl, length);
+}
+
 void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
 {
+    const auto form = static_cast<ReplacementOfMatches>(jit.key().form());
+    const bool takesAnyValue = form == ReplacementOfMatches::AnyValue;
+    const bool givesLength = form == ReplacementOfMatches::NothingForLength;
     const GPRReg string = jit.clobberOperand(0);
     const GPRReg regExpObject = jit.clobberOperand(1);
-    const GPRReg replacement = jit.clobberOperand(2);
+    const GPRReg replacement = givesLength ? InvalidGPRReg : jit.clobberOperand(2);
     const MatchRegisters registers = allocateMatchRegisters(jit);
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
-    const std::array savedOperands { string, regExpObject, replacement };
+    const std::array operands { string, regExpObject, replacement };
+    const std::span savedOperands = std::span<const GPRReg>(operands).first(givesLength ? 2 : 3);
     JumpList slowCases;
+    JumpList isNeitherTextNorFunction;
+
+    if (takesAnyValue) {
+        isNeitherTextNorFunction.append(jit.branchIfNotCell(replacement));
+        Jump isText = jit.branchIfString(replacement);
+        Jump isFunction = jit.branchIfType(replacement, jsFunctionTypes);
+        isNeitherTextNorFunction.append(jit.branchIfNotType(replacement, slimClosureTypes));
+        isText.link(&jit);
+        isFunction.link(&jit);
+    }
 
     Label begin = jit.label();
     Jump isRope = loadFlatSubject(jit, registers, string);
@@ -636,21 +1015,37 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     slowCases.append(branchIfReadOnlyLastIndex(jit, regExpObject));
     isNotGlobal.link(&jit);
     Jump hasNoCode = branchIfNotCompiled(jit, regExp);
-    loadMatchingCode(jit, registers, slowCases);
+    loadMatchingCode(jit, registers, slowCases, slowCases);
     resetLastIndexIfGlobal(jit, flags, regExpObject);
     Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
-    callMatchingCode(jit, registers, savedOperands, std::nullopt, OffsetVectorOwner::VM);
-    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
+    callMatchingCode(jit, registers, savedOperands, std::nullopt);
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
     isTooShort.link(&jit);
     Label isMiss = jit.label();
-    returnResult(jit, string);
+    if (givesLength) {
+        loadLengthOfString(jit, string, impl, jit.result());
+        jit.returnToCaller();
+    } else
+        returnResult(jit, string);
 
-    static_assert(operationArgumentGPR(4) == gprOf(StubRegister::A4));
-    const GPRReg oneBehindStartOfFirstMatch = jit.reuseScratch(StubRegister::A4);
+    static_assert(operationArgumentGPR(3) == gprOf(StubRegister::A3) && operationArgumentGPR(4) == gprOf(StubRegister::A4));
+    const GPRReg startOfFirstMatchPlusOne = jit.reuseScratch(givesLength ? StubRegister::A3 : StubRegister::A4);
     didNotMiss.link(&jit);
-    slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
+    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
+    if (givesLength && !jit.options().recordsLastMatch) {
+        loadRegExpAndFlags(jit, registers, regExpObject);
+        Jump hasMoreMatches = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag));
+        const GPRReg output = regExp;
+        loadMatchOutput(jit, output);
+        loadLengthOfString(jit, string, impl, subjectLength);
+        jit.load32(matchOutputEntry(output, 1), output);
+        jit.sub32(output, subjectLength);
+        jit.add32(subjectLength, scratch, jit.result());
+        jit.returnToCaller();
+        hasMoreMatches.link(&jit);
+    }
     Label isFound = jit.label();
-    jit.add32(TrustedImm32(1), scratch, oneBehindStartOfFirstMatch);
+    jit.add32(TrustedImm32(1), scratch, startOfFirstMatchPlusOne);
     Jump hasArguments = jit.jump();
 
     isRope.link(&jit);
@@ -659,35 +1054,36 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     jit.jump().linkTo(hasCharacters, &jit);
 
     isNotSubstring.link(&jit);
-    flattenSubject(jit, string, { string, regExpObject, replacement }, begin);
+    if (givesLength)
+        flattenSubject(jit, string, { string, regExpObject }, begin);
+    else
+        flattenSubject(jit, string, { string, regExpObject, replacement }, begin);
 
     hasNoCode.link(&jit);
-    loadAtom(jit, registers, slowCases, slowCases);
+    JumpList isInNoNarrowText;
+    loadAtom(jit, registers, slowCases, slowCases, isInNoNarrowText);
     resetLastIndexIfGlobal(jit, flags, regExpObject);
     searchForAtom(jit, registers, savedOperands);
-    jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(noMatch)).linkTo(isMiss, &jit);
+    jit.branch64(CCallHelpers::Equal, scratch, noMatchImmediate).linkTo(isMiss, &jit);
     jit.jump().linkTo(isFound, &jit);
 
+    isInNoNarrowText.link(&jit);
+    resetLastIndexIfGlobal(jit, flags, regExpObject);
+    jit.jump().linkTo(isMiss, &jit);
+
     slowCases.link(&jit);
-    jit.move(TrustedImm32(0), oneBehindStartOfFirstMatch);
+    jit.move(TrustedImm32(0), startOfFirstMatchPlusOne);
     hasArguments.link(&jit);
+    if (givesLength) {
+        jit.callOperationAndReturn(Entry::operationAOTStringLengthWithoutMatches, { });
+        return;
+    }
+    Jump isNoText = jit.branchIfNotString(replacement);
     jit.callOperationAndReturn(Entry::operationAOTStringReplaceRegExpString, { });
-}
 
-void generateStringMatchRegExp(StubAssembler& jit)
-{
-    const GPRReg string = jit.clobberOperand(0);
-    const GPRReg regExpObject = jit.clobberOperand(1);
-    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
-    JumpList slowCases;
-    checkOriginalRegExp(jit, regExpObject, scratch, slowCases);
-    loadRegExp(jit, regExpObject, scratch);
-    slowCases.append(jit.branchTest16(CCallHelpers::NonZero, Address(scratch, RegExp::offsetOfFlags()), TrustedImm32(globalFlag)));
-    jit.swap(string, regExpObject);
-    jit.jumpToStub(regExpMatch(RegExpMatchResult::Array));
-
-    slowCases.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTStringMatchRegExp, { });
+    isNoText.link(&jit);
+    isNeitherTextNorFunction.link(&jit);
+    jit.callOperationAndReturn(takesAnyValue ? Entry::operationAOTStringReplaceRegExp : Entry::operationAOTStringReplaceRegExpWithFunction, { });
 }
 
 void generateNewRegExpLiteral(StubAssembler& jit)

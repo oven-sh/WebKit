@@ -101,12 +101,12 @@ NSString * const WebHistoryItemChangedNotification = @"WebHistoryItemChangedNoti
 
 using HistoryItemMap = HashMap<WeakRef<WebCore::HistoryItem>, WebHistoryItem*>;
 
-SUPPRESS_NODELETE static inline WebCoreHistoryItem* LEGACY_NODELETE core(WebHistoryItemPrivate* itemPrivate)
+NODELETE SUPPRESS_NODELETE static inline WebCoreHistoryItem* core(WebHistoryItemPrivate* itemPrivate)
 {
     return itemPrivate->_historyItem.get();
 }
 
-static HistoryItemMap& LEGACY_NODELETE historyItemWrappers()
+NODELETE static HistoryItemMap& historyItemWrappers()
 {
     static NeverDestroyed<HistoryItemMap> historyItemWrappers;
     return historyItemWrappers;
@@ -335,8 +335,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
     if (NSArray *redirectURLs = [dict _webkit_arrayForKey:redirectURLsKey])
         _private->_redirectURLs = makeUnique<Vector<String>>(makeVector<String>(redirectURLs));
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL id childDict in [[dict objectForKey:childrenKey] reverseObjectEnumerator]) {
+    for (id childDict in [[dict objectForKey:childrenKey] reverseObjectEnumerator]) {
         RetainPtr child = adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:dynamic_objc_cast<NSDictionary>(childDict)]);
         protect(core(_private))->addChildItem(*core(child->_private));
     }
@@ -348,7 +347,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
         core(_private)->setScale([scaleValue floatValue], [scaleIsInitialValue boolValue]);
 
     if (id viewportArguments = [dict objectForKey:@"WebViewportArguments"])
-        [self _setViewportArguments:viewportArguments];
+        [self _setViewportArguments:dynamic_objc_cast<NSDictionary>(viewportArguments)];
 
     NSNumber *scrollPointXValue = [dict objectForKey:scrollPointXKey];
     NSNumber *scrollPointYValue = [dict objectForKey:scrollPointYKey];

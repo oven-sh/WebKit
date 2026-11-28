@@ -1,0 +1,84 @@
+# Two calls of import() in one turn whose graphs share two modules that are left to load. Each module runs once, and each graph runs whole before its call settles.
+# RUN: run-in-shell --aotCountsPath=/dev/null const atJob = now => { }; const begin = () => { first().then(() => print("first imported behind job " + job)); second().then(() => print("second imported behind job " + job)); Promise.all([first(), second()]).then(() => { isDone = true; walked(); }); }; let job = 0; let isDone = false; globalThis.report = (label, value) => print(label + ": " + value + " behind job " + job); const walked = () => print("walked " + aotRuntimeCounters().match(/^(\d+)\tcounter:CompiledModulesWalkedByLoader$/m)[1]); globalThis.register = (first, second) => { globalThis.first = first; globalThis.second = second; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => { const next = () => { if (isDone) return; ++job; atJob(job); Promise.resolve().then(next); }; Promise.resolve().then(next); begin(); }); return result; };
+# CHECK: runs: shared-2.js behind job 16
+# CHECK-NEXT: runs: shared-1.js behind job 16
+# CHECK-NEXT: runs: a-2.js behind job 16
+# CHECK-NEXT: runs: root-a.js behind job 16
+# CHECK-NEXT: runs: b-2.js behind job 17
+# CHECK-NEXT: runs: root-b.js behind job 17
+# CHECK-NEXT: first imported behind job 23
+# CHECK-NEXT: second imported behind job 24
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root-a.js" displayPath="root-a.js" body=f1 requests=[{target=m3 completes=true}, {target=m4 completes=true}]
+module m2 path="/root-b.js" displayPath="root-b.js" body=f2 requests=[{target=m5 completes=true}]
+module m3 path="/shared-1.js" displayPath="shared-1.js" body=f3 requests=[{target=m6 completes=true}]
+module m4 path="/a-2.js" displayPath="a-2.js" body=f4
+module m5 path="/b-2.js" displayPath="b-2.js" body=f5 requests=[{target=m3 completes=true}]
+module m6 path="/shared-2.js" displayPath="shared-2.js" body=f6
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f7
+    v1 = NewClosure function=f8
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="roota" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root-a.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="rootb" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root-b.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="shared1" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="shared-1.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="a2" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="a-2.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="b2" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="b-2.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f6 name="shared2" module=m6 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="shared-2.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f7 name="importA" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f8 name="importB" results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m0
+    Return v0
+}

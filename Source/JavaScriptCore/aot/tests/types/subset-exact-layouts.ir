@@ -1,5 +1,5 @@
 # A set of one layout is inside every set that lists the layout and overlaps no other
-# RUN: subset
+# RUN: subset L0 L0|L1|L2 L1 L3
 # CHECK: t0 <= t0: yes overlaps: yes
 # CHECK-NEXT: t0 <= t1: yes overlaps: yes
 # CHECK-NEXT: t0 <= t2: no overlaps: no
@@ -23,4 +23,5 @@ layout L0 name="Shape"
 layout L1 name="Circle" supertypes=[L0]
 layout L2 name="Square" supertypes=[L0]
 layout L3 name="Other"
-function f0 name="types" parameters=[{type=L0}, {type=L0|L1|L2}, {type=L1}, {type=L3}] results=[{type=undefined}]
+function f0 name="types" role=Signature results=[{type=undefined}]
+entry module=m0

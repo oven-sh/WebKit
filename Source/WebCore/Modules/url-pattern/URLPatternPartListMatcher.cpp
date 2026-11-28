@@ -28,11 +28,12 @@
 
 #include "URLPatternParser.h"
 #include <optional>
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 namespace URLPatternUtilities {
 
-static bool LEGACY_NODELETE literalMatchesAt(StringView input, unsigned position, StringView literal, unsigned& endPosition)
+NODELETE static bool literalMatchesAt(StringView input, unsigned position, StringView literal, unsigned& endPosition)
 {
     if (position > input.length() || literal.length() > input.length() - position)
         return false;
@@ -46,7 +47,7 @@ static bool LEGACY_NODELETE literalMatchesAt(StringView input, unsigned position
     return true;
 }
 
-static inline bool LEGACY_NODELETE isComponentDelimiter(char16_t character, StringView delimiterCodepoint)
+NODELETE static inline bool isComponentDelimiter(char16_t character, StringView delimiterCodepoint)
 {
     return !delimiterCodepoint.isEmpty() && character == delimiterCodepoint[0];
 }
@@ -149,7 +150,7 @@ static bool matchPartListFrom(const Vector<Part>& parts, unsigned partIndex, uns
         return *memo[key];
 
     Vector<bool> reachable(FillWith { }, length + 1, false);
-    markReachableEnds(parts[partIndex], input, position, delimiterCodepoint, reachable);
+    markReachableEnds(borrow(parts)[partIndex], input, position, delimiterCodepoint, reachable);
 
     bool result = false;
     for (unsigned end = 0; end <= length && !result; ++end) {
@@ -169,7 +170,7 @@ URLPatternPartListMatcher::URLPatternPartListMatcher(Vector<Part>&& partList, co
     ASSERT(m_delimiterCodepoint.isEmpty() || m_delimiterCodepoint == "."_s || m_delimiterCodepoint == "/"_s);
 
     if (m_ignoreCase) {
-        for (auto& part : m_partList) {
+        for (auto& part : borrow(m_partList)) {
             part.prefix = part.prefix.foldCase();
             part.value = part.value.foldCase();
             part.suffix = part.suffix.foldCase();

@@ -37,8 +37,7 @@
 #include <WebCore/StylePrimitiveNumeric.h>
 #include <WebCore/StyleValueTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <grid-line-explicit> = [ [ <integer [-∞,-1]> | <integer [1,∞]> ] && <custom-ident>? ]
 struct GridPositionExplicit {
@@ -89,25 +88,25 @@ struct GridPosition {
     using Span = GridPositionSpan;
 
     GridPosition(CSS::Keyword::Auto) { }
-    WEBCORE_EXPORT GridPosition(Explicit&&);
-    WEBCORE_EXPORT GridPosition(Span&&);
-    GridPosition(CustomIdent&&);
+    NODELETE WEBCORE_EXPORT GridPosition(Explicit&&);
+    NODELETE WEBCORE_EXPORT GridPosition(Span&&);
+    NODELETE GridPosition(CustomIdent&&);
 
     bool isAuto() const { return m_type == GridPositionType::Auto; }
     bool isExplicit() const { return m_type == GridPositionType::Explicit; }
     bool isSpan() const { return m_type == GridPositionType::Span; }
     bool isNamedGridArea() const { return m_type == GridPositionType::NamedGridArea; }
 
-    WEBCORE_EXPORT int LEGACY_NODELETE explicitPosition() const;
-    WEBCORE_EXPORT int LEGACY_NODELETE spanPosition() const;
-    const CustomIdent& LEGACY_NODELETE namedGridLine() const LIFETIME_BOUND;
+    NODELETE WEBCORE_EXPORT int explicitPosition() const;
+    NODELETE WEBCORE_EXPORT int spanPosition() const;
+    NODELETE const CustomIdent& namedGridLine() const LIFETIME_BOUND;
 
     bool shouldBeResolvedAgainstOppositePosition() const { return isAuto() || isSpan(); }
 
     // Note that grid line 1 is internally represented by the index 0, that's why the max value for
     // a position is gridMaxTracks instead of gridMaxTracks + 1.
-    static int LEGACY_NODELETE max();
-    static int LEGACY_NODELETE min();
+    NODELETE static int max();
+    NODELETE static int min();
 
     template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
@@ -128,10 +127,10 @@ struct GridPosition {
 
     bool operator==(const GridPosition&) const = default;
 
-    WEBCORE_EXPORT static void LEGACY_NODELETE setMaxPositionForTesting(unsigned);
+    NODELETE WEBCORE_EXPORT static void setMaxPositionForTesting(std::optional<unsigned>);
 
 private:
-    friend void LEGACY_NODELETE add(Hasher&, const GridPosition&);
+    friend void add(Hasher&, const GridPosition&);
 
     enum class GridPositionType : uint8_t {
         Auto,
@@ -145,13 +144,14 @@ private:
     CustomIdent m_namedGridLine;
 };
 
+NODELETE void add(Hasher&, const GridPosition&);
+
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<GridPosition> { auto operator()(BuilderState&, const CSSValue&) -> GridPosition; };
 template<> struct CSSValueCreation<GridPosition> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const GridPosition&); };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::GridPosition)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::GridPosition::Explicit)

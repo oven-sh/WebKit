@@ -85,17 +85,26 @@ class VideoFrame : public ThreadSafeRefCounted<VideoFrame> {
 public:
     virtual ~VideoFrame() = default;
 
-    static RefPtr<VideoFrame> fromNativeImage(NativeImage&);
-    static RefPtr<VideoFrame> createFromPixelBuffer(Ref<PixelBuffer>&&, PlatformVideoColorSpace&& = { });
-    static RefPtr<VideoFrame> createNV12(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-    static RefPtr<VideoFrame> createRGBA(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-    static RefPtr<VideoFrame> createRGBX(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-    static RefPtr<VideoFrame> createBGRA(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-    static RefPtr<VideoFrame> createBGRX(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-    static RefPtr<VideoFrame> createI420(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-    static RefPtr<VideoFrame> createI420A(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, VideoFrameRotation, PlatformVideoColorSpace&&);
-
     using Rotation = VideoFrameRotation;
+
+    struct Init {
+        MediaTime presentationTime;
+        Rotation rotation { Rotation::None };
+        bool isMirrored { false };
+        PlatformVideoColorSpace colorSpace;
+    };
+
+    static RefPtr<VideoFrame> fromNativeImage(NativeImage&);
+    static RefPtr<VideoFrame> createFromPixelBuffer(Ref<PixelBuffer>&&, Init&&);
+    static RefPtr<VideoFrame> createNV12(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, Init&&);
+    static RefPtr<VideoFrame> createRGBA(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, Init&&);
+    static RefPtr<VideoFrame> createRGBX(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, Init&&);
+    static RefPtr<VideoFrame> createBGRA(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, Init&&);
+    static RefPtr<VideoFrame> createBGRX(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, Init&&);
+    static RefPtr<VideoFrame> createI420(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, Init&&);
+    static RefPtr<VideoFrame> createI420A(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, Init&&);
+    // I422, I444, the formats with alpha other than I420A and the 10 and 12-bit formats of planarYUVFormatLayout(). One layout per plane.
+    static RefPtr<VideoFrame> createPlanarYUV(VideoPixelFormat, std::span<const uint8_t>, size_t width, size_t height, std::span<const ComputedPlaneLayout>, Init&&);
 
     MediaTime presentationTime() const { return m_presentationTime; }
     Rotation rotation() const { return m_rotation; }
@@ -122,6 +131,12 @@ public:
     using CopyCallback = CompletionHandler<void(std::optional<Vector<PlaneLayout>>&&)>;
     void copyTo(std::span<uint8_t>, VideoPixelFormat, ColorSpace, Vector<ComputedPlaneLayout>&&, CopyCallback&&);
 
+    // The formats of planarYUVFormatLayout() and I420A, tightly packed: Y, U, V, then alpha for I420A.
+    WEBCORE_EXPORT static Vector<ComputedPlaneLayout> planarBufferLayout(IntSize, VideoPixelFormat);
+    WEBCORE_EXPORT static std::optional<size_t> planarBufferSize(IntSize, VideoPixelFormat);
+    // The I420A alpha plane is alphaFrame's luma, or opaque if alphaFrame is null or can't be read.
+    WEBCORE_EXPORT bool copyToPlanarBuffer(std::span<uint8_t> destination, VideoPixelFormat, VideoFrame* alphaFrame);
+
     virtual IntSize presentationSize() const = 0;
     virtual uint32_t pixelFormat() const = 0;
     virtual bool isEncoded() const { return false; }
@@ -138,7 +153,7 @@ public:
 #endif
     WEBCORE_EXPORT virtual void setOwnershipIdentity(const ProcessIdentity&) { }
 
-    void LEGACY_NODELETE initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
+    NODELETE void initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
 
     RefPtr<NativeImage> copyNativeImage() const;
     const PlatformVideoColorSpace& colorSpace() const LIFETIME_BOUND { return m_colorSpace; }
@@ -157,6 +172,10 @@ protected:
 
     void initializePresentationTime(MediaTime);
 
+    // copyToPlanarYUV() fills a destination laid out by planarBufferLayout(); copyLumaPlane() writes the luma as tightly packed samples.
+    WEBCORE_EXPORT virtual bool copyToPlanarYUV(std::span<uint8_t>, VideoPixelFormat);
+    WEBCORE_EXPORT virtual bool copyLumaPlane(std::span<uint8_t>, PlanarImageConverter::SampleFormat);
+
 private:
     virtual Ref<VideoFrame> clone() = 0;
     // Called by updateShouldIgnoreAlpha on a frame that is not shared.
@@ -167,6 +186,11 @@ private:
     const Rotation m_rotation;
     const PlatformVideoColorSpace m_colorSpace;
 };
+
+VideoFrameRotation parseVideoFrameRotation(double);
+VideoFrameRotation addVideoFrameRotations(VideoFrameRotation baseRotation, bool baseFlip, VideoFrameRotation rotation);
+VideoFrameRotation subtractVideoFrameRotations(VideoFrameRotation, VideoFrameRotation);
+VideoFrameRotation combineVideoFrameRotations(const VideoFrame&, double);
 
 }
 

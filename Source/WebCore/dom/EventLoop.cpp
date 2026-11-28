@@ -50,9 +50,9 @@ public:
     enum class Type : bool { OneShot, Repeating };
     static Ref<EventLoopTimer> create(Type type, std::unique_ptr<EventLoopTask>&& task) { return adoptRef(*new EventLoopTimer(type, WTF::move(task))); }
 
-    Type LEGACY_NODELETE type() const { return m_type; }
-    EventLoopTaskGroup* LEGACY_NODELETE group() const { return m_task ? m_task->group() : nullptr; }
-    bool LEGACY_NODELETE isSuspended() const { return m_suspended; }
+    NODELETE Type type() const { return m_type; }
+    NODELETE EventLoopTaskGroup* group() const { return m_task ? m_task->group() : nullptr; }
+    NODELETE bool isSuspended() const { return m_suspended; }
 
     void stop()
     {
@@ -147,11 +147,11 @@ private:
         if (!m_task)
             return;
         WeakPtr group = m_task->group();
-        if (group)
-            group->didFireTimer();
+        if (CheckedPtr checkedGroup = group)
+            checkedGroup->didFireTimer();
         m_task->execute();
-        if (group && m_type == Type::OneShot)
-            group->removeScheduledTimer(*this);
+        if (CheckedPtr checkedGroup = group; checkedGroup && m_type == Type::OneShot)
+            checkedGroup->removeScheduledTimer(*this);
     }
 
     std::unique_ptr<EventLoopTask> m_task;
@@ -201,7 +201,7 @@ void EventLoop::queueTask(std::unique_ptr<EventLoopTask>&& task)
 {
     ASSERT(task->taskSource() != TaskSource::Microtask);
     ASSERT(task->group());
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     scheduleToRunIfNeeded();
     m_tasks.append(WTF::move(task));
 }
@@ -273,7 +273,7 @@ void EventLoop::performMicrotaskCheckpoint(JSC::VM& vm)
 
 void EventLoop::resumeGroup(EventLoopTaskGroup& group)
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     if (!m_groupsWithSuspendedTasks.contains(group))
         return;
     scheduleToRunIfNeeded();
@@ -281,20 +281,20 @@ void EventLoop::resumeGroup(EventLoopTaskGroup& group)
 
 void EventLoop::registerGroup(EventLoopTaskGroup& group)
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     m_associatedGroups.add(group);
 }
 
 void EventLoop::unregisterGroup(EventLoopTaskGroup& group)
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     if (m_associatedGroups.remove(group))
         stopAssociatedGroupsIfNecessary();
 }
 
 void EventLoop::stopAssociatedGroupsIfNecessary()
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     for (auto& group : m_associatedGroups) {
         if (!group.isReadyToStop())
             return;
@@ -306,7 +306,7 @@ void EventLoop::stopAssociatedGroupsIfNecessary()
 
 void EventLoop::stopGroup(EventLoopTaskGroup& group)
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     m_tasks.removeAllMatching([&group] (auto& task) {
         return group.matchesTask(*task);
     });

@@ -1,0 +1,45 @@
+# whether a value has no then is asked of its cell, its structure's word, the structure's realm and the realm's watchpoint: in line that is some seventy bytes.
+# Outside loops the operation is the call of a leaf stub that asks the same with the helper that the stubs of coroutines ask it with; in a loop it stays in line.
+# async function same(x) { return x; }  async function run(x, n) { for (let i = 0; i < n; i++) x = await same(x); return x; }  sink(run); sink(same);
+# same() as others call it makes its promise and asks the question outside any loop; run() asks it on every turn.
+# OPTIONS: report=Flow mechanisms=all
+# RUN: bytes-by-form Body CoroutineBody
+# CHECK-NOT: the build failed
+# CHECK-NOT: IsNotThenable Always Anywhere Open
+# CHECK: IsNotThenable Always Anywhere Closed 1 [[call]] [[call]]
+# CHECK: IsNotThenable Always Loop Open 1 [[inLine]] [[inLine]]
+# CHECK-NOT: not named:
+# CHECK: every form is named
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f1
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="same" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="run" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v0, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v3 calleeName="same"
+    v9 = Await v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}

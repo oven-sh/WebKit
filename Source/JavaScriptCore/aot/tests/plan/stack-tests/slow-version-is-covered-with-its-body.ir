@@ -1,0 +1,8 @@
+# the slow version calls what the function calls as it is written and is entered by a jump out of the guard, in the place of the fast one: whoever covers the one frame covers either
+# f1 = area, which has a guard and two versions
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:Body (JSValue, Double) -> (JSValue) covered-by-callers
+# CHECK: unit f1:SlowBody (JSValue, JSValue) -> (JSValue) covered-by-callers
+# RUN(WITHHELD): plan units mechanisms=all-DirectCalls
+# WITHHELD-NOT: covered-by-callers
+# PROGRAM-OF: ../which-functions-have-a-parameter-guard.ir

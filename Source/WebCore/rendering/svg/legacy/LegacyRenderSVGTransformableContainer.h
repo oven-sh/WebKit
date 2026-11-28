@@ -31,7 +31,7 @@ class LegacyRenderSVGTransformableContainer final : public LegacyRenderSVGContai
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGTransformableContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGTransformableContainer);
 public:
-    LegacyRenderSVGTransformableContainer(SVGGraphicsElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGTransformableContainer(SVGGraphicsElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGTransformableContainer();
 
     const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localTransform; }
@@ -41,7 +41,7 @@ public:
     const FloatSize& additionalTranslation() const LIFETIME_BOUND { return m_additionalTranslation; }
 
 private:
-    SVGGraphicsElement& LEGACY_NODELETE graphicsElement();
+    NODELETE SVGGraphicsElement& graphicsElement();
 
     void element() const = delete;
     bool calculateLocalTransform() override;

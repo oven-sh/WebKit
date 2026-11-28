@@ -1,0 +1,31 @@
+# a store into `this` under a key that nobody knows may lay anything under the key of the tag: the constructor is no tagged maker
+# function NodeMaker(this: Base, kind: number, name: string) { this.kind = kind; this[name] = kind; }  report(new NodeMaker(1, input));
+# of a member Link says that it may be allocated whatever is reached, so the plan is asked
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L3 None never-allocated
+# CHECK: layout [[member]] {{*}}never-allocated
+
+layout L0 kind=Instance name="NodeMaker" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L1 originField=0}, {key="pos" declared={type=number} flags=[IsRequired] originLayout=L1 originField=1}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 name="Base" module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2, L3] flags=[IsNeverAllocated] ownFieldCount=2
+layout L2 name="Num" module=m0 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 2, 1] ownFieldCount=3
+layout L3 name="Str" module=m0 fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 2, 1] ownFieldCount=3
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Construct v0, -, v1, v3 calleeName="NodeMaker"
+    v5 = PropGet v2 key="report" [isFreeName]
+    v6 = Call v5, -, v4 calleeName="report"
+    Return v6
+}
+function f1 name="NodeMaker" module=m0 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: number, v2: anything):
+    PropSet v0, v1 key="kind"
+    ElemSet v0, v2, v1
+    v5 = Undefined
+    Return v5
+}

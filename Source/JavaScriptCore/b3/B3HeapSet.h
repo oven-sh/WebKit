@@ -121,7 +121,7 @@ private:
     HeapSet intern(Vector<HeapRange, 8>&& sortedDisjointRanges);
 
     Vector<UniqueRef<HeapSet::RangeList>> m_lists;
-    UncheckedKeyHashMap<unsigned, Vector<unsigned, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    HashMap<unsigned, Vector<unsigned, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
 };
 
 } } // namespace JSC::B3

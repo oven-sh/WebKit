@@ -1,0 +1,27 @@
+# if (c) node.left = l; node.right = r;
+# The barrier of v4 runs on every way on from v3 before anything can collect or exit sideways, so v3 needs none.
+# RUN: sweep-code
+# CHECK: v3 @Void = SetMappedArgument
+# CHECK: LaterBarrierCovers
+# CHECK: v4 @Void = SetMappedArgument
+# CHECK-NOT: LaterBarrierCovers
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     v3 @Void = SetMappedArgument v0, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b2()
+#   b2():
+#     v4 @Void = SetMappedArgument v0, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

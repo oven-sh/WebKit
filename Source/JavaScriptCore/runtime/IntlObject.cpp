@@ -786,7 +786,7 @@ Vector<String> canonicalizeLocaleList(JSGlobalObject* globalObject, JSValue loca
     uint64_t length = lengthProperty.toLength(globalObject);
     RETURN_IF_EXCEPTION(scope, Vector<String>());
 
-    UncheckedKeyHashSet<String> seenSet;
+    HashSet<String> seenSet;
     for (uint64_t k = 0; k < length; ++k) {
         bool kPresent = localesObject->hasProperty(globalObject, k);
         RETURN_IF_EXCEPTION(scope, Vector<String>());
@@ -1242,7 +1242,7 @@ bool isUnicodeVariantSubtag(StringView string)
 }
 
 using VariantCode = uint64_t;
-static VariantCode LEGACY_NODELETE parseVariantCode(StringView string)
+NODELETE static VariantCode parseVariantCode(StringView string)
 {
     ASSERT(isUnicodeVariantSubtag(string));
     ASSERT(string.containsOnlyASCII());
@@ -1261,7 +1261,7 @@ static VariantCode LEGACY_NODELETE parseVariantCode(StringView string)
     return result;
 }
 
-static unsigned LEGACY_NODELETE convertToUnicodeSingletonIndex(char16_t singleton)
+NODELETE static unsigned convertToUnicodeSingletonIndex(char16_t singleton)
 {
     ASSERT(isASCIIAlphanumeric(singleton));
     singleton = toASCIILower(singleton);
@@ -1273,41 +1273,41 @@ static unsigned LEGACY_NODELETE convertToUnicodeSingletonIndex(char16_t singleto
 }
 static constexpr unsigned numberOfUnicodeSingletons = 10 + 26; // Digits + Alphabets.
 
-static bool LEGACY_NODELETE isUnicodeExtensionAttribute(StringView string)
+NODELETE static bool isUnicodeExtensionAttribute(StringView string)
 {
     auto length = string.length();
     return length >= 3 && length <= 8 && string.containsOnly<isASCIIAlphanumeric>();
 }
 
-static bool LEGACY_NODELETE isUnicodeExtensionKey(StringView string)
+NODELETE static bool isUnicodeExtensionKey(StringView string)
 {
     return string.length() == 2 && isASCIIAlphanumeric(string[0]) && isASCIIAlpha(string[1]);
 }
 
-static bool LEGACY_NODELETE isUnicodeExtensionTypeComponent(StringView string)
+NODELETE static bool isUnicodeExtensionTypeComponent(StringView string)
 {
     auto length = string.length();
     return length >= 3 && length <= 8 && string.containsOnly<isASCIIAlphanumeric>();
 }
 
-static bool LEGACY_NODELETE isUnicodePUExtensionValue(StringView string)
+NODELETE static bool isUnicodePUExtensionValue(StringView string)
 {
     auto length = string.length();
     return length >= 1 && length <= 8 && string.containsOnly<isASCIIAlphanumeric>();
 }
 
-static bool LEGACY_NODELETE isUnicodeOtherExtensionValue(StringView string)
+NODELETE static bool isUnicodeOtherExtensionValue(StringView string)
 {
     auto length = string.length();
     return length >= 2 && length <= 8 && string.containsOnly<isASCIIAlphanumeric>();
 }
 
-static bool LEGACY_NODELETE isUnicodeTKey(StringView string)
+NODELETE static bool isUnicodeTKey(StringView string)
 {
     return string.length() == 2 && isASCIIAlpha(string[0]) && isASCIIDigit(string[1]);
 }
 
-static bool LEGACY_NODELETE isUnicodeTValueComponent(StringView string)
+NODELETE static bool isUnicodeTValueComponent(StringView string)
 {
     auto length = string.length();
     return length >= 3 && length <= 8 && string.containsOnly<isASCIIAlphanumeric>();
@@ -1337,12 +1337,12 @@ public:
     bool parseUnicodeLocaleId();
     bool parseUnicodeLanguageId();
 
-    bool LEGACY_NODELETE isEOS()
+    NODELETE bool isEOS()
     {
         return m_cursor == m_range.end();
     }
 
-    bool LEGACY_NODELETE next()
+    NODELETE bool next()
     {
         if (isEOS())
             return false;
@@ -1403,7 +1403,7 @@ bool LanguageTagParser::parseUnicodeLanguageId()
             return true;
     }
 
-    UncheckedKeyHashSet<VariantCode> variantCodes;
+    HashSet<VariantCode> variantCodes;
     while (true) {
         if (!isUnicodeVariantSubtag(m_current))
             return true;
@@ -1416,7 +1416,7 @@ bool LanguageTagParser::parseUnicodeLanguageId()
     }
 }
 
-bool LEGACY_NODELETE LanguageTagParser::parseUnicodeExtensionAfterPrefix()
+NODELETE bool LanguageTagParser::parseUnicodeExtensionAfterPrefix()
 {
     // ((sep keyword)+ | (sep attribute)+ (sep keyword)*) ;
     //
@@ -1498,7 +1498,7 @@ bool LanguageTagParser::parseTransformedExtensionAfterPrefix()
     return found;
 }
 
-bool LEGACY_NODELETE LanguageTagParser::parseOtherExtensionAfterPrefix()
+NODELETE bool LanguageTagParser::parseOtherExtensionAfterPrefix()
 {
     // (sep alphanum{2,8})+ ;
     ASSERT(!isEOS());
@@ -1515,7 +1515,7 @@ bool LEGACY_NODELETE LanguageTagParser::parseOtherExtensionAfterPrefix()
     }
 }
 
-bool LEGACY_NODELETE LanguageTagParser::parsePUExtensionAfterPrefix()
+NODELETE bool LanguageTagParser::parsePUExtensionAfterPrefix()
 {
     // (sep alphanum{1,8})+ ;
     ASSERT(!isEOS());
@@ -1758,13 +1758,13 @@ const Vector<String>& intlAvailableCalendars()
     return availableCalendars;
 }
 
-const UncheckedKeyHashMap<String, CalendarID, ASCIICaseInsensitiveHash>& intlAvailableCalendarIndex()
+const HashMap<String, CalendarID, ASCIICaseInsensitiveHash>& intlAvailableCalendarIndex()
 {
-    static LazyNeverDestroyed<UncheckedKeyHashMap<String, CalendarID, ASCIICaseInsensitiveHash>> index;
+    static LazyNeverDestroyed<HashMap<String, CalendarID, ASCIICaseInsensitiveHash>> index;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
         const auto& calendars = intlAvailableCalendars();
-        UncheckedKeyHashMap<String, CalendarID, ASCIICaseInsensitiveHash> table;
+        HashMap<String, CalendarID, ASCIICaseInsensitiveHash> table;
         for (CalendarID i = 0; i < calendars.size(); ++i)
             table.add(calendars[i], i);
 
@@ -1844,8 +1844,7 @@ static JSArray* availableCollations(JSGlobalObject* globalObject)
         return { };
     }
 
-    Vector<String, 1> elements;
-    elements.reserveInitialCapacity(count + 2);
+    Vector<String, 1> elements(ReserveCapacityTag { }, count + 2);
     // ICU ~69 has a bug that does not report "emoji" and "eor" for collation when using ucol_getKeywordValues.
     // https://github.com/unicode-org/icu/commit/24778dfc9bf67f431509361a173a33a1ab860b5d
     elements.append("emoji"_s);
@@ -1894,14 +1893,13 @@ static JSArray* availableCurrencies(JSGlobalObject* globalObject)
         return { };
     }
 
-    Vector<String, 1> elements;
     // ICU ~69 doesn't list VES and UYW, but it is actually supported via Intl.DisplayNames.
     // And ICU ~69 lists up EQE / LSM while it cannot return information via Intl.DisplayNames.
     // So, we need to add the following work-around.
     //     1. Add VES and UYW
     //     2. Do not add EQE and LSM
     // https://unicode-org.atlassian.net/browse/ICU-21685
-    elements.reserveInitialCapacity(count + 2);
+    Vector<String, 1> elements(ReserveCapacityTag { }, count + 2);
     elements.append("VES"_s);
     elements.append("UYW"_s);
     for (int32_t index = 0; index < count; ++index) {
@@ -1947,8 +1945,7 @@ static JSArray* availableNumberingSystems(JSGlobalObject* globalObject)
         return { };
     }
 
-    Vector<String, 1> elements;
-    elements.reserveInitialCapacity(count);
+    Vector<String, 1> elements(ReserveCapacityTag { }, count);
     for (int32_t index = 0; index < count; ++index) {
         int32_t length = 0;
         const char* name = uenum_next(enumeration.get(), &length, &status);
@@ -2114,7 +2111,7 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
             String primaryName;
         };
         Vector<AliasRecord> aliases;
-        UncheckedKeyHashSet<String> primaryNameSet;
+        HashSet<String> primaryNameSet;
         for (auto& name : primaryNames)
             primaryNameSet.add(name);
 
@@ -2122,7 +2119,7 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
             UErrorCode status = U_ZERO_ERROR;
             auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_openTimeZones(&status));
             ASSERT(U_SUCCESS(status));
-            UncheckedKeyHashSet<String> seenAliases;
+            HashSet<String> seenAliases;
             while (true) {
                 status = U_ZERO_ERROR;
                 int32_t length = 0;
@@ -2153,9 +2150,8 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
         // Step 3: materialize the combined entries vector — primaries first, aliases after,
         // each region sorted. Build a name→index map so we can resolve each alias's
         // primary-name reference into a TimeZoneID.
-        Vector<TimeZoneEntry> combined;
-        combined.reserveInitialCapacity(primaryNames.size() + aliases.size());
-        UncheckedKeyHashMap<String, TimeZoneID> nameToIndex;
+        Vector<TimeZoneEntry> combined(ReserveCapacityTag { }, primaryNames.size() + aliases.size());
+        HashMap<String, TimeZoneID> nameToIndex;
         for (auto& name : primaryNames) {
             String identifier = reuseOrCreateImmortal(WTF::move(name));
             TimeZoneID id = static_cast<TimeZoneID>(combined.size());
@@ -2191,13 +2187,13 @@ TimeZoneID intlPrimaryTimeZoneID(TimeZoneID id)
 // fixed by the linked ICU/CLDR version, so a fixed map is safe. Stored keys are the
 // immortal static strings owned by intlAvailableTimeZoneEntries, so the read-only map
 // can be shared across VM threads.
-static const UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>& intlAvailableTimeZoneIndex()
+static const HashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>& intlAvailableTimeZoneIndex()
 {
-    static LazyNeverDestroyed<UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>> index;
+    static LazyNeverDestroyed<HashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>> index;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
         const auto& entries = intlAvailableTimeZoneEntries();
-        UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash> table;
+        HashMap<String, TimeZoneID, ASCIICaseInsensitiveHash> table;
         for (TimeZoneID i = 0; i < entries.size(); ++i)
             table.add(entries[i].identifier, i);
         index.construct(WTF::move(table));
@@ -2286,8 +2282,7 @@ static JSArray* availablePrimaryTimeZoneIdentifiers(JSGlobalObject* globalObject
 {
     const auto& entries = intlAvailableTimeZoneEntries();
     unsigned primaryCount = primaryTimeZoneCount;
-    Vector<String> primaries;
-    primaries.reserveInitialCapacity(primaryCount);
+    Vector<String> primaries(ReserveCapacityTag { }, primaryCount);
     for (unsigned i = 0; i < primaryCount; ++i)
         primaries.append(entries[i].identifier);
     return createArrayFromStringVector(globalObject, primaries);

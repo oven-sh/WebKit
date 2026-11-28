@@ -146,8 +146,7 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
             GUniqueOutPtr<GVariantIter> iter;
             g_variant_get(parameters, "(ta(tsssb))", &connectionID, &iter.outPtr());
             size_t targetCount = g_variant_iter_n_children(iter.get());
-            Vector<RemoteInspectorClient::Target> targetList;
-            targetList.reserveInitialCapacity(targetCount);
+            Vector<RemoteInspectorClient::Target> targetList(ReserveCapacityTag { }, targetCount);
             guint64 targetID;
             const char* type;
             const char* name;
@@ -179,7 +178,7 @@ RemoteInspectorClient::RemoteInspectorClient(String&& hostAndPort, RemoteInspect
     , m_cancellable(adoptGRef(g_cancellable_new()))
 {
     GRefPtr<GSocketClient> socketClient = adoptGRef(g_socket_client_new());
-    g_socket_client_connect_to_host_async(socketClient.get(), m_hostAndPort.utf8().legacyCStringPointer(), 0, m_cancellable.get(),
+    g_socket_client_connect_to_host_async(socketClient.get(), makeUTF8CString(m_hostAndPort).legacyCStringPointer(), 0, m_cancellable.get(),
         [](GObject* object, GAsyncResult* result, gpointer userData) {
             GUniqueOutPtr<GError> error;
             GRefPtr<GSocketConnection> connection = adoptGRef(g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(object), result, &error.outPtr()));
@@ -254,7 +253,7 @@ void RemoteInspectorClient::inspect(uint64_t connectionID, uint64_t targetID, co
 
 void RemoteInspectorClient::sendMessageToBackend(uint64_t connectionID, uint64_t targetID, const String& message)
 {
-    m_socketConnection->sendMessage("SendMessageToBackend"_s, gVariantNew("(tts)", connectionID, targetID, message.utf8()));
+    m_socketConnection->sendMessage("SendMessageToBackend"_s, gVariantNew("(tts)", connectionID, targetID, makeUTF8CString(message)));
 }
 
 void RemoteInspectorClient::closeFromFrontend(uint64_t connectionID, uint64_t targetID)
@@ -292,7 +291,6 @@ void RemoteInspectorClient::setTargetList(uint64_t connectionID, Vector<Target>&
 void RemoteInspectorClient::sendMessageToFrontend(uint64_t connectionID, uint64_t targetID, const char* message)
 {
     auto proxy = m_inspectorProxyMap.get(std::make_pair(connectionID, targetID));
-    ASSERT(proxy);
     if (!proxy)
         return;
     proxy->sendMessageToFrontend(String::fromUTF8(message));

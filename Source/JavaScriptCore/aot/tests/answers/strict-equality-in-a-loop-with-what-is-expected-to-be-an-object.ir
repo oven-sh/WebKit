@@ -1,0 +1,85 @@
+# function onLeft(x, next, times) { let found = 0; for (let i = 0; i < times; i++) if (x === next()) found++; return found; }
+# function onRight(next, x, times) { let found = 0; for (let i = 0; i < times; i++) if (next() === x) found++; return found; }
+# function kept(x, next, times) { let answer = false; for (let i = 0; i < times; i++) answer = x === next(); return answer; }
+# publish(onLeft, onRight, kept);
+# `x` is expected to be an object, null or undefined, and nothing holds it to that. In a loop its kind is asked in line: where it is an object or a symbol the bits decide; whatever else arrives goes to the stub for any two values.
+# The shell hands over every pair out of 43 values on both sides, and each value with itself, as strict-equality-of-unknown-values.ir does: what is expected arrives, and so does everything that is not:
+# numbers of both forms, NaNs, texts that are ropes, pieces, 16-bit copies, BigInts in one cell and in two. The shell asks itself the same question behind each answer.
+# RUN: run-in-shell globalThis.publish = (onLeft, onRight, kept) => { const doubles = [0.5, 1, 0, -0, 2147483648]; const wide = "\u0100abc"; const long = "a text that is longer than what a stub compares by itself, "; const other = "a text that is LONGER than what a stub compares by itself, "; const flat = text => { text.charCodeAt(0); return text; }; const symbol = Symbol("a"); const object = {}; const makers = [() => undefined, () => null, () => true, () => false, () => 0, () => -0, () => 1, () => -1, () => doubles[1], () => doubles[2], () => doubles[3], () => doubles[4], () => 2147483648, () => 1.5, () => doubles[0] + 1, () => NaN, () => doubles[2] / doubles[2], () => -(doubles[2] / doubles[2]), () => Infinity, () => "", () => "abc", () => id("ab") + id("c"), () => id("ab") + id("d"), () => flat(id("ab") + id("c")), () => id("xabc").slice(1), () => id("xabd").slice(1), () => wide.slice(1), () => flat(wide.slice(1, 3) + id("c")), () => long + id("tail"), () => other + id("tail"), () => flat(long + id("tail")), () => flat(other + id("tail")), () => 10n, () => BigInt(id("10")), () => BigInt(id("11")), () => BigInt(id("123456789012345678901234567890")), () => symbol, () => Symbol("a"), () => Symbol.iterator, () => object, () => ({}), () => [], () => print]; const twice = found => found === 2 ? true : found === 0 ? false : found; const ways = [(a, b) => twice(onLeft(a, () => b, 2)), (a, b) => twice(onRight(() => a, b, 2)), (a, b) => kept(a, () => b, 2)]; let asked = 0; let right = 0; const ask = (way, a, b, name) => { const answer = way(a, b); asked++; if (answer === (a === b)) right++; else print("wrong: " + name); }; for (let w = 0; w < ways.length; w++) { for (let i = 0; i < makers.length; i++) { for (let j = 0; j < makers.length; j++) ask(ways[w], makers[i](), makers[j](), w + " " + i + " " + j); const value = makers[i](); ask(ways[w], value, value, w + " " + i + " itself"); } } print(right + " of " + asked); };
+# CHECK: 5676 of 5676
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return
+}
+function f1 name="onLeft" parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: anything, v2: anything):
+    v3 = Integer
+    Jump -> next b1(v3, v3)
+  b1(v4: anything, v5: anything):
+    LoopHint
+    v7 = Less v4, v2
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Call v1
+    v9 = StrictEq v0, v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Increment v5
+    Jump -> next b5(v10)
+  b4():
+    Jump -> next b5(v5)
+  b5(v11: anything):
+    v12 = Increment v4
+    Jump -> next b1(v12, v11)
+  b6():
+    Return v5
+}
+function f2 name="onRight" parameters=[{type=anything}, {type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|object, v2: anything):
+    v3 = Integer
+    Jump -> next b1(v3, v3)
+  b1(v4: anything, v5: anything):
+    LoopHint
+    v7 = Less v4, v2
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Call v0
+    v9 = StrictEq v8, v1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Increment v5
+    Jump -> next b5(v10)
+  b4():
+    Jump -> next b5(v5)
+  b5(v11: anything):
+    v12 = Increment v4
+    Jump -> next b1(v12, v11)
+  b6():
+    Return v5
+}
+function f3 name="kept" parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = Boolean
+    Jump -> next b1(v3, v4)
+  b1(v5: anything, v6: anything):
+    LoopHint
+    v8 = Less v5, v2
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Call v1
+    v10 = StrictEq v0, v9
+    v11 = Increment v5
+    Jump -> next b1(v11, v10)
+  b3():
+    Return v6
+}

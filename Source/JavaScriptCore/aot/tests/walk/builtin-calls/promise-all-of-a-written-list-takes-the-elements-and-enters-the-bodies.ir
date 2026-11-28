@@ -1,0 +1,47 @@
+# the list is written in the call of Promise.all and named nowhere else: one operation takes the elements, no list is made, and the two listed calls of known async functions enter their bodies without a promise
+# async function a(x) { await x; return x; }  async function b(x) { await x; return x; }  function both(x) { return Promise.all([a(x), b(x), x]); }  sink(both);
+# the callee and its receiver are found by binding. The first two elements are direct calls: bits 0 and 1
+# RUN: walk f3 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: = CallDirect {{*}}role=CoroutineBody
+# CHECK: = CallDirect {{*}}role=CoroutineBody
+# CHECK: = PromiseAllOfElements {{*}}directCalls=3
+# RUN(NEVER): walk f3 mechanisms=none+DirectCalls+BuiltinCalls
+# NEVER-NOT: = NewArray
+# NEVER-NOT: = NewPromise
+# RUN(ALL): walk f3 mechanisms=all
+# ALL-LABEL: code f3:Body
+# ALL: = PromiseAllOfElements
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="a" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="b" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f3 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    v2 = Builtin builtin=PromiseAll
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v0 calleeName="a"
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v0 calleeName="b"
+    v7 = NewArray v4, v6, v0 contents=anything
+    v8 = Call v2, v1, v7 calleeKey="all" calleeName="Promise.all"
+    Return v8
+}

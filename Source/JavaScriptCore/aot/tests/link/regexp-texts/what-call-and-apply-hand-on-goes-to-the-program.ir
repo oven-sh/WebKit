@@ -1,0 +1,77 @@
+# The list follows from the program alone. call and apply only hand on: what the function gives goes to the program that called, not to a built-in, and costs nothing.
+# const text = doubled("ab", 16); function held() { return text; } export function asked() { held.call(null); .. 24 times ..; return new RegExp("x".toUpperCase() + held.call(null).length); }   (doubled(text, k): text = text + text, k times)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /X131072/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="asked" variable=g0}]
+entry module=m0
+variable g0 name="asked" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="text" module=m0 declared={type=anything|absent}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = String string="ab"
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    PutModuleVariable v18 variable=g1
+    v20 = Undefined
+    Return v20
+}
+function f1 name="asked" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = PropGet v0 key="call"
+    v2 = Null
+    v3 = Call v1, v0, v2 calleeKey="call"
+    v4 = Call v1, v0, v2 calleeKey="call"
+    v5 = Call v1, v0, v2 calleeKey="call"
+    v6 = Call v1, v0, v2 calleeKey="call"
+    v7 = Call v1, v0, v2 calleeKey="call"
+    v8 = Call v1, v0, v2 calleeKey="call"
+    v9 = Call v1, v0, v2 calleeKey="call"
+    v10 = Call v1, v0, v2 calleeKey="call"
+    v11 = Call v1, v0, v2 calleeKey="call"
+    v12 = Call v1, v0, v2 calleeKey="call"
+    v13 = Call v1, v0, v2 calleeKey="call"
+    v14 = Call v1, v0, v2 calleeKey="call"
+    v15 = Call v1, v0, v2 calleeKey="call"
+    v16 = Call v1, v0, v2 calleeKey="call"
+    v17 = Call v1, v0, v2 calleeKey="call"
+    v18 = Call v1, v0, v2 calleeKey="call"
+    v19 = Call v1, v0, v2 calleeKey="call"
+    v20 = Call v1, v0, v2 calleeKey="call"
+    v21 = Call v1, v0, v2 calleeKey="call"
+    v22 = Call v1, v0, v2 calleeKey="call"
+    v23 = Call v1, v0, v2 calleeKey="call"
+    v24 = Call v1, v0, v2 calleeKey="call"
+    v25 = Call v1, v0, v2 calleeKey="call"
+    v26 = Call v1, v0, v2 calleeKey="call"
+    v27 = PropGet v26 key="length"
+    v28 = String string="x"
+    v29 = PropGet v28 key="toUpperCase"
+    v30 = Call v29, v28 calleeKey="toUpperCase"
+    v31 = Builtin builtin=RegExp
+    v32 = Add v30, v27
+    v33 = Construct v31, -, v32
+    Return v33
+}
+function f2 name="held" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}

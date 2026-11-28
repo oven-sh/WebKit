@@ -1,0 +1,52 @@
+# a lookup that ends on built-ins and finds nothing is answered once for the whole flow. Where the flow brings the name to one of those objects later, whoever went by the answer is told again
+# marked.marked; other.other; put(Function.prototype, true)   with   put = (o, v) => { o.marked = v }
+# what is laid on Function.prototype may be an accessor, which gets the closure as `this`: so the function that is asked for `marked` has callers that nobody knows. The one that is asked for `other` is the control
+# in the three orders of the worklist: in some the read comes in front of the store
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 callers-known
+# CHECK: function f3 callers-known
+# RUN(OLDEST): link functions oldest-first mechanisms=all
+# OLDEST-NOT: function f2 callers-known
+# OLDEST: function f3 callers-known
+# RUN(SCATTERED): link functions scattered mechanisms=all
+# SCATTERED-NOT: function f2 callers-known
+# SCATTERED: function f3 callers-known
+# RUN(ADDS): test-run
+# ADDS: adds FunctionPrototype "marked"
+# RUN(ADDSOLDEST): test-run oldest-first
+# ADDSOLDEST: adds FunctionPrototype "marked"
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = PropGet v0 key="marked"
+    v2 = Call v0, -
+    v3 = NewClosure function=f3
+    v4 = PropGet v3 key="other"
+    v5 = Call v3, -
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Function" [isFreeName]
+    v8 = PropGet v7 key="prototype"
+    v9 = NewClosure function=f1
+    v10 = Boolean boolean=true
+    v11 = Call v9, -, v8, v10
+    Return v11
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="marked"
+    Return v1
+}
+function f2 name="marked" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="other" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

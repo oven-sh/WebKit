@@ -14,17 +14,13 @@
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
-#include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
 #include "JSGlobalProxy.h"
 #include "SymbolTableInlines.h"
 #include <bit>
-#include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT {
@@ -51,53 +47,32 @@ static ChainWalk walkAboveGlobalObject(JSGlobalObject* globalObject, UniquedStri
     return walkChain({ globalObject, globalObject->structure(), globalObject, mode }, uid);
 }
 
-static ALWAYS_INLINE bool putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot, const Invocable<void()> auto& didNotFile)
+static ALWAYS_INLINE void putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
     if (SymbolTableEntry::Fast entry = lexical->symbolTable()->get(identifier.impl()); !entry.isNull()) {
-        didNotFile();
         if (!lexical->variableAt(entry.scopeOffset()).get()) {
             throwException(globalObject, scope, createTDZError(globalObject, identifier));
-            return false;
+            return;
         }
         PutPropertySlot lexicalSlot(lexical, true);
         scope.release();
         JSGlobalLexicalEnvironment::put(lexical, globalObject, identifier, value, lexicalSlot);
-        return false;
+        return;
     }
     if (slot.isStrictMode()) {
         bool exists = globalObject->hasProperty(globalObject, identifier);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, void());
         if (!exists) {
-            didNotFile();
             throwException(globalObject, scope, createUndefinedVariableError(globalObject, identifier));
-            return false;
+            return;
         }
     }
 
-    Structure* structureBefore = globalObject->structure();
-    unsigned lexicalBindingEpochBefore = globalObject->globalLexicalBindingEpoch();
+    scope.release();
     globalObject->methodTable()->put(globalObject, globalObject, identifier, value, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (globalObject->structure() == structureBefore && globalObject->globalLexicalBindingEpoch() == lexicalBindingEpochBefore)
-        return true;
-    didNotFile();
-    return false;
-}
-
-static SiteCache siteToFill(SiteCache site)
-{
-    return site && site->get().kind != Slot::Kind::Uncacheable ? site : nullptr;
-}
-
-static PropertyAnswer constantAnswer(JSValue value, JSGlobalObject* changeableGlobalObject = nullptr)
-{
-    PropertyAnswer answer { .kind = PropertyAnswerKind::Constant, .constant = value };
-    if (changeableGlobalObject)
-        answer.changeableObjects.append(changeableGlobalObject);
-    return answer;
 }
 
 static PropertyAnswer answerInStorage(PropertyAnswerKind kind, SlotAccess access, JSObject* holder, PropertyOffset offset)
@@ -123,30 +98,6 @@ static PropertyAnswer classifyInheritedRead(JSGlobalObject* globalObject, Unique
     if (walk.result != ChainWalkResult::Found || walk.holder != slot.slotBase() || (!isValue && !isGetter))
         return PropertyAnswer::uncacheableAfter(SlotAccess::Read, WTF::move(walk));
     return PropertyAnswer::above(isValue ? PropertyAnswerKind::Value : PropertyAnswerKind::Accessor, SlotAccess::Read, WTF::move(walk));
-}
-
-static PropertyAnswer classifyFreeNameRead(Instance& instance, const Identifier& identifier, const PropertySlot& slot, JSValue value, SiteCache site)
-{
-    JSGlobalObject* globalObject = instance.globalObject;
-    UniquedStringImpl* uid = identifier.impl();
-    if (!canCachePropertiesOf(globalObject) || slot.isTaintedByOpaqueObject())
-        return PropertyAnswer::uncacheable(SlotAccess::Read);
-    if (slot.slotBase() != globalObject)
-        return classifyInheritedRead(globalObject, uid, slot);
-    if (slot.isCacheableValue()) {
-        if (isFixed(slot, identifier) || globalObject->structure()->isImmutablePropertyForReader(uid))
-            return constantAnswer(value);
-        if (instance.state->propertyCaches->watchedValues().tryWatchConstant(*instance.vm, globalObject, uid, value, site))
-            return constantAnswer(value, globalObject);
-        return answerInStorage(PropertyAnswerKind::Value, SlotAccess::Read, globalObject, slot.cachedOffset());
-    }
-    if (slot.isCacheableGetter())
-        return answerInStorage(PropertyAnswerKind::Accessor, SlotAccess::Read, globalObject, slot.cachedOffset());
-    if (slot.isValue() && isConstantVariable(globalObject->symbolTable()->get(uid), identifier))
-        return constantAnswer(value);
-    if (slot.isCustom() && isFixed(slot, identifier) && slot.attributes() & PropertyAttribute::CustomValue)
-        return constantAnswer(value);
-    return PropertyAnswer::uncacheable(SlotAccess::Read);
 }
 
 PropertyAnswer classifyGlobalProxyRead(const ReadQuery& query)
@@ -183,23 +134,18 @@ ChainWalk walkChainThroughGlobalProxy(JSGlobalObject* globalObject, const Slot& 
     return walk;
 }
 
-static JSValue getFreeName(Instance* instance, uint32_t key, SiteCache site, bool isForTypeOf)
+static JSValue getFreeName(Instance* instance, uint32_t key, bool isForTypeOf)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertyCaches& caches = *instance->state->propertyCaches;
     const Identifier& identifier = identifierAt(instance, key);
-    UniquedStringImpl* uid = identifier.impl();
-    site = siteToFill(site);
 
     JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
-    if (SymbolTableEntry::Fast entry = lexical->symbolTable()->get(uid); !entry.isNull()) {
+    if (SymbolTableEntry::Fast entry = lexical->symbolTable()->get(identifier.impl()); !entry.isNull()) {
         JSValue value = lexical->variableAt(entry.scopeOffset()).get();
         if (!value)
             throwException(globalObject, scope, createTDZError(globalObject, identifier));
-        else if (site)
-            caches.cacheFreeName(site, uid, SlotAccess::Read, entry.isReadOnly() ? constantAnswer(value, globalObject) : PropertyAnswer::uncacheable(SlotAccess::Read));
         return value;
     }
 
@@ -211,91 +157,81 @@ static JSValue getFreeName(Instance* instance, uint32_t key, SiteCache site, boo
             throwException(globalObject, scope, createUndefinedVariableError(globalObject, identifier));
             return { };
         }
-        if (site)
-            caches.cacheFreeName(site, uid, SlotAccess::Read, classifyAbsentRead(globalObject, uid));
         return jsUndefined();
     }
 
-    // The answer is filed before a getter runs, so that a change the getter makes drops it.
-    bool callsGetter = slot.isAccessor();
-    JSValue value;
-    if (!callsGetter) {
-        value = slot.getValue(globalObject, identifier);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    if (site)
-        caches.cacheFreeName(site, uid, SlotAccess::Read, classifyFreeNameRead(*instance, identifier, slot, value, site));
-    if (callsGetter)
-        RELEASE_AND_RETURN(scope, slot.getValue(globalObject, identifier));
-    return value;
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, identifier));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetFreeName, EncodedJSValue, (Instance* instance, uint32_t key, SiteCache cache))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetFreeName, EncodedJSValue, (Instance* instance, uint32_t key, SiteCache))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetFreeName);
-    OPERATION_RETURN(scope, JSValue::encode(getFreeName(instance, key, cache, false)));
+    OPERATION_RETURN(scope, JSValue::encode(getFreeName(instance, key, false)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetFreeNameForTypeOf, EncodedJSValue, (Instance* instance, uint32_t key, SiteCache cache))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetFreeNameForTypeOf, EncodedJSValue, (Instance* instance, uint32_t key, SiteCache))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetFreeNameForTypeOf);
-    OPERATION_RETURN(scope, JSValue::encode(getFreeName(instance, key, cache, true)));
+    OPERATION_RETURN(scope, JSValue::encode(getFreeName(instance, key, true)));
 }
 
-static PropertyAnswer classifyFreeNameStore(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* uid, const PutPropertySlot& slot)
-{
-    Structure* structure = globalObject->structure();
-    if (!canCachePropertiesOf(globalObject) || structure->isImmutableProperty(uid))
-        return PropertyAnswer::uncacheable(SlotAccess::Store);
-    unsigned attributes = 0;
-    PropertyOffset offset = structure->get(vm, uid, attributes);
-    if (!isValidOffset(offset))
-        return PropertyAnswer::uncacheable(SlotAccess::Store);
-    if (attributes & PropertyAttribute::Accessor)
-        return answerInStorage(PropertyAnswerKind::Accessor, SlotAccess::Store, globalObject, offset);
-    if (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
-        return PropertyAnswer::uncacheable(SlotAccess::Store);
-    if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != globalObject || slot.cachedOffset() != offset)
-        return PropertyAnswer::uncacheable(SlotAccess::Store, true);
-    return answerInStorage(PropertyAnswerKind::Value, SlotAccess::Store, globalObject, offset);
-}
-
-static ALWAYS_INLINE void setFreeName(Instance* instance, uint32_t key, SiteCache site, JSValue value, bool isStrict)
+static ALWAYS_INLINE void setFreeName(Instance* instance, uint32_t key, JSValue value, bool isStrict)
 {
     JSGlobalObject* globalObject = instance->globalObject;
-    VM& vm = *instance->vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    const Identifier& identifier = identifierAt(instance, key);
     PutPropertySlot slot(globalObject, isStrict);
-    bool mayBeFiled = putGlobalName(globalObject, identifier, value, slot, [] { });
-    RETURN_IF_EXCEPTION(scope, void());
-    site = siteToFill(site);
-    if (!mayBeFiled || !site)
-        return;
-
-    UniquedStringImpl* uid = identifier.impl();
-    PropertyCaches& caches = *instance->state->propertyCaches;
-    PropertyAnswer answer = classifyFreeNameStore(vm, globalObject, uid, slot);
-    if (answer.kind == PropertyAnswerKind::Value) {
-        caches.watchedValues().didCacheStore(uid);
-        Structure* structure = globalObject->structure();
-        if (structure->propertyAccessesAreCacheable())
-            structure->didCachePropertyReplacement(vm, answer.offset);
-    }
-    caches.cacheFreeName(site, uid, SlotAccess::Store, answer);
+    putGlobalName(globalObject, identifierAt(instance, key), value, slot);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetFreeName, void, (Instance* instance, uint32_t key, SiteCache cache, EncodedJSValue value))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetFreeName, void, (Instance* instance, uint32_t key, SiteCache, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetFreeName);
-    setFreeName(instance, key, cache, JSValue::decode(value), true);
+    setFreeName(instance, key, JSValue::decode(value), true);
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetFreeNameSloppy, void, (Instance* instance, uint32_t key, SiteCache cache, EncodedJSValue value))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetFreeNameSloppy, void, (Instance* instance, uint32_t key, SiteCache, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetFreeNameSloppy);
-    setFreeName(instance, key, cache, JSValue::decode(value), false);
+    setFreeName(instance, key, JSValue::decode(value), false);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCheckEvaluation, void, (Instance* instance))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCheckEvaluation);
+    if (instance->state->disallowsEvaluation) [[unlikely]]
+        throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDeclareGlobal, void, (Instance* instance, uint32_t key, uint32_t step, uint32_t isFunction))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDeclareGlobal);
+    const Identifier& name = identifierAt(instance, key);
+    switch (static_cast<Typed::GlobalDeclarationStep>(step)) {
+    case Typed::GlobalDeclarationStep::FindDuplicate: {
+        JSValue holder = JSScope::resolveScopeForHoistingFuncDeclInEval(globalObject, globalObject->globalScope(), name);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (holder.isUndefined())
+            throwSyntaxError(globalObject, scope, makeString("Can't create duplicate variable in eval: '"_s, StringView(name.impl()), '\''));
+        break;
+    }
+    case Typed::GlobalDeclarationStep::CheckProperty: {
+        if (!isFunction && globalObject->isStructureExtensible())
+            break;
+        bool canDeclare = isFunction ? globalObject->canDeclareGlobalFunction(name) : globalObject->canDeclareGlobalVar(name);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (!canDeclare)
+            throwException(globalObject, scope, isFunction ? createErrorForInvalidGlobalFunctionDeclaration(globalObject, name) : createErrorForInvalidGlobalVarDeclaration(globalObject, name));
+        break;
+    }
+    case Typed::GlobalDeclarationStep::Create:
+        if (isFunction)
+            globalObject->createGlobalFunctionBinding<BindingCreationContext::Eval>(name);
+        else
+            globalObject->createGlobalVarBinding<BindingCreationContext::Eval>(name);
+        break;
+    }
     OPERATION_RETURN(scope);
 }
 
@@ -312,9 +248,7 @@ namespace {
 
 struct BindingAccess {
     UniquedStringImpl* uid() const { return name.impl(); }
-    void didNotFile() const { count(instance, RuntimeCounterID::GlobalBindingNotFiled); }
 
-    Instance& instance;
     VM& vm;
     JSGlobalObject* globalObject;
     GlobalBindings& bindings;
@@ -327,7 +261,7 @@ struct BindingAccess {
 static ALWAYS_INLINE BindingAccess bindingAccess(Instance* instance, uint32_t number)
 {
     GlobalBindings& bindings = *instance->state->globalBindings;
-    return { *instance, *instance->vm, instance->globalObject, bindings, number, bindings.nameOf(number) };
+    return { *instance->vm, instance->globalObject, bindings, number, bindings.nameOf(number) };
 }
 
 static bool structureSaysWherePropertiesAre(const BindingAccess& access)
@@ -410,6 +344,12 @@ static bool tryFileAbsence(const BindingAccess& access)
     return true;
 }
 
+static bool forwardsToGlobalObject(JSGlobalObject* globalObject)
+{
+    JSObject* globalThis = globalObject->globalThis();
+    return globalThis == globalObject || (globalThis->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(globalThis)->target() == globalObject);
+}
+
 static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t number, bool seesScriptBindings)
 {
     if (EncodedJSValue* location = filedLocationOrNull(instance, number, seesScriptBindings)) {
@@ -438,11 +378,8 @@ static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t numbe
         }
     } else {
         receiver = globalObject->globalThis();
-        bool forwardsToGlobalObject = receiver == globalObject || (receiver->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(receiver)->target() == globalObject);
-        if (!forwardsToGlobalObject) [[unlikely]] {
-            access.didNotFile();
+        if (!forwardsToGlobalObject(globalObject)) [[unlikely]]
             RELEASE_AND_RETURN(scope, JSValue(receiver).get(globalObject, identifier));
-        }
     }
 
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
@@ -450,23 +387,18 @@ static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t numbe
     RETURN_IF_EXCEPTION(scope, { });
     if (!found) {
         if (access.bindings.answersUndefinedWhereAbsent(number)) {
-            if (!tryFileAbsence(access))
-                access.didNotFile();
+            tryFileAbsence(access);
             return jsUndefined();
         }
-        access.didNotFile();
         throwException(globalObject, scope, createUndefinedVariableError(globalObject, identifier));
         return { };
     }
 
-    if (slot.isAccessor()) {
-        access.didNotFile();
+    if (slot.isAccessor())
         RELEASE_AND_RETURN(scope, slot.getValue(globalObject, identifier));
-    }
     JSValue value = slot.getValue(globalObject, identifier);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!tryFileRead(access, slot, value))
-        access.didNotFile();
+    tryFileRead(access, slot, value);
     return value;
 }
 
@@ -482,21 +414,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetGlobalObjectBinding, EncodedJSValue, (In
     OPERATION_RETURN(scope, JSValue::encode(getGlobalBinding(instance, binding, false)));
 }
 
-static bool tryFileStore(const BindingAccess& access, const PutPropertySlot& slot)
+static bool tryReplaceAndFileLocation(const BindingAccess& access, JSValue value)
 {
     VM& vm = access.vm;
     JSGlobalObject* globalObject = access.globalObject;
-    if (!canCachePropertiesOf(globalObject) || globalObject->structure()->isImmutableProperty(access.uid()) || !structureSaysWherePropertiesAre(access))
+    if (globalObject->methodTable()->put != JSGlobalObject::info()->methodTable.put || !canCachePropertiesOf(globalObject))
+        return false;
+    unsigned attributes = 0;
+    if (!isValidOffset(globalObject->structure()->get(vm, access.uid(), attributes)) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+        return false;
+    if (globalObject->structure()->isImmutableProperty(access.uid()) || isWriteJudgedByWriter(globalObject->structure(), access.uid()) || !structureSaysWherePropertiesAre(access))
         return false;
     Structure* structure = globalObject->structure();
-    unsigned attributes = 0;
-    PropertyOffset offset = structure->get(vm, access.uid(), attributes);
-    bool isWritableDataProperty = isValidOffset(offset) && !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
-    if (!isWritableDataProperty || !slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != globalObject || slot.cachedOffset() != offset)
-        return false;
+    PropertyOffset offset = structure->get(vm, access.uid());
     structure->didCachePropertyReplacement(vm, offset);
     access.bindings.didFileStore(access.number);
     access.bindings.fileLocation(access.number, structure, locationOfProperty(globalObject, offset));
+    globalObject->putDirectOffset(vm, offset, value);
     return true;
 }
 
@@ -506,12 +440,10 @@ static ALWAYS_INLINE void setGlobalBinding(Instance* instance, uint32_t number, 
         return;
     BindingAccess access = bindingAccess(instance, number);
     ASSERT(access.bindings.seesScriptBindings(number));
-    auto scope = DECLARE_THROW_SCOPE(access.vm);
+    if (!access.globalObject->globalLexicalEnvironment()->symbolTable()->contains(access.uid()) && tryReplaceAndFileLocation(access, value))
+        return;
     PutPropertySlot slot(access.globalObject, isStrict);
-    bool mayBeFiled = putGlobalName(access.globalObject, access.name, value, slot, [&] { access.didNotFile(); });
-    RETURN_IF_EXCEPTION(scope, void());
-    if (mayBeFiled && !tryFileStore(access, slot))
-        access.didNotFile();
+    putGlobalName(access.globalObject, access.name, value, slot);
 }
 
 static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
@@ -521,15 +453,11 @@ static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t nu
     BindingAccess access = bindingAccess(instance, number);
     ASSERT(!access.bindings.seesScriptBindings(number));
     JSGlobalObject* globalObject = access.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(access.vm);
-
-    Structure* structureBefore = globalObject->structure();
+    if (forwardsToGlobalObject(globalObject) && tryReplaceAndFileLocation(access, value))
+        return;
     JSObject* receiver = globalObject->globalThis();
     PutPropertySlot slot(receiver, isStrict);
     receiver->methodTable()->put(receiver, globalObject, access.name, value, slot);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (globalObject->structure() != structureBefore || !tryFileStore(access, slot))
-        access.didNotFile();
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetGlobalBinding, void, (Instance* instance, uint32_t binding, EncodedJSValue value))
@@ -560,48 +488,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetGlobalObjectBindingSloppy, void, (Instan
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateGlobalBinding, void, (Instance* instance, uint32_t binding, EncodedJSValue value))
-{
-    VM& vm = *instance->vm;
-    DeferGCForAWhile deferGC(vm);
-    DeferTerminationForAWhile deferTermination(vm);
-    JSGlobalObject* globalObject = instance->globalObject;
-    GlobalBindings& bindings = *instance->state->globalBindings;
-    Identifier identifier = bindings.nameOf(binding);
-    JSValue answered = JSValue::decode(value);
-    JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
-    SymbolTableEntry::Fast entry = bindings.seesScriptBindings(binding) ? lexical->symbolTable()->get(identifier.impl()) : SymbolTableEntry::Fast();
-    JSValue found;
-    PropertySlot own(globalObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (!entry.isNull())
-        found = lexical->variableAt(entry.scopeOffset()).get();
-    else if (globalObject->methodTable()->getOwnPropertySlot(globalObject, globalObject, identifier, own) && own.isValue())
-        found = own.getValue(globalObject, identifier);
-    if (found == answered)
-        return;
-    PropertySlot inherited(globalObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (!found && answered.isUndefined() && bindings.answersUndefinedWhereAbsent(binding) && !globalObject->getPropertySlot(globalObject, identifier, inherited) && !inherited.isTaintedByOpaqueObject())
-        return;
-    dataLogLn("AOT: the record of the global name ", identifier.string(), " answers with another value than a lookup finds");
-    crashOnValidationFailure(vm, { ValidationFailureKind::LookupDiffers, { }, { }, answered });
-}
-
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalBindings);
 
 GlobalBindings::GlobalBindings(State& state)
     : m_state(state)
-    , m_records(unsafeMakeSpan(state.instance.runtime.counters.globalBindings, state.tables.globalBindings().size()))
+    , m_records(unsafeMakeSpan(state.instance.runtime.bindings.globalBindings, state.tables.globalBindings().size()))
     , m_names(state.tables.globalBindings())
     , m_chainDependentOwner(state.chainDependents->addOwner(*this))
 {
-    RELEASE_ASSERT(m_records.data());
+    RELEASE_ASSERT(m_records.data() == state.instance.tableAt<GlobalBinding>(InstanceLayout::offsetOfGlobalBindings(state.tables.instanceSizes)));
+    RELEASE_ASSERT(m_records.size() == state.tables.instanceSizes.numberOfGlobalBindings);
     state.caches->add(CacheKind::WeakByKey, "GlobalBindings"_s, *this);
 }
 
 Identifier GlobalBindings::nameOf(uint32_t number) const
 {
     RELEASE_ASSERT(number < m_names.size());
-    return m_state.instance.vm->aotState().identifiers->identifier(identifierNumberOf(number));
+    return identifiersOf(m_state.instance).identifier(identifierNumberOf(number));
 }
 
 bool GlobalBindings::fileConstant(VM& vm, uint32_t number, JSObject* holderToWatch, JSValue value)
@@ -611,7 +514,6 @@ bool GlobalBindings::fileConstant(VM& vm, uint32_t number, JSObject* holderToWat
     if (!holderToWatch)
         m_watches.remove(number);
     else {
-        // A free-name site with a cached store compares no Structure and fires no watchpoint, and each later Structure of the holder starts with a valid replacement set.
         if (m_names[number] & isStoredByNameFlag || m_identifiersStoredThrough.contains(identifierNumberOf(number)) || !holderToWatch->structure()->propertyAccessesAreCacheable())
             return false;
         auto isValue = [&](JSValue held) { return held == value; };
@@ -624,7 +526,6 @@ bool GlobalBindings::fileConstant(VM& vm, uint32_t number, JSObject* holderToWat
             return false;
         m_watches.set(number, WTF::move(watch));
     }
-    // The global object or its lexical environment holds the value for as long as it stands here, so the record is no root.
     setConstant(number, value, false);
     return true;
 }
@@ -643,7 +544,6 @@ void GlobalBindings::fileAbsence(VM& vm, uint32_t number, std::span<JSObject* co
     ChainObjects objects;
     objects.append(m_state.instance.globalObject);
     objects.append(objectsAboveGlobalObject);
-    // Only an object that may be a prototype reports its changes. The global object becomes one here, which costs it a Structure.
     for (JSObject* object : objects) {
         if (object->mayBePrototype()) [[likely]]
             continue;
@@ -653,7 +553,6 @@ void GlobalBindings::fileAbsence(VM& vm, uint32_t number, std::span<JSObject* co
     m_state.chainDependents->add(objects.span(), { nameOf(number).impl(), number, m_chainDependentOwner });
     m_watches.remove(number);
     setConstant(number, jsUndefined(), true);
-    // A read that looks at the location alone finds the answer in the record: any new property changes the Structure, and a change above the global object empties the word.
     if (filesLocationAlone(number))
         fileLocation(number, m_state.instance.globalObject->structure(), std::bit_cast<int64_t>(&at(number).constant));
 }
@@ -707,7 +606,6 @@ void GlobalBindings::dropLocations()
     m_filedLocations.shrink(0);
 }
 
-// The number of a dead Structure is given to a later one, which the global object may get.
 size_t GlobalBindings::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     size_t numberOfRemovedEntries = 0;

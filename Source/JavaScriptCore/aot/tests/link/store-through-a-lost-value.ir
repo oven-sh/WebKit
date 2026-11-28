@@ -1,0 +1,71 @@
+# If a store through a lost value missed a member, that member's field would be proven a type that it no longer holds. If it reached every layout with the name, one list of mixed objects would spoil the fields of the whole program
+# const list = [{ x: "a", p: "a" }, { x: true, q: true }, { x: "a", s: "a" }, { x: "a", t: "a" }, { x: "a", u: "a" }];  const apart = { x: "a", r: "a" };  function put(e) { e.x = null; e.p = null; }  put(list[0]);
+# Five layouts that no declared family holds meet in the list, one more than a set takes, so they are lost. The store reaches the field of that name in the lost layouts and in no other. A member without the name may gain it.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "x" proven=null|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L0.1 "p" proven=null|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L1.0 "x" proven=null|true writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L1.1 "q" proven=true writers-known written-at-construction-alone
+# CHECK: field L2.0 "x" proven=string writers-known written-at-construction-alone
+# CHECK: field L3.0 "x" proven=null|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L3.1 "s" proven=string writers-known written-at-construction-alone
+# CHECK: field L4.0 "x" proven=null|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L4.1 "t" proven=string writers-known written-at-construction-alone
+# CHECK: field L5.0 "x" proven=null|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L5.1 "u" proven=string writers-known written-at-construction-alone
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[GainsProperty]
+# CHECK: layout L2 {{*}}changes=[]
+# CHECK: layout L3 {{*}}changes=[GainsProperty]
+# CHECK: layout L4 {{*}}changes=[GainsProperty]
+# CHECK: layout L5 {{*}}changes=[GainsProperty]
+# RUN(LOST): link functions mechanisms=all
+# LOST: function f1 callers-known one-callee
+# LOST-NEXT: parameter 0 {{*}}proven=undefined|L0|L1|L3|L4|L5
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}]
+layout L5 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="u" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v3, v3 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v0, v0 layout=L5 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = NewArray v2, v5, v9, v11, v13 contents=anything
+    v15 = Double number=0.5
+    v16 = ElemGet v14, v15
+    v17 = NewClosure function=f1
+    v18 = Call v17, -, v16 calleeName="put"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    PropSet v0, v1 key="p"
+    v4 = Undefined
+    Return v4
+}

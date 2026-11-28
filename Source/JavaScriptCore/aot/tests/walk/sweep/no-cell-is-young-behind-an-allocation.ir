@@ -1,0 +1,26 @@
+# const made = make(); const other = make(); made.left = l; other.left = l;
+# The second allocation may collect, and the collection marks v3, which the frame holds: the store into v3 keeps its barrier. v4 is the younger.
+# RUN: sweep-code
+# CHECK: v5 @Void = SetMappedArgument v3
+# CHECK-NOT: OwnerIsYoung
+# CHECK: v6 @Void = SetMappedArgument v4{{*}}OwnerIsYoung
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     v4: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v6 @Void = SetMappedArgument v4, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v7 @Void = SetMappedArgument v0, v3 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v8 @Void = SetMappedArgument v0, v4 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

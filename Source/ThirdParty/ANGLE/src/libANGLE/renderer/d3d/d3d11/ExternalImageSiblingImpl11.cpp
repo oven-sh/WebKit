@@ -57,6 +57,11 @@ egl::Error ExternalImageSiblingImpl11::initialize(const egl::Display *display)
 
         mTexture.set(std::move(texture), d3d11::GetYUVPlaneFormat(textureDesc.Format, plane));
     }
+    else if (const d3d11::Format *packedYUVFormat = d3d11::GetPackedYUVFormat(textureDesc.Format))
+    {
+        // Sampled through the documented aliased view; see GetPackedYUVFormat.
+        mTexture.set(std::move(texture), *packedYUVFormat);
+    }
     else
     {
         mTexture.set(std::move(texture), d3d11::Format::Get(angleFormat->glInternalFormat,
@@ -69,9 +74,13 @@ egl::Error ExternalImageSiblingImpl11::initialize(const egl::Display *display)
     DXGI_USAGE resourceUsage = 0;
     resource->GetUsage(&resourceUsage);
 
+    // A texture may have D3D11_BIND_RENDER_TARGET even when the format table has no RTV format for
+    // it (e.g. Y210), so require a valid rtvFormat or createRenderTarget() would build an RTV with
+    // DXGI_FORMAT_UNKNOWN.
     mIsRenderable = (textureDesc.BindFlags & D3D11_BIND_RENDER_TARGET) &&
                     (resourceUsage & DXGI_USAGE_RENDER_TARGET_OUTPUT) &&
-                    !(resourceUsage & DXGI_USAGE_READ_ONLY);
+                    !(resourceUsage & DXGI_USAGE_READ_ONLY) &&
+                    (mTexture.getFormatSet().rtvFormat != DXGI_FORMAT_UNKNOWN);
 
     mIsTexturable = (textureDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE) &&
                     (resourceUsage & DXGI_USAGE_SHADER_INPUT);

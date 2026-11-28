@@ -28,6 +28,9 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "JSWebExtensionAPINamespace.h"
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionAPINamespaceAdditionsPrefix.h>)
+#include <WebKitAdditions/WebExtensionAPINamespaceAdditionsPrefix.h>
+#endif
 #include "WebExtensionAPIAction.h"
 #include "WebExtensionAPIAlarms.h"
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
@@ -39,6 +42,7 @@
 #include "WebExtensionAPIDeclarativeNetRequest.h"
 #include "WebExtensionAPIDevTools.h"
 #include "WebExtensionAPIExtension.h"
+#include "WebExtensionAPIExtensionTypes.h"
 #include "WebExtensionAPILocalization.h"
 #include "WebExtensionAPIMenus.h"
 #include "WebExtensionAPINotifications.h"
@@ -70,6 +74,7 @@ public:
     WebExtensionAPIAction& action();
 #endif
     WebExtensionAPIAlarms& alarms();
+    WebExtensionAPIExtensionTypes& extensionTypes();
 #if PLATFORM(COCOA)
     WebExtensionAPIAction& browserAction() { return action(); }
     WebExtensionAPICommands& commands();
@@ -123,6 +128,7 @@ private:
 #endif
     const RefPtr<WebExtensionAPIDOM> m_dom;
     const RefPtr<WebExtensionAPIExtension> m_extension;
+    const RefPtr<WebExtensionAPIExtensionTypes> m_extensionTypes;
     const RefPtr<WebExtensionAPILocalization> m_i18n;
     const RefPtr<WebExtensionAPIMenus> m_menus;
     const RefPtr<WebExtensionAPINotifications> m_notifications;
@@ -145,6 +151,10 @@ private:
     const RefPtr<WebExtensionAPIWindows> m_windows;
     const RefPtr<WebExtensionAPIWebNavigation> m_webNavigation;
     const RefPtr<WebExtensionAPIWebRequest> m_webRequest;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionAPINamespaceAdditions.h>)
+#include <WebKitAdditions/WebExtensionAPINamespaceAdditions.h>
+#endif
 };
 
 } // namespace WebKit

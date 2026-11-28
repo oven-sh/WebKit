@@ -184,6 +184,7 @@
 #define NSAccessibilityFormValidationUnannouncedTextKey @"AXFormValidationUnannouncedText"
 #define NSAccessibilityFormValidationErrorFieldCountKey @"AXFormValidationErrorFieldCount"
 #define NSAccessibilityFormValidationTargetIsSubmitterKey @"AXFormValidationTargetIsSubmitter"
+#define NSAccessibilityFormValidationFieldsKey @"AXFormValidationFields"
 #define NSAccessibilityErrorMessageForAttribute @"AXErrorMessageFor"
 #define NSAccessibilityExpandedTextValueAttribute @"AXExpandedTextValue"
 #define NSAccessibilityFlowFromAttribute @"AXFlowFrom"
@@ -289,6 +290,7 @@
 #define NSAccessibilityTextMarkerDebugDescriptionAttribute @"_AXTextMarkerDebugDescription"
 #define NSAccessibilityTextMarkerForIndexAttribute @"AXTextMarkerForIndex"
 #define NSAccessibilityTextMarkerForPositionAttribute @"AXTextMarkerForPosition" // FIXME: should be AXTextMarkerForPoint.
+#define NSAccessibilityTextMarkerForRelativeIndexAttribute @"AXTextMarkerForRelativeIndex"
 #define NSAccessibilityTextMarkerIsNullParameterizedAttribute @"AXTextMarkerIsNull"
 #define NSAccessibilityTextMarkerIsValidAttribute @"AXTextMarkerIsValid"
 #define NSAccessibilityTextMarkerRangeDescriptionAttribute @"_AXTextMarkerRangeDescription"
@@ -336,12 +338,12 @@
 
 #if !HAVE(ADDITIONAL_NS_ACCESSIBILITY_CONSTANTS)
 #define NSAccessibilityAutocorrectionOccurredNotification @"AXAutocorrectionOccurred"
-#define NSAccessibilityDraggingDestinationDragAcceptedNotification CFSTR("AXDraggingDestinationDragAccepted")
-#define NSAccessibilityDraggingDestinationDragNotAcceptedNotification CFSTR("AXDraggingDestinationDragNotAccepted")
-#define NSAccessibilityDraggingDestinationDropAllowedNotification CFSTR("AXDraggingDestinationDropAllowed")
-#define NSAccessibilityDraggingDestinationDropNotAllowedNotification CFSTR("AXDraggingDestinationDropNotAllowed")
-#define NSAccessibilityDraggingSourceDragBeganNotification CFSTR("AXDraggingSourceDragBegan")
-#define NSAccessibilityDraggingSourceDragEndedNotification CFSTR("AXDraggingSourceDragEnded")
+#define NSAccessibilityDraggingDestinationDragAcceptedNotification @"AXDraggingDestinationDragAccepted"
+#define NSAccessibilityDraggingDestinationDragNotAcceptedNotification @"AXDraggingDestinationDragNotAccepted"
+#define NSAccessibilityDraggingDestinationDropAllowedNotification @"AXDraggingDestinationDropAllowed"
+#define NSAccessibilityDraggingDestinationDropNotAllowedNotification @"AXDraggingDestinationDropNotAllowed"
+#define NSAccessibilityDraggingSourceDragBeganNotification @"AXDraggingSourceDragBegan"
+#define NSAccessibilityDraggingSourceDragEndedNotification @"AXDraggingSourceDragEnded"
 #define NSAccessibilityTextInputMarkingSessionBeganNotification @"AXTextInputMarkingSessionBegan"
 #define NSAccessibilityTextInputMarkingSessionEndedNotification @"AXTextInputMarkingSessionEnded"
 #endif

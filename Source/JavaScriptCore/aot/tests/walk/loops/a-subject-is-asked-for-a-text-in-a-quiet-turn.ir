@@ -1,0 +1,68 @@
+# function read(list: string[]) { let n = 0; for (let i = 0; i < list.length; i++) { const m = /^([a-z]+)=(.*)$/.exec(list[i]); if (m) n += m[1].length; else n++; } return n; }
+# The match is only taken apart, so nothing in a turn runs other code but what may be typed, and the loop is bought a quiet copy: a turn of it that would run other code begins again in the other copy.
+# What the list holds is only said to be texts, and the row of exec converts its subject in front. A ToString that may run code has no place in a quiet turn: every turn left there, without a test, and the copy was thrown away:
+# the loop read its variables and tested its list in every turn. Now the subject is asked for a text: where it is one nothing is converted, and where it is none the turn begins again.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# RUN(ASKED): walk f1 mechanisms=all
+# ASKED-LABEL: code f1:Body
+# ASKED: [[isText]]: boolean @Boolean = TypeTest [[subject]] testedType=string
+# ASKED: = Narrowed [[subject]], [[isText]]
+# ASKED: = RegExpMatchLiteralInParts
+# RUN(COUNTED): compile StringOperandsGuardedInIterations mechanisms=all
+# COUNTED: statistic StringOperandsGuardedInIterations 1
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 4 4
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="a=1"
+    v2 = NewObject layout=L0
+    v3 = String string="bb=22"
+    v4 = NewArray v1, v2, v3 contents=anything
+    v5 = Call v0, -, v4
+    v6 = Call v0, -, v4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v5, v6
+    Return v9
+}
+function f1 name="read" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<string>):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = NewRegExp pattern="^([a-z]+)=(.*)$" @11
+    v9 = PropGet v8 key="exec" @12
+    v10 = ElemGet v0, v4 @13
+    v11 = Call v9, v8, v10 calleeKey="exec" calleeName="exec" @14
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Integer integer=1
+    v14 = ElemGet v11, v13 @15
+    v15 = PropGet v14 key="length" @16
+    v16 = Add v3, v15
+    Jump -> next b5(v16)
+  b4():
+    v17 = Increment v3
+    Jump -> next b5(v17)
+  b5(v18: number):
+    v19 = Increment v4
+    Jump -> next b1(v18, v19)
+  b6():
+    Return v3
+}

@@ -36,13 +36,13 @@ class RenderAttachment final : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderAttachment);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderAttachment);
 public:
-    RenderAttachment(HTMLAttachmentElement&, Style::ComputedStyle&&);
+    RenderAttachment(HTMLAttachmentElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderAttachment();
 
-    HTMLAttachmentElement& LEGACY_NODELETE attachmentElement() const;
+    NODELETE HTMLAttachmentElement& attachmentElement() const;
 
     void setShouldDrawBorder(bool drawBorder) { m_shouldDrawBorder = drawBorder; }
-    bool LEGACY_NODELETE shouldDrawBorder() const;
+    NODELETE bool shouldDrawBorder() const;
 
     void setHasShadowControls(bool hasShadowControls) { m_hasShadowControls = hasShadowControls; }
     bool hasShadowControls() const { return m_hasShadowControls; }

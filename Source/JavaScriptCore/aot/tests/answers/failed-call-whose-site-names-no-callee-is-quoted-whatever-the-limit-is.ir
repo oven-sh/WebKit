@@ -1,0 +1,59 @@
+# a call that failed is quoted whatever Error.stackTraceLimit is, also where its site names no callee: the text comes out of the image
+# function run(task) { try { return task.run(1); } catch (error) { return error.message; } }  the program of quoted-text.ir, the call in f2 without calleeKey and calleeName
+# RUN: run-in-shell Error.stackTraceLimit = 0; globalThis.report = message => print(message);
+# CHECK: undefined is not an object
+# CHECK-NEXT: task.run is not a function. (In 'task.run(1)', 'task.run' is undefined)
+# CHECK-NEXT: null is not an object
+# CHECK-NEXT: exited with 0
+# RUN(TEN): run-in-shell globalThis.report = message => print(message);
+# TEN: undefined is not an object (evaluating 'task.title')
+# TEN-NEXT: task.run is not a function. (In 'task.run(1)', 'task.run' is undefined)
+# TEN-NEXT: null is not an object (evaluating 'task.run')
+# TEN-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92, 183] quotedSources=[{position=36 end=10}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] quotedSourceText="task.titletask.run(1)"}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClosure function=f2 @0
+    v2 = Builtin builtin=GlobalThis @183
+    v3 = PropGet v2 key="report" [isFreeName] @183
+    v4 = Undefined @196
+    v5 = Call v0, -, v4 calleeName="title" @190
+    v6 = Call v3, -, v5 calleeName="report" @183
+    v7 = NewObject layout=L0 @220
+    v8 = FinishObject v7 @220
+    v9 = Call v1, -, v8 calleeName="run" @216
+    v10 = Call v3, -, v9 calleeName="report" @209
+    v11 = Null @239
+    v12 = Call v1, -, v11 calleeName="run" @235
+    v13 = Call v3, -, v12 calleeName="report" @228
+    v14 = Undefined @228
+    Return v14 @228
+}
+function f1 name="title" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @23
+  b1() handler=b2():
+    v1 = PropGet v0 key="title" @36
+    Return v1 @36
+  b2() role=CatchHandler:
+    v2 = CatchValue @64
+    v3 = PropGet v2 key="message" @73
+    Return v3 @73
+}
+function f2 name="run" module=m0 position=92 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @113
+  b1() handler=b2():
+    v1 = PropGet v0 key="run" @126
+    v2 = Integer integer=1 @135
+    v3 = Call v1, v0, v2 @131
+    Return v3 @131
+  b2() role=CatchHandler:
+    v4 = CatchValue @155
+    v5 = PropGet v4 key="message" @164
+    Return v5 @164
+}
+layout L0 module=m0 position=220

@@ -1,0 +1,22 @@
+# sink(function Function() {}.name);
+# The read of the name makes the text "Function". The control: the-name-of-a-function-that-spells-a-member-of-the-global-object-is-no-text-where-another-name-is-read.ir.
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "Function"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = PropGet v2 key="name"
+    v4 = Call v1, -, v3
+    v5 = Undefined
+    Return v5
+}
+function f1 name="Function" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

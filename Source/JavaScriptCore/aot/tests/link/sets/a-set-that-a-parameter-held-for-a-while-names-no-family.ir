@@ -1,0 +1,60 @@
+# A PARAMETER HELD FIVE VARIANTS OF ONE SHAPE BEFORE THE SIXTH CAME. What a node holds on the way depends on the order in which things come to it, so only what it holds in the end names a family: the five were one within the six, and the image of a large program hung on the order.
+# area({ a, b, c, d: 1 }); area({ a, b, c, e: 1 }); ..; area(same({ a, b, c, i: 1 }));   function area(s) { return 1; }   function same(s) { return s; }
+# RUN: link families functions layouts mechanisms=all
+# CHECK: family F0 [L0, L1, L2, L3, L4, L5]
+# CHECK-NOT: family F1
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5
+# CHECK: layout L0 family=F0
+# CHECK: layout L5 family=F0
+# RUN(OLDEST): link families oldest-first mechanisms=all
+# OLDEST: family F0 [L0, L1, L2, L3, L4, L5]
+# OLDEST-NOT: family F1
+# RUN(SCATTERED): link families scattered mechanisms=all
+# SCATTERED: family F0 [L0, L1, L2, L3, L4, L5]
+# SCATTERED-NOT: family F1
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L2 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L3 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="g" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L4 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L5 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="i" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0, v0, v0 layout=L1 fields=[0, 1, 2, 3]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0, v0, v0 layout=L2 fields=[0, 1, 2, 3]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0, v0, v0, v0 layout=L3 fields=[0, 1, 2, 3]
+    v8 = FinishObject v7
+    v9 = NewObject -, v0, v0, v0, v0 layout=L4 fields=[0, 1, 2, 3]
+    v10 = FinishObject v9
+    v11 = NewObject -, v0, v0, v0, v0 layout=L5 fields=[0, 1, 2, 3]
+    v12 = FinishObject v11
+    v13 = NewClosure function=f1
+    v14 = Call v13, -, v2 calleeName="area"
+    v15 = Call v13, -, v4 calleeName="area"
+    v16 = Call v13, -, v6 calleeName="area"
+    v17 = Call v13, -, v8 calleeName="area"
+    v18 = Call v13, -, v10 calleeName="area"
+    v19 = NewClosure function=f2
+    v20 = Call v19, -, v12 calleeName="same"
+    v21 = Call v13, -, v20 calleeName="area"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

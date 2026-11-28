@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSInjectedScriptHost.h"
 
+#include "AOTCompiledCallee.h"
 #include "ArrayPrototype.h"
 #include "BuiltinNames.h"
 #include "Completion.h"
@@ -162,6 +163,35 @@ JSValue JSInjectedScriptHost::isHTMLAllCollection(JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     JSValue value = callFrame->uncheckedArgument(0);
     return jsBoolean(impl().isHTMLAllCollection(vm, value));
+}
+
+JSValue JSInjectedScriptHost::isNativeFunction(CallFrame* callFrame)
+{
+    if (callFrame->argumentCount() < 1)
+        return jsBoolean(false);
+
+    JSValue value = callFrame->uncheckedArgument(0);
+
+    // Embedder callbacks, such as the getters of JSExport properties, are internal functions.
+    if (value.inherits<InternalFunction>())
+        return jsBoolean(true);
+
+#if ENABLE(AOT)
+    // A compiled function is the program's own code unless it belongs to the built-in module. This has to come
+    // before the tests below: a full closure is a host function, and a slim closure is not a JSFunction.
+    if (value.isCell() && AOT::CompiledCallee::isCompiledCallee(value.asCell()))
+        return jsBoolean(AOT::belongsToBuiltinModule(value.asCell()));
+#endif
+
+    // A bound function is a host function, but it calls the function it is bound to.
+    auto* function = dynamicDowncast<JSFunction>(value);
+#if USE(BUN_JSC_ADDITIONS)
+    // A builtin whose source has a URL is a function of one of Bun's JavaScript modules. Such a getter may have
+    // side effects, so a preview must not call it: of the builtins, only the private ones are native.
+    if (function && function->isBuiltinFunction() && !function->jsExecutable()->isPrivateBuiltinFunction())
+        return jsBoolean(false);
+#endif
+    return jsBoolean(function && (function->isNonBoundHostFunction() || function->isBuiltinFunction()));
 }
 
 JSValue JSInjectedScriptHost::isPromiseRejectedWithNativeGetterTypeError(JSGlobalObject* globalObject, CallFrame* callFrame)
@@ -1057,10 +1087,10 @@ public:
         profiler.vm().heap.collectNow(Sync, CollectionScope::Full);
         profiler.setActiveHeapAnalyzer(nullptr);
 
-        UncheckedKeyHashSet<JSCell*> queue;
+        HashSet<JSCell*> queue;
 
         // Filter `m_holders` based on whether they're reachable from a non-Debugger root.
-        UncheckedKeyHashSet<JSCell*> visited;
+        HashSet<JSCell*> visited;
         for (auto* root : m_rootsToInclude)
             queue.add(root);
         while (auto* from = queue.takeAny()) {
@@ -1092,7 +1122,7 @@ public:
         });
     }
 
-    UncheckedKeyHashSet<JSCell*>& LEGACY_NODELETE holders() { return m_holders; }
+    NODELETE HashSet<JSCell*>& holders() { return m_holders; }
 
     void analyzeEdge(JSCell* from, JSCell* to, RootMarkReason reason) final
     {
@@ -1103,11 +1133,11 @@ public:
 
         if (from && from != to) {
             m_successors.ensure(from, [] {
-                return UncheckedKeyHashSet<JSCell*>();
+                return HashSet<JSCell*>();
             }).iterator->value.add(to);
 
             m_predecessors.ensure(to, [] {
-                return UncheckedKeyHashSet<JSCell*>();
+                return HashSet<JSCell*>();
             }).iterator->value.add(from);
 
             if (to == m_target)
@@ -1133,7 +1163,7 @@ public:
     {
         Indentation<4> indent;
 
-        UncheckedKeyHashSet<JSCell*> visited;
+        HashSet<JSCell*> visited;
 
         Function<void(JSCell*)> visit = [&] (auto* from) {
             auto isFirstVisit = visited.add(from).isNewEntry;
@@ -1171,11 +1201,11 @@ public:
 
 private:
     Lock m_mutex;
-    UncheckedKeyHashMap<JSCell*, UncheckedKeyHashSet<JSCell*>> m_predecessors;
-    UncheckedKeyHashMap<JSCell*, UncheckedKeyHashSet<JSCell*>> m_successors;
-    UncheckedKeyHashSet<JSCell*> m_rootsToInclude;
-    UncheckedKeyHashSet<JSCell*> m_rootsToIgnore;
-    UncheckedKeyHashSet<JSCell*> m_holders;
+    HashMap<JSCell*, HashSet<JSCell*>> m_predecessors;
+    HashMap<JSCell*, HashSet<JSCell*>> m_successors;
+    HashSet<JSCell*> m_rootsToInclude;
+    HashSet<JSCell*> m_rootsToIgnore;
+    HashSet<JSCell*> m_holders;
     const JSCell* m_target;
 };
 

@@ -26,8 +26,7 @@
 
 #include <WebCore/StylePrimitiveNumeric.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'text-indent'> = <length-percentage> && hanging? && each-line?
 // https://drafts.csswg.org/css-text-3/#propdef-text-indent
@@ -92,11 +91,10 @@ template<> struct CSSValueConversion<TextIndent> { auto operator()(BuilderState&
 // MARK: - Blending
 
 template<> struct Blending<TextIndent> {
-    bool LEGACY_NODELETE canBlend(const TextIndent&, const TextIndent&);
+    NODELETE bool canBlend(const TextIndent&, const TextIndent&);
     auto blend(const TextIndent&, const TextIndent&, const BlendingContext&) -> TextIndent;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::Style::TextIndent, 3);

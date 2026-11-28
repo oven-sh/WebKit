@@ -1,0 +1,61 @@
+# function sum(items: Item[]) { let total = 0; for (let i = 0; i < items.length; i++) { turns = i; total += items[i].price * items[i].count; } return total; }
+# The store into the variable of the module is seen by whoever reads it. A turn that has come past it does not start over: the store would be made twice. So the guesses behind it keep their closed sides, which rejoin: the turn makes the item, so each read is one operation that tests for itself.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: PutModuleVariable
+# CHECK: = GetSlot{{*}}key="price" {{*}}level=Expected
+# RUN(COUNT): compile IterationRestartsEmitted mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 0
+# RUN(SHELL): run-in-shell globalThis.sink = (sum, item) => { const list = [item, item]; print(sum(list)); list[1] = { count: "2", price: 7 }; print(sum(list)); list[0] = { get price() { print("read"); return 1; }, count: 1 }; print(sum(list)); list[1] = item; print(sum(list)); };
+# SHELL: 12
+# SHELL-NEXT: 20
+# SHELL-NEXT: read
+# SHELL-NEXT: 15
+# SHELL-NEXT: read
+# SHELL-NEXT: 7
+# SHELL-NEXT: exited with 0
+
+layout L0 name="Item" module=m0 fields=[{key="price" declared={type=number} flags=[IsRequired]}, {key="count" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="turns" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewObject layout=L0
+    v4 = Integer integer=2
+    PropDefine v3, v4 key="price"
+    v6 = Integer integer=3
+    PropDefine v3, v6 key="count"
+    v8 = FinishObject v3
+    v9 = Call v1, -, v2, v8
+    Return v9
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v4 variable=g0
+    v9 = ElemGet v0, v4
+    v10 = PropGet v9 key="price"
+    v11 = ElemGet v0, v4
+    v12 = PropGet v11 key="count"
+    v13 = Mul v10, v12
+    v14 = Add v3, v13
+    v15 = Convert v14 declared={type=number}
+    v16 = Increment v4
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b3():
+    Return v3
+}

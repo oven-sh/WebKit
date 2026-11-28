@@ -1,0 +1,84 @@
+# reader.js: const above = { plain: 1 };  const outer = Object.create(above);  outer.request = Object.create(above);  globalThis.kept = [outer, { s0: 1 }, { s1: 1 }, ..];
+# company.js, which reader.js never names: const holder = Object.create(top);  holder.request = 7;  globalThis.kept.push(holder);
+# Both created objects are lost among strangers. The proofs tie the appended fields of lost layouts to one place a NAME for the whole program: a store through a subject that nobody knows may reach either.
+# What is EXPECTED of `outer.request` is what was stored into it through a subject that names its own layout: how reader.js is compiled may not hang on company.js.
+# RUN: link held fields mechanisms=all
+# CHECK: field L1.0 "request" appended proven=L2
+# CHECK: field L3.0 "request" appended proven=i32
+
+layout L0 module=m0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance module=m0 position=10 flags=[IsOfCreatedObject] place=10
+layout L2 kind=Instance module=m0 position=20 flags=[IsOfCreatedObject] place=20
+layout L3 kind=Instance module=m1 position=30 flags=[IsOfCreatedObject] place=30
+layout L4 module=m1 fields=[{key="top" declared={type=anything} flags=[IsRequired]}]
+layout L5 module=m0 fields=[{key="s0" declared={type=anything} flags=[IsRequired]}]
+layout L6 module=m0 fields=[{key="s1" declared={type=anything} flags=[IsRequired]}]
+layout L7 module=m0 fields=[{key="s2" declared={type=anything} flags=[IsRequired]}]
+layout L8 module=m0 fields=[{key="s3" declared={type=anything} flags=[IsRequired]}]
+layout L9 module=m0 fields=[{key="s4" declared={type=anything} flags=[IsRequired]}]
+layout L10 module=m0 fields=[{key="s5" declared={type=anything} flags=[IsRequired]}]
+layout L11 module=m0 fields=[{key="s6" declared={type=anything} flags=[IsRequired]}]
+layout L12 module=m0 fields=[{key="s7" declared={type=anything} flags=[IsRequired]}]
+layout L13 module=m0 fields=[{key="s8" declared={type=anything} flags=[IsRequired]}]
+layout L14 module=m0 fields=[{key="s9" declared={type=anything} flags=[IsRequired]}]
+module m0 path="reader.js" displayPath="reader.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="company.js" displayPath="company.js" body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v2 [refusesOtherValues]
+    v5 = FinishObject v3
+    v6 = NewObject layout=L2
+    SetLiteralPrototype v6, v2 [refusesOtherValues]
+    v8 = FinishObject v6
+    PropSet v5, v8 key="request"
+    v10 = NewObject -, v0 layout=L5 fields=[0]
+    v11 = FinishObject v10
+    v12 = NewObject -, v0 layout=L6 fields=[0]
+    v13 = FinishObject v12
+    v14 = NewObject -, v0 layout=L7 fields=[0]
+    v15 = FinishObject v14
+    v16 = NewObject -, v0 layout=L8 fields=[0]
+    v17 = FinishObject v16
+    v18 = NewObject -, v0 layout=L9 fields=[0]
+    v19 = FinishObject v18
+    v20 = NewObject -, v0 layout=L10 fields=[0]
+    v21 = FinishObject v20
+    v22 = NewObject -, v0 layout=L11 fields=[0]
+    v23 = FinishObject v22
+    v24 = NewObject -, v0 layout=L12 fields=[0]
+    v25 = FinishObject v24
+    v26 = NewObject -, v0 layout=L13 fields=[0]
+    v27 = FinishObject v26
+    v28 = NewObject -, v0 layout=L14 fields=[0]
+    v29 = FinishObject v28
+    v30 = NewArray v5, v11, v13, v15, v17, v19, v21, v23, v25, v27, v29 contents=anything
+    v31 = Builtin builtin=GlobalThis
+    PropSet v31, v30 key="kept"
+    v33 = Undefined
+    Return v33
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L3
+    SetLiteralPrototype v3, v2 [refusesOtherValues]
+    v5 = FinishObject v3
+    PropSet v5, v0 key="request"
+    v7 = NewArray v5, v2 contents=anything
+    v8 = Builtin builtin=GlobalThis
+    PropSet v8, v7 key="keptToo"
+    v10 = PropGet v8 key="kept"
+    v11 = Integer integer=0
+    v12 = ElemGet v10, v11
+    v13 = String string="text"
+    PropSet v12, v13 key="request"
+    v15 = Undefined
+    Return v15
+}

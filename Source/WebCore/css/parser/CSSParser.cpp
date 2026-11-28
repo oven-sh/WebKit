@@ -57,12 +57,14 @@
 #include "CSSPropertyParserConsumer+MetaConsumer.h"
 #include "CSSPropertyParserConsumer+Primitives.h"
 #include "CSSPropertyParserConsumer+Timeline.h"
+#include "CSSPropertyParserConsumer+URL.h"
 #include "CSSSelectorParser.h"
 #include "CSSStringValue.h"
 #include "CSSStyleSheet.h"
 #include "CSSSubstitutionParser.h"
 #include "CSSSupportsParser.h"
 #include "CSSTokenizer.h"
+#include "CSSURL.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
 #include "CSSViewTransitionRule.h"
@@ -319,7 +321,7 @@ bool CSSParser::supportsDeclaration(CSSParserTokenRange& range)
     SetForScope suppressObserver(m_observerWrapper, decltype(m_observerWrapper) { nullptr });
     runInNewNestingContext([&] {
         ASSERT(topContext().m_parsedProperties.isEmpty());
-        result = consumeDeclaration(range, StyleRuleType::Style);
+        result = consumeDeclaration(range, StyleRuleType::Style).isValid;
     });
 
     return result;
@@ -346,7 +348,7 @@ void CSSParser::parseStyleSheetForInspector(StringView string, const CSSParserCo
     styleSheet.setHasSyntacticallyValidCSSHeader(firstRuleValid);
 }
 
-static CSSParser::AllowedRules LEGACY_NODELETE computeNewAllowedRules(CSSParser::AllowedRules allowedRules, StyleRuleBase* rule)
+NODELETE static CSSParser::AllowedRules computeNewAllowedRules(CSSParser::AllowedRules allowedRules, StyleRuleBase* rule)
 {
     if (!rule || allowedRules == CSSParser::AllowedRules::FontFeatureValuesRules || allowedRules == CSSParser::AllowedRules::KeyframeRules || allowedRules == CSSParser::AllowedRules::NoRules)
         return allowedRules;
@@ -629,9 +631,24 @@ static std::optional<CascadeLayerName> consumeCascadeLayerName(CSSParserTokenRan
 
 RefPtr<StyleRuleImport> CSSParser::consumeImportRule(CSSParserTokenRange prelude)
 {
-    AtomString uri(consumeStringOrURI(prelude));
-    if (uri.isNull())
-        return nullptr; // Parse error, expected string or URI
+    // @import [ <url> | <string> ] [ layer | layer(<layer-name>) ]? <import-conditions> ;
+    // <import-conditions> = [ supports( [ <supports-condition> | <declaration> ] ) ]? <media-query-list>?
+    // https://drafts.csswg.org/css-cascade-5/#at-import
+
+    // [ <url> | <string> ]
+    auto url = [&] -> std::optional<CSS::URL> {
+        if (prelude.peek().type() == StringToken)
+            return CSS::URL { .specified = prelude.consumeIncludingWhitespace().value().toString(), .resolved = { }, .modifiers = { } };
+
+        auto state = CSS::PropertyParserState { .context = m_context };
+        return CSSPropertyParserHelpers::consumeURLRaw(prelude, state, {
+            CSSPropertyParserHelpers::AllowedURLModifiers::CrossOrigin,
+            CSSPropertyParserHelpers::AllowedURLModifiers::Integrity,
+            CSSPropertyParserHelpers::AllowedURLModifiers::ReferrerPolicy,
+        });
+    }();
+    if (!url)
+        return nullptr;
 
     if (RefPtr observerWrapper = m_observerWrapper.get()) {
         unsigned endOffset = observerWrapper->endOffset(prelude);
@@ -643,7 +660,8 @@ RefPtr<StyleRuleImport> CSSParser::consumeImportRule(CSSParserTokenRange prelude
 
     prelude.consumeWhitespace();
 
-    auto consumeCascadeLayer = [&]() -> std::optional<CascadeLayerName> {
+    // [ layer | layer(<layer-name>) ]?
+    auto consumeCascadeLayer = [&] -> std::optional<CascadeLayerName> {
         auto& token = prelude.peek();
         if (token.type() == FunctionToken && equalLettersIgnoringASCIICase(token.value(), "layer"_s)) {
             auto savedPreludeForFailure = prelude;
@@ -662,7 +680,8 @@ RefPtr<StyleRuleImport> CSSParser::consumeImportRule(CSSParserTokenRange prelude
         return { };
     };
 
-    auto consumeSupports = [&] () -> std::optional<StyleRuleImport::SupportsCondition> {
+    // [ supports( [ <supports-condition> | <declaration> ] ) ]?
+    auto consumeSupports = [&] -> std::optional<StyleRuleImport::SupportsCondition> {
         auto& token = prelude.peek();
         if (token.type() == FunctionToken && equalLettersIgnoringASCIICase(token.value(), "supports"_s)) {
             auto arguments = CSSPropertyParserHelpers::consumeFunction(prelude);
@@ -678,9 +697,11 @@ RefPtr<StyleRuleImport> CSSParser::consumeImportRule(CSSParserTokenRange prelude
     auto supports = consumeSupports();
     if (!supports)
         return nullptr; // Discard import rule with incorrect syntax.
+
+    // <media-query-list>?
     auto mediaQueries = MQ::MediaQueryParser::parse(prelude, m_context);
 
-    return StyleRuleImport::create(uri, WTF::move(mediaQueries), WTF::move(cascadeLayerName), WTF::move(*supports));
+    return StyleRuleImport::create(WTF::move(*url), WTF::move(mediaQueries), WTF::move(cascadeLayerName), WTF::move(*supports));
 }
 
 RefPtr<StyleRuleNamespace> CSSParser::consumeNamespaceRule(CSSParserTokenRange prelude)
@@ -801,7 +822,7 @@ RefPtr<StyleRuleFontFace> CSSParser::consumeFontFaceRule(CSSParserTokenRange pre
 
 // The associated number represents the maximum number of allowed values for this font-feature-values type.
 // No value means unlimited (for styleset).
-static std::pair<FontFeatureValuesType, std::optional<unsigned>> LEGACY_NODELETE fontFeatureValuesTypeMappings(CSSAtRuleID id)
+NODELETE static std::pair<FontFeatureValuesType, std::optional<unsigned>> fontFeatureValuesTypeMappings(CSSAtRuleID id)
 {
     switch (id) {
     case CSSAtRuleStyleset:
@@ -1028,7 +1049,7 @@ RefPtr<StyleRuleKeyframes> CSSParser::consumeKeyframesRule(CSSParserTokenRange p
         // According to the CSS Values specification, identifier-based keyframe names
         // are not allowed to be CSS wide keywords or "default". And CSS Animations
         // additionally excludes the "none" keyword.
-        if (!isValidCustomIdentifier(nameToken.id()) || nameToken.id() == CSSValueID::None)
+        if (!isValidCustomIdentifierForKeyframeName(nameToken.id()))
             return nullptr;
     } else if (nameToken.type() != StringToken)
         return nullptr; // Parse error; expected ident token or string in @keyframes header
@@ -1562,7 +1583,7 @@ static void validateUserAgentSheetSelector(const CSSSelectorList& selectorList)
         }
         // Don't use subject position :is(foo, bar) and similar on UA sheet before we have good optimizations for them.
         // Selectors like this should be expanded manually.
-        ASSERT_WITH_MESSAGE(hasBucketedSelector || !hasLogicalCombination, "Subject position selector list in '%s' not allowed in user-agent stylesheet", complexSelector.selectorText().utf8());
+        ASSERT_WITH_MESSAGE(hasBucketedSelector || !hasLogicalCombination, "Subject position selector list in '%s' not allowed in user-agent stylesheet", makeUTF8CString(complexSelector.selectorText()));
     };
 
     for (auto& complexSelector : selectorList)
@@ -1670,7 +1691,7 @@ void CSSParser::consumeBlockContent(CSSParserTokenRange range, StyleRuleType rul
     while (!range.atEnd()) {
         const auto initialRange = range;
 
-        auto consumeNestedRuleOrInvalidSyntax = [&] {
+        auto consumeNestedRuleOrInvalidSyntax = [&] -> bool {
             if (blockAllowedRules.contains(BlockAllowedRule::QualifiedRules)) {
                 ASSERT(isStyleNestedContext());
                 // For block, we try to consume a qualified rule (~= a style rule).
@@ -1678,17 +1699,19 @@ void CSSParser::consumeBlockContent(CSSParserTokenRange range, StyleRuleType rul
                 // in the case of invalid syntax.
                 RefPtr rule = consumeQualifiedRule(range, AllowedRules::RegularRules);
                 if (!rule)
-                    return;
+                    return false;
                 if (!rule->isStyleRule())
-                    return;
+                    return false;
                 storeDeclarations();
                 topContext().m_parsedRules.append(rule.releaseNonNull());
-            } else {
-                // https://drafts.csswg.org/css-syntax/#typedef-declaration-list
-                // For declaration list, we consume invalid tokens until next recovery point.
-                range = initialRange;
-                consumeUntilSemicolon();
+                return true;
             }
+
+            // https://drafts.csswg.org/css-syntax/#typedef-declaration-list
+            // For declaration list, we consume invalid tokens until next recovery point.
+            range = initialRange;
+            consumeUntilSemicolon();
+            return false;
         };
 
         switch (range.peek().type()) {
@@ -1706,7 +1729,7 @@ void CSSParser::consumeBlockContent(CSSParserTokenRange range, StyleRuleType rul
             consumeUntilSemicolon();
 
             auto declarationRange = declarationStart.rangeUntil(range);
-            auto isValidDeclaration = consumeDeclaration(declarationRange, ruleType);
+            auto [isValidDeclaration, deferredInvalidDeclaration] = consumeDeclaration(declarationRange, ruleType);
 
             if (useObserver)
                 observerWrapper->skipCommentsBefore(range, false);
@@ -1714,7 +1737,12 @@ void CSSParser::consumeBlockContent(CSSParserTokenRange range, StyleRuleType rul
             if (!isValidDeclaration) {
                 // If it's not a valid declaration, we rewind the parser and try to parse it as a nested style rule.
                 range = initialRange;
-                consumeNestedRuleOrInvalidSyntax();
+                bool didConsumeNestedRule = consumeNestedRuleOrInvalidSyntax();
+
+                // Text like `a:hover { ... }` starts like a declaration but may be consumed as a nested style rule instead.
+                // Only notify the observer of an invalid declaration if it was not consumed as a nested style rule.
+                if (deferredInvalidDeclaration && !didConsumeNestedRule)
+                    observerWrapper->observer().observeProperty(deferredInvalidDeclaration->startOffset, deferredInvalidDeclaration->endOffset, deferredInvalidDeclaration->isImportant, false);
             }
             break;
         }
@@ -1817,7 +1845,7 @@ IsImportant CSSParser::consumeTrailingImportantAndWhitespace(CSSParserTokenRange
 }
 
 // Check if a CSS rule type does not allow declarations with !important.
-static bool LEGACY_NODELETE ruleDoesNotAllowImportant(StyleRuleType type)
+NODELETE static bool ruleDoesNotAllowImportant(StyleRuleType type)
 {
     return type == StyleRuleType::CounterStyle
         || type == StyleRuleType::FontFace
@@ -1830,7 +1858,7 @@ static bool LEGACY_NODELETE ruleDoesNotAllowImportant(StyleRuleType type)
 }
 
 // https://drafts.csswg.org/css-syntax/#consume-declaration
-bool CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType ruleType)
+auto CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType ruleType) -> ConsumeDeclarationResult
 {
     CSSParserTokenRange rangeCopy = range; // For inspector callbacks
 
@@ -1838,13 +1866,13 @@ bool CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType rule
     auto& token = range.consumeIncludingWhitespace();
     auto propertyID = token.parseAsCSSPropertyID();
     if (range.consume().type() != ColonToken)
-        return false; // Parse error
+        return { }; // Parse error
 
     range.consumeWhitespace();
 
     auto important = consumeTrailingImportantAndWhitespace(range);
     if (important == IsImportant::Yes && ruleDoesNotAllowImportant(ruleType))
-        return false;
+        return { };
 
     const size_t oldPropertiesCount = topContext().m_parsedProperties.size();
     auto didParseNewProperties = [&] {
@@ -1871,12 +1899,16 @@ bool CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType rule
 
     RefPtr observerWrapper = m_observerWrapper.get();
     if (observerWrapper&& (ruleType == StyleRuleType::Style || ruleType == StyleRuleType::Keyframe || ruleType == StyleRuleType::Page)) {
-        observerWrapper->observer().observeProperty(
-            observerWrapper->startOffset(rangeCopy), observerWrapper->endOffset(rangeCopy),
-            important == IsImportant::Yes, didParseNewProperties());
+        auto startOffset = observerWrapper->startOffset(rangeCopy);
+        auto endOffset = observerWrapper->endOffset(rangeCopy);
+        bool isImportant = important == IsImportant::Yes;
+        // The caller notifies the observer of an invalid declaration once it knows it was not consumed as a nested style rule instead.
+        if (!didParseNewProperties())
+            return { false, { { startOffset, endOffset, isImportant } } };
+        observerWrapper->observer().observeProperty(startOffset, endOffset, isImportant, true);
     }
 
-    return didParseNewProperties();
+    return { didParseNewProperties(), std::nullopt };
 }
 
 void CSSParser::consumeCustomPropertyValue(CSSParserTokenRange range, const AtomString& variableName, IsImportant important)

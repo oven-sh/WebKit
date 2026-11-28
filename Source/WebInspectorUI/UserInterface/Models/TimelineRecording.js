@@ -158,7 +158,7 @@ WI.TimelineRecording = class TimelineRecording extends WI.Object
     get startTime() { return this._startTime; }
     get endTime() { return this._endTime; }
 
-    start(initiatedByBackend)
+    start(initiatingTarget)
     {
         console.assert(!this._capturing, "Attempted to start an already started session.");
         console.assert(!this._readonly, "Attempted to start a readonly session.");
@@ -166,7 +166,7 @@ WI.TimelineRecording = class TimelineRecording extends WI.Object
         this._capturing = true;
 
         for (let instrument of this._instruments)
-            instrument.startInstrumentation(initiatedByBackend);
+            instrument.startInstrumentation(initiatingTarget);
 
         if (!isNaN(this._discontinuityStartTime)) {
             for (let instrument of this._instruments)
@@ -174,7 +174,15 @@ WI.TimelineRecording = class TimelineRecording extends WI.Object
         }
     }
 
-    stop(initiatedByBackend)
+    startInstrumentationForTarget(target)
+    {
+        console.assert(this._capturing, "Attempted to instrument a target in a stopped session.");
+
+        for (let instrument of this._instruments)
+            instrument.startInstrumentationForTarget(target);
+    }
+
+    stop()
     {
         console.assert(this._capturing, "Attempted to stop an already stopped session.");
         console.assert(!this._readonly, "Attempted to stop a readonly session.");
@@ -182,7 +190,7 @@ WI.TimelineRecording = class TimelineRecording extends WI.Object
         this._capturing = false;
 
         for (let instrument of this._instruments)
-            instrument.stopInstrumentation(initiatedByBackend);
+            instrument.stopInstrumentation();
     }
 
     capturingStarted(startTime)

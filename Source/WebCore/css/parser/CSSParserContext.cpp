@@ -28,6 +28,7 @@
 #include "CSSParserContext.h"
 
 #include "CSSPropertyNames.h"
+#include "CSSURLProvenance.h"
 #include "CSSValuePool.h"
 #include "DocumentLoader.h"
 #include "DocumentQuirks.h"
@@ -45,7 +46,7 @@ const CSSParserContext& strictCSSParserContext()
     return strictContext;
 }
 
-static void LEGACY_NODELETE applyUASheetBehaviorsToContext(CSSParserContext& context)
+NODELETE static void applyUASheetBehaviorsToContext(CSSParserContext& context)
 {
     // FIXME: We should turn all of the features on from their WebCore Settings defaults.
     context.cssAppearanceBaseEnabled = true;
@@ -80,15 +81,20 @@ CSSParserContext::CSSParserContext(const Document& document)
     *this = document.cssParserContext();
 }
 
-CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBaseURL, ASCIILiteral charset)
+CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBaseURL, ASCIILiteral charset, IsExternalStyleSheet isExternalStyleSheet, ReferrerPolicy referrerPolicy, LoadedFromOpaqueSource loadedFromOpaqueSource)
     : CSSParserContext(document.settings())
 {
     baseURL = sheetBaseURL.isNull() ? document.baseURL() : sheetBaseURL;
     this->charset = charset;
+    this->isExternalStyleSheet = isExternalStyleSheet == IsExternalStyleSheet::Yes;
+    this->referrerPolicy = referrerPolicy;
+    this->loadedFromOpaqueSource = loadedFromOpaqueSource;
     mode = document.inQuirksMode() ? HTMLQuirksMode : HTMLStandardMode;
     isHTMLDocument = document.isHTMLDocument();
     hasDocumentSecurityOrigin = sheetBaseURL.isNull() || protect(document.securityOrigin())->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton());
-    webkitMediaTextTrackDisplayQuirkEnabled = document.quirks().needsWebKitMediaTextTrackDisplayQuirk();
+    marginTrimInlineSupportsQuirkEnabled = document.quirks().needsMarginTrimInlineSupportsQuirk();
+    if (document.quirks().shouldDisableCSSSizeShorthandQuirk())
+        propertySettings.cssSizeShorthandEnabled = false;
 }
 
 CSSParserContext::CSSParserContext(const Settings& settings)
@@ -120,7 +126,8 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssRubyDisplayTypesEnabled { settings.cssRubyDisplayTypesInAuthorStylesEnabled() }
     , cssTreeCountingFunctionsEnabled { settings.cssTreeCountingFunctionsEnabled() }
     , cssCalcSizeFunctionEnabled { settings.cssCalcSizeFunctionEnabled() }
-    , cssURLModifiersEnabled { settings.cssURLModifiersEnabled() }
+    , cssFitContentFunctionEnabled { settings.cssFitContentFunctionEnabled() }
+    , cssStretchFunctionEnabled { settings.cssStretchFunctionEnabled() }
     , cssURLIntegrityModifierEnabled { settings.cssURLIntegrityModifierEnabled() }
     , cssLinkParametersEnabled { settings.cssLinkParametersEnabled() }
     , cssAxisRelativePositionKeywordsEnabled { settings.cssAxisRelativePositionKeywordsEnabled() }
@@ -138,10 +145,21 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssInheritFunctionEnabled { settings.cssInheritFunctionEnabled() }
     , cssFontPaletteMixFunctionEnabled { settings.cssFontPaletteMixFunctionEnabled() }
     , cssSymbolsFunctionEnabled { settings.cssSymbolsFunctionEnabled() }
+    , cssMeshGradientsEnabled { settings.cssMeshGradientsEnabled() }
+    , cssFreeformGradientsEnabled { settings.cssFreeformGradientsEnabled() }
     , viewportSegmentsAPIEnabled { settings.viewportSegmentsAPIEnabled() }
     , propertySettings { CSSPropertySettings { settings } }
 {
     StaticCSSValuePool::init();
+}
+
+CSS::URLProvenance CSSParserContext::provenance() const
+{
+    return {
+        .styleSheetURL = isExternalStyleSheet ? baseURL : URL { },
+        .styleSheetReferrerPolicy = referrerPolicy,
+        .isStyleSheetOriginClean = loadedFromOpaqueSource == LoadedFromOpaqueSource::No,
+    };
 }
 
 void add(Hasher& hasher, const CSSParserContext& context)
@@ -150,6 +168,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.isHTMLDocument,
         context.hasDocumentSecurityOrigin,
         static_cast<bool>(context.loadedFromOpaqueSource),
+        context.isExternalStyleSheet,
         context.useSystemAppearance,
         context.shouldIgnoreImportRules,
         context.counterStyleAtRuleImageSymbolsEnabled,
@@ -176,7 +195,8 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssRubyDisplayTypesEnabled,
         context.cssTreeCountingFunctionsEnabled,
         context.cssCalcSizeFunctionEnabled,
-        context.cssURLModifiersEnabled,
+        context.cssFitContentFunctionEnabled,
+        context.cssStretchFunctionEnabled,
         context.cssURLIntegrityModifierEnabled,
         context.cssLinkParametersEnabled,
         context.cssAxisRelativePositionKeywordsEnabled,
@@ -187,7 +207,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssTextTransformMathAutoEnabled,
         context.cssFontSynthesisStyleObliqueOnlyEnabled,
         context.cssInternalAutoBaseParsingEnabled,
-        context.webkitMediaTextTrackDisplayQuirkEnabled,
+        context.marginTrimInlineSupportsQuirkEnabled,
         context.cssMathDepthEnabled,
         context.openPseudoClassEnabled,
         context.cssScrollStateContainerQueriesEnabled,
@@ -197,10 +217,12 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssInheritFunctionEnabled,
         context.cssFontPaletteMixFunctionEnabled,
         context.cssSymbolsFunctionEnabled,
+        context.cssMeshGradientsEnabled,
+        context.cssFreeformGradientsEnabled,
         context.legacyFontFaceAttributeMode,
         context.viewportSegmentsAPIEnabled
     );
-    add(hasher, context.baseURL, context.charset, context.propertySettings, context.mode, context.enclosingRuleType, bits);
+    add(hasher, context.baseURL, context.charset, context.referrerPolicy, context.propertySettings, context.mode, context.enclosingRuleType, bits);
 }
 
 void CSSParserContext::setUASheetMode()

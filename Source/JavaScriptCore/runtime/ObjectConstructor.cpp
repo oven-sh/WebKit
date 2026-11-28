@@ -26,14 +26,17 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "NumberPrototype.h"
 #include "ObjectConstructorInlines.h"
 #include "OwedOutOfMemoryError.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
+#include "ReflectObject.h"
 #include "Symbol.h"
 
 #if ENABLE(AOT)
 #include "AOTClassPrototype.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalkInlines.h"
 #endif
 
@@ -50,11 +53,11 @@ static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperties);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorCreate);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorSeal);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorFreeze);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorFreeze);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorPreventExtensions);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorIsSealed);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorIsFrozen);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorIsExtensible);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorIsSealed);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorIsFrozen);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorIsExtensible);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorHasOwn);
 
 }
@@ -189,12 +192,13 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorSetPrototypeOf, (JSGlobalObject* globa
     return JSValue::encode(objectValue);
 }
 
-JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
+// Inlined into the host function.
+static ALWAYS_INLINE JSValue describeOwnProperty(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyDescriptor descriptor;
-    if (!object->getOwnPropertyDescriptor(globalObject, propertyName, descriptor))
+    if (!getReportedDescriptor(globalObject, object, propertyName, descriptor))
         RELEASE_AND_RETURN(scope, jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -202,6 +206,11 @@ JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, 
     scope.assertNoException();
     ASSERT(result);
     return result;
+}
+
+JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
+{
+    return describeOwnProperty(globalObject, object, propertyName);
 }
 
 JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject* globalObject, JSObject* object)
@@ -217,7 +226,7 @@ JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject* globalObject,
 
     for (auto& propertyName : properties) {
         PropertyDescriptor descriptor;
-        bool didGetDescriptor = object->getOwnPropertyDescriptor(globalObject, propertyName, descriptor);
+        bool didGetDescriptor = getReportedDescriptor(globalObject, object, propertyName, descriptor);
         RETURN_IF_EXCEPTION(scope, { });
 
         if (!didGetDescriptor)
@@ -243,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorGetOwnPropertyDescriptor, (JSGlobalObj
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto propertyName = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    RELEASE_AND_RETURN(scope, JSValue::encode(objectConstructorGetOwnPropertyDescriptor(globalObject, object, propertyName)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(describeOwnProperty(globalObject, object, propertyName)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(objectConstructorGetOwnPropertyDescriptors, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -282,22 +291,31 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorKeys, (JSGlobalObject* globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
-void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+// goesOnKeyByKey is to a compiled target what !targetCanPerformFastPut is to an ordinary one: behind a source that objectAssignFast() would refuse, every later source of the call gives its names first and then its symbols.
+static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source, bool& goesOnKeyByKey)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (target->structure()->isCompiledStructure()) {
-        // As for an ordinary target that takes properties directly.
-        if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
+    if (target->structure()->isCompiledStructure() && !goesOnKeyByKey) {
+        // Same as for an ordinary target that accepts direct property puts.
+        if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::wouldPerformFastPut(vm, target)) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source);
+        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source, goesOnKeyByKey);
         RETURN_IF_EXCEPTION(scope, void());
         if (didAssign)
             return;
     }
+    if (vm.hasCompiledCode() && !target->structure()->isCompiledStructure()) {
+        bool didAssign = AOT::PropertyWalk::tryAssignThroughCaches(globalObject, target, source);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (didAssign)
+            return;
+    }
+#else
+    UNUSED_PARAM(goesOnKeyByKey);
 #endif
 
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.
@@ -333,6 +351,12 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
     }
 }
 
+void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+{
+    bool goesOnKeyByKey = false;
+    objectAssignGeneric(globalObject, vm, target, source, goesOnKeyByKey);
+}
+
 JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -349,7 +373,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
 #if ENABLE(AOT)
-    if (targetObject && !targetCanPerformFastPut)
+    if (targetObject && !targetCanPerformFastPut && vm.hasCompiledCode())
         targetCanPerformFastPut = AOT::PropertyWalk::wouldPerformFastPut(vm, targetObject);
 #endif
     unsigned argsCount = callFrame->argumentCount();
@@ -407,6 +431,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
 
     Vector<UniquedStringImpl*, 8> properties;
     MarkedArgumentBuffer values;
+    bool goesOnKeyByKey = false;
     for (unsigned i = 1; i < argsCount; ++i) {
         JSValue sourceValue = callFrame->uncheckedArgument(i);
         if (sourceValue.isUndefinedOrNull())
@@ -427,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
         }
 
         targetCanPerformFastPut = false;
-        objectAssignGeneric(globalObject, vm, target, source);
+        objectAssignGeneric(globalObject, vm, target, source, goesOnKeyByKey);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(target);
@@ -446,13 +471,21 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
     }
 
     {
+        Vector<unsigned, 8> indices;
         Vector<RefPtr<UniquedStringImpl>, 8> properties;
         MarkedArgumentBuffer values;
         bool canUseFastPath = false;
-        if (!target->canHaveExistingOwnIndexedProperties() && !target->hasNonReifiedStaticProperties()) {
+        if (!target->canHaveExistingOwnIndexedGetterSetterProperties() && !target->hasNonReifiedStaticProperties()) {
             Structure* targetStructure = target->structure();
             if (targetStructure->canPerformFastPropertyEnumerationCommon()) {
                 canUseFastPath = true;
+                if (target->canHaveExistingOwnIndexedProperties()) {
+                    target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>([&](unsigned index, JSValue value) {
+                        indices.append(index);
+                        values.appendWithCrashOnOverflow(value);
+                        return IterationStatus::Continue;
+                    });
+                }
                 targetStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
@@ -479,7 +512,7 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
 
         if (canUseFastPath) {
             Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-            JSArray* entries = JSArray::tryCreate(vm, arrayStructure, properties.size());
+            JSArray* entries = JSArray::tryCreate(vm, arrayStructure, values.size());
             if (!entries) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return { };
@@ -519,6 +552,20 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                     targetStructure->setCachedPropertyNames(vm, CachedPropertyNamesKind::EnumerableStrings, StructureRareData::cachedPropertyNamesSentinel());
             }
 
+            unsigned index = 0;
+            auto append = [&](JSString* key) ALWAYS_INLINE_LAMBDA {
+                JSArray* entry = constructArrayPair(globalObject, key, values.at(index));
+                RETURN_IF_EXCEPTION(scope, void());
+                entries->putDirectIndex(globalObject, index++, entry);
+            };
+
+            for (unsigned propertyIndex : indices) {
+                if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[unlikely]]
+                    return { };
+                append(numberToString(vm, propertyIndex, 10));
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+
             for (size_t i = 0; i < properties.size(); ++i) {
                 if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[unlikely]]
                     return { };
@@ -532,19 +579,7 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                 if (!key)
                     key = jsOwnedString(vm, properties[i].get());
 
-                JSArray* entry = nullptr;
-                {
-                    ObjectInitializationScope initializationScope(vm);
-                    if ((entry = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 2))) [[likely]] {
-                        entry->initializeIndex(initializationScope, 0, key);
-                        entry->initializeIndex(initializationScope, 1, values.at(i));
-                    }
-                }
-                if (!entry) [[unlikely]] {
-                    throwOutOfMemoryError(globalObject, scope);
-                    return { };
-                }
-                entries->putDirectIndex(globalObject, i, entry);
+                append(key);
                 RETURN_IF_EXCEPTION(scope, { });
             }
 
@@ -577,18 +612,8 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
         RETURN_IF_EXCEPTION(scope, void());
 
         JSString* key = jsOwnedString(vm, propertyName.uid());
-        JSArray* entry = nullptr;
-        {
-            ObjectInitializationScope initializationScope(vm);
-            if ((entry = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 2))) [[likely]] {
-                entry->initializeIndex(initializationScope, 0, key);
-                entry->initializeIndex(initializationScope, 1, value);
-            }
-        }
-        if (!entry) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return;
-        }
+        JSArray* entry = constructArrayPair(globalObject, key, value);
+        RETURN_IF_EXCEPTION(scope, void());
         entries->putDirectIndex(globalObject, index++, entry);
     };
 
@@ -1050,10 +1075,8 @@ static JSValue defineProperties(JSGlobalObject* globalObject, JSObject* object, 
 
     unsigned index = 0;
     unsigned numProperties = propertyNames.size();
-    Vector<PropertyDescriptor, 16> descriptors;
+    Vector<PropertyDescriptor, 16> descriptors(ReserveCapacityTag { }, numProperties);
     MarkedArgumentBuffer markBuffer;
-
-    descriptors.reserveInitialCapacity(numProperties);
 
 #define RETURN_IF_EXCEPTION_CLEARING_OVERFLOW(value) do { \
     if (scope.exception()) [[unlikely]] { \
@@ -1255,11 +1278,11 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+    if ((is<JSFinalObject>(*object) || isJSArray(object)) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
         return object;
     }
@@ -1267,6 +1290,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Sealed);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 #endif
@@ -1300,11 +1324,15 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    if (object->structure()->isCompiledStructure() && AOT::PropertyWalk::tryFreezeFields(vm, object))
+        return object;
+
+    // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+    // Where dense arrays stay dense, an array is frozen in place below (tryFreezeArrayInPlace()), or by the generic steps.
+    if ((is<JSFinalObject>(*object) || (isJSArray(object) && vm.arrayStoragePolicy() != ArrayStoragePolicy::KeepsDenseArraysDense)) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
         return object;
     }
@@ -1314,9 +1342,10 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
         AOT::PropertyWalk::prepareForFreeze(object);
         RETURN_IF_EXCEPTION(scope, nullptr);
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Frozen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
-    // A slim closure is an ordinary object once it has its properties: JSObject::freeze() gives it them and takes the one transition. Its `prototype` object is still made at the first read.
+    // Once its properties exist, a slim closure is an ordinary object: JSObject::freeze() creates them and takes the single transition. Its `prototype` object is still created on first read.
     if (isSlimClosureType(object->type()) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
         return object;
@@ -1374,8 +1403,8 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsSealed, (JSGlobalObject* globalObjec
         return JSValue::encode(jsBoolean(true));
     JSObject* object = asObject(obj);
 
-    // Quick check for final objects.
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
+    // Quick check for final objects and arrays.
+    if ((is<JSFinalObject>(*object) || isJSArray(object)) && !object->structure()->hasImmutableProperties())
         return JSValue::encode(jsBoolean(object->isSealed(vm)));
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {
@@ -1399,8 +1428,8 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsFrozen, (JSGlobalObject* globalObjec
         return JSValue::encode(jsBoolean(true));
     JSObject* object = asObject(obj);
 
-    // Quick check for final objects.
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties())
+    // Quick check for final objects and arrays.
+    if ((is<JSFinalObject>(*object) || isJSArray(object)) && !object->structure()->hasImmutableProperties())
         return JSValue::encode(jsBoolean(object->isFrozen(vm)));
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {
@@ -1432,7 +1461,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIs, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(jsBoolean(sameValue(globalObject, callFrame->argument(0), callFrame->argument(1))));
 }
 
-static CachedPropertyNamesKind LEGACY_NODELETE inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+NODELETE static CachedPropertyNamesKind inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
 {
     switch (propertyNameMode) {
     case PropertyNameMode::Strings:
@@ -1461,6 +1490,12 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
             object = proxy->target();
     }
 
+#if ENABLE(AOT)
+    // An object that is still being filled is a dictionary, and the keys of a dictionary are not cached.
+    if (vm.aotState().hasObjectsBeingFilled && object->type() == FinalObjectType && object->structure()->isDictionary()) [[unlikely]]
+        AOT::flattenOnce(vm, object);
+#endif
+
     // We attempt to look up own property keys cache in Object.keys / Object.getOwnPropertyNames cases.
     if (!globalObject->isHavingABadTime()) [[likely]] {
         if (auto* immutableButterfly = object->structure()->cachedPropertyNames(kind)) {
@@ -1474,6 +1509,14 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                 filter = propertyNameMode == PropertyNameMode::Strings ? AOT::PropertyWalk::Filter::Strings : AOT::PropertyWalk::Filter::StringsAndSymbols;
             if (auto* keys = AOT::PropertyWalk::tryGetCachedOwnKeys(vm, object, filter))
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+        }
+        if (!Inherit && propertyNameMode == PropertyNameMode::Symbols && object->structure()->isCompiledStructure()) [[unlikely]] {
+            JSObject* extraProperties = nullptr;
+            if (AOT::PropertyWalk::keepsSymbolsInExtraProperties(object, extraProperties)) {
+                if (!extraProperties)
+                    RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+                RELEASE_AND_RETURN(scope, (getPropertyKeys<Inherit>(globalObject, extraProperties, propertyNameMode, dontEnumPropertiesMode)));
+            }
         }
 #endif
     }

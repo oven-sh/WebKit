@@ -39,8 +39,14 @@ enum class PlatformXR::SessionFeature : uint8_t {
 #if ENABLE(WEBXR_HANDS)
     HandTracking,
 #endif
+#if ENABLE(WEBXR_ANCHORS)
+    Anchors,
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     HitTest,
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    PlaneDetection,
 #endif
     WebGPU,
 #if ENABLE(WEBXR_LAYERS)
@@ -93,16 +99,16 @@ header: <WebCore/PlatformXR.h>
     Vector<PlatformXR::LayerHandle> activeLayerHandles;
 };
 
-[Nested] struct PlatformXR::FrameData::FloatQuaternion {
+[CustomHeader] struct PlatformXR::FloatQuaternion {
     float x;
     float y;
     float z;
     float w;
 };
 
-[Nested] struct PlatformXR::FrameData::Pose {
+[CustomHeader] struct PlatformXR::Pose {
     WebCore::FloatPoint3D position;
-    PlatformXR::FrameData::FloatQuaternion orientation;
+    PlatformXR::FloatQuaternion orientation;
 };
 
 [Nested] struct PlatformXR::FrameData::Fov {
@@ -115,7 +121,7 @@ header: <WebCore/PlatformXR.h>
 using PlatformXR::FrameData::Projection = PlatformXR::FrameData::Projection;
 
 [Nested] struct PlatformXR::FrameData::View {
-    PlatformXR::FrameData::Pose offset;
+    PlatformXR::Pose offset;
     PlatformXR::FrameData::Projection projection;
 };
 
@@ -180,7 +186,7 @@ header: <WebCore/PlatformXR.h>
 };
 
 [Nested] struct PlatformXR::FrameData::InputSourcePose {
-    PlatformXR::FrameData::Pose pose;
+    PlatformXR::Pose pose;
     bool isPositionEmulated;
 };
 
@@ -247,7 +253,7 @@ using PlatformXR::NativeOriginInformation = Variant<PlatformXR::ReferenceSpaceTy
 };
 
 [Nested] struct PlatformXR::FrameData::HitTestResult {
-    PlatformXR::FrameData::Pose pose;
+    PlatformXR::Pose pose;
 };
 
 [CustomHeader] struct PlatformXR::TransientInputHitTestOptions {
@@ -265,7 +271,44 @@ using PlatformXR::HitTestSource = WebCore::XRHitTestSourceIdentifier;
 using PlatformXR::TransientInputHitTestSource = WebCore::XRHitTestSourceIdentifier;
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+enum class PlatformXR::PlaneOrientation : uint8_t {
+    Horizontal,
+    Vertical,
+};
+
+enum class PlatformXR::PlaneSemanticLabel : uint8_t {
+    Floor,
+    Wall,
+    Ceiling,
+    Table,
+};
+
+[Nested] struct PlatformXR::FrameData::Plane {
+    uint64_t id;
+    PlatformXR::Pose pose;
+    Vector<WebCore::FloatPoint> polygon;
+    std::optional<PlatformXR::PlaneOrientation> orientation;
+    std::optional<PlatformXR::PlaneSemanticLabel> semanticLabel;
+};
+#endif
+
 using PlatformXR::LayerHandle = int;
+
+#if ENABLE(WEBXR_ANCHORS)
+enum class PlatformXR::AnchorTrackingState : uint8_t {
+    Stopped,
+    Paused,
+    Tracking,
+};
+
+[CustomHeader] struct PlatformXR::AnchorState {
+    PlatformXR::Pose pose;
+    PlatformXR::AnchorTrackingState trackingState;
+};
+
+using PlatformXR::AnchorIdentifier = WebCore::XRAnchorIdentifier;
+#endif
 
 header: <WebCore/PlatformXR.h>
 [CustomHeader, RValue] struct PlatformXR::FrameData {
@@ -274,14 +317,20 @@ header: <WebCore/PlatformXR.h>
     bool isPositionEmulated;
     bool shouldRender;
     long predictedDisplayTime;
-    PlatformXR::FrameData::Pose origin;
-    std::optional<PlatformXR::FrameData::Pose> floorTransform;
+    PlatformXR::Pose origin;
+    std::optional<PlatformXR::Pose> floorTransform;
     PlatformXR::FrameData::StageParameters stageParameters;
     Vector<PlatformXR::FrameData::View> views;
     HashMap<PlatformXR::LayerHandle, UniqueRef<PlatformXR::FrameData::LayerData>> layers;
+#if ENABLE(WEBXR_ANCHORS)
+    HashMap<PlatformXR::AnchorIdentifier, PlatformXR::AnchorState> trackedAnchors;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     HashMap<PlatformXR::HitTestSource, Vector<PlatformXR::FrameData::HitTestResult>> hitTestResults;
     HashMap<PlatformXR::TransientInputHitTestSource, Vector<PlatformXR::FrameData::TransientInputHitTestResult>> transientInputHitTestResults;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    std::optional<Vector<PlatformXR::FrameData::Plane>> detectedPlanes;
 #endif
     Vector<PlatformXR::FrameData::InputSource> inputSources;
     PlatformXR::XREnvironmentBlendMode environmentBlendMode;
@@ -303,7 +352,7 @@ header: <WebCore/PlatformXR.h>
 header: <WebCore/PlatformXR.h>
 [Nested] struct PlatformXR::DeviceLayer::QuadLayerData {
     WebCore::FloatSize worldSize;
-    PlatformXR::FrameData::Pose poseInLocalSpace;
+    PlatformXR::Pose poseInLocalSpace;
 };
 
 header: <WebCore/PlatformXR.h>
@@ -312,7 +361,7 @@ header: <WebCore/PlatformXR.h>
     float centralHorizontalAngle;
     float upperVerticalAngle;
     float lowerVerticalAngle;
-    PlatformXR::FrameData::Pose poseInLocalSpace;
+    PlatformXR::Pose poseInLocalSpace;
 };
 
 header: <WebCore/PlatformXR.h>
@@ -320,12 +369,12 @@ header: <WebCore/PlatformXR.h>
     float radius;
     float centralAngle;
     float aspectRatio;
-    PlatformXR::FrameData::Pose poseInLocalSpace;
+    PlatformXR::Pose poseInLocalSpace;
 };
 
 header: <WebCore/PlatformXR.h>
 [Nested] struct PlatformXR::DeviceLayer::CubeLayerData {
-    PlatformXR::FrameData::FloatQuaternion orientation;
+    PlatformXR::FloatQuaternion orientation;
 };
 
 header: <WebCore/PlatformXR.h>
@@ -337,6 +386,7 @@ header: <WebCore/PlatformXR.h>
 #if ENABLE(WEBXR_LAYERS)
     bool blendTextureSourceAlpha;
     bool forceMonoPresentation;
+    bool contentUpdated;
     std::optional<PlatformXR::DeviceLayer::QuadLayerData> quadLayerData;
     std::optional<PlatformXR::DeviceLayer::EquirectLayerData> equirectLayerData;
     std::optional<PlatformXR::DeviceLayer::CylinderLayerData> cylinderLayerData;
@@ -363,6 +413,11 @@ enum class PlatformXR::LayerLayout : uint8_t {
     Stereo,
     StereoLeftRight,
     StereoTopBottom,
+};
+
+enum class PlatformXR::LayerUpdateMode : uint8_t {
+    Dynamic,
+    Static,
 };
 
 #endif

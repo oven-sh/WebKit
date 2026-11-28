@@ -54,7 +54,7 @@ public:
         m_runLoop->threadWillExit();
     }
 
-    RunLoop& LEGACY_NODELETE runLoop() { return m_runLoop; }
+    NODELETE RunLoop& runLoop() { return m_runLoop; }
 
 private:
     const Ref<RunLoop> m_runLoop;
@@ -75,7 +75,7 @@ auto RunLoop::runLoopHolder() -> ThreadSpecific<Holder>&
     return runLoopHolder;
 }
 
-RunLoop& RunLoop::currentSingleton()
+SUPPRESS_NODELETE RunLoop& RunLoop::currentSingleton()
 {
     return runLoopHolder()->runLoop();
 }
@@ -119,7 +119,7 @@ Ref<RunLoop> RunLoop::create(ASCIILiteral threadName, ThreadType threadType, Thr
     return runLoop.releaseNonNull();
 }
 
-bool RunLoop::isCurrent() const
+SUPPRESS_NODELETE bool RunLoop::isCurrent() const
 {
     // Avoid constructing the RunLoop for the current thread if it has not been created yet.
     return runLoopHolder().isSet() && this == &RunLoop::currentSingleton();

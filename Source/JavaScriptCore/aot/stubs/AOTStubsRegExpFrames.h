@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTRegExpRecord.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTVMState.h"
@@ -18,6 +19,8 @@
 #include "YarrFlags.h"
 #include "YarrJIT.h"
 #include "YarrMatchingContextHolder.h"
+#include <array>
+#include <bit>
 #include <memory>
 #include <optional>
 #include <span>
@@ -34,7 +37,6 @@ static_assert(sizeof(String) == sizeof(void*));
 inline constexpr unsigned maxSavedOperandsOfMatch = 3;
 inline constexpr unsigned offsetOfSavedOperandsOfMatch = roundUpToMultipleOf<sizeof(void*)>(sizeof(Yarr::MatchingContextHolder));
 inline constexpr unsigned sizeOfMatchFrame = roundUpToMultipleOf<stackAlignmentBytes()>(offsetOfSavedOperandsOfMatch + maxSavedOperandsOfMatch * sizeof(void*));
-// What StubAssembler::callLeaf wants to know inside the frame.
 inline constexpr unsigned bytesPushedInMatchFrame = sizeOfMatchFrame + (isX86_64() ? 1 : 2) * sizeof(CPURegister);
 
 inline constexpr int64_t noMatch = static_cast<int64_t>(notFound);
@@ -43,6 +45,37 @@ inline constexpr int32_t globalFlag = static_cast<int32_t>(Yarr::Flags::Global);
 inline constexpr int32_t stickyFlag = static_cast<int32_t>(Yarr::Flags::Sticky);
 inline constexpr int32_t hasIndicesFlag = static_cast<int32_t>(Yarr::Flags::HasIndices);
 inline constexpr int32_t unicodeFlags = static_cast<int32_t>(Yarr::Flags::Unicode) | static_cast<int32_t>(Yarr::Flags::UnicodeSets);
+
+inline constexpr ptrdiff_t offsetOfRegExpRecordBitFields = OBJECT_OFFSETOF(ImageRegExp, rawFlags) + sizeof(ImageRegExp::rawFlags);
+static_assert(offsetOfRegExpRecordBitFields + 1 == OBJECT_OFFSETOF(ImageRegExp, rawSpecificPattern));
+
+inline uint8_t regExpRecordBitFields(const ImageRegExp& record)
+{
+    return std::bit_cast<std::array<uint8_t, sizeof(ImageRegExp)>>(record)[offsetOfRegExpRecordBitFields];
+}
+
+[[nodiscard]] inline Jump branchIfHasNoFirstCharacters(StubAssembler& jit, GPRReg record)
+{
+    ImageRegExp recordWithBit { };
+    recordWithBit.hasFirstCharacters = 1;
+    return jit.branchTest8(CCallHelpers::Zero, Address(record, offsetOfRegExpRecordBitFields), TrustedImm32(regExpRecordBitFields(recordWithBit)));
+}
+
+inline void branchUnlessMatchCanBegin(StubAssembler& jit, GPRReg record, GPRReg characters, GPRReg distance, GPRReg span, MacroAssembler::JumpList& cannotMatch)
+{
+    RELEASE_ASSERT(noOverlap(record, characters, distance, span));
+    auto loadDistanceAndSpan = [&](ptrdiff_t offset) {
+        jit.load8(Address(characters), distance);
+        jit.load8(Address(record, OBJECT_OFFSETOF(ImageRegExp, details) + offset), span);
+        jit.sub32(span, distance);
+        jit.load8(Address(record, OBJECT_OFFSETOF(ImageRegExp, details) + offset + 1), span);
+    };
+    loadDistanceAndSpan(0);
+    Jump canBegin = jit.branch32(CCallHelpers::BelowOrEqual, distance, span);
+    loadDistanceAndSpan(2);
+    cannotMatch.append(jit.branch32(CCallHelpers::Above, distance, span));
+    canBegin.link(&jit);
+}
 
 inline Address savedOperandOfMatch(size_t index)
 {
@@ -66,7 +99,6 @@ inline void popMatchFrame(StubAssembler& jit, GPRReg answer, std::span<const GPR
     jit.emitFunctionEpilogue();
 }
 
-// The holder is at the stack pointer of the match frame.
 inline void storeMatchingContext(StubAssembler& jit, GPRReg scratch)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -81,7 +113,6 @@ inline void loadMatchOutput(StubAssembler& jit, GPRReg output)
     jit.loadPtr(Address(output, VM::offsetOfAOTState() + VMState::offsetOfRegExpMatchOutput()), output);
 }
 
-// The characters are in A0. Without a start the match starts at 0. loadOutput(output) loads the address of the offsets, call() calls the code, whose answer goes to answer.
 inline void callMatchingCodeInFrame(StubAssembler& jit, std::span<const GPRReg> savedOperands, GPRReg subjectLength, std::optional<GPRReg> start, GPRReg answer, const auto& loadOutput, const auto& call)
 {
     const GPRReg startArgument = jit.reuseScratch(StubRegister::A1);
@@ -90,7 +121,6 @@ inline void callMatchingCodeInFrame(StubAssembler& jit, std::span<const GPRReg> 
     const GPRReg context = jit.reuseScratch(StubRegister::A4);
     pushMatchFrame(jit, savedOperands);
     jit.move(subjectLength, lengthArgument);
-    // start may share its register with output.
     if (start)
         jit.move(*start, startArgument);
     else
@@ -138,8 +168,17 @@ struct MatchRecordRegisters {
     GPRReg scratch;
 };
 
-// Leaves the match where RegExp.lastMatch and the other legacy static properties read it. Of the five registers only string is intact afterwards, and the result register is overwritten.
 void recordMatch(StubAssembler&, const MatchRecordRegisters&);
+
+struct WideMatchRegisters {
+    GPRReg answer;
+    GPRReg string;
+    GPRReg impl;
+    GPRReg characters;
+    GPRReg length;
+};
+
+void rejectMatchInsidePair(StubAssembler&, const WideMatchRegisters&, Label isSearched, JumpList& slowCases);
 
 } } // namespace JSC::AOT
 

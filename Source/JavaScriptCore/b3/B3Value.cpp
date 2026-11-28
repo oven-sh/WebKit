@@ -54,6 +54,7 @@
 #include <optional>
 #include <wtf/CommaPrinter.h>
 #include <wtf/ListDump.h>
+#include <wtf/SmallSet.h>
 #include <wtf/StackTrace.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -606,23 +607,35 @@ bool Value::isRounded() const
     }
 }
 
-bool Value::returnsBool() const
+static bool returnsBool(const Value* value, SmallSet<const Value*>& booleans, SmallSet<const Value*>& others)
 {
-    if (type() != Int32)
+    if (value->type() != Int32)
         return false;
 
-    switch (opcode()) {
+    auto ask = [&](unsigned index) {
+        return returnsBool(value->child(index), booleans, others);
+    };
+    auto answerOnce = [&](NOESCAPE const Invocable<bool()> auto& compute) {
+        if (booleans.contains(value))
+            return true;
+        if (others.contains(value))
+            return false;
+        bool result = compute();
+        (result ? booleans : others).add(value);
+        return result;
+    };
+    switch (value->opcode()) {
     case Const32:
-        return asInt32() == 0 || asInt32() == 1;
+        return value->asInt32() == 0 || value->asInt32() == 1;
     case BitAnd:
-        return child(0)->returnsBool() || child(1)->returnsBool();
+        return answerOnce([&] { return ask(0) || ask(1); });
     case BitOr:
     case BitXor:
-        return child(0)->returnsBool() && child(1)->returnsBool();
+        return answerOnce([&] { return ask(0) && ask(1); });
     case Select:
-        return child(1)->returnsBool() && child(2)->returnsBool();
+        return answerOnce([&] { return ask(1) && ask(2); });
     case Identity:
-        return child(0)->returnsBool();
+        return ask(0);
     case Equal:
     case NotEqual:
     case LessThan:
@@ -643,6 +656,13 @@ bool Value::returnsBool() const
     default:
         return false;
     }
+}
+
+bool Value::returnsBool() const
+{
+    SmallSet<const Value*> booleans;
+    SmallSet<const Value*> others;
+    return B3::returnsBool(this, booleans, others);
 }
 
 TriState Value::asTriState() const
@@ -680,7 +700,11 @@ constexpr Effects constantEffectsForOpcode(Opcode opcode)
     case Store16:
     case Store:
     case MemoryMove:
-    case MemoryFill:
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128:
     case AtomicWeakCAS:
     case AtomicStrongCAS:
     case AtomicXchgAdd:
@@ -810,7 +834,11 @@ Effects Value::effectsSlow() const
         result.controlDependent = true;
         break;
     }
-    case MemoryFill: {
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128: {
         const auto* memory = as<BulkMemoryValue>();
         result.writes = memory->writeRange();
         result.controlDependent = true;
@@ -1150,7 +1178,11 @@ ValueKey Value::key() const
     case WasmArraySet:
     case WasmArrayNew:
     case MemoryMove:
-    case MemoryFill:
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128:
     case Fence:
     case CCall:
     case Patchpoint:

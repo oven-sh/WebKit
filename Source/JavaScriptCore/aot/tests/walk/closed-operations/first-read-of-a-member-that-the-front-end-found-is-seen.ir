@@ -1,0 +1,56 @@
+# if (Reflect.has) ..;  Reflect.get(o, "a"); Reflect.get(o, "b"); return Reflect.ownKeys(Reflect)
+# The front end has found the member, and writes the read as the object that it finds: a Builtin, with a value that nobody may take.
+# Reflect adds `has` and `get` when they are first read, which shows in the order of its keys: the run time has to see each read where it stands, whatever is withheld.
+# Only the first read does anything: behind one that every way has passed, the state answers for the next.
+# `isNotReadFromHolder`: the program names the object and reads nothing.
+# RUN: walk f0 mechanisms=none
+# CHECK-LABEL: code f0:Body
+# CHECK: InitializeBuiltin builtin=ReflectHas
+# CHECK: InitializeBuiltin builtin=ReflectGet
+# CHECK: InitializeBuiltin builtin=ReflectGet
+# CHECK: InitializeBuiltin builtin=ReflectOwnKeys
+# RUN(ALL): walk f0 mechanisms=all
+# ALL-LABEL: code f0:Body
+# ALL: InitializeBuiltin builtin=ReflectHas
+# ALL: InitializeBuiltin builtin=ReflectGet
+# ALL-NOT: InitializeBuiltin builtin=ReflectGet
+# ALL: InitializeBuiltin builtin=ReflectOwnKeys
+# RUN(NAMED): walk f0 mechanisms=none
+# NAMED-NOT: InitializeBuiltin builtin=ReflectApply
+# RUN(ARMS): walk f1 mechanisms=all
+# ARMS-LABEL: code f1:Body
+# ARMS: InitializeBuiltin builtin=ReflectHas
+# ARMS: InitializeBuiltin builtin=ReflectHas
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ReflectHas
+    v1 = Builtin builtin=Reflect
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="o" [isFreeName]
+    v4 = Builtin builtin=ReflectGet
+    v5 = String string="a"
+    v6 = Call v4, v1, v3, v5 calleeName="Reflect.get"
+    v7 = Builtin builtin=ReflectGet
+    v8 = String string="b"
+    v9 = Call v7, v1, v3, v8 calleeName="Reflect.get"
+    v10 = Builtin builtin=ReflectApply [isNotReadFromHolder]
+    v11 = NewClosure function=f1
+    v12 = PropGet v2 key="sink" [isFreeName]
+    v13 = Call v12, -, v10, v11
+    v14 = Builtin builtin=ReflectOwnKeys
+    v15 = Call v14, v1, v1 calleeName="Reflect.ownKeys"
+    Return v15
+}
+function f1 name="arms" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Builtin builtin=ReflectHas
+    Jump -> next b2()
+  b2():
+    v2 = Builtin builtin=ReflectHas
+    Return v2
+}

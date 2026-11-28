@@ -1,0 +1,39 @@
+# let last = new SuppressedError(a, b); do { r = b(last); const e = new SuppressedError(a, b); if (r === undefined) define(e, "name", b); last = e; } while (r === null); return a;
+# v7 stores into v5, which nobody has marked where the way comes by: the store waits, b2 holds nothing, and the branch at the end of b1 is held to decide nothing. Then v4 marks v3, v3 marks v5,
+# v5 calls for its store: b2 does something after all, and the branch in front of it decides.
+# RUN: sweep-code
+# CHECK: b1(
+# CHECK: v6: boolean @Boolean = TypeTest v4
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
+# CHECK: b2()
+# CHECK: v7 @Void = PropDefine v5, v1
+# CHECK-NOT: dropped b
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @Cell = NewSuppressedError v0, v1 traits=[mayCollect, mayTouchMemory]
+#     Jump -> next b1(v2)
+#   b1(v3: anything @Cell) isInLoop=true isLoopHead=true:
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @Cell = NewSuppressedError v0, v1 traits=[mayCollect, mayTouchMemory]
+#     v6: boolean @Boolean = TypeTest v4 testedType=undefined
+#     Branch v6 -> taken b2(), notTaken b3()
+#   b2() isInLoop=true:
+#     v7 @Void = PropDefine v5, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b3()
+#   b3() isInLoop=true:
+#     v8: boolean @Boolean = TypeTest v4 testedType=null
+#     Branch v8 -> taken b1(v5), notTaken b4()
+#   b4():
+#     Return v0
+# }
+# -- end of code

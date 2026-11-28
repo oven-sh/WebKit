@@ -81,7 +81,8 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
     check->effects = Effects::none();
     check->effects.writesLocalState = true;
     check->setRunsWithoutFrame(true);
-    check->setGenerator([load, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool continuesAfterReport = proc.policy().validation.continuesAfterMovedLoadReports;
+    check->setGenerator([load, continuesAfterReport, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg found = params.gpScratch(0);
         GPRReg given = params.gpScratch(1);
@@ -131,7 +132,10 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
             }
             if (report)
                 report->run(jit, load, found, given);
-            jit.breakpoint();
+            if (continuesAfterReport)
+                jit.jump().linkTo(done, &jit);
+            else
+                jit.breakpoint();
         });
     });
     return check;
@@ -176,18 +180,23 @@ PatchpointValue* createDecidedComparisonCheck(Procedure& proc, Opcode opcode, Or
     check->effects.writesLocalState = true;
     check->setRunsWithoutFrame(true);
     MovedLoad comparison { opcode, left->type(), 0, origin, HeapRange() };
-    check->setGenerator([comparison, answer, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool continuesAfterReport = proc.policy().validation.continuesAfterMovedLoadReports;
+    check->setGenerator([comparison, answer, continuesAfterReport, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg left = params[0].gpr();
         GPRReg right = params[1].gpr();
         CCallHelpers::RelationalCondition otherAnswer = answer ? CCallHelpers::invert(conditionOf(comparison.opcode)) : conditionOf(comparison.opcode);
         CCallHelpers::Jump differs = comparison.type == Int64 ? jit.branch64(otherAnswer, left, right) : jit.branch32(otherAnswer, left, right);
+        CCallHelpers::Label done = jit.label();
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             differs.link(&jit);
             if (report)
                 report->run(jit, comparison, left, right);
-            jit.breakpoint();
+            if (continuesAfterReport)
+                jit.jump().linkTo(done, &jit);
+            else
+                jit.breakpoint();
         });
     });
     return check;
@@ -297,7 +306,7 @@ void MovedLoadLog::willCopy(Procedure& proc, const IndexSet<BasicBlock*>& blocks
     if (isEmpty())
         return;
     // An entry may name a value that is gone: see insertChecks().
-    UncheckedKeyHashMap<Value*, BasicBlock*> blockOf;
+    HashMap<Value*, BasicBlock*> blockOf;
     for (BasicBlock* block : proc) {
         for (Value* value : *block) {
             if (m_entriesNaming.contains(value))
@@ -318,12 +327,12 @@ void MovedLoadLog::willCopy(Procedure& proc, const IndexSet<BasicBlock*>& blocks
     }
 }
 
-void MovedLoadLog::didDemote(Procedure& proc, const UncheckedKeyHashMap<Value*, Variable*>& variables)
+void MovedLoadLog::didDemote(Procedure& proc, const HashMap<Value*, Variable*>& variables)
 {
     if (isEmpty())
         return;
-    UncheckedKeyHashMap<Value*, Vector<unsigned, 2>> entriesBehind;
-    UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 2>> entriesAtHead;
+    HashMap<Value*, Vector<unsigned, 2>> entriesBehind;
+    HashMap<BasicBlock*, Vector<unsigned, 2>> entriesAtHead;
     for (unsigned index = 0; index < m_entries.size(); ++index) {
         const Entry& entry = m_entries[index];
         if (!entry.address || (!variables.contains(entry.address) && !variables.contains(entry.givenToUsers)))
@@ -504,8 +513,8 @@ bool MovedLoadLog::insertChecks(Procedure& proc, RefPtr<DifferenceReport> report
         unsigned index { 0 };
     };
     // An entry may name a value that is gone: what stood for a deleted value may have been deleted before it. So nothing that an entry names is looked into before it is found here.
-    UncheckedKeyHashMap<Value*, Place> places;
-    UncheckedKeyHashSet<BasicBlock*> blocks;
+    HashMap<Value*, Place> places;
+    HashSet<BasicBlock*> blocks;
     for (BasicBlock* block : proc) {
         blocks.add(block);
         for (unsigned index = 0; index < block->size(); ++index)

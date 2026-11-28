@@ -1,0 +1,5 @@
+
+PASS AccentColorText is black for a light accent-color
+PASS AccentColorText is white for a dark accent-color
+PASS AccentColorText contrasts against the element's own accent-color
+

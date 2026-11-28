@@ -1,0 +1,67 @@
+# var defaults = { depth: 2, color: false, width: 80 };
+# function main(on) { var o = Object.assign({}, defaults, on ? { depth: 7 } : { width: 100, color: true }); return o.depth + o.width + (o.color ? 1 : 0); }
+# console.log(main(globalThis.on));
+# RUN(ANSWER): run-in-shell globalThis.on = true;
+# ANSWER: 87
+# ANSWER-NEXT: exited with 0
+# RUN(OTHER): run-in-shell globalThis.on = false;
+# OTHER: 103
+
+layout L0 module=m0 position=15 fields=[{key="color" declared={type=undefined|boolean flags=[IsExpected]}}, {key="depth" declared={type=undefined|number flags=[IsExpected]}}, {key="width" declared={type=undefined|number flags=[IsExpected]}}] declaredOrder=[1, 0, 2] ownFieldCount=3
+layout L1 module=m0 position=147
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+data d0 root=Object{layout=L0 members=[{key="depth" value=Number{value=2}}, {key="color" value=Boolean{}}, {key="width" value=Number{value=80}}]} module=m0
+data d1 root=Object{layout=L1} module=m0
+data d2 root=Object{layout=L0 members=[{key="width" value=Number{value=100}}, {key="color" value=Boolean{value=true}}]} module=m0
+data d3 root=Object{layout=L0 members=[{key="depth" value=Number{value=7}}]} module=m0
+entry module=m0
+variable g0 name="defaults" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="on" [isFreeName]
+    v7 = Call v1, -, v6 calleeName="main"
+    v8 = PropGet v5 key="console" [isFreeName]
+    v9 = PropGet v8 key="log"
+    v10 = Call v9, v8, v7 calleeKey="log" calleeName="console.log"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="main" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectAssign
+    v3 = Data data=d1
+    v4 = GetModuleVariable variable=g0
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Data data=d3
+    Jump -> next b3(v6)
+  b2():
+    v7 = Data data=d2
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Call v2, v1, v3, v4, v8 calleeName="Object.assign"
+    v10 = PropGet v9 key="depth"
+    v11 = PropGet v9 key="width"
+    v12 = Add v10, v11
+    v13 = PropGet v9 key="color"
+    v14 = ToBoolean v13
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    v15 = Integer integer=1
+    Jump -> next b6(v15)
+  b5():
+    v16 = Integer
+    Jump -> next b6(v16)
+  b6(v17):
+    v18 = Add v12, v17
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Return v19
+}

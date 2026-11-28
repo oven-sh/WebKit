@@ -149,7 +149,7 @@ static OptionSet<AcceleratedEffectProperty> acceleratedPropertyFromCSSProperty(A
     }
 }
 
-static CSSPropertyID LEGACY_NODELETE cssPropertyFromAcceleratedProperty(AcceleratedEffectProperty property)
+NODELETE static CSSPropertyID cssPropertyFromAcceleratedProperty(AcceleratedEffectProperty property)
 {
     switch (property) {
     case AcceleratedEffectProperty::Opacity:
@@ -441,6 +441,74 @@ ResolvedEffectTiming AcceleratedEffect::resolvedTiming(WebAnimationTime timeline
     });
 }
 
+std::optional<double> AcceleratedEffect::progressUntilNextTransformRelatedStep(double iterationProgress) const
+{
+    auto progressUntilNextStepInInterval = [iterationProgress](double intervalStartProgress, double intervalEndProgress, const TimingFunction* timingFunction) -> std::optional<double> {
+        RefPtr stepsTimingFunction = dynamicDowncast<StepsTimingFunction>(timingFunction);
+        if (!stepsTimingFunction || intervalEndProgress <= intervalStartProgress)
+            return std::nullopt;
+
+        auto numberOfSteps = stepsTimingFunction->numberOfSteps();
+        auto intervalProgress = intervalEndProgress - intervalStartProgress;
+        auto iterationProgressMappedToCurrentInterval = (iterationProgress - intervalStartProgress) / intervalProgress;
+        auto nextStepProgress = std::ceil(iterationProgressMappedToCurrentInterval * numberOfSteps) / numberOfSteps;
+        return (nextStepProgress - iterationProgressMappedToCurrentInterval) * intervalProgress;
+    };
+
+    if (RefPtr stepsTimingFunction = dynamicDowncast<StepsTimingFunction>(m_timing.timingFunction))
+        return progressUntilNextStepInInterval(0, 1, stepsTimingFunction.get());
+
+    if (!is<LinearTimingFunction>(m_timing.timingFunction))
+        return std::nullopt;
+
+    // A missing interval start keyframe stands for the implicit 0% keyframe, which uses the default keyframe timing function.
+    auto timingFunctionForIntervalStartKeyframe = [&](const Keyframe* keyframe) -> const TimingFunction* {
+        if (keyframe)
+            return timingFunctionForKeyframe(*keyframe);
+        return m_animationType == WebAnimationType::CSSAnimation ? m_defaultKeyframeTimingFunction.get() : nullptr;
+    };
+
+    const Keyframe* intervalStartKeyframe = nullptr;
+    double intervalStartProgress = 0;
+    for (auto& keyframe : m_keyframes) {
+        if (!keyframe.animatedProperties().containsAny(transformRelatedAcceleratedProperties))
+            continue;
+        if (keyframe.offset() > iterationProgress) {
+            RefPtr timingFunction = timingFunctionForIntervalStartKeyframe(intervalStartKeyframe);
+            return progressUntilNextStepInInterval(intervalStartProgress, keyframe.offset(), timingFunction);
+        }
+        intervalStartKeyframe = &keyframe;
+        intervalStartProgress = keyframe.offset();
+    }
+
+    // We're in the interval ending with the implicit 100% keyframe.
+    RefPtr timingFunction = timingFunctionForIntervalStartKeyframe(intervalStartKeyframe);
+    return progressUntilNextStepInInterval(intervalStartProgress, 1, timingFunction);
+}
+
+std::optional<Seconds> AcceleratedEffect::timeUntilNextTransformRelatedStep(WebAnimationTime timelineTime, std::optional<WebAnimationTime> timelineDuration) const
+{
+    // FIXME: it will be useful to make this function more general and use it to sparingly
+    // schedule display links in the UI process in cases where the only monotonic animations
+    // running are using steps() easing.
+    if (m_paused || !m_playbackRate)
+        return std::nullopt;
+
+    auto resolvedTiming = this->resolvedTiming(timelineTime, timelineDuration);
+    if (resolvedTiming.phase != AnimationEffectPhase::Active || !resolvedTiming.simpleIterationProgress)
+        return std::nullopt;
+
+    auto iterationDuration = m_timing.iterationDuration.time();
+    if (!iterationDuration)
+        return std::nullopt;
+
+    auto progressUntilNextStep = progressUntilNextTransformRelatedStep(*resolvedTiming.simpleIterationProgress);
+    if (!progressUntilNextStep)
+        return std::nullopt;
+
+    return *iterationDuration * *progressUntilNextStep / std::abs(m_playbackRate);
+}
+
 void AcceleratedEffect::apply(AcceleratedEffectValues& values, WebAnimationTime timelineTime, std::optional<WebAnimationTime> timelineDuration) const
 {
     auto resolvedTiming = this->resolvedTiming(timelineTime, timelineDuration);
@@ -515,42 +583,38 @@ void AcceleratedEffect::validateFilters(const AcceleratedEffectValues& baseValue
     };
 
     auto isValidProperty = [&](AcceleratedEffectProperty property) {
-        // First, let's assemble the matching values.
-        Vector<const AcceleratedEffectValues*> values;
-        bool hasToKeyframe = false;
+        // Filters are animated in the remote layer tree using a fixed set of presentation modifiers
+        // created for the longest filter list the effect stack may yield, and each presentation modifier
+        // may only ever be set to values of the type it was created with. As such, all filter lists this
+        // effect may yield must use the same filter operation types as the longest one, in the same order.
+        // This includes the base value, used for implicit 0% or 100% keyframes but also when the effect is
+        // in its delay phase or its associated animation is outside of the range of a progress-based timeline.
+
+        // We can't animate a filter list with additivity or accumulation since this will guarantee a filter
+        // list longer than the base value.
+        auto& baseFilter = filterOperations(baseValues, property);
+        if (!baseFilter.isEmpty() && m_compositeOperation != CompositeOperation::Replace)
+            return false;
+
+        Vector<const FilterOperations*> allFilters { &baseFilter };
         for (auto& keyframe : m_keyframes) {
-            if (keyframe.animatesProperty(property)) {
-                // If this is the first value we're processing and it's not the
-                // keyframe with offset 0, then we need to add the implicit 0% values.
-                if (values.isEmpty() && keyframe.offset())
-                    values.append(&baseValues);
-                values.append(&keyframe.values());
-                hasToKeyframe = hasToKeyframe || keyframe.offset() == 1;
-            }
+            if (!keyframe.animatesProperty(property))
+                continue;
+            if (!baseFilter.isEmpty() && keyframe.compositeOperation().value_or(CompositeOperation::Replace) != CompositeOperation::Replace)
+                return false;
+            allFilters.append(&filterOperations(keyframe.values(), property));
         }
 
-        // At this stage we should have found at least an explicit 0% keyframe
-        // or have added an implicit 0% keyframe.
-        ASSERT(values.size());
-
-        // Add the implicit 100% value if one wasn't provided.
-        if (!hasToKeyframe)
-            values.append(&baseValues);
-
-        // Now we should have at least 0% and 100% values.
-        ASSERT(values.size() > 1);
-
         const FilterOperations* longestFilterList = nullptr;
-        for (size_t i = 1; i < values.size(); ++i) {
-            auto& fromFilters = filterOperations(*values[i - 1], property);
-            auto& toFilters = filterOperations(*values[i], property);
-            // FIXME: we should provide the actual composite operation here.
-            if (!fromFilters.canInterpolate(toFilters, CompositeOperation::Replace))
+        for (auto* filterList : allFilters) {
+            if (!longestFilterList || filterList->size() > longestFilterList->size())
+                longestFilterList = filterList;
+        }
+
+        // Now check all filter values against the longest one.
+        for (auto* filterList : allFilters) {
+            if (!filterList->canInterpolate(*longestFilterList, CompositeOperation::Replace))
                 return false;
-            if (!longestFilterList || fromFilters.size() > longestFilterList->size())
-                longestFilterList = &fromFilters;
-            if (!longestFilterList || toFilters.size() > longestFilterList->size())
-                longestFilterList = &toFilters;
         }
 
         // We need to make sure that the longest filter, if it contains a drop-shadow() operation,

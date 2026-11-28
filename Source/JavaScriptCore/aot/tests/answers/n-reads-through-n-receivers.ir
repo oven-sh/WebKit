@@ -1,0 +1,51 @@
+# let held; for each k of 1..8: held = an object of a layout of its own with `get x() { return k }`; first(); second();
+# function first() { show(held.x); .. eight times }   function second() { the same text }
+# RUN(RUNS): run-in-shell globalThis.show = (x) => print(x);
+# REPEAT: k = 1..8
+# RUNS-COUNT-16: %(k)
+# END REPEAT
+# RUNS-NEXT: exited with 0
+
+# REPEAT: n = 0..7
+layout L%(n)
+# END REPEAT
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="held" module=m0 declared={type=anything|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+# REPEAT: n = 0..7
+    v%(n*9) = NewObject layout=L%(n)
+    v%(n*9+1) = FinishObject v%(n*9)
+    v%(n*9+2) = NewClosure function=f%(n+1)
+    DefineGetter v%(n*9+1), v%(n*9+2) key="x"
+    PutModuleVariable v%(n*9+1) variable=g0
+    v%(n*9+5) = NewClosure function=f9
+    v%(n*9+6) = Call v%(n*9+5), -
+    v%(n*9+7) = NewClosure function=f10
+    v%(n*9+8) = Call v%(n*9+7), -
+# END REPEAT
+    v72 = Undefined
+    Return v72
+}
+# REPEAT: n = 1..8
+function f%(n) name="x" module=m0 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=%(n)
+    Return v0
+}
+# END REPEAT
+# REPEAT: f = 9..10; name = first second
+function f%(f) name="%(name)" module=m0 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+# REPEAT: n = 0..7
+    v%(n*3+2) = GetModuleVariable variable=g0
+    v%(n*3+3) = PropGet v%(n*3+2) key="x"
+    v%(n*3+4) = Call v1, -, v%(n*3+3) calleeName="show"
+# END REPEAT
+    v26 = Undefined
+    Return v26
+}
+# END REPEAT

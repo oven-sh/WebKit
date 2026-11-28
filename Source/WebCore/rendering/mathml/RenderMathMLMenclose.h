@@ -37,16 +37,16 @@ class RenderMathMLMenclose final : public RenderMathMLRow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLMenclose);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLMenclose);
 public:
-    RenderMathMLMenclose(MathMLMencloseElement&, Style::ComputedStyle&&);
+    RenderMathMLMenclose(MathMLMencloseElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMathMLMenclose();
 
 private:
     ASCIILiteral renderName() const final { return "RenderMathMLMenclose"_s; }
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     void paint(PaintInfo&, const LayoutPoint&) final;
 
-    LayoutUnit LEGACY_NODELETE ruleThickness() const;
+    NODELETE LayoutUnit ruleThickness() const;
     bool hasNotation(MathMLMencloseElement::MencloseNotationFlag notationFlag) const { return protect(downcast<MathMLMencloseElement>(element()))->hasNotation(notationFlag); }
 
     struct SpaceAroundContent {

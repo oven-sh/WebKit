@@ -1,0 +1,17 @@
+# The program of store-below-parent-frozen-later.ir. The caller freezes the prototype object through a Proxy without traps: the engine tells the target to take no more properties and makes each of them read-only, name by name.
+# The table of classes hears of the object that changes, whoever was handed to Object.freeze(): the guards that stores ask end, and the second store under `c` throws.
+# PROGRAM-OF: store-below-parent-frozen-later.ir
+# RUN: run-in-shell globalThis.register = parent => { Object.freeze(new Proxy(parent, {})); };
+# CHECK: 1
+# CHECK-NEXT: TypeError: Attempted to assign to readonly property
+# CHECK-NOT: exited with 0
+# CHECK: exited with 3
+# A value that is sealed, or lies on an object that takes no more properties, is still written past: the store makes a property of the object's own.
+# RUN(SEALED): run-in-shell globalThis.register = parent => { Object.seal(new Proxy(parent, {})); };
+# SEALED: 1
+# SEALED-NEXT: 2
+# SEALED-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell globalThis.register = parent => { Reflect.preventExtensions(new Proxy(new Proxy(parent, {}), {})); };
+# CLOSED: 1
+# CLOSED-NEXT: 2
+# CLOSED-NEXT: exited with 0

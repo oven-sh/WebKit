@@ -1,0 +1,65 @@
+# A test run has opened a name on Object.prototype, so an accessor may lie there. A read or a store under a key that nobody knows may find it, and it gets the object as `this`: the layout escapes, as under a key that is named.
+# A key whose beginning is known names no prototype link, but it may name what lies above. A key that is a number names nothing there: no object takes such a name above another.
+# function peek(box, key) { return box[key]; }   function put(box, tail) { box["la" + tail] = 1; }   function at(box, i) { return box[i | 0]; }
+# Object.defineProperty(Object.prototype, "late", { get() { this.name = 7 }, set(value) { this.name = 7 } })
+# access-under-a-computed-key-below-a-name-that-a-test-run-has-opened-elsewhere-keeps-the-layout.ir is the twin: the same records, and the last line opens the name on another object
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link layouts mechanisms=all
+# CHECK: layout L2 {{*}}stays-with-compiled-code
+# RUN(READ): link layouts mechanisms=all
+# READ-NOT: layout L0 {{*}}stays-with-compiled-code
+# RUN(STORE): link layouts mechanisms=all
+# STORE-NOT: layout L1 {{*}}stays-with-compiled-code
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: field L0.0 "name" {{*}}writers-known
+# FIELDS-NOT: field L1.0 "name" {{*}}writers-known
+
+layout L0 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="key" [isFreeName]
+    v9 = NewClosure function=f1
+    v10 = NewClosure function=f2
+    v11 = NewClosure function=f3
+    v12 = Call v9, -, v2, v8 calleeName="peek"
+    v13 = Call v10, -, v4, v8 calleeName="put"
+    v14 = Call v11, -, v6, v8 calleeName="at"
+    v15 = PropGet v2 key="name"
+    v16 = PropGet v4 key="name"
+    v17 = PropGet v6 key="name"
+    Return v17
+}
+function f1 name="peek" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="la"
+    v3 = Add v2, v1
+    v4 = Integer integer=1
+    ElemSet v0, v3, v4 mode=Strict
+    v6 = Undefined
+    Return v6
+}
+function f3 name="at" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+openedname holder=ObjectPrototype name="late"

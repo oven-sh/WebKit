@@ -23,9 +23,17 @@
 """Unit tests for manager.py."""
 
 import unittest
+from unittest.mock import MagicMock, patch
+
+from webkitcorepy import OutputCapture
 
 from webkitpy.api_tests.manager import Manager
+from webkitpy.api_tests.runner import Runner
 from webkitpy.api_tests.test_expectations import PASS, FAIL, CRASH, TIMEOUT
+from webkitpy.common.host_mock import MockHost
+from webkitpy.common.program_status import ProgramStatus
+from webkitpy.common.program_status_mock import TTYStringIO, encoded
+from webkitpy.tool.mocktool import MockOptions
 from webkitexpectationspy.expectations import Expectation
 
 
@@ -128,6 +136,13 @@ TestWebKitAPI.WKWebViewSwiftOverlayTests/evaluateJavaScriptYieldsExpectedRespons
     def test_parallel_safety_tests_need_no_arguments_when_collecting_everything(self):
         self.assertEqual(Manager._arguments_with_parallel_safety_tests([], ['TestWTF.WTF_Vector.Basic']), [])
 
+    def test_blocklisted_tests_are_left_out(self):
+        port = MagicMock()
+        port.filter_api_tests_by_blocklist.return_value = (['TestWTF.WTF_Vector.Basic'], ['TestWebKitAPI.Serial.Test'])
+        with OutputCapture():
+            self.assertEqual(Manager._tests_outside_the_blocklist(port, ['TestWTF.WTF_Vector.Basic', 'TestWebKitAPI.Serial.Test']), ['TestWTF.WTF_Vector.Basic'])
+        port.filter_api_tests_by_blocklist.assert_called_once_with(['TestWTF.WTF_Vector.Basic', 'TestWebKitAPI.Serial.Test'])
+
     def test_args_specify_individual_tests(self):
         self.assertTrue(Manager._args_specify_individual_tests(["WebKit.SomeTest"]))
         self.assertTrue(Manager._args_specify_individual_tests(["TestWebKitAPI.WebKit.SomeTest"]))
@@ -157,3 +172,187 @@ TestWebKitAPI.WKWebViewSwiftOverlayTests/evaluateJavaScriptYieldsExpectedRespons
     def test_expected_results_for_upload_flaky(self):
         result = Manager._expected_results_for_upload(Expectation('TestWebKitAPI.WebKit.SomeTest', expected={PASS, FAIL}))
         self.assertEqual({'PASS', 'FAIL'}, set(result.split()))
+
+    def test_program_status_reports_how_the_run_finished(self):
+        cases = [
+            (Manager.SUCCESS, False, 'state=done:app=run-api-tests'),
+            (Manager.FAILED_BUILD_CHECK, False, 'state=error:app=run-api-tests:msg=' + encoded('Build check failed')),
+            (Manager.FAILED_COLLECT_TESTS, False, 'state=error:app=run-api-tests:msg=' + encoded('Failed to collect tests')),
+            (Manager.FAILED_TESTS, False, 'state=error:app=run-api-tests:msg=' + encoded('Test suite failed')),
+            (Manager.FAILED_UPLOAD, False, 'state=error:app=run-api-tests:msg=' + encoded('Upload failed')),
+            (Manager.SUCCESS, True, 'state=idle:app=run-api-tests'),
+            (Manager.FAILED_TESTS, True, 'state=idle:app=run-api-tests'),
+        ]
+        for result, interrupted, expected_report in cases:
+            with self.subTest(result=result, interrupted=interrupted):
+                stream = TTYStringIO()
+                manager = Manager(MagicMock(), MagicMock(), MagicMock(), status=ProgramStatus(stream, 'run-api-tests'))
+                manager._interrupted = interrupted
+                manager._report_finished(result)
+                self.assertEqual(stream.program_status_reports(), [expected_report])
+
+    def test_program_status_reports_the_unexpected_failure_count(self):
+        stream = TTYStringIO()
+        manager = Manager(MagicMock(), MagicMock(), MagicMock(), status=ProgramStatus(stream, 'run-api-tests'))
+        manager._unexpected_failure_count = 3
+        manager._report_finished(Manager.FAILED_TESTS)
+        self.assertEqual(stream.program_status_reports(), ['state=error:app=run-api-tests:msg=' + encoded('3 unexpected failures')])
+
+    def test_write_update_reports_the_phase(self):
+        stream = TTYStringIO()
+        manager_stream = MagicMock()
+        manager = Manager(MagicMock(), MagicMock(), manager_stream, status=ProgramStatus(stream, 'run-api-tests'))
+        manager._write_update('Collecting tests ...')
+        manager_stream.write_update.assert_called_once_with('Collecting tests ...')
+        self.assertEqual(stream.program_status_reports(), ['state=working:app=run-api-tests:msg=' + encoded('Collecting tests ...')])
+
+    def test_run_reports_working_before_the_run_and_finishes_with_its_result(self):
+        stream = TTYStringIO()
+        manager = Manager(MagicMock(), MagicMock(), MagicMock(), status=ProgramStatus(stream, 'run-api-tests'))
+        manager._run = lambda args, json_output: Manager.FAILED_BUILD_CHECK
+        self.assertEqual(manager.run([]), Manager.FAILED_BUILD_CHECK)
+        self.assertEqual(stream.program_status_reports(), [
+            'state=working:app=run-api-tests',
+            'state=error:app=run-api-tests:msg=' + encoded('Build check failed'),
+        ])
+
+    def test_run_warns_once_about_ignored_sanitizer_options(self):
+        port = MockHost().port_factory.get('test', options=MockOptions(additional_env_var=[], api_binary=['TestWTF']))
+        port.check_api_test_build = lambda binaries: False
+        manager = Manager(port, MockOptions(test_list=None), MagicMock())
+        with patch.dict('os.environ', {'ASAN_OPTIONS': 'log_path=/tmp/shell'}), OutputCapture() as captured:
+            self.assertEqual(manager.run([]), Manager.FAILED_BUILD_CHECK)
+        warnings = [line for line in captured.root.log.getvalue().splitlines() if line.startswith('ASAN_OPTIONS is set')]
+        self.assertEqual(['ASAN_OPTIONS is set in the environment but is ignored; pass it with --additional-env-var=ASAN_OPTIONS=... instead.'], warnings)
+
+    FAILURE_OUTPUT = 'Tools/TestWebKitAPI/Tests/WebKit/WKWebView/AdvancedPrivacyProtections.mm:647\nValue of: referrerFromPopup.startsWith(mainURLPrefix)\n  Actual: false\nExpected: true\n'
+
+    def _sample_upload(self):
+        return Manager._upload_results_with_logs({
+            'TestWebKitAPI.AdvancedPrivacyProtections.DoNotHideReferrerInPopupWindow': {'actual': 'FAIL', 'time': 3717},
+            'TestWebKitAPI.GetUserMedia.OriginAndWebArchivePermission': {'actual': 'TIMEOUT', 'time': 33285},
+            'TestWebKitAPI.ContextMenuMouseEvents.RightClick': {'expected': 'PASS FAIL', 'actual': 'FAIL', 'time': 2429},
+            'TestIPC.ArgumentCoderEditingRange.OverflowingRangeIsRejectedNotCrashed': {'time': 76},
+        }, {
+            'TestWebKitAPI.AdvancedPrivacyProtections.DoNotHideReferrerInPopupWindow': (Runner.STATUS_FAILED, self.FAILURE_OUTPUT, 3.717),
+            'TestWebKitAPI.GetUserMedia.OriginAndWebArchivePermission': (Runner.STATUS_TIMEOUT, '', 33.285),
+        })
+
+    def test_upload_log_for_unexpected_failure(self):
+        self.assertEqual(self.FAILURE_OUTPUT, self._sample_upload()['TestWebKitAPI.AdvancedPrivacyProtections.DoNotHideReferrerInPopupWindow']['log'])
+
+    def test_no_upload_log_for_unexpected_failure_without_output(self):
+        self.assertNotIn('log', self._sample_upload()['TestWebKitAPI.GetUserMedia.OriginAndWebArchivePermission'])
+
+    def test_no_upload_log_for_expected_failure(self):
+        self.assertNotIn('log', self._sample_upload()['TestWebKitAPI.ContextMenuMouseEvents.RightClick'])
+
+    def test_no_upload_log_for_pass(self):
+        self.assertNotIn('log', self._sample_upload()['TestIPC.ArgumentCoderEditingRange.OverflowingRangeIsRejectedNotCrashed'])
+
+    def test_upload_logs_stop_at_run_limit(self):
+        outputs = ['x' * 14610] * 175 + ['x' * 32]
+        unexpected_failures = {f'TestWebKitAPI.Crash.Test{index}': (Runner.STATUS_CRASHED, output, 1.0) for index, output in enumerate(outputs)}
+        results = Manager._upload_results_with_logs({test: {'actual': 'CRASH'} for test in unexpected_failures}, unexpected_failures)
+        self.assertEqual([8191] * 32 + [0] * 144, [len(result.get('log', '')) for result in results.values()])
+
+    def test_upload_log_truncated(self):
+        output = self.FAILURE_OUTPUT + 'x' * 10000 + '\n'
+        unexpected_failures = {'TestWebKitAPI.MediaSamplesDecoder.DecodeVP8IntoSharedMemory': (Runner.STATUS_FAILED, output, 1.0)}
+        results = Manager._upload_results_with_logs({test: {'actual': 'FAIL'} for test in unexpected_failures}, unexpected_failures)
+        self.assertEqual(self.FAILURE_OUTPUT + 'x' * 8009 + ' [1,991 more bytes]\n', results['TestWebKitAPI.MediaSamplesDecoder.DecodeVP8IntoSharedMemory']['log'])
+
+    def test_merge_retry_results_reports_a_test_that_passes_on_retry_as_flaky(self):
+        first_run = {
+            'TestA': (Runner.STATUS_FAILED, 'fail output', 1.0),
+            'TestB': (Runner.STATUS_PASSED, '', 0.5),
+        }
+        final, flakies = Manager._merge_retry_results(first_run, {'TestA': (Runner.STATUS_PASSED, '', 0.9)})
+        self.assertEqual({'TestA': Runner.STATUS_PASSED, 'TestB': Runner.STATUS_PASSED}, {test: result[0] for test, result in final.items()})
+        self.assertEqual({'TestA': (Runner.STATUS_FAILED, 'fail output', 1.0)}, flakies)
+
+    def test_merge_retry_results_keeps_the_retry_result_of_a_test_that_fails_twice(self):
+        final, flakies = Manager._merge_retry_results(
+            {'TestA': (Runner.STATUS_FAILED, 'first output', 1.0)},
+            {'TestA': (Runner.STATUS_CRASHED, 'second output', 1.1)},
+        )
+        self.assertEqual({'TestA': (Runner.STATUS_CRASHED, 'second output', 1.1)}, final)
+        self.assertEqual({}, flakies)
+
+    def test_merge_retry_results_keeps_the_first_run_result_of_a_test_the_retry_did_not_run(self):
+        final, flakies = Manager._merge_retry_results({'TestA': (Runner.STATUS_TIMEOUT, '', 30.0)}, {})
+        self.assertEqual({'TestA': (Runner.STATUS_TIMEOUT, '', 30.0)}, final)
+        self.assertEqual({}, flakies)
+
+    @staticmethod
+    def _manager_with_expectations(expectations=None):
+        manager = Manager(MagicMock(), MagicMock(), MagicMock())
+        manager._expectations = MagicMock()
+        manager._expectations.get_expectation.side_effect = lambda test, config: (expectations or {}).get(test)
+        return manager
+
+    def test_classify_results_sorts_each_result_by_its_expectation(self):
+        manager = self._manager_with_expectations({
+            'ExpectedFailure': Expectation('ExpectedFailure', expected={FAIL}),
+            'UnexpectedPass': Expectation('UnexpectedPass', expected={FAIL}),
+            'WrongFailure': Expectation('WrongFailure', expected={FAIL}),
+            'FlakyPass': Expectation('FlakyPass', expected={PASS, FAIL}),
+        })
+        results = {
+            'NewFailure': (Runner.STATUS_FAILED, '', 1.0),
+            'Pass': (Runner.STATUS_PASSED, '', 1.0),
+            'Disabled': (Runner.STATUS_DISABLED, '', 0.0),
+            'StillRunning': (Runner.STATUS_RUNNING, '', 0.0),
+            'ExpectedFailure': (Runner.STATUS_FAILED, '', 1.0),
+            'UnexpectedPass': (Runner.STATUS_PASSED, '', 1.0),
+            'WrongFailure': (Runner.STATUS_CRASHED, '', 1.0),
+            'FlakyPass': (Runner.STATUS_PASSED, '', 1.0),
+        }
+
+        unexpected_failures, expected_failures, unexpected_passes = manager._classify_results(results, current_config=None)
+
+        self.assertEqual(['NewFailure', 'StillRunning', 'WrongFailure'], sorted(unexpected_failures))
+        self.assertEqual(['ExpectedFailure'], list(expected_failures))
+        self.assertEqual(['UnexpectedPass'], list(unexpected_passes))
+
+    def test_retry_failing_tests_reruns_only_the_unexpected_failures_with_one_worker(self):
+        manager = self._manager_with_expectations({
+            'TestD': Expectation('TestD', expected={FAIL}),
+            'TestE': Expectation('TestE', expected={FAIL}),
+        })
+        runner = Runner(MagicMock(), MagicMock())
+        runner.results = {
+            'TestA': (Runner.STATUS_FAILED, 'fail output', 1.0),
+            'TestB': (Runner.STATUS_PASSED, '', 0.5),
+            'TestC': (Runner.STATUS_DISABLED, '', 0.0),
+            'TestD': (Runner.STATUS_FAILED, 'expected failure output', 1.0),
+            'TestE': (Runner.STATUS_CRASHED, 'crash output', 1.0),
+        }
+
+        def pass_on_retry(retry_runner, tests, num_workers):
+            retry_runner.results = {test: (Runner.STATUS_PASSED, '', 0.9) for test in tests}
+
+        with patch.object(Runner, 'run', autospec=True, side_effect=pass_on_retry) as run:
+            flakies = manager._retry_failing_tests(runner, current_config=None)
+
+        self.assertEqual(['TestA', 'TestE'], run.call_args.args[1])
+        self.assertEqual({'num_workers': 1}, run.call_args.kwargs)
+        self.assertIsNot(runner, run.call_args.args[0])
+        self.assertEqual({
+            'TestA': (Runner.STATUS_FAILED, 'fail output', 1.0),
+            'TestE': (Runner.STATUS_CRASHED, 'crash output', 1.0),
+        }, flakies)
+        self.assertEqual(Runner.STATUS_PASSED, runner.results['TestA'][0])
+        self.assertEqual((Runner.STATUS_FAILED, 'expected failure output', 1.0), runner.results['TestD'])
+
+    def test_retry_failing_tests_skips_the_retry_when_nothing_failed_unexpectedly(self):
+        manager = self._manager_with_expectations({'TestB': Expectation('TestB', expected={FAIL})})
+        runner = Runner(MagicMock(), MagicMock())
+        runner.results = {
+            'TestA': (Runner.STATUS_PASSED, '', 0.5),
+            'TestB': (Runner.STATUS_FAILED, 'expected failure output', 1.0),
+        }
+
+        with patch.object(Runner, 'run', autospec=True) as run:
+            self.assertEqual({}, manager._retry_failing_tests(runner, current_config=None))
+        run.assert_not_called()

@@ -1,0 +1,92 @@
+# const TABLE = new Int32Array(4);
+# function pick(words: Int32Array, at: number) { return words[TABLE[at]]; }
+# function sum(words: Int32Array, turns: number) { let total = 0; for (let at = 0; at < turns; at++) total = (total + (words[TABLE[at]] >>> 1)) | 0; return total; }
+# What a view gives is a number, or undefined behind its end, and under undefined a read goes by the name "undefined". The number is asked for, the read under it is typed, and a Rare block does the read as written.
+# In the typed copy of a loop nothing of the turn has been done where a test fails: the turn begins again in the other copy. So each position is held below the length of its view in front of the read, no closed read stands in the typed copy, and what a read gives is an i32 and nothing else.
+# Once a guess asked for the int32, its closed arm came back, the element was boxed for the meeting and asked for its tag behind it: 18 instructions a turn of two such reads.
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[position]]: undefined|i32 {{*}} = GetTypedArrayElement
+# CHECK: = TypeTest [[position]] testedType=i32
+# CHECK: frequency=Rare
+# CHECK: = ElemGet
+# CHECK: : undefined|i32 {{*}} = GetTypedArrayElement
+# CHECK-LABEL: code f2:Body
+# CHECK: [[positionInTurn]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
+# CHECK-NOT: = ElemGet
+# CHECK-NOT: = TypeTest
+# CHECK: [[held]]: int[-2147483648, 1073741823] @Int32 = Narrowed [[positionInTurn]]
+# CHECK: [[element]]: i32 @Int32 = GetTypedArrayElement {{*}}, [[held]], {{*}}isInsideView
+# CHECK: = URShift [[element]], {{*}} form=Integers
+# RUN(SHELL): run-in-shell globalThis.sink = (picked, sum) => { print(String(picked) + " " + String(sum)); };
+# SHELL: undefined 0
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="TABLE" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=Int32Array @66
+    v5 = Integer integer=4 @77
+    v6 = Construct v4, -, v5 calleeName="Int32Array" @66
+    v7 = Convert v6 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @62
+    PutModuleVariable v7 variable=g0 @54
+    v9 = Builtin builtin=GlobalThis @321
+    v10 = PropGet v9 key="sink" [isFreeName] @321
+    v11 = Builtin builtin=Int32Array @335
+    v12 = Integer integer=4 @346
+    v13 = Construct v11, -, v12 calleeName="Int32Array" @335
+    v14 = Convert v13 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @331
+    v15 = Integer integer=9 @350
+    v16 = Call v1, -, v14, v15 calleeName="pick" @326
+    v17 = Builtin builtin=Int32Array @362
+    v18 = Integer integer=4 @373
+    v19 = Construct v17, -, v18 calleeName="Int32Array" @362
+    v20 = Convert v19 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @358
+    v21 = Integer integer=6 @377
+    v22 = Call v3, -, v20, v21 calleeName="sum" @354
+    v23 = Call v10, -, v16, v22 calleeName="sink" @321
+    v24 = Undefined @321
+    Return v24 @321
+}
+function f1 name="pick" module=m0 position=81 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = GetModuleVariable variable=g0 @141
+    v3 = CheckInitialized v2 name="TABLE" @141
+    v4 = ElemGet v3, v1 @141
+    v5 = ElemGet v0, v4 @135
+    Return v5 @135
+}
+function f2 name="sum" module=m0 position=156 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @217
+    v3 = Convert v2 declared={type=number} @217
+    v4 = Integer @234
+    v5 = Convert v4 declared={type=number} @234
+    Jump -> next b1(v3, v5) @229
+  b1(v6: number, v7: number):
+    LoopHint @229
+    v9 = Less v7, v1 @242
+    Branch v9 -> taken b2(), notTaken b3() @242
+  b2():
+    v10 = GetModuleVariable variable=g0 @279
+    v11 = CheckInitialized v10 name="TABLE" @279
+    v12 = ElemGet v11, v7 @279
+    v13 = ElemGet v0, v12 @273
+    v14 = Integer integer=1 @296
+    v15 = URShift v13, v14 @296
+    v16 = Add v6, v15 @296
+    v17 = Integer @302
+    v18 = BitOr v16, v17 @302
+    v19 = Convert v18 declared={type=number} @255
+    v20 = Increment v7 @249
+    v21 = Convert v20 declared={type=number} @249
+    Jump -> next b1(v19, v21) @249
+  b3():
+    Return v6 @312
+}

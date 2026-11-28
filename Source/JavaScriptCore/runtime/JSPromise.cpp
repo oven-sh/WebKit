@@ -37,6 +37,9 @@
 #include "JSCInlines.h"
 #include "JSFunctionWithFields.h"
 #include "JSMicrotask.h"
+#if ENABLE(AOT)
+#include "AOTReactionChain.h"
+#endif
 #include "JSPromiseCombinatorsContext.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromisePrototype.h"
@@ -363,6 +366,19 @@ JSValue JSPromise::asyncStackTraceContext() const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+JSPromise* JSPromise::promiseForReactionCell(JSCell* cell)
+{
+    if (!cell)
+        return nullptr;
+    if (auto* promise = dynamicDowncast<JSPromise>(cell))
+        return promise;
+#if ENABLE(AOT)
+    if (auto* chain = dynamicDowncast<AOT::ReactionChain>(cell))
+        return chain->promise();
+#endif
+    return nullptr;
+}
+
 void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>& callback) const
 {
     ASSERT(status() == Status::Pending);
@@ -605,8 +621,8 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
 #if ENABLE(AOT)
 static NEVER_INLINE bool isDefinitelyNonThenableWithCompiledCode(JSObject* object, JSGlobalObject* globalObject, Structure* structure, Structure::DefinitelyNonThenableState state)
 {
-    // Only a Structure that lists the extra properties of its objects can say that none of them is called "then".
-    if (structure->isCompiledStructure() && AOT::PropertyWalk::listExtraPropertiesInStructure(globalObject->vm(), object))
+    // Only a Structure that lists its objects' extra properties can prove that none of them is named "then".
+    if (structure->isCompiledStructure() && AOT::PropertyWalk::ensureExtraPropertiesStructure(globalObject->vm(), object))
         return isDefinitelyNonThenable(object, globalObject);
 
     UniquedStringImpl* then = globalObject->vm().propertyNames->then.impl();
@@ -815,7 +831,20 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     }
 }
 
+// Storing a non-cell needs no write barrier, so splitting on that keeps the common path free of calls, removing stack frame.
 void JSPromise::fulfillPromise(VM& vm, JSValue argument)
+{
+    if (argument.isCell()) [[unlikely]]
+        return fulfillPromiseWithCell(vm, argument.asCell());
+    fulfillPromiseImpl(vm, argument);
+}
+
+NEVER_INLINE void JSPromise::fulfillPromiseWithCell(VM& vm, JSCell* argument)
+{
+    fulfillPromiseImpl(vm, argument);
+}
+
+ALWAYS_INLINE void JSPromise::fulfillPromiseImpl(VM& vm, JSValue argument)
 {
     ASSERT(status() == Status::Pending);
     JSGlobalObject* globalObject = realm();

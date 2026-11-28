@@ -25,9 +25,12 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
-#import <wtf/GenericHashKey.h>
 #import <wtf/Hasher.h>
 #import <wtf/ListHashSet.h>
 #import <wtf/Lock.h>
@@ -65,7 +68,7 @@ public:
 
     void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
 
     id<MTLSamplerState> cachedSamplerState() const { return m_cachedSamplerState; }
     id<MTLSamplerState> tryCacheSamplerState() const;

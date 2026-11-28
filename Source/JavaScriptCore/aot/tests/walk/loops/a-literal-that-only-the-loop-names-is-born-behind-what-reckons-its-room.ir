@@ -1,0 +1,203 @@
+# function bornBehind(first, n) { const k = n | 0; const list = [first]; for (let i = 0; i < k; i++) list.push(i); return list; }
+# function namedInFront(first, n) { const k = n | 0; const list = [first]; const holder = [list]; for (let i = 0; i < k; i++) list.push(i); return holder; }
+# function broughtRound(first, n) { const k = n | 0; let list = [first]; for (let i = 0; i < k; i++) { list.push(i); list = first; } return list; }
+# function filledTwice(first, n) { const k = n | 0; const list = [first]; for (let i = 0; i < k; i++) { list.push(i); list.push(i); } return list; }
+# function inATurn(first, n) { const k = n | 0; let last; for (let j = 0; j < 4; j++) { const list = [first]; for (let i = 0; i < k; i++) list.push(i); last = list; } return last; }
+# A literal is born with a vector as long as it is written; the reservation in front of a loop that fills it took a second vector, copied and filled it, and the first lay dead in the cell.
+# bornBehind: nothing but the loop names the literal: it is built once more behind what reckons its room, right in front of the reservation, and the emitter bears it with that room; the first birth has no user and goes.
+# namedInFront: another literal holds it: it is ONE list: it stays where it is written. broughtRound: the loop takes it as a parameter of its head: the edge has read the name: it stays.
+# filledTwice: a turn pushes twice, so the count of turns does not say how long the list becomes: places in its own cell would lie dead beside a longer vector: it stays.
+# inATurn: it is born in each turn of an outer loop, in walks of that loop that may be given up: what stays has one birth, behind the room.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: Jump
+# CHECK: = NewArray
+# CHECK-NOT: Jump
+# CHECK: ReserveArrayCapacity
+# CHECK-NOT: = NewArray
+# RUN(COUNT): compile ArrayLiteralAllocationsSunk mechanisms=all
+# COUNT: statistic ArrayLiteralAllocationsSunk 2
+# RUN(NAMED): walk f2 mechanisms=all
+# NAMED-LABEL: code f2:Body
+# NAMED: = NewArray
+# NAMED: = NewArray
+# NAMED: Jump
+# NAMED-NOT: = NewArray
+# NAMED: ReserveArrayCapacity
+# NAMED-NOT: = NewArray
+# RUN(ROUND): walk f3 mechanisms=all
+# ROUND-LABEL: code f3:Body
+# ROUND: = NewArray
+# ROUND: Jump
+# ROUND-NOT: = NewArray
+# RUN(TURN): walk f4 mechanisms=all
+# TURN-LABEL: code f4:Body
+# TURN: isLoopHead=true
+# TURN: Jump
+# TURN: = NewArray
+# TURN-NOT: Jump
+# TURN: ReserveArrayCapacity
+# TURN-NOT: = NewArray
+# RUN(TWICE): walk f5 mechanisms=all
+# TWICE-LABEL: code f5:Body
+# TWICE: = NewArray
+# TWICE: Jump
+# TWICE-NOT: = NewArray
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: a,0,1,2|a|a,0,1,2|a|a|a|a,0,1,2|a|a,0,0,1,1,2,2|a
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="a"
+    v3 = Integer integer=3
+    v4 = Integer
+    v5 = String string="|"
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v2, v3
+    v8 = Call v6, -, v2, v4
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v2, v3
+    v11 = Call v9, -, v2, v4
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v2, v3
+    v14 = Call v12, -, v2, v4
+    v15 = NewClosure function=f4
+    v16 = Call v15, -, v2, v3
+    v17 = Call v15, -, v2, v4
+    v18 = Add v7, v5
+    v19 = Add v18, v8
+    v20 = Add v19, v5
+    v21 = Add v20, v10
+    v22 = Add v21, v5
+    v23 = Add v22, v11
+    v24 = Add v23, v5
+    v25 = Add v24, v13
+    v26 = Add v25, v5
+    v27 = Add v26, v14
+    v28 = Add v27, v5
+    v29 = Add v28, v16
+    v30 = Add v29, v5
+    v31 = Add v30, v17
+    v32 = NewClosure function=f5
+    v33 = Call v32, -, v2, v3
+    v34 = Call v32, -, v2, v4
+    v35 = Add v31, v5
+    v36 = Add v35, v33
+    v37 = Add v36, v5
+    v38 = Add v37, v34
+    v39 = Call v1, -, v38
+    Return v39
+}
+function f1 name="bornBehind" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = NewArray v0 contents=anything
+    v5 = Integer
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = Less v6, v3
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = PropGet v4 key="push"
+    v10 = Call v9, v4, v6 calleeKey="push"
+    v11 = Increment v6
+    Jump -> next b1(v11)
+  b3():
+    Return v4
+}
+function f2 name="namedInFront" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = NewArray v0 contents=anything
+    v5 = NewArray v4 contents=anything
+    v6 = Integer
+    Jump -> next b1(v6)
+  b1(v7):
+    LoopHint
+    v9 = Less v7, v3
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = PropGet v4 key="push"
+    v11 = Call v10, v4, v7 calleeKey="push"
+    v12 = Increment v7
+    Jump -> next b1(v12)
+  b3():
+    Return v5
+}
+function f3 name="broughtRound" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = NewArray v0 contents=anything
+    v5 = Integer
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v3
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v0, v11)
+  b3():
+    Return v6
+}
+function f4 name="inATurn" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = Undefined
+    v5 = Integer
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Integer integer=4
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(), notTaken b6()
+  b2():
+    v11 = NewArray v0 contents=anything
+    v12 = Integer
+    Jump -> next b3(v12)
+  b3(v13):
+    LoopHint
+    v15 = Less v13, v3
+    Branch v15 -> taken b4(), notTaken b5()
+  b4():
+    v16 = PropGet v11 key="push"
+    v17 = Call v16, v11, v13 calleeKey="push"
+    v18 = Increment v13
+    Jump -> next b3(v18)
+  b5():
+    v19 = Increment v7
+    Jump -> next b1(v11, v19)
+  b6():
+    Return v6
+}
+function f5 name="filledTwice" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = NewArray v0 contents=anything
+    v5 = Integer
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = Less v6, v3
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = PropGet v4 key="push"
+    v10 = Call v9, v4, v6 calleeKey="push"
+    v11 = PropGet v4 key="push"
+    v12 = Call v11, v4, v6 calleeKey="push"
+    v13 = Increment v6
+    Jump -> next b1(v13)
+  b3():
+    Return v4
+}

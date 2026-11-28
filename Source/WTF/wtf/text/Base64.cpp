@@ -97,7 +97,7 @@ static constexpr std::array<char, decodeMapSize> base64URLDecMap {
     0x31, 0x32, 0x33, nonAlphabet, nonAlphabet, nonAlphabet, nonAlphabet, nonAlphabet
 };
 
-static inline simdutf::base64_options LEGACY_NODELETE toSIMDUTFEncodeOptions(OptionSet<Base64EncodeOption> options)
+NODELETE static inline simdutf::base64_options toSIMDUTFEncodeOptions(OptionSet<Base64EncodeOption> options)
 {
     if (options.contains(Base64EncodeOption::URL)) {
         if (options.contains(Base64EncodeOption::OmitPadding))
@@ -112,7 +112,7 @@ static inline simdutf::base64_options LEGACY_NODELETE toSIMDUTFEncodeOptions(Opt
 template<typename CharacterType> static void base64EncodeInternal(std::span<const uint8_t> inputDataBuffer, std::span<CharacterType> destinationDataBuffer, OptionSet<Base64EncodeOption> options)
 {
     ASSERT(destinationDataBuffer.size() > 0);
-    ASSERT(calculateBase64EncodedSize(inputDataBuffer.size(), options) == destinationDataBuffer.size());
+    RELEASE_ASSERT(calculateBase64EncodedSize(inputDataBuffer.size(), options) == destinationDataBuffer.size());
 
     if constexpr (sizeof(CharacterType) == 1) {
         size_t bytesWritten = simdutf::binary_to_base64(inputDataBuffer, byteCast<char>(destinationDataBuffer), toSIMDUTFEncodeOptions(options));
@@ -311,7 +311,7 @@ String base64DecodeToString(StringView input, OptionSet<Base64DecodeOption> opti
     return String::adopt(WTF::move(*result));
 }
 
-static inline simdutf::base64_options LEGACY_NODELETE toSIMDUTFDecodeOptions(Alphabet alphabet)
+NODELETE static inline simdutf::base64_options toSIMDUTFDecodeOptions(Alphabet alphabet)
 {
     switch (alphabet) {
     case Alphabet::Base64:
@@ -322,7 +322,7 @@ static inline simdutf::base64_options LEGACY_NODELETE toSIMDUTFDecodeOptions(Alp
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static inline simdutf::last_chunk_handling_options LEGACY_NODELETE toSIMDUTFLastChunkHandling(LastChunkHandling lastChunkHandling)
+NODELETE static inline simdutf::last_chunk_handling_options toSIMDUTFLastChunkHandling(LastChunkHandling lastChunkHandling)
 {
     switch (lastChunkHandling) {
     case LastChunkHandling::Loose:

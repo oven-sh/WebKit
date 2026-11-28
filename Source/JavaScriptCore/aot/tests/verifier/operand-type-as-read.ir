@@ -1,5 +1,4 @@
 # On the wire NewClass takes the closure of its layout's constructor, the pieces of an object or class take its head, and a Results value is returned and has no other use
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: OperandTypeMismatch 8
 
@@ -83,6 +82,12 @@ function f13 name="goodClassBodyThroughUpcast" results=[{type=undefined}] {
     v3 = FinishClass v2 layout=L0
     Return
 }
-function f14 name="constructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
-function f15 name="otherConstructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
-function f16 name="method" kind=Method flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f14 name="constructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    Return
+}
+function f15 name="otherConstructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    Return
+}
+function f16 name="method" kind=Method flags=[HasThis] thisType={type=object} results=[{type=undefined}] {
+    Return
+}

@@ -8,16 +8,24 @@
 #if ENABLE(AOT)
 
 #include "AOTStubsPropertyProbes.h"
+#include <array>
 
 namespace JSC { namespace AOT {
 
 void loadNameOfKey(StubAssembler&, GPRReg key, GPRReg uid, GPRReg scratch, JumpList& hasNoName);
-// In a stub that keeps the registers of its caller, lostAnyway names those it need not keep.
+void findNameOfText(StubAssembler&, GPRReg characters, GPRReg length, GPRReg first, GPRReg last, GPRReg uid, JumpList& isNotFound);
 void callLeafLookup(StubAssembler&, Entry, GPRReg second, std::optional<GPRReg> value, GPRReg baseAfterCall, const RegisterSet& lostAnyway = { });
-// A slot for reads has said that nothing is found under the key. Its header names the Structure.
+void returnValueOfKeyByPlace(StubAssembler&, GPRReg base, GPRReg key, const std::array<GPRReg, 4>& scratches, FPRReg number, FPRReg numberScratch, JumpList& isNotAnswered);
 void rememberAbsenceOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg place, GPRReg scratch);
-// The register of the StructureID of the object is overwritten.
+void rememberOwnGetterOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg wordIndex, GPRReg place, GPRReg scratch);
+void rememberGetterAboveOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg addressOfWord, GPRReg place, GPRReg scratch);
 void rememberPlaceOfExtraProperty(StubAssembler&, SlotAccess, const CachedSlot&, GPRReg object, GPRReg key, GPRReg place, GPRReg structureID);
+void rememberPlaceOfAddition(StubAssembler&, const CachedSlot&, GPRReg object, GPRReg key, GPRReg place, GPRReg scratch);
+void branchUnlessKindOfValueIsAccepted(StubAssembler&, GPRReg value, GPRReg type, GPRReg kind, GPRReg entry, JumpList& isNotKnownToBeAccepted);
+void rememberAcceptedKindOfValue(StubAssembler&, GPRReg value, GPRReg type, GPRReg filedInPlaceOfType, GPRReg place, GPRReg scratch, GPRReg secondScratch);
+void branchUnlessKindOfValueIsRefused(StubAssembler&, GPRReg entryOfFieldTable, GPRReg kind, GPRReg entry, JumpList& isNotKnownToBeRefused);
+void rememberPlaceOfValueInField(StubAssembler&, GPRReg object, GPRReg key, GPRReg value, GPRReg type, GPRReg address, GPRReg classOfSlot, GPRReg place, GPRReg scratch, GPRReg secondScratch);
+void rememberPlaceOfFieldOfAnyValue(StubAssembler&, GPRReg object, GPRReg key, GPRReg offsetOfSlot, GPRReg place, GPRReg scratch);
 
 static_assert(firstStubOperandRegister == StubRegister::R0 && keyCellRegister == StubRegister::A1 && storedValueByValRegister == StubRegister::A2);
 

@@ -30,6 +30,7 @@
 #import "InstanceMethodSwizzler.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/cocoa/TestNSBundleExtras.h"
+#import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/ios/TestWKWebViewController.h"
@@ -41,6 +42,7 @@
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/WTFString.h>
 #import <pal/ios/QuickLookSoftLink.h>
 #if HAVE(ARKIT_QUICK_LOOK_PREVIEW_ITEM) && !PLATFORM(VISION)
@@ -58,6 +60,16 @@ static bool wasTriggeredByDetachedElement;
 static uint64_t elementID;
 static uint64_t pageID;
 static String documentID;
+
+static void resetSystemPreviewTriggerState()
+{
+    hasTriggerInfo = false;
+    wasTriggered = false;
+    wasTriggeredByDetachedElement = false;
+    elementID = 0;
+    pageID = 0;
+    documentID = { };
+}
 
 @interface TestSystemPreviewTriggeredHandler : NSObject <WKScriptMessageHandler>
 @end
@@ -110,10 +122,17 @@ static String documentID;
 }
 @end
 
+@protocol TestSystemPreviewDataProvider <NSObject>
+- (void)web_setContentProviderData:(NSData *)data suggestedFilename:(NSString *)filename completionHandler:(void (^)(void))completionHandler;
+- (NSData *)provideDataForItem:(QLItem *)item;
+@end
+
 namespace TestWebKitAPI {
 
 TEST(WebKit, SystemPreviewLoad)
 {
+    resetSystemPreviewTriggerState();
+
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
@@ -138,6 +157,8 @@ TEST(WebKit, SystemPreviewLoad)
 
 TEST(WebKit, SystemPreviewFail)
 {
+    resetSystemPreviewTriggerState();
+
     RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
@@ -162,6 +183,8 @@ TEST(WebKit, SystemPreviewFail)
 
 TEST(WebKit, SystemPreviewBlobRevokedImmediately)
 {
+    resetSystemPreviewTriggerState();
+
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
@@ -202,6 +225,8 @@ TEST(WebKit, SystemPreviewBlobRevokedImmediately)
 
 TEST(WebKit, SystemPreviewBlob)
 {
+    resetSystemPreviewTriggerState();
+
     RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
@@ -226,6 +251,8 @@ TEST(WebKit, SystemPreviewBlob)
 
 TEST(WebKit, SystemPreviewUnknownMIMEType)
 {
+    resetSystemPreviewTriggerState();
+
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
@@ -265,6 +292,8 @@ TEST(WebKit, SystemPreviewUnknownMIMEType)
 
 TEST(WebKit, SystemPreviewTriggered)
 {
+    resetSystemPreviewTriggerState();
+
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     RetainPtr messageHandler = adoptNS([[TestSystemPreviewTriggeredHandler alloc] init]);
     [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"testSystemPreview"];
@@ -280,6 +309,8 @@ TEST(WebKit, SystemPreviewTriggered)
 
 TEST(WebKit, SystemPreviewTriggeredOnDetachedElement)
 {
+    resetSystemPreviewTriggerState();
+
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     RetainPtr messageHandler = adoptNS([[TestSystemPreviewTriggeredOnDetachedElementHandler alloc] init]);
     [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"testSystemPreview"];
@@ -443,6 +474,81 @@ TEST(WebKit, PromptRealityTopLevelNavigation)
     });
 }
 
+static void testModelPreviewPromptDeferredUntilPresentingViewController(bool providePresentingViewController)
+{
+    bool qlItemCreated = false;
+    bool alertPresented = false;
+
+    auto swizzledQLItemBlock = makeBlockPtr([&](id self, SEL _cmd, id dataProvider, id contentType, id previewTitle) {
+        qlItemCreated = true;
+        return nil;
+    });
+
+    InstanceMethodSwizzler qlItemSwizzler { PAL::getQLItemClassSingleton(), @selector(initWithDataProvider:contentType:previewTitle:), imp_implementationWithBlock(swizzledQLItemBlock.get()) };
+
+    auto swizzledPresentBlock = makeBlockPtr([&](id self, UIViewController *controllerToPresent, BOOL animated, void (^completion)()) {
+        EXPECT_TRUE([controllerToPresent isKindOfClass:[UIAlertController class]]);
+        UIAlertController *alert = (UIAlertController *)controllerToPresent;
+        alertPresented = true;
+
+        EXPECT_WK_STREQ(@"View 3D Object?", alert.title);
+        EXPECT_EQ(2U, alert.actions.count);
+
+        EXPECT_FALSE(qlItemCreated);
+
+        UIAlertAction *allowAction = alert.actions[1];
+        EXPECT_EQ(UIAlertActionStyleDefault, allowAction.style);
+        id allowHandler = [allowAction valueForKey:@"handler"];
+        EXPECT_TRUE(allowHandler != nil);
+        void (^allowHandlerBlock)(UIAlertAction *) = allowHandler;
+        allowHandlerBlock(allowAction);
+        EXPECT_TRUE(qlItemCreated);
+    });
+
+    InstanceMethodSwizzler presentSwizzler { [UIViewController class], @selector(presentViewController:animated:completion:), imp_implementationWithBlock(swizzledPresentBlock.get()) };
+
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    [configuration _setSystemPreviewEnabled:YES];
+
+    // No window and no UI delegate, so there is no presenting view controller to show the confirmation alert, as in a link preview.
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get() addToWindow:NO]);
+
+    RetainPtr realityURL = [NSBundle.test_resourcesBundle URLForResource:@"hab" withExtension:@"reality"];
+    [webView loadRequest:[NSURLRequest requestWithURL:realityURL.get()]];
+    [webView _test_waitForDidFinishNavigation];
+
+    EXPECT_FALSE(alertPresented);
+    EXPECT_FALSE(qlItemCreated);
+
+    RetainPtr viewController = adoptNS([[UIViewController alloc] init]);
+    RetainPtr uiDelegate = adoptNS([[TestSystemPreviewUIDelegate alloc] init]);
+    if (providePresentingViewController) {
+        [uiDelegate setViewController:viewController.get()];
+        [webView setUIDelegate:uiDelegate.get()];
+    }
+
+    [webView addToTestWindow];
+
+    if (providePresentingViewController) {
+        TestWebKitAPI::Util::run(&alertPresented);
+        EXPECT_TRUE(qlItemCreated);
+    } else {
+        [webView waitForNextPresentationUpdate];
+        EXPECT_FALSE(alertPresented);
+        EXPECT_FALSE(qlItemCreated);
+    }
+}
+
+TEST(WebKit, NoPromptOrParsingRealityTopLevelNavigationWithoutPresentingViewController)
+{
+    testModelPreviewPromptDeferredUntilPresentingViewController(false);
+}
+
+TEST(WebKit, DeferredPromptRealityTopLevelNavigationOncePresentingViewControllerExists)
+{
+    testModelPreviewPromptDeferredUntilPresentingViewController(true);
+}
+
 TEST(WebKit, PromptUSDZLinkWithoutRelAR)
 {
     testModelPreviewPrompt(^(TestWKWebView *webView) {
@@ -475,6 +581,74 @@ TEST(WebKit, PromptRealityLinkWithRelAR)
     });
 }
 
+TEST(WebKit, SystemPreviewProvideDataForItemIsSafeAgainstConcurrentReassignment)
+{
+    RetainPtr<id<TestSystemPreviewDataProvider>> dataProvider;
+
+    auto swizzledQLItemBlock = makeBlockPtr([&](id self, id provider, id contentType, id previewTitle) -> id {
+        dataProvider = provider;
+        return nil;
+    });
+
+    InstanceMethodSwizzler qlItemSwizzler { PAL::getQLItemClassSingleton(), @selector(initWithDataProvider:contentType:previewTitle:), imp_implementationWithBlock(swizzledQLItemBlock.get()) };
+
+    bool alertPresented = false;
+    auto swizzledPresentBlock = makeBlockPtr([&](id self, UIViewController *controllerToPresent, BOOL animated, void (^completion)()) {
+        ASSERT_TRUE([controllerToPresent isKindOfClass:[UIAlertController class]]);
+        UIAlertController *alert = (UIAlertController *)controllerToPresent;
+        ASSERT_EQ(2U, alert.actions.count);
+
+        // Accept the prompt, which is what arms the background QuickLook data fetch.
+        UIAlertAction *allowAction = alert.actions[1];
+        void (^allowHandlerBlock)(UIAlertAction *) = [allowAction valueForKey:@"handler"];
+        ASSERT_TRUE(allowHandlerBlock != nil);
+        allowHandlerBlock(allowAction);
+
+        alertPresented = true;
+    });
+
+    InstanceMethodSwizzler presentSwizzler { [UIViewController class], @selector(presentViewController:animated:completion:), imp_implementationWithBlock(swizzledPresentBlock.get()) };
+
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    [configuration _setSystemPreviewEnabled:YES];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+
+    RetainPtr viewController = adoptNS([[UIViewController alloc] init]);
+    RetainPtr uiDelegate = adoptNS([[TestSystemPreviewUIDelegate alloc] init]);
+    [uiDelegate setViewController:viewController.get()];
+    [webView setUIDelegate:uiDelegate.get()];
+    [viewController setView:webView.get()];
+
+    RetainPtr usdzURL = [NSBundle.test_resourcesBundle URLForResource:@"UnitBox" withExtension:@"usdz"];
+    [webView loadRequest:[NSURLRequest requestWithURL:usdzURL.get()]];
+
+    Util::run(&alertPresented);
+    ASSERT_TRUE(!!dataProvider);
+    ASSERT_TRUE([dataProvider respondsToSelector:@selector(provideDataForItem:)]);
+    ASSERT_TRUE([dataProvider respondsToSelector:@selector(web_setContentProviderData:suggestedFilename:completionHandler:)]);
+
+    RetainPtr originalData = [NSData dataWithContentsOfURL:usdzURL.get()];
+    NSUInteger expectedLength = [originalData length];
+    ASSERT_GT(expectedLength, 0U);
+
+    // Simulate 2nd DidFinishLoadingDataForCustomContentProvider IPC arriving while the background queue is between reading the ivar and retaining what it read.
+    RetainPtr replacementData = adoptNS([[NSMutableData alloc] initWithLength:16]);
+
+    bool didRead = false;
+    dispatch_async(globalDispatchQueueSingleton(QOS_CLASS_DEFAULT, 0), makeBlockPtr([&] {
+        NSData *providedData = [dataProvider provideDataForItem:nil];
+
+        dispatch_sync(mainDispatchQueueSingleton(), makeBlockPtr([&] {
+            [dataProvider web_setContentProviderData:replacementData.get() suggestedFilename:@"replacement.usdz" completionHandler:^{ }];
+        }).get());
+
+        EXPECT_EQ(expectedLength, [providedData length]);
+        EXPECT_TRUE([providedData isEqualToData:originalData.get()]);
+        didRead = true;
+    }).get());
+
+    Util::run(&didRead);
+}
 
 #if HAVE(ARKIT_QUICK_LOOK_PREVIEW_ITEM) && !PLATFORM(VISION)
 TEST(WebKit, SystemPreviewCanonicalWebPageURLIsPageURL)

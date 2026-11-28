@@ -26,10 +26,17 @@ enum class RelocationKind : uint8_t {
     AddressFar,
     Load64,
     Distance32,
+
+    // The target of each kind below is not an offset into the code. It is a 32-bit number, zero-extended.
+    // InstanceOffset and InstanceAccess treat it as a signed distance from the instance register.
     InstanceOffset,
+    Number32,
+    InstanceAccess,
+    // Four bytes of data in the code that hold the number itself.
+    NumberWord,
 };
-static constexpr unsigned numberOfRelocationKinds = 14;
-static_assert(static_cast<unsigned>(RelocationKind::InstanceOffset) + 1 == numberOfRelocationKinds);
+static constexpr unsigned numberOfRelocationKinds = 17;
+static_assert(static_cast<unsigned>(RelocationKind::NumberWord) + 1 == numberOfRelocationKinds);
 
 constexpr bool transfersControl(RelocationKind kind)
 {
@@ -49,6 +56,9 @@ constexpr bool transfersControl(RelocationKind kind)
     case RelocationKind::Load64:
     case RelocationKind::Distance32:
     case RelocationKind::InstanceOffset:
+    case RelocationKind::Number32:
+    case RelocationKind::InstanceAccess:
+    case RelocationKind::NumberWord:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();

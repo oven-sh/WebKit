@@ -314,7 +314,7 @@ void MarkedSpace::sweepPreciseAllocations()
 
 void MarkedSpace::prepareForAllocation()
 {
-    ASSERT(!Thread::mayBeGCThread() || heap().worldIsStopped());
+    ASSERT(heap().isInPhase(CollectorPhase::End));
     if (!heap().isEdenCollectionWithEmptyEden()) {
         for (Subspace* subspace : m_subspaces)
             subspace->prepareForAllocation();
@@ -331,13 +331,14 @@ void MarkedSpace::prepareForAllocation()
 
 void MarkedSpace::enablePreciseAllocationTracking()
 {
-    m_preciseAllocationSet = UncheckedKeyHashSet<HeapCell*> { };
+    m_preciseAllocationSet = HashSet<HeapCell*> { };
     for (auto* allocation : m_preciseAllocations)
         m_preciseAllocationSet->add(allocation->cell());
 }
 
 void MarkedSpace::reapWeakSets()
 {
+    ASSERT(heap().isInPhase(CollectorPhase::End));
     auto visit = [&] (WeakSet* weakSet) {
         weakSet->reap();
     };
@@ -414,7 +415,7 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
-    heap().assertIsMutatorOrMutatorIsStopped();
+    heap().assertIsExclusiveAccessHolder();
     m_capacity -= MarkedBlock::blockSize;
     m_blocks.remove(&block->block());
     delete block;
@@ -431,6 +432,7 @@ void MarkedSpace::shrink()
 
 void MarkedSpace::beginMarking()
 {
+    ASSERT(heap().isInPhase(CollectorPhase::Begin));
     switch (heap().collectionScope().value()) {
     case CollectionScope::Eden: {
         m_preciseAllocationsOffsetForThisCollection = m_preciseAllocationsNurseryOffset;
@@ -475,6 +477,7 @@ void MarkedSpace::beginMarking()
 
 void MarkedSpace::endMarking()
 {
+    ASSERT(heap().isInPhase(CollectorPhase::End));
     if (nextVersion(m_newlyAllocatedVersion) == initialVersion) [[unlikely]] {
         forEachBlock(
             [&] (MarkedBlock::Handle* handle) {
@@ -588,6 +591,7 @@ void MarkedSpace::didAllocateInBlock(MarkedBlock::Handle* block)
 
 void MarkedSpace::snapshotUnswept()
 {
+    ASSERT(heap().isInPhase(CollectorPhase::End));
     if (heap().collectionScope() == CollectionScope::Eden) {
         forEachDirectory(
             [&] (BlockDirectory& directory) -> IterationStatus {

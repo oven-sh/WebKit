@@ -33,6 +33,7 @@
 #if ENABLE(WEB_AUTHN)
 
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -93,8 +94,7 @@ FidoHidInitPacket::FidoHidInitPacket(uint32_t channelId, FidoHidDeviceCommand cm
 
 Vector<uint8_t> FidoHidInitPacket::getSerializedData() const
 {
-    Vector<uint8_t> serialized;
-    serialized.reserveInitialCapacity(kHidPacketSize);
+    Vector<uint8_t> serialized(ReserveCapacityTag { }, kHidPacketSize);
     serialized.append((m_channelId >> 24) & 0xff);
     serialized.append((m_channelId >> 16) & 0xff);
     serialized.append((m_channelId >> 8) & 0xff);
@@ -105,7 +105,7 @@ Vector<uint8_t> FidoHidInitPacket::getSerializedData() const
     serialized.appendVector(m_data);
     auto offset = serialized.size();
     serialized.grow(kHidPacketSize);
-    zeroSpan(serialized.mutableSpan().subspan(offset, kHidPacketSize - offset));
+    zeroSpan(borrow(serialized)->mutableSpan().subspan(offset, kHidPacketSize - offset));
 
     return serialized;
 }
@@ -143,8 +143,7 @@ FidoHidContinuationPacket::FidoHidContinuationPacket(const uint32_t channelId, c
 
 Vector<uint8_t> FidoHidContinuationPacket::getSerializedData() const
 {
-    Vector<uint8_t> serialized;
-    serialized.reserveInitialCapacity(kHidPacketSize);
+    Vector<uint8_t> serialized(ReserveCapacityTag { }, kHidPacketSize);
     serialized.append((m_channelId >> 24) & 0xff);
     serialized.append((m_channelId >> 16) & 0xff);
     serialized.append((m_channelId >> 8) & 0xff);
@@ -153,7 +152,7 @@ Vector<uint8_t> FidoHidContinuationPacket::getSerializedData() const
     serialized.appendVector(m_data);
     auto offset = serialized.size();
     serialized.grow(kHidPacketSize);
-    zeroSpan(serialized.mutableSpan().subspan(offset, kHidPacketSize - offset));
+    zeroSpan(borrow(serialized)->mutableSpan().subspan(offset, kHidPacketSize - offset));
 
     return serialized;
 }

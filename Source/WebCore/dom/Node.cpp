@@ -121,7 +121,7 @@ struct SameSizeAsNode : EventTarget, CanMakeCheckedPtr<SameSizeAsNode> {
     WTF_MAKE_TZONE_ALLOCATED(SameSizeAsNode);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SameSizeAsNode);
 public:
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     bool inRemovedLastRefFunction;
     bool deletionHasBegun;
 #endif
@@ -343,7 +343,7 @@ void Node::dumpStatistics()
 
     printf("Element tag name distibution:\n");
     for (auto& stringSizePair : perTagCount)
-        SAFE_PRINTF("  Number of <%s> tags: %zu\n", stringSizePair.key.utf8(), stringSizePair.value);
+        SAFE_PRINTF("  Number of <%s> tags: %zu\n", makeUTF8CString(stringSizePair.key), stringSizePair.value);
 
     printf("Attributes:\n");
     printf("  Number of Attributes (non-Node and Node): %zu [%zu]\n", attributes, sizeof(Attribute));
@@ -382,7 +382,7 @@ Node::Node(Document& document, NodeType type, OptionSet<TypeFlag> flags)
     , m_shadowIncludingRoot(this)
 {
     ASSERT(nodeType() == type);
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
 
     if (!isDocumentNode())
         document.incrementReferencingNodeCount();
@@ -397,7 +397,7 @@ Node::Node(ClangVTableWorkaroundTag, Document& document)
 {
 }
 
-static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& LEGACY_NODELETE nodeIdentifiersMap()
+NODELETE static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& nodeIdentifiersMap()
 {
     static MainThreadNeverDestroyed<HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>> map;
     return map;
@@ -405,7 +405,7 @@ static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& L
 
 Node::~Node()
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     ASSERT(deletionHasBegun());
 
     InspectorInstrumentation::willDestroyDOMNode(*this);
@@ -423,6 +423,8 @@ Node::~Node()
     ASSERT(!parentNode());
     ASSERT(!m_previousSibling);
     ASSERT(!m_next);
+
+    m_shadowIncludingRoot = nullptr;
 
     {
         SUPPRESS_UNCHECKED_LOCAL auto& document = this->document(); // Store document before clearing out m_treeScope.
@@ -443,7 +445,7 @@ Node::~Node()
     }
 #endif
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     if (m_refCountAndParentBit != s_refCountIncrement)
         WTF::RefCountDebuggerBase::printRefDuringDestructionLogAndCrash(this);
 #endif
@@ -481,7 +483,7 @@ void Node::materializeRareData()
 void Node::clearRareData()
 {
     ASSERT(hasRareData());
-    ASSERT(!transientMutationObserverRegistry() || transientMutationObserverRegistry()->isEmptyIgnoringNullReferences());
+    ASSERT(!transientMutationObserverRegistry() || transientMutationObserverRegistry()->computeIsEmpty());
 
     m_rareDataWithBitfields.setPointer(nullptr);
 }
@@ -570,7 +572,7 @@ static HashSet<Ref<Node>> nodeSetPreTransformedFromNodeOrStringVector(const Fixe
     return nodeSet;
 }
 
-static RefPtr<Node> LEGACY_NODELETE firstPrecedingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
+NODELETE static RefPtr<Node> firstPrecedingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
 {
     for (auto* sibling = context.previousSibling(); sibling; sibling = sibling->previousSibling()) {
         if (!nodeSet.contains(*sibling))
@@ -579,7 +581,7 @@ static RefPtr<Node> LEGACY_NODELETE firstPrecedingSiblingNotInNodeSet(Node& cont
     return nullptr;
 }
 
-static RefPtr<Node> LEGACY_NODELETE firstFollowingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
+NODELETE static RefPtr<Node> firstFollowingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
 {
     for (auto* sibling = context.nextSibling(); sibling; sibling = sibling->nextSibling()) {
         if (!nodeSet.contains(*sibling))
@@ -621,8 +623,7 @@ ExceptionOr<NodeVector> Node::convertNodesOrStringsIntoNodeVector(FixedVector<No
         return NodeVector { };
 
     Ref document = this->document();
-    NodeVector nodeVector;
-    nodeVector.reserveInitialCapacity(nodeOrStringVector.size());
+    NodeVector nodeVector(ReserveCapacityTag { }, nodeOrStringVector.size());
     for (auto& variant : nodeOrStringVector) {
         if (std::holds_alternative<String>(variant)) {
             nodeVector.append(Text::create(document, WTF::move(std::get<String>(variant))));
@@ -847,7 +848,7 @@ void Node::inspect()
         page->inspectorController().inspect(this);
 }
 
-static Node::Editability LEGACY_NODELETE computeEditabilityFromComputedStyle(const Style::ComputedStyle& style, Node::UserSelectAllTreatment treatment, PageIsEditable pageIsEditable)
+NODELETE static Node::Editability computeEditabilityFromComputedStyle(const Style::ComputedStyle& style, Node::UserSelectAllTreatment treatment, PageIsEditable pageIsEditable)
 {
     // Ideally we'd call ASSERT(!needsStyleRecalc()) here, but
     // ContainerNode::setFocus() calls invalidateStyleForSubtree(), so the assertion
@@ -1019,8 +1020,16 @@ void Node::invalidateStyle(Style::Validity validity, Style::InvalidationMode mod
         updateAncestorsForStyleRecalc();
 }
 
+static unsigned s_computeNodeIndexCountForTesting;
+
+unsigned Node::computeNodeIndexCountForTesting()
+{
+    return s_computeNodeIndexCountForTesting;
+}
+
 unsigned Node::computeNodeIndex() const
 {
+    ++s_computeNodeIndexCountForTesting;
     unsigned count = 0;
     for (Node* sibling = previousSibling(); sibling; sibling = sibling->previousSibling())
         ++count;
@@ -1028,7 +1037,7 @@ unsigned Node::computeNodeIndex() const
 }
 
 template<unsigned type>
-bool LEGACY_NODELETE shouldInvalidateNodeListCachesForAttr(std::span<const unsigned, numNodeListInvalidationTypes> nodeListCounts, const QualifiedName& attrName)
+NODELETE bool shouldInvalidateNodeListCachesForAttr(std::span<const unsigned, numNodeListInvalidationTypes> nodeListCounts, const QualifiedName& attrName)
 {
     if constexpr (type >= numNodeListInvalidationTypes)
         return false;
@@ -1059,7 +1068,7 @@ void Document::invalidateNodeListAndCollectionCaches(InvalidationFunction invali
     for (RefPtr list : copyToVectorSpecialization<Vector<LiveNodeList*, 8>>(m_listsInvalidatedAtDocument))
         invalidate(*list);
 
-    for (RefPtr collection : copyToVectorSpecialization<Vector<HTMLCollection*, 8>>(m_collectionsInvalidatedAtDocument))
+    for (RefPtr collection : copyToVectorSpecialization<Vector<HTMLCollection*, 8>>(m_collectionsInvalidatedAtDocument.values()))
         invalidate(*collection);
 }
 
@@ -1317,21 +1326,21 @@ bool Node::isClosedShadowHidden(const Node& otherNode) const
     return true;
 }
 
-static inline ShadowRoot* LEGACY_NODELETE parentShadowRoot(const Node& node)
+NODELETE static inline ShadowRoot* parentShadowRoot(const Node& node)
 {
     if (auto* parent = node.parentElement())
         return parent->shadowRoot();
     return nullptr;
 }
 
-HTMLSlotElement* LEGACY_NODELETE Node::assignedSlot() const
+NODELETE HTMLSlotElement* Node::assignedSlot() const
 {
     if (auto* shadowRoot = parentShadowRoot(*this))
         return shadowRoot->findAssignedSlot(*this);
     return nullptr;
 }
 
-HTMLSlotElement* LEGACY_NODELETE Node::assignedSlotForBindings() const
+NODELETE HTMLSlotElement* Node::assignedSlotForBindings() const
 {
     auto* shadowRoot = parentShadowRoot(*this);
     if (shadowRoot && shadowRoot->mode() == ShadowRootMode::Open)
@@ -1370,7 +1379,7 @@ void Node::setHasEverPaintedImages(bool hasEverPaintedImages)
 
 ContainerNode* Node::parentInComposedTree() const
 {
-    ASSERT(isMainThreadOrGCThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThreadOrGCThread());
     if (auto* slot = assignedSlot())
         return slot;
     if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(*this))
@@ -1471,20 +1480,26 @@ static Node* traverseToShadowIncludingRoot(Node* current)
         current = parent;
     return current;
 }
+
+static Node* realRootFromShadowIncludingRoot(Node* shadowIncludingRoot)
+{
+    auto* root = shadowIncludingRoot;
+    if (auto* parent = root->parentNode(); parent && parent->isDocumentFragmentForInnerOuterHTML())
+        return parent;
+    return root;
+}
 #endif
 
 ALWAYS_INLINE void Node::updateShadowIncludingRoot()
 {
-    if (auto* parent = parentNode())
+    if (auto* parent = parentNode(); parent && !parent->isDocumentFragmentForInnerOuterHTML())
         m_shadowIncludingRoot = parent->m_shadowIncludingRoot;
     else if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(this)) [[unlikely]] {
         auto* host = shadowRoot->host();
-        auto* root = host ? host->m_shadowIncludingRoot : shadowRoot;
-        shadowRoot->setShadowIncludingRoot(root);
-        m_shadowIncludingRoot = root;
+        m_shadowIncludingRoot = host ? host->m_shadowIncludingRoot : shadowRoot;
     } else
         m_shadowIncludingRoot = this;
-    ASSERT(traverseToShadowIncludingRoot(this) == m_shadowIncludingRoot);
+    ASSERT(traverseToShadowIncludingRoot(this) == realRootFromShadowIncludingRoot(m_shadowIncludingRoot));
 }
 
 Node::NeedsPostConnectionSteps Node::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
@@ -1963,12 +1978,12 @@ void Node::showNode(ASCIILiteral prefix) const
     if (isTextNode()) {
         String value = makeStringByReplacingAll(nodeValue(), '\\', "\\\\"_s);
         value = makeStringByReplacingAll(value, '\n', "\\n"_s);
-        SAFE_FPRINTF(stderr, "%s%s\t%p \"%s\"\n", prefix, nodeName().utf8(), this, value.utf8());
+        SAFE_FPRINTF(stderr, "%s%s\t%p \"%s\"\n", prefix, makeUTF8CString(nodeName()), this, makeUTF8CString(value));
     } else {
         StringBuilder attrs;
         appendAttributeDesc(this, attrs, classAttr, " CLASS="_s);
         appendAttributeDesc(this, attrs, styleAttr, " STYLE="_s);
-        SAFE_FPRINTF(stderr, "%s%s\t%p (renderer %p) %s%s%s\n", prefix, nodeName().utf8(), this, renderer(), attrs.toString().utf8(), needsStyleRecalc() ? " (needs style recalc)"_s : ""_s, childNeedsStyleRecalc() ? " (child needs style recalc)"_s : ""_s);
+        SAFE_FPRINTF(stderr, "%s%s\t%p (renderer %p) %s%s%s\n", prefix, makeUTF8CString(nodeName()), this, renderer(), makeUTF8CString(attrs.toString()), needsStyleRecalc() ? " (needs style recalc)"_s : ""_s, childNeedsStyleRecalc() ? " (child needs style recalc)"_s : ""_s);
     }
 }
 
@@ -1997,7 +2012,7 @@ void Node::showNodePathForThis() const
 
         switch (node->nodeType()) {
         case NodeType::Element: {
-            SAFE_FPRINTF(stderr, "/%s", node->nodeName().utf8());
+            SAFE_FPRINTF(stderr, "/%s", makeUTF8CString(node->nodeName()));
 
             const Element& element = uncheckedDowncast<Element>(*node);
             const AtomString& idattr = element.getIdAttribute();
@@ -2008,18 +2023,18 @@ void Node::showNodePathForThis() const
                     if (previous->nodeName() == node->nodeName())
                         ++count;
                 if (hasIdAttr)
-                    SAFE_FPRINTF(stderr, "[@id=\"%s\" and position()=%d]", idattr.string().utf8(), count);
+                    SAFE_FPRINTF(stderr, "[@id=\"%s\" and position()=%d]", makeUTF8CString(idattr.string()), count);
                 else
                     fprintf(stderr, "[%d]", count);
             } else if (hasIdAttr)
-                SAFE_FPRINTF(stderr, "[@id=\"%s\"]", idattr.string().utf8());
+                SAFE_FPRINTF(stderr, "[@id=\"%s\"]", makeUTF8CString(idattr.string()));
             break;
         }
         case NodeType::Text:
             fprintf(stderr, "/text()");
             break;
         case NodeType::Attribute:
-            SAFE_FPRINTF(stderr, "/@%s", node->nodeName().utf8());
+            SAFE_FPRINTF(stderr, "/@%s", makeUTF8CString(node->nodeName()));
             break;
         default:
             break;
@@ -2040,7 +2055,7 @@ static void traverseTreeAndMark(const String& baseIndent, const Node* rootNode, 
         indent.append(baseIndent);
         for (const Node* tmpNode = node; tmpNode && tmpNode != rootNode; tmpNode = tmpNode->parentOrShadowHostNode())
             indent.append('\t');
-        SAFE_FPRINTF(stderr, "%s", indent.toString().utf8());
+        SAFE_FPRINTF(stderr, "%s", makeUTF8CString(indent.toString()));
         node->showNode();
         indent.append('\t');
         if (!node->isShadowRoot()) {
@@ -2073,7 +2088,7 @@ static void showSubTreeAcrossFrame(const Node* node, const Node* markedNode, con
 {
     if (node == markedNode)
         SAFE_FPRINTF(stderr, "*");
-    SAFE_FPRINTF(stderr, "%s\n", indent.utf8());
+    SAFE_FPRINTF(stderr, "%s\n", makeUTF8CString(indent));
     node->showNode();
     if (!node->isShadowRoot()) {
         if (auto* frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(node))
@@ -2151,18 +2166,15 @@ static unsigned traverseSubtreeToUpdateTreeScope(Node& root, NOESCAPE const Move
 {
     unsigned count = 0;
     for (CheckedPtr node = &root; node; node = NodeTraversal::next(*node, &root)) {
-        moveNode(*node);
-        ++count;
+        count += moveNode(*node);
 
         RefPtr element = dynamicDowncast<Element>(*node);
         if (!element)
             continue;
 
         if (element->hasSyntheticAttrChildNodes()) {
-            for (auto& attr : element->attrNodeList()) {
-                moveNode(attr);
-                ++count;
-            }
+            for (auto& attr : element->attrNodeList())
+                count += moveNode(attr);
         }
 
         if (RefPtr shadow = element->shadowRoot())
@@ -2171,7 +2183,7 @@ static unsigned traverseSubtreeToUpdateTreeScope(Node& root, NOESCAPE const Move
     return count;
 }
 
-static ALWAYS_INLINE bool LEGACY_NODELETE isDocumentEligibleForFastAdoption(Document& oldDocument, Document& newDocument)
+NODELETE static ALWAYS_INLINE bool isDocumentEligibleForFastAdoption(Document& oldDocument, Document& newDocument)
 {
     return !oldDocument.hasNodeIterators()
         && !oldDocument.hasRanges()
@@ -2184,20 +2196,34 @@ static ALWAYS_INLINE bool LEGACY_NODELETE isDocumentEligibleForFastAdoption(Docu
         && oldDocument.inQuirksMode() == newDocument.inQuirksMode();
 }
 
-static ALWAYS_INLINE void adoptCustomElementRegistryIfNotExplicitlySet(ShadowRoot& shadowRoot, Document& newDocument)
+static ALWAYS_INLINE void adoptCustomElementRegistryIfNotKeptNull(ShadowRoot& shadowRoot, Document& newDocument)
 {
-    if (shadowRoot.hasScopedCustomElementRegistry() || !shadowRoot.usesNullCustomElementRegistry() || newDocument.usesNullCustomElementRegistry()) [[likely]]
+    if (shadowRoot.keepsCustomElementRegistryNull() || !shadowRoot.usesNullCustomElementRegistry() || !newDocument.effectiveGlobalCustomElementRegistry()) [[likely]]
         return;
-    shadowRoot.clearUsesNullCustomElementRegistry();
-    shadowRoot.setCustomElementRegistry(newDocument.customElementRegistry());
+    shadowRoot.resetCustomElementRegistryType();
+    shadowRoot.setCustomElementRegistry(newDocument.effectiveGlobalCustomElementRegistry());
+}
+
+static ALWAYS_INLINE RefPtr<CustomElementRegistry> scopedCustomElementRegistry(TreeScope& treeScope)
+{
+    RefPtr registry = treeScope.customElementRegistry();
+    if (!registry || !registry->isScoped())
+        return nullptr;
+    return registry;
 }
 
 inline unsigned Node::moveShadowTreeToNewDocumentFastCase(ShadowRoot& shadowRoot, Document& oldDocument, Document& newDocument)
 {
-    ASSERT(isDocumentEligibleForFastAdoption(oldDocument, newDocument));
-    adoptCustomElementRegistryIfNotExplicitlySet(shadowRoot, newDocument);
-    return traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) {
-        node.moveNodeToNewDocumentFastCase(oldDocument, newDocument);
+    ASSERT_WITH_SECURITY_IMPLICATION(isDocumentEligibleForFastAdoption(oldDocument, newDocument));
+    adoptCustomElementRegistryIfNotKeptNull(shadowRoot, newDocument);
+    RefPtr scopedRegistry = scopedCustomElementRegistry(shadowRoot);
+    return traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) -> unsigned {
+        if (&node.treeScope() != static_cast<TreeScope*>(&shadowRoot)) {
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.document() == &newDocument);
+            return 0;
+        }
+        node.moveNodeToNewDocumentFastCase(oldDocument, newDocument, scopedRegistry.get());
+        return 1;
     }, [&oldDocument, &newDocument](ShadowRoot& innerShadowRoot) {
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&innerShadowRoot.document() == &oldDocument);
         innerShadowRoot.moveShadowRootToNewDocument(oldDocument, newDocument);
@@ -2207,10 +2233,15 @@ inline unsigned Node::moveShadowTreeToNewDocumentFastCase(ShadowRoot& shadowRoot
 
 inline void Node::moveShadowTreeToNewDocumentSlowCase(ShadowRoot& shadowRoot, Document& oldDocument, Document& newDocument)
 {
-    ASSERT(!isDocumentEligibleForFastAdoption(oldDocument, newDocument));
-    adoptCustomElementRegistryIfNotExplicitlySet(shadowRoot, newDocument);
-    traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) {
-        node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument);
+    adoptCustomElementRegistryIfNotKeptNull(shadowRoot, newDocument);
+    RefPtr scopedRegistry = scopedCustomElementRegistry(shadowRoot);
+    traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) -> unsigned {
+        if (&node.treeScope() != static_cast<TreeScope*>(&shadowRoot)) {
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.document() == &newDocument);
+            return 0;
+        }
+        node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument, scopedRegistry.get());
+        return 1;
     }, [&oldDocument, &newDocument](ShadowRoot& innerShadowRoot) {
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&innerShadowRoot.document() == &oldDocument);
         innerShadowRoot.moveShadowRootToNewDocument(oldDocument, newDocument);
@@ -2228,13 +2259,15 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
     bool newScopeIsUAShadowTree = newScope.rootNode().hasBeenInUserAgentShadowTree();
     if (&oldDocument.get() != &newDocument.get()) {
         oldDocument->incrementReferencingNodeCount();
+        RefPtr oldScopeScopedRegistry = scopedCustomElementRegistry(oldScope);
         bool isFastCase = isDocumentEligibleForFastAdoption(oldDocument, newDocument) && !newScopeIsUAShadowTree;
         if (isFastCase) {
-            unsigned nodeCount = traverseSubtreeToUpdateTreeScope(root, [&](Node& node) {
+            unsigned nodeCount = traverseSubtreeToUpdateTreeScope(root, [&](Node& node) -> unsigned {
                 ASSERT(!node.isTreeScope());
                 RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.treeScope() == &oldScope);
                 node.setTreeScope(newScope);
-                node.moveNodeToNewDocumentFastCase(oldDocument, newDocument);
+                node.moveNodeToNewDocumentFastCase(oldDocument, newDocument, oldScopeScopedRegistry.get());
+                return 1;
             }, [&](ShadowRoot& shadowRoot) {
                 ASSERT_WITH_SECURITY_IMPLICATION(&shadowRoot.document() == oldDocument.ptr());
                 shadowRoot.moveShadowRootToNewParentScope(newScope, newDocument);
@@ -2243,13 +2276,14 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
             newDocument->incrementReferencingNodeCount(nodeCount);
             oldDocument->decrementReferencingNodeCount(nodeCount);
         } else {
-            traverseSubtreeToUpdateTreeScope(root, [&](Node& node) {
+            traverseSubtreeToUpdateTreeScope(root, [&](Node& node) -> unsigned {
                 ASSERT(!node.isTreeScope());
                 RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.treeScope() == &oldScope);
                 if (newScopeIsUAShadowTree)
                     node.setEventTargetFlag(EventTargetFlag::HasBeenInUserAgentShadowTree);
                 node.setTreeScope(newScope);
-                node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument);
+                node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument, oldScopeScopedRegistry.get());
+                return 1;
             }, [&](ShadowRoot& shadowRoot) {
                 ASSERT_WITH_SECURITY_IMPLICATION(&shadowRoot.document() == oldDocument.ptr());
                 shadowRoot.moveShadowRootToNewParentScope(newScope, newDocument);
@@ -2260,16 +2294,17 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&oldScope.documentScope() == oldDocument.ptr() && &newScope.documentScope() == newDocument.ptr());
         oldDocument->decrementReferencingNodeCount();
     } else {
-        traverseSubtreeToUpdateTreeScope(root, [&](Node& node) {
+        traverseSubtreeToUpdateTreeScope(root, [&](Node& node) -> unsigned {
             ASSERT(!node.isTreeScope());
             RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.treeScope() == &oldScope);
             if (newScopeIsUAShadowTree)
                 node.setEventTargetFlag(EventTargetFlag::HasBeenInUserAgentShadowTree);
             node.setTreeScope(newScope);
             if (!node.hasRareData()) [[likely]]
-                return;
+                return 1;
             if (auto* nodeLists = node.rareData()->nodeLists())
                 nodeLists->adoptTreeScope();
+            return 1;
         }, [&newScope](ShadowRoot& shadowRoot) {
             shadowRoot.setParentTreeScope(newScope);
             return 0; // Unused.
@@ -2277,19 +2312,66 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
     }
 }
 
-inline void Node::adoptCustomElementRegistryIntoScopedRegistryDocument()
+NODELETE static inline void adoptCustomElementRegistryIntoScopedRegistryDocument(Node& node)
 {
     // Called during adoption only when the destination document's custom element registry is scoped.
     // An element that inherits the global custom element registry (neither uses the null registry
     // nor an explicit scoped registry) has no global registry to inherit in such a document, so it
     // ends up with a null custom element registry.
-    if (is<Element>(*this) && !usesNullCustomElementRegistry() && !usesScopedCustomElementRegistryMap())
-        setUsesNullCustomElementRegistry();
+    if (is<Element>(node) && !node.usesNullCustomElementRegistry() && !node.usesScopedCustomElementRegistryMap()) {
+        node.resetCustomElementRegistryType();
+        node.setUsesNullCustomElementRegistry();
+    }
 }
 
-void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDocument)
+// https://dom.spec.whatwg.org/#concept-node-adopt
+static bool shouldClearNullCustomElementRegistryOnAdoption(const Node& node, Document& newDocument)
 {
-    ASSERT(!oldDocument.shouldInvalidateNodeListAndCollectionCaches());
+    if (newDocument.usesNullCustomElementRegistry() || node.isShadowRoot())
+        return false;
+    if (!is<Element>(node))
+        return true;
+    if (downcast<Element>(node).keepsCustomElementRegistryNull())
+        return false;
+    RefPtr parent = node.parentNode();
+    if (!parent || (parent->isDocumentFragment() && !parent->isShadowRoot()))
+        return true;
+    RefPtr registry = CustomElementRegistry::registryForNodeOrTreeScope(*parent, protect(parent->isInShadowTree() ? parent->treeScope() : newDocument));
+    return registry && !registry->isScoped();
+}
+
+static void clearNullCustomElementRegistryOnAdoption(Node& node, Document& newDocument)
+{
+    node.resetCustomElementRegistryType();
+    if (is<Element>(node) && node.isInShadowTree() && node.treeScope().customElementRegistry() != newDocument.effectiveGlobalCustomElementRegistry())
+        node.setUsesGlobalCustomElementRegistry();
+}
+
+static ALWAYS_INLINE void adoptCustomElementRegistry(Node& node, CustomElementRegistry* scopedRegistryOfOldTreeScope, Document& newDocument)
+{
+    // An element keeps a scoped registry it got from its old tree scope.
+    if (scopedRegistryOfOldTreeScope && is<Element>(node) && !node.usesNullCustomElementRegistry()
+        && !node.usesScopedCustomElementRegistryMap() && !node.usesGlobalCustomElementRegistry()) [[unlikely]] {
+        if (node.treeScope().customElementRegistry() != scopedRegistryOfOldTreeScope)
+            CustomElementRegistry::addToScopedCustomElementRegistryMap(downcast<Element>(node), *scopedRegistryOfOldTreeScope);
+        return;
+    }
+
+    if (node.usesNullCustomElementRegistry() && shouldClearNullCustomElementRegistryOnAdoption(node, newDocument)) [[unlikely]]
+        clearNullCustomElementRegistryOnAdoption(node, newDocument);
+
+    if (auto* newRegistry = newDocument.customElementRegistry()) {
+        if (newRegistry->isScoped()) [[unlikely]]
+            adoptCustomElementRegistryIntoScopedRegistryDocument(node);
+    } else if (node.usesGlobalCustomElementRegistry()) [[unlikely]] {
+        node.resetCustomElementRegistryType();
+        node.setUsesNullCustomElementRegistry();
+    }
+}
+
+void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDocument, CustomElementRegistry* scopedRegistryOfOldTreeScope)
+{
+    ASSERT_WITH_SECURITY_IMPLICATION(!oldDocument.shouldInvalidateNodeListAndCollectionCaches());
     ASSERT(!oldDocument.hasNodeIterators());
     ASSERT(!oldDocument.hasRanges());
     ASSERT(!AXObjectCache::accessibilityEnabled() || !oldDocument.existingAXObjectCache());
@@ -2300,13 +2382,12 @@ void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDoc
     ASSERT(!transientMutationObserverRegistry());
     ASSERT(!oldDocument.numberOfIntersectionObservers());
 
+    if (hasValidQuerySelectorResults()) [[unlikely]]
+        oldDocument.removeQuerySelectorResults(*this);
+
     ensureWrapperForAdoptedNodeWithForeignGlobalObjectIfNeeded(*this, oldDocument, newDocument);
 
-    if (usesNullCustomElementRegistry() && !newDocument.usesNullCustomElementRegistry()) [[unlikely]]
-        clearUsesNullCustomElementRegistry();
-
-    if (auto* newRegistry = newDocument.customElementRegistry(); newRegistry && newRegistry->isScoped()) [[unlikely]]
-        adoptCustomElementRegistryIntoScopedRegistryDocument();
+    adoptCustomElementRegistry(*this, scopedRegistryOfOldTreeScope, newDocument);
 
     if (!hasTypeFlag(TypeFlag::HasDidMoveToNewDocument) && !hasEventTargetFlag(EventTargetFlag::HasLangAttr) && !hasEventTargetFlag(EventTargetFlag::HasXMLLangAttr)
         && !isDefinedCustomElement() && !isCustomElementUpgradeCandidate())
@@ -2316,18 +2397,17 @@ void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDoc
         element->didMoveToNewDocument(oldDocument, newDocument);
 }
 
-void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDocument)
+void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDocument, CustomElementRegistry* scopedRegistryOfOldTreeScope)
 {
+    if (hasValidQuerySelectorResults()) [[unlikely]]
+        oldDocument.removeQuerySelectorResults(*this);
+
     ensureWrapperForAdoptedNodeWithForeignGlobalObjectIfNeeded(*this, oldDocument, newDocument);
 
     newDocument.incrementReferencingNodeCount();
     oldDocument.decrementReferencingNodeCount();
 
-    if (usesNullCustomElementRegistry() && !newDocument.usesNullCustomElementRegistry()) [[unlikely]]
-        clearUsesNullCustomElementRegistry();
-
-    if (auto* newRegistry = newDocument.customElementRegistry(); newRegistry && newRegistry->isScoped()) [[unlikely]]
-        adoptCustomElementRegistryIntoScopedRegistryDocument();
+    adoptCustomElementRegistry(*this, scopedRegistryOfOldTreeScope, newDocument);
 
     if (hasRareData()) {
         if (auto* nodeLists = rareData()->nodeLists())
@@ -2362,7 +2442,7 @@ void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDoc
     if (hasEventTargetData()) {
         unsigned numWheelEventHandlers = 0;
         unsigned numTouchEventListeners = 0;
-#if ENABLE(TOUCH_EVENTS) && ENABLE(IOS_GESTURE_EVENTS)
+#if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
         unsigned numGestureEventListeners = 0;
 #endif
 
@@ -2389,7 +2469,7 @@ void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDoc
                 numWheelEventHandlers += count;
             else if (typeInfo.isInCategory(touchEventCategory))
                 numTouchEventListeners += count;
-#if ENABLE(TOUCH_EVENTS) && ENABLE(IOS_GESTURE_EVENTS)
+#if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
             else if (typeInfo.isInCategory(EventCategory::Gesture))
                 numGestureEventListeners += count;
 #endif
@@ -2408,6 +2488,20 @@ void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDoc
             newDocument.addTouchEventListener(*this);
 #endif
         }
+
+#if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
+        // Match tryAddEventListener(), which tracks gesture listeners in touchEventTargets.
+        if (numGestureEventListeners) {
+            bool oldDocumentUsesTouchEventRegions = oldDocument.shouldUseTouchEventRegions();
+            bool newDocumentUsesTouchEventRegions = newDocument.shouldUseTouchEventRegions();
+            for (unsigned i = 0; i < numGestureEventListeners; ++i) {
+                if (oldDocumentUsesTouchEventRegions)
+                    oldDocument.didRemoveTouchEventHandler(*this);
+                if (newDocumentUsesTouchEventRegions)
+                    newDocument.didAddTouchEventHandler(*this);
+            }
+        }
+#endif
 
 #if ENABLE(TOUCH_EVENTS) && ENABLE(IOS_GESTURE_EVENTS)
         for (unsigned i = 0; i < numGestureEventListeners; ++i) {
@@ -2489,7 +2583,7 @@ static inline bool tryAddEventListener(Node* targetNode, const AtomString& event
 
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
     if (typeInfo.isInCategory(EventCategory::MouseMoveRelated)) {
-        if (WeakPtr observer = document->contentChangeObserverIfExists())
+        if (RefPtr observer = document->contentChangeObserverIfExists())
             observer->didAddMouseMoveRelatedEventListener(eventType, *targetNode);
     }
 #endif
@@ -2713,7 +2807,7 @@ void Node::dispatchSubtreeModifiedEvent()
 
 void Node::dispatchDOMActivateEvent(Event& underlyingClickEvent)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::InMainThread::isScriptAllowed());
+    RELEASE_ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
     auto* uiEvent = dynamicDowncast<UIEvent>(underlyingClickEvent);
     int detail = uiEvent ? uiEvent->detail() : 0;
     Ref event = UIEvent::create(eventNames().DOMActivateEvent, Event::CanBubble::Yes, Event::IsCancelable::Yes, Event::IsComposed::Yes, document().windowProxy(), detail);
@@ -2940,7 +3034,7 @@ void Node::removedLastRef()
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this))
         svgElement->detachAllProperties();
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     m_deletionHasBegun = true;
 #endif
     delete this;
@@ -2948,7 +3042,7 @@ void Node::removedLastRef()
 
 void Node::incrementConnectedSubframeCount(unsigned amount)
 {
-    static_assert(RareDataBitFields { Page::maxNumberOfFrames, 0, 0, 0, 0 }.connectedSubframeCount == Page::maxNumberOfFrames, "connectedSubframeCount must fit Page::maxNumberOfFrames");
+    static_assert(RareDataBitFields { Page::maxNumberOfFrames, 0, 0, 0 }.connectedSubframeCount == Page::maxNumberOfFrames, "connectedSubframeCount must fit Page::maxNumberOfFrames");
 
     ASSERT(isContainerNode());
     auto bitfields = rareDataBitfields();
@@ -2990,23 +3084,9 @@ void Node::updateAncestorConnectedSubframeCountForInsertion() const
 
 TextDirection Node::effectiveTextDirection() const
 {
-    if (rareDataBitfields().usesEffectiveTextDirection)
-        return static_cast<TextDirection>(rareDataBitfields().effectiveTextDirection);
+    if (usesEffectiveTextDirection())
+        return hasStateFlag(StateFlag::EffectiveTextDirectionIsRTL) ? TextDirection::RTL : TextDirection::LTR;
     return document().documentElementTextDirection();
-}
-
-void Node::setEffectiveTextDirection(TextDirection direction)
-{
-    auto bitfields = rareDataBitfields();
-    bitfields.effectiveTextDirection = std::to_underlying(direction);
-    setRareDataBitfields(bitfields);
-}
-
-void Node::setUsesEffectiveTextDirection(bool value)
-{
-    auto bitfields = rareDataBitfields();
-    bitfields.usesEffectiveTextDirection = value;
-    setRareDataBitfields(bitfields);
 }
 
 bool Node::inRenderedDocument() const
@@ -3044,7 +3124,7 @@ template<> ContainerNode* parent<ComposedTreeIncludingPseudoElements>(const Node
     return node.parentElementInComposedTree();
 }
 
-template<TreeType treeType> size_t LEGACY_NODELETE depth(const Node& node)
+template<TreeType treeType> NODELETE size_t depth(const Node& node)
 {
     size_t depth = 0;
     SUPPRESS_UNCHECKED_LOCAL auto ancestor = &node;
@@ -3053,13 +3133,17 @@ template<TreeType treeType> size_t LEGACY_NODELETE depth(const Node& node)
     return depth;
 }
 
+// AncestorAndChildren is a short-lived return value of NODELETE functions and is never stored, so nodes
+// cannot be destroyed while it is alive. Using smart pointers here would regress treeOrder(), which is hot.
 struct AncestorAndChildren {
-    const Node* commonAncestor;
-    const Node* distinctAncestorA;
-    const Node* distinctAncestorB;
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    SUPPRESS_UNCHECKED_MEMBER SUPPRESS_UNCOUNTED_MEMBER const Node* commonAncestor;
+    SUPPRESS_UNCHECKED_MEMBER SUPPRESS_UNCOUNTED_MEMBER const Node* distinctAncestorA;
+    SUPPRESS_UNCHECKED_MEMBER SUPPRESS_UNCOUNTED_MEMBER const Node* distinctAncestorB;
 };
 
-template<TreeType treeType> AncestorAndChildren LEGACY_NODELETE commonInclusiveAncestorAndChildren(const Node& a, const Node& b)
+template<TreeType treeType> NODELETE AncestorAndChildren commonInclusiveAncestorAndChildren(const Node& a, const Node& b)
 {
     // This check isn't needed for correctness, but it is cheap and likely to be
     // common enough to be worth optimizing so we don't have to walk to the root.
@@ -3089,7 +3173,7 @@ template<TreeType treeType> AncestorAndChildren LEGACY_NODELETE commonInclusiveA
     return { x, distinctAncestorA, distinctAncestorB };
 }
 
-template<TreeType treeType> Node* LEGACY_NODELETE commonInclusiveAncestor(const Node& a, const Node& b)
+template<TreeType treeType> NODELETE Node* commonInclusiveAncestor(const Node& a, const Node& b)
 {
     return const_cast<Node*>(commonInclusiveAncestorAndChildren<treeType>(a, b).commonAncestor);
 }
@@ -3099,7 +3183,7 @@ template Node* commonInclusiveAncestor<ComposedTree>(const Node&, const Node&);
 template Node* commonInclusiveAncestor<ShadowIncludingTree>(const Node&, const Node&);
 template Node* commonInclusiveAncestor<ComposedTreeIncludingPseudoElements>(const Node&, const Node&);
 
-template<TreeType treeType> bool LEGACY_NODELETE isSiblingSubsequent(const Node& siblingA, const Node& siblingB)
+template<TreeType treeType> NODELETE bool isSiblingSubsequent(const Node& siblingA, const Node& siblingB)
 {
     ASSERT(&siblingA != &siblingB);
     ASSERT(parent<treeType>(siblingA));
@@ -3131,7 +3215,7 @@ template<TreeType treeType> bool LEGACY_NODELETE isSiblingSubsequent(const Node&
     return false;
 }
 
-template<TreeType treeType> std::partial_ordering LEGACY_NODELETE treeOrder(const Node& a, const Node& b)
+template<TreeType treeType> NODELETE std::partial_ordering treeOrder(const Node& a, const Node& b)
 {
     if (&a == &b)
         return std::partial_ordering::equivalent;

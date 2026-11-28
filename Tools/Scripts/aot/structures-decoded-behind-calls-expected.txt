@@ -9,6 +9,7 @@ JSC::AOT::destructureIterable                # the result of next() is alive and
 JSC::AOT::StructureTable::allocateAsCompiledCodeDoes    # the records of allocation sites are roots
 JSC::AOT::Object::tryCreateCopyOfFields      # collections are deferred, and the source is alive and keeps its Structure
 JSC::AOT::Object::tryCreateCopyOfFieldsAndExtraProperties    # the same
+JSC::AOT::tryCopyAsOrdinaryObject            # the source is alive and keeps its Structure, and nothing in front of the DeferGC allocates
 operationAOTPrivateDefine                    # JSObject::putDirectInternal(): the object keeps the Structure before until the one behind is set
 JSC::AOT::PropertyCaches::didFinishCollection    # runs at the end of a collection
 JSC::AOT::Modules::makeTableOfCapturedFields # the realm holds the Structure of objects without a prototype

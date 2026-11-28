@@ -1,0 +1,64 @@
+# `value instanceof Promise` asks the constructor for @@hasInstance, and the function that it finds on Function.prototype asks the constructor for `prototype`. Both are members that never change,
+# so both are answered when the program is built. What is left is the walk up the chain of the value, which a primitive does not come to
+# function isWaiting(value) { return value instanceof Promise; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: [[above]]: builtin(PromisePrototype) @Cell = Builtin builtin=PromisePrototype
+# CHECK: = HasInPrototypeChain v0, [[above]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = InstanceOf
+# The same where the constructor is written as a free name.
+# RUN(NAME): walk f2 mechanisms=none+TypedOperations
+# NAME-LABEL: code f2:Body
+# NAME-NOT: PropGet
+# NAME: = HasInPrototypeChain
+# Of a constructor that nobody knows both are asked: function isOne(value, constructor) { return value instanceof constructor; }
+# RUN(UNKNOWN): walk f3 mechanisms=none+TypedOperations
+# UNKNOWN-LABEL: code f3:Body
+# UNKNOWN: = InstanceOf v0, v1
+# What is no constructor throws, in the words of the operator: function isMath(value) { return value instanceof Math; }
+# RUN(OBJECT): walk f4 mechanisms=none+TypedOperations
+# OBJECT-LABEL: code f4:Body
+# OBJECT: = InstanceOf
+# With typed operations withheld the operator stays as it is written.
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED-LABEL: code f1:Body
+# CLOSED: = InstanceOf
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="isWaiting" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+function f2 name="isWaitingByName" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Promise" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+function f3 name="isOne" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+function f4 name="isMath" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Math
+    v2 = InstanceOf v0, v1
+    Return v2
+}

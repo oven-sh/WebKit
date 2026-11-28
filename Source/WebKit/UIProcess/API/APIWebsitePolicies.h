@@ -170,7 +170,7 @@ public:
     bool prefersIsolatedProcess() const { return m_data.prefersIsolatedProcess; }
     void setPrefersIsolatedProcess(bool prefersIsolatedProcess) { m_data.prefersIsolatedProcess = prefersIsolatedProcess; }
 
-    const WebCore::ResourceRequest& LEGACY_NODELETE alternateRequest() const LIFETIME_BOUND;
+    NODELETE const WebCore::ResourceRequest& alternateRequest() const LIFETIME_BOUND;
     void setAlternateRequest(WebCore::ResourceRequest&&);
 
     bool allowsJSHandleCreationInPageWorld() const { return m_data.allowsJSHandleCreationInPageWorld; }
@@ -178,6 +178,11 @@ public:
 
     void setOverrideReferrerForAllRequests(WTF::String&& referrer) { m_data.overrideReferrerForAllRequests = WTF::move(referrer); }
     const WTF::String& overrideReferrerForAllRequests() const LIFETIME_BOUND { return m_data.overrideReferrerForAllRequests; }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void setForceDisableAXCustomColorMode(bool value) { m_data.forceDisableAXCustomColorMode = value; }
+    bool forceDisableAXCustomColorMode() const { return m_data.forceDisableAXCustomColorMode; }
+#endif
 
 private:
     WebKit::WebsitePoliciesData m_data;

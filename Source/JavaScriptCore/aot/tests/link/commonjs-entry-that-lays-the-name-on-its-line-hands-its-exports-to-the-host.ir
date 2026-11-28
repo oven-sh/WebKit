@@ -1,0 +1,30 @@
+# main.cjs: exports.handle = function (n) { return n }; exports.handle(1); ({ fetch: 1, handle: 1 });
+# The host of this entry looks for `handle`, and finds it.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions variables lookups mechanisms=all
+# CHECK-NOT: function f1 {{*}}callers-known
+# CHECK-NOT: lookup entry-hands-host-nothing
+
+layout L0 module=m0 fields=[{key="handle" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}, {key="handle" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["handle"]}, {exportName="then"}]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="file" module=m0 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="handle"
+    v6 = Integer integer=1
+    v7 = Call v5, v4, v6 calleeKey="handle" calleeName="handle"
+    v8 = NewObject -, v6, v6 layout=L1 fields=[0, 1]
+    v9 = FinishObject v8
+    Return
+}
+function f1 name="handle" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

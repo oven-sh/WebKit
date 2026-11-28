@@ -1,0 +1,59 @@
+# a RegExp takes the characters of its pattern and nothing else of it: a known pattern that is no text is spelled as ToString spells it, and none, or undefined, is the empty text
+# function status() { return new RegExp(404); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewRegExp pattern=made "404"
+# function nothing() { return new RegExp(null); }
+# RUN(NULL): walk f2 mechanisms=all
+# NULL-LABEL: code f2:Body
+# NULL: = NewRegExp pattern="null"
+# function empty() { return new RegExp(); }
+# RUN(EMPTY): walk f3 mechanisms=all
+# EMPTY-LABEL: code f3:Body
+# EMPTY: = NewRegExp
+# nobody knows the pattern, and the build says so: function any(pattern) { return new RegExp(pattern); }
+# DIAGNOSTIC: RegExpPatternNotConstant 1
+# RUN(ANY): walk f4 mechanisms=all
+# ANY-LABEL: code f4:Body
+# ANY-NOT: = NewRegExp
+# ANY: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="status" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Integer integer=404
+    v2 = Construct v0, -, v1 calleeName="RegExp"
+    Return v2
+}
+function f2 name="nothing" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Null
+    v2 = Construct v0, -, v1 calleeName="RegExp"
+    Return v2
+}
+function f3 name="empty" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Construct v0 calleeName="RegExp"
+    Return v1
+}
+function f4 name="any" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0 calleeName="RegExp"
+    Return v2
+}

@@ -58,6 +58,7 @@ void JIT::emit_op_get_by_val(const JSInstruction* currentInstruction)
     using BaselineJITRegisters::GetByVal::propertyCacheGPR;
     using BaselineJITRegisters::GetByVal::profileGPR;
     using BaselineJITRegisters::GetByVal::scratch1GPR;
+    using BaselineJITRegisters::GetByVal::scratch2GPR;
 
     emitGetVirtualRegister(base, baseGPR);
     emitGetVirtualRegister(property, propertyGPR);
@@ -75,7 +76,31 @@ void JIT::emit_op_get_by_val(const JSInstruction* currentInstruction)
     emitJumpSlowCaseIfNotJSCell(baseGPR, base);
     emitArrayProfilingSiteWithCellAndProfile(baseGPR, profileGPR, scratch1GPR);
 
+    bool propertyIsConstant = property.isConstant();
+    bool emitInlineAccess = !propertyIsConstant || isOperandConstantInt(property);
+    JumpList notInlineAccess;
+    Jump inlineAccessDone;
+    if (emitInlineAccess) {
+        if (!propertyIsConstant)
+            notInlineAccess.append(branchIfNotInt32(propertyGPR));
+        load8(Address(baseGPR, JSCell::indexingTypeAndMiscOffset()), scratch1GPR);
+        and32(TrustedImm32(IndexingShapeMask), scratch1GPR);
+        sub32(TrustedImm32(Int32Shape), scratch1GPR);
+        static_assert(ContiguousShape - Int32Shape == 4);
+        notInlineAccess.append(branchTest32(NonZero, scratch1GPR, TrustedImm32(~4)));
+        loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch1GPR);
+        zeroExtend32ToWord(propertyGPR, scratch2GPR);
+        notInlineAccess.append(branch32(AboveOrEqual, scratch2GPR, Address(scratch1GPR, Butterfly::offsetOfPublicLength())));
+        load64(BaseIndex(scratch1GPR, scratch2GPR, TimesEight), scratch2GPR);
+        notInlineAccess.append(branchIfEmpty(scratch2GPR));
+        move(scratch2GPR, resultGPR);
+        inlineAccessDone = jump();
+        notInlineAccess.link(this);
+    }
+
     gen.generateDataICFastPath(*this);
+    if (emitInlineAccess)
+        inlineAccessDone.link(this);
 
     addSlowCase();
     m_getByVals.append(gen);
@@ -1897,7 +1922,7 @@ void JIT::emit_op_enumerator_next(const JSInstruction* currentInstruction)
     GPRReg baseGPR = regT2;
 
     // This is the most common mode set we tend to see, so special case it if we profile it in the LLInt.
-    if (bytecode.metadata(m_profiledCodeBlock).m_enumeratorMetadata == JSPropertyNameEnumerator::OwnStructureMode) {
+    if (bytecode.metadata(m_profiledCodeBlock).m_enumeratorMetadata & JSPropertyNameEnumerator::OwnStructureMode) {
         GPRReg enumeratorGPR = regT3;
         GPRReg scratch1GPR = regT4;
         emitGetVirtualRegister(enumerator, enumeratorGPR);
@@ -1908,7 +1933,7 @@ void JIT::emit_op_enumerator_next(const JSInstruction* currentInstruction)
         or32(TrustedImm32(JSPropertyNameEnumerator::OwnStructureMode), scratch1GPR);
         store8ToMetadata(scratch1GPR, bytecode, OpEnumeratorNext::Metadata::offsetOfEnumeratorMetadata());
 
-        load32(Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDOffset()), indexGPR);
+        load32(Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDForNamesOffset()), indexGPR);
         operationCases.append(branch32(NotEqual, indexGPR, Address(baseGPR, JSCell::structureIDOffset())));
 
         emitGetVirtualRegister(mode, modeGPR);
@@ -1965,7 +1990,7 @@ void JIT::emit_enumerator_has_propertyImpl(const Bytecode& bytecode, SlowPathFun
 
     emitGetVirtualRegister(enumerator, regT1);
     load32(Address(regT0, JSCell::structureIDOffset()), regT0);
-    slowCases.append(branch32(NotEqual, regT0, Address(regT1, JSPropertyNameEnumerator::cachedStructureIDOffset())));
+    slowCases.append(branch32(NotEqual, regT0, Address(regT1, JSPropertyNameEnumerator::cachedStructureIDForNamesOffset())));
 
     move(TrustedImm64(JSValue::encode(jsBoolean(true))), regT0);
     emitPutVirtualRegister(dst, regT0);
@@ -2029,7 +2054,7 @@ void JIT::emit_op_enumerator_get_by_val(const JSInstruction* currentInstruction)
     // Check the structure
     emitGetVirtualRegister(enumerator, scratch1GPR);
     load32(Address(baseGPR, JSCell::structureIDOffset()), scratch2GPR);
-    Jump structureMismatch = branch32(NotEqual, scratch2GPR, Address(scratch1GPR, JSPropertyNameEnumerator::cachedStructureIDOffset()));
+    Jump structureMismatch = branch32(NotEqual, scratch2GPR, Address(scratch1GPR, JSPropertyNameEnumerator::cachedStructureIDForNamesAndOffsetsOffset()));
 
     // Compute the offset.
     emitGetVirtualRegister(index, scratch2GPR);
@@ -2124,7 +2149,7 @@ void JIT::emit_op_enumerator_put_by_val(const JSInstruction* currentInstruction)
     JumpList structureMismatch;
     emitGetVirtualRegister(enumerator, scratch1GPR);
     load32(Address(baseGPR, JSCell::structureIDOffset()), scratch2GPR);
-    structureMismatch.append(branch32(NotEqual, scratch2GPR, Address(scratch1GPR, JSPropertyNameEnumerator::cachedStructureIDOffset())));
+    structureMismatch.append(branch32(NotEqual, scratch2GPR, Address(scratch1GPR, JSPropertyNameEnumerator::cachedStructureIDForNamesAndOffsetsOffset())));
     emitNonNullDecodeZeroExtendedStructureID(scratch2GPR, scratch2GPR);
     structureMismatch.append(branchTest32(NonZero, Address(scratch2GPR, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits | Structure::s_anyImmutablePropertiesBits)));
 

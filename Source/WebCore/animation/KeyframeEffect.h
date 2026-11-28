@@ -67,7 +67,7 @@ class KeyframeEffect final : public AnimationEffect, public Style::Interpolation
 public:
     static ExceptionOr<Ref<KeyframeEffect>> create(JSC::JSGlobalObject&, Document&, Element*, JSC::Strong<JSC::JSObject>&&, Variant<double, KeyframeEffectOptions>&&);
     static Ref<KeyframeEffect> create(Ref<KeyframeEffect>&&);
-    static Ref<KeyframeEffect> LEGACY_NODELETE create(const Element&, const std::optional<Style::PseudoElementIdentifier>&);
+    NODELETE static Ref<KeyframeEffect> create(const Element&, const std::optional<Style::PseudoElementIdentifier>&);
 
     using KeyframeOffset = Variant<std::nullptr_t, double, TimelineRangeOffset, String>;
 
@@ -116,11 +116,11 @@ public:
     Element* target() const { return m_target.get(); }
     void setTarget(RefPtr<Element>&&);
 
-    bool LEGACY_NODELETE targetsPseudoElement() const;
+    NODELETE bool targetsPseudoElement() const;
     const String pseudoElement() const;
     ExceptionOr<void> setPseudoElement(const String&);
 
-    const std::optional<const Styleable> LEGACY_NODELETE targetStyleable() const;
+    NODELETE const std::optional<const Styleable> targetStyleable() const;
 
     Vector<ComputedKeyframe> getKeyframes();
     ExceptionOr<void> setBindingsKeyframes(JSC::JSGlobalObject&, Document&, JSC::Strong<JSC::JSObject>&&);
@@ -166,6 +166,7 @@ public:
 
     bool animatesMotionPath() const;
     bool computeExtentOfTransformAnimation(LayoutRect&) const;
+    IntOutsets computeExtentOfFilterAnimation() const;
     bool forceLayoutIfNeeded();
 
     enum class Accelerated : bool { No, Yes };
@@ -174,7 +175,7 @@ public:
     bool isRunningAcceleratedTransformRelatedAnimation() const;
     bool isRunningOrAboutToRunAcceleratedTransformRelatedAnimation() const;
 
-    bool LEGACY_NODELETE requiresPseudoElement() const;
+    NODELETE bool requiresPseudoElement() const;
 
     void customPropertyRegistrationDidChange(const AtomString&);
 
@@ -230,6 +231,7 @@ private:
     void addPendingAcceleratedAction(AcceleratedAction);
     void updateAcceleratedActions();
     void setAnimatedPropertiesInStyle(Style::ComputedStyle&, const ComputedEffectTiming&) const;
+    template<typename KeyframeMatches, typename Functor> bool forEachKeyframeStyle(const KeyframeMatches&, const Functor&) const;
     const TimingFunction* timingFunctionForKeyframeAtIndex(size_t) const;
     const TimingFunction* timingFunctionForBlendingKeyframe(const BlendingKeyframe&) const;
     Ref<const GraphicsLayerAnimation> backingAnimationForCompositedRenderer();

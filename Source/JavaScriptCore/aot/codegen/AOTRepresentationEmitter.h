@@ -24,10 +24,12 @@ public:
     void generateDecode(const ValueContext& value) { generate(value); }
     void generateCompress(const ValueContext& value) { generate(value); }
 
-    Operand convert(const OperationContext&, Opcode conversion, ValueID sourceID, Operand source, const Type&, Representation to);
+    Operand convert(const OperationContext&, Opcode conversion, Operand source, const Type&, Representation to);
 
 private:
     void generate(const ValueContext&);
+    std::optional<Integer> integerOfStep(const ValueContext&);
+    Integer heldToWhatConversionGives(const OperationContext&, Number, Integer);
 };
 
 } } } // namespace JSC::AOT::Typed

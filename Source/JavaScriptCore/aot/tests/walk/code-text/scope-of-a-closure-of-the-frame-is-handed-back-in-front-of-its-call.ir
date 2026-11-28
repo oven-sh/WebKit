@@ -1,0 +1,13 @@
+# a closure of the frame marks no scope: between the closure and the call that takes it no scope of a layout that it holds is handed back, or the cell waits for its next maker while the callee still reads it
+# RUN: verify-code mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# CHECK: OpcodeNotInForm: f2 Body b0 v3 (ReleaseEnvironment): the environment that a closure of the frame holds is handed back in front of the call that takes the closure: v2 (NewClosure)
+# PROGRAM-OF: ../escape-analysis/direct-callee-marks-the-environment-that-it-keeps.ir
+# -- code
+# code f2:Body {
+#   b0(v0: env L0 @Cell, v1: anything @JSValue) entry=0:
+#     v2: f3 @Cell = NewClosure v0 function=f3 storage=Frame closureForm=Slim loan=LeftToStubOfCall
+#     v3 @Void = ReleaseEnvironment v0
+#     v4: anything @JSValue = Call v1, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v4
+# }
+# -- end of code

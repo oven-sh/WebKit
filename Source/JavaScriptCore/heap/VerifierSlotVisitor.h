@@ -138,7 +138,7 @@ private:
         bool testAndSetMarked(unsigned atomNumber) { return m_atoms.testAndSet(atomNumber); }
 
         void addMarkerData(unsigned atomNumber, MarkerData&&);
-        const MarkerData* LEGACY_NODELETE markerData(unsigned atomNumber) const;
+        NODELETE const MarkerData* markerData(unsigned atomNumber) const;
 
     private:
         MarkedBlock* m_block { nullptr };
@@ -174,9 +174,9 @@ private:
         MarkerData m_marker;
     };
 
-    using MarkedBlockMap = UncheckedKeyHashMap<MarkedBlock*, std::unique_ptr<MarkedBlockData>>;
-    using PreciseAllocationMap = UncheckedKeyHashMap<PreciseAllocation*, std::unique_ptr<PreciseAllocationData>>;
-    using OpaqueRootMap = UncheckedKeyHashMap<void*, std::unique_ptr<OpaqueRootData>>;
+    using MarkedBlockMap = HashMap<MarkedBlock*, std::unique_ptr<MarkedBlockData>>;
+    using PreciseAllocationMap = HashMap<PreciseAllocation*, std::unique_ptr<PreciseAllocationData>>;
+    using OpaqueRootMap = HashMap<void*, std::unique_ptr<OpaqueRootData>>;
 
     void appendToMarkStack(JSCell*);
     void appendSlow(JSCell* cell) { setMarkedAndAppendToMarkStack(cell); }

@@ -1,0 +1,50 @@
+# `o[Symbol.dispose]` is no field, and no look says that nothing lies under a symbol: its read stays closed in the typed run too, and it may run a getter that does anything to `o`. What the look at `x` found ends there:
+# the read of `x` behind it is not answered from the slot that was seen filled. The shape is still proven, so the slot alone is looked at again, by the read itself: nothing else leans on that look.
+# The run goes on to `!o`, which the proof of the shape answers
+# function list(o: Point) { return [o.x, o[Symbol.dispose], o.x, !o]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = IsSlotFilled {{*}}key="x"
+# CHECK-NEXT: Branch {{*}}taken [[typed]](), notTaken [[closed]]()
+# CHECK: [[typed]]()
+# CHECK: = GetSlot {{*}}key="x" receivers=[L0] level=Proven
+# CHECK-NEXT: = PropGet {{*}}key=@@dispose
+# CHECK-NEXT: = GetSlot {{*}}key="x" receivers=[L0] level=Expected
+# RUN(SHAPE): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# SHAPE-COUNT-1: = ShapeTest
+# SHAPE-NOT: = ShapeTest
+# RUN(LOOKS): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# LOOKS-COUNT-1: = IsSlotFilled
+# LOOKS-NOT: = IsSlotFilled
+# RUN(TYPED): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# TYPED-COUNT-2: = GetSlot
+# TYPED-NOT: = GetSlot
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    Return v8
+}
+function f1 name="list" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="x"
+    v3 = PropGet v1 key=@@dispose
+    v4 = PropGet v1 key="x"
+    v5 = ToBoolean v1
+    v6 = LogicalNot v5
+    v7 = NewArray v2, v3, v4, v6 contents=anything
+    Return v7
+}

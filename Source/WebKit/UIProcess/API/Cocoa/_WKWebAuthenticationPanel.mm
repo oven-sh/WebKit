@@ -203,7 +203,7 @@ NSString * const _WKLocalAuthenticatorCredentialLastUsedDateKey = @"_WKLocalAuth
     return _panel->rpId().createNSString().autorelease();
 }
 
-static _WKWebAuthenticationTransport LEGACY_NODELETE wkWebAuthenticationTransport(WebCore::AuthenticatorTransport transport)
+NODELETE static _WKWebAuthenticationTransport wkWebAuthenticationTransport(WebCore::AuthenticatorTransport transport)
 {
     switch (transport) {
     case WebCore::AuthenticatorTransport::Usb:
@@ -235,7 +235,7 @@ static _WKWebAuthenticationTransport LEGACY_NODELETE wkWebAuthenticationTranspor
     return _transports.get();
 }
 
-static _WKWebAuthenticationType LEGACY_NODELETE wkWebAuthenticationType(WebCore::ClientDataType type)
+NODELETE static _WKWebAuthenticationType wkWebAuthenticationType(WebCore::ClientDataType type)
 {
     switch (type) {
     case WebCore::ClientDataType::Create:
@@ -248,7 +248,7 @@ static _WKWebAuthenticationType LEGACY_NODELETE wkWebAuthenticationType(WebCore:
     }
 }
 
-static fido::AuthenticatorSupportedOptions::UserVerificationAvailability LEGACY_NODELETE coreUserVerificationAvailability(_WKWebAuthenticationUserVerificationAvailability wkAvailability)
+NODELETE static fido::AuthenticatorSupportedOptions::UserVerificationAvailability coreUserVerificationAvailability(_WKWebAuthenticationUserVerificationAvailability wkAvailability)
 {
     switch (wkAvailability) {
     case _WKWebAuthenticationUserVerificationAvailabilitySupportedAndConfigured:
@@ -317,8 +317,7 @@ static RetainPtr<NSArray> getAllLocalAuthenticatorCredentialsImpl(NSString *acce
     auto retainAttributesArray = adoptCF(attributesArrayRef);
 
     auto result = adoptNS([[NSMutableArray alloc] init]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *attributes in (NSArray *)attributesArrayRef) {
+    for (NSDictionary *attributes in (NSArray *)attributesArrayRef) {
         auto decodedResponse = cbor::CBORReader::read(makeVector(protect(dynamic_objc_cast<NSData>(attributes[bridge_id_cast(kSecAttrApplicationTag)]))));
         if (!decodedResponse || !decodedResponse->isMap()) {
             ASSERT_NOT_REACHED();
@@ -863,7 +862,7 @@ static Vector<WebCore::PublicKeyCredentialParameters> publicKeyCredentialParamet
     });
 }
 
-static WebCore::AuthenticatorTransport LEGACY_NODELETE authenticatorTransport(_WKWebAuthenticationTransport transport)
+NODELETE static WebCore::AuthenticatorTransport authenticatorTransport(_WKWebAuthenticationTransport transport)
 {
     switch (transport) {
     case _WKWebAuthenticationTransportUSB:
@@ -902,7 +901,7 @@ static Vector<WebCore::PublicKeyCredentialDescriptor> publicKeyCredentialDescrip
     });
 }
 
-static std::optional<WebCore::AuthenticatorAttachment> LEGACY_NODELETE authenticatorAttachment(_WKAuthenticatorAttachment attachment)
+NODELETE static std::optional<WebCore::AuthenticatorAttachment> authenticatorAttachment(_WKAuthenticatorAttachment attachment)
 {
     switch (attachment) {
     case _WKAuthenticatorAttachmentAll:
@@ -917,7 +916,7 @@ static std::optional<WebCore::AuthenticatorAttachment> LEGACY_NODELETE authentic
     }
 }
 
-static WebCore::UserVerificationRequirement LEGACY_NODELETE userVerification(_WKUserVerificationRequirement uv)
+NODELETE static WebCore::UserVerificationRequirement userVerification(_WKUserVerificationRequirement uv)
 {
     switch (uv) {
     case _WKUserVerificationRequirementRequired:
@@ -932,7 +931,7 @@ static WebCore::UserVerificationRequirement LEGACY_NODELETE userVerification(_WK
     }
 }
 
-static std::optional<WebCore::ResidentKeyRequirement> LEGACY_NODELETE toWebCore(_WKResidentKeyRequirement uv)
+NODELETE static std::optional<WebCore::ResidentKeyRequirement> toWebCore(_WKResidentKeyRequirement uv)
 {
     switch (uv) {
     case _WKResidentKeyRequirementNotPresent:
@@ -960,7 +959,7 @@ static WebCore::AuthenticatorSelectionCriteria authenticatorSelectionCriteria(_W
     return result;
 }
 
-static WebCore::AttestationConveyancePreference LEGACY_NODELETE attestationConveyancePreference(_WKAttestationConveyancePreference attestation)
+NODELETE static WebCore::AttestationConveyancePreference attestationConveyancePreference(_WKAttestationConveyancePreference attestation)
 {
     switch (attestation) {
     case _WKAttestationConveyancePreferenceNone:
@@ -997,8 +996,7 @@ static WebCore::AuthenticationExtensionsClientInputs authenticationExtensionsCli
         if (evalByCredentialValue) {
             RetainPtr<NSDictionary<NSData *, _WKAuthenticationPRFInputValues *>> evalByCredential = (NSDictionary<NSData *, _WKAuthenticationPRFInputValues *> *)evalByCredentialValue;
             Vector<KeyValuePair<String, WebCore::AuthenticationExtensionsClientInputs::PRFValues>> evalByCredentialVector;
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSData *credentialId in evalByCredential.get()) {
+            for (NSData *credentialId in evalByCredential.get()) {
                 _WKAuthenticationPRFInputValues *prfInputValues = evalByCredential.get()[credentialId];
                 evalByCredentialVector.append({
                     base64URLEncodeToString(span(credentialId)),
@@ -1032,7 +1030,7 @@ static WebCore::AuthenticationExtensionsClientInputs authenticationExtensionsCli
     return result;
 }
 
-static WebCore::MediationRequirement LEGACY_NODELETE toWebCore(_WKWebAuthenticationMediationRequirement mediation)
+NODELETE static WebCore::MediationRequirement toWebCore(_WKWebAuthenticationMediationRequirement mediation)
 {
     switch (mediation) {
     case _WKWebAuthenticationMediationRequirementSilent:
@@ -1070,7 +1068,7 @@ static WebCore::MediationRequirement LEGACY_NODELETE toWebCore(_WKWebAuthenticat
 }
 
 #if ENABLE(WEB_AUTHN)
-static _WKAuthenticatorAttachment LEGACY_NODELETE authenticatorAttachmentToWKAuthenticatorAttachment(WebCore::AuthenticatorAttachment attachment)
+NODELETE static _WKAuthenticatorAttachment authenticatorAttachmentToWKAuthenticatorAttachment(WebCore::AuthenticatorAttachment attachment)
 {
     switch (attachment) {
     case WebCore::AuthenticatorAttachment::Platform:

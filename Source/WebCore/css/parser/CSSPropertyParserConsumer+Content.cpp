@@ -44,8 +44,7 @@
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 static std::optional<CSS::Quotes> consumeUnresolvedQuotes(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
@@ -83,6 +82,8 @@ static std::optional<CSS::Quotes> consumeUnresolvedQuotes(CSSParserTokenRange& r
     }
     if (openClosePairs.isEmpty())
         return std::nullopt;
+
+    openClosePairs.value.shrinkToFit();
 
     guard.commit();
     return CSS::Quotes { WTF::move(openClosePairs) };
@@ -235,6 +236,7 @@ static std::optional<CSS::Content> consumeUnresolvedContent(CSSParserTokenRange&
             shouldEnd = shouldEnd || range.atEnd();
         } while (!shouldEnd);
 
+        result.value.shrinkToFit();
         return result;
     };
 
@@ -257,6 +259,7 @@ static std::optional<CSS::Content> consumeUnresolvedContent(CSSParserTokenRange&
             result.value.append(WTF::move(*item));
         } while (!range.atEnd());
 
+        result.value.shrinkToFit();
         return result;
     };
 
@@ -290,5 +293,4 @@ RefPtr<CSSValue> consumeContent(CSSParserTokenRange& range, CSS::PropertyParserS
     return nullptr;
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

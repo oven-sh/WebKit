@@ -27,8 +27,7 @@
 #include <WebCore/StyleValueTypes.h>
 #include <WebCore/TextSpacing.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'text-autospace'> = normal | auto | no-autospace | [ ideograph-alpha || ideograph-numeric || insert ]
 // FIXME: Current spec is `normal | auto | no-autospace | [ [ ideograph-alpha || ideograph-numeric || punctuation ] || [ insert | replace ] ]`
@@ -97,7 +96,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<TextAutospace> { TextAutospace LEGACY_NODELETE operator()(BuilderState&, const CSSValue&); };
+template<> struct CSSValueConversion<TextAutospace> { NODELETE TextAutospace operator()(BuilderState&, const CSSValue&); };
 
 // MARK: - Platform
 
@@ -108,7 +107,6 @@ template<> struct ToPlatform<TextAutospace> {
     }
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::TextAutospace);

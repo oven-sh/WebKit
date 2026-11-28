@@ -28,7 +28,6 @@
 #if USE(CG)
 
 #include <WebCore/BifurcatedGraphicsContext.h>
-#include <WebCore/BitmapImage.h>
 #include <WebCore/ColorSpace.h>
 #include <WebCore/DisplayList.h>
 #include <WebCore/DisplayListItems.h>
@@ -116,7 +115,7 @@ TEST(BifurcatedGraphicsContextTests, Text)
     runTest(secondaryContext->takeDisplayList());
 }
 
-static RefPtr<BitmapImage> createRedImage()
+static RefPtr<NativeImage> createRedImage()
 {
     auto imageBuffer = ImageBuffer::create({ 1, 1 }, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
@@ -124,11 +123,7 @@ static RefPtr<BitmapImage> createRedImage()
 
     imageBuffer->context().fillRect(FloatRect { 0, 0, 1, 1 }, Color::red);
 
-    RefPtr nativeImage = imageBuffer->copyNativeImage();
-    if (!nativeImage)
-        return nullptr;
-
-    return BitmapImage::create(nativeImage.releaseNonNull());
+    return imageBuffer->copyNativeImage();
 }
 
 TEST(BifurcatedGraphicsContextTests, DrawPattern)
@@ -144,11 +139,7 @@ TEST(BifurcatedGraphicsContextTests, DrawPattern)
     auto redImage = createRedImage();
     ASSERT_TRUE(redImage);
 
-    // Tiling reaches a context as a pattern.
-    RefPtr nativeImage = redImage->currentNativeImage(WebCore::ConcreteObjectSize::fixed(FloatSize { 1, 1 }));
-    ASSERT_TRUE(nativeImage);
-
-    ctx.drawPattern(*nativeImage, FloatRect { 0, 0, 100, 100 }, FloatRect { 0, 0, 1, 1 }, AffineTransform { }, FloatPoint { }, FloatSize { });
+    ctx.drawPattern(*redImage, FloatRect { 0, 0, 100, 100 }, FloatRect { 0, 0, 1, 1 }, AffineTransform { }, FloatPoint { }, FloatSize { });
 
     // The primary context should be red.
     CGContextFlush(primaryCGContext.get());
@@ -178,7 +169,7 @@ TEST(BifurcatedGraphicsContextTests, DrawImage)
     auto redImage = createRedImage();
     ASSERT_TRUE(redImage);
 
-    redImage->draw(ctx, WebCore::ConcreteObjectSize::fixed(FloatSize { 1, 1 }), FloatRect { 0, 0, 100, 100 }, FloatRect { 0, 0, 1, 1 });
+    ctx.drawNativeImage(*redImage, FloatRect { 0, 0, 100, 100 }, FloatRect { 0, 0, 1, 1 });
 
     // The primary context should be red.
     CGContextFlush(primaryCGContext.get());
@@ -302,7 +293,7 @@ TEST(BifurcatedGraphicsContextTests, ApplyDeviceScaleFactor)
     EXPECT_EQ(primaryCTM.yScale(), 2);
 }
 
-TEST(BifurcatedGraphicsContextTests, ClipToImageBuffer)
+TEST(BifurcatedGraphicsContextTests, ClipToNativeImage)
 {
     Ref primaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
     Ref secondaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
@@ -310,21 +301,22 @@ TEST(BifurcatedGraphicsContextTests, ClipToImageBuffer)
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
 
     auto imageBuffer = ImageBuffer::create({ 100, 100 }, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
-    ctx.clipToImageBuffer(*imageBuffer, { 0, 0, 100, 100 });
+    RefPtr nativeImage = imageBuffer->copyNativeImage();
+    ASSERT_TRUE(nativeImage);
+    ctx.clipToNativeImage(*nativeImage, { 0, 0, 100, 100 });
 
-    auto runTest = [&] (const DisplayList& displayList) {
-        EXPECT_FALSE(displayList.items().empty());
-        bool sawClipToImageBuffer = false;
-
+    auto runTest = [&](const DisplayList& displayList) {
+        unsigned clipCount = 0;
         for (auto& item : displayList.items()) {
-            if (std::holds_alternative<ClipToImageBuffer>(item))
-                sawClipToImageBuffer = true;
+            if (auto* clip = std::get_if<ClipToNativeImage>(&item)) {
+                EXPECT_EQ(&clip->nativeImage(), nativeImage.get());
+                ++clipCount;
+            }
         }
-
-        EXPECT_TRUE(sawClipToImageBuffer);
+        EXPECT_EQ(clipCount, 1u);
     };
 
-    // Ensure that both contexts have clip-to-image-buffer commands.
+    // Ensure that both contexts have clip-to-native-image commands with the same image.
     runTest(primaryContext->takeDisplayList());
     runTest(secondaryContext->takeDisplayList());
 }

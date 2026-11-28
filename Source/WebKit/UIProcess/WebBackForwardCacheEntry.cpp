@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebBackForwardCacheEntry.h"
 
+#include "FrameProcess.h"
 #include "Logging.h"
 #include "SuspendedPageProxy.h"
 #include "WebBackForwardCache.h"
@@ -123,6 +124,13 @@ HashSet<Ref<WebProcessProxy>> WebBackForwardCacheEntry::allProcesses() const
     return result;
 }
 
+void WebBackForwardCacheEntry::setMainFrameProcess(FrameProcess& frameProcess)
+{
+    ASSERT(!m_suspendedPage);
+    ASSERT(frameProcess.process().coreProcessIdentifier() == m_processIdentifier);
+    m_mainFrameProcess = frameProcess;
+}
+
 void WebBackForwardCacheEntry::setCachedChildren(Vector<Ref<WebFrameProxy>>&& children)
 {
     ASSERT(m_cachedChildren.isEmpty());
@@ -172,7 +180,7 @@ void WebBackForwardCacheEntry::expirationTimerFired()
 {
     ASSERT(m_backForwardItemID);
     ASSERT(m_backForwardFrameItemID);
-    RELEASE_LOG(BackForwardCache, "%p - WebBackForwardCacheEntry::expirationTimerFired backForwardItemID=%s backForwardFrameItemID=%s, hasSuspendedPage=%d", this, m_backForwardItemID->toString().utf8(), m_backForwardFrameItemID->toString().utf8(), !!m_suspendedPage);
+    RELEASE_LOG(BackForwardCache, "%p - WebBackForwardCacheEntry::expirationTimerFired backForwardItemID=%s backForwardFrameItemID=%s, hasSuspendedPage=%d", this, makeUTF8CString(m_backForwardItemID->toString()), makeUTF8CString(m_backForwardFrameItemID->toString()), !!m_suspendedPage);
     RefPtr item = WebBackForwardListFrameItem::itemForID(*m_backForwardItemID, *m_backForwardFrameItemID);
     ASSERT(item);
     if (RefPtr backForwardCache = m_backForwardCache.get()) {

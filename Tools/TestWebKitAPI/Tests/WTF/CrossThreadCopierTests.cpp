@@ -137,34 +137,6 @@ TEST(WTF_CrossThreadCopier, Variant)
     EXPECT_EQ(std::get<URL>(copy).string().impl(), impl);
 }
 
-TEST(WTF_CrossThreadCopier, UncheckedKeyHashMap)
-{
-    UncheckedKeyHashMap<UTF8CString, StringImpl*> impls;
-
-    UncheckedKeyHashMap<String, String> map;
-    map.add("foo"_str, "fooValue"_str);
-    map.add("bar"_str, "barValue"_str);
-    for (auto& [key, value] : map) {
-        impls.add(key.utf8(), key.impl());
-        impls.add(value.utf8(), value.impl());
-    }
-
-    auto copy = crossThreadCopy(map);
-    EXPECT_EQ(copy, map);
-    for (auto& [key, value] : copy) {
-        EXPECT_NE(key.impl(), impls.get(key.utf8()));
-        EXPECT_NE(value.impl(), impls.get(value.utf8()));
-    }
-
-    auto copy2 = crossThreadCopy(WTF::move(map));
-    EXPECT_EQ(copy2, copy);
-    EXPECT_TRUE(map.isEmpty());
-    for (auto& [key, value] : copy2) {
-        EXPECT_EQ(key.impl(), impls.get(key.utf8()));
-        EXPECT_EQ(value.impl(), impls.get(value.utf8()));
-    }
-}
-
 TEST(WTF_CrossThreadCopier, HashMap)
 {
     HashMap<UTF8CString, StringImpl*> impls;
@@ -173,23 +145,23 @@ TEST(WTF_CrossThreadCopier, HashMap)
     map.add("foo"_str, "fooValue"_str);
     map.add("bar"_str, "barValue"_str);
     for (auto& [key, value] : map) {
-        impls.add(key.utf8(), key.impl());
-        impls.add(value.utf8(), value.impl());
+        impls.add(makeUTF8CString(key), key.impl());
+        impls.add(makeUTF8CString(value), value.impl());
     }
 
     auto copy = crossThreadCopy(map);
     EXPECT_EQ(copy, map);
     for (auto& [key, value] : copy) {
-        EXPECT_NE(key.impl(), impls.get(key.utf8()));
-        EXPECT_NE(value.impl(), impls.get(value.utf8()));
+        EXPECT_NE(key.impl(), impls.get(makeUTF8CString(key)));
+        EXPECT_NE(value.impl(), impls.get(makeUTF8CString(value)));
     }
 
     auto copy2 = crossThreadCopy(WTF::move(map));
     EXPECT_EQ(copy2, copy);
     EXPECT_TRUE(map.isEmpty());
     for (auto& [key, value] : copy2) {
-        EXPECT_EQ(key.impl(), impls.get(key.utf8()));
-        EXPECT_EQ(value.impl(), impls.get(value.utf8()));
+        EXPECT_EQ(key.impl(), impls.get(makeUTF8CString(key)));
+        EXPECT_EQ(value.impl(), impls.get(makeUTF8CString(value)));
     }
 }
 
@@ -201,18 +173,18 @@ TEST(WTF_CrossThreadCopier, HashSet)
     set.add("foo"_str);
     set.add("bar"_str);
     for (auto& item : set)
-        impls.add(item.utf8(), item.impl());
+        impls.add(makeUTF8CString(item), item.impl());
 
     auto copy = crossThreadCopy(set);
     EXPECT_EQ(copy, set);
     for (auto& item : copy)
-        EXPECT_NE(item.impl(), impls.get(item.utf8()));
+        EXPECT_NE(item.impl(), impls.get(makeUTF8CString(item)));
 
     auto copy2 = crossThreadCopy(WTF::move(set));
     EXPECT_EQ(copy2, copy);
     EXPECT_TRUE(set.isEmpty());
     for (auto& item : copy2)
-        EXPECT_EQ(item.impl(), impls.get(item.utf8()));
+        EXPECT_EQ(item.impl(), impls.get(makeUTF8CString(item)));
 }
 
 TEST(WTF_CrossThreadCopier, Optional)

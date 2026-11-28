@@ -38,7 +38,7 @@ public:
     void layout() override;
     void insertedIntoTree() final;
 
-    static float LEGACY_NODELETE computeTextPaintingScale(const RenderElement&);
+    NODELETE static float computeTextPaintingScale(const RenderElement&);
     static AffineTransform transformOnNonScalingStroke(RenderObject*, const AffineTransform& resourceTransform);
 
     void removeClientFromCacheAndMarkForInvalidation(RenderElement&, bool markForInvalidation = true) override;
@@ -51,7 +51,7 @@ public:
     void markAllClientLayersForInvalidation();
 
 protected:
-    LegacyRenderSVGResourceContainer(Type, SVGElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGResourceContainer(Type, SVGElement&, UniqueRef<Style::ComputedStyle>&&);
 
     enum InvalidationMode {
         LayoutAndBoundariesInvalidation,

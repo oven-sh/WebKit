@@ -1,0 +1,25 @@
+# const Maker = Array[Symbol.species]; Maker.from("hi")
+# The row of @@species says that a read answers its receiver. The read is made on `Array`, in sight: what it gives is `Array`, `from` is found on it, and the function of the library behind Array.from
+# is in the program. If the answer counted as a value that nobody knows, `from` would be looked for on what has been let go alone, which `Array` has not: "Array.from was left out".
+# The control: property-whose-row-answers-its-receiver-brings-nothing-in-by-itself.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="ArrayConstructor.js" displayPath="ArrayConstructor.js" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = PropGet v0 key=@@species
+    v2 = PropGet v1 key="from"
+    v3 = String string="hi"
+    v4 = Call v2, v1, v3 calleeKey="from"
+    Return v4
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

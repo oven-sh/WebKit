@@ -208,18 +208,14 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
     RELEASE_ASSERT(callee().isCell());
     SourceOrigin sourceOrigin;
     bool haveSkippedFirstFrame = false;
-    StackVisitor::visit(this, vm, [&](auto& visitor) {
+    auto findCaller = [&](auto& visitor) {
         if (!std::exchange(haveSkippedFirstFrame, true))
             return IterationStatus::Continue;
 
 #if ENABLE(AOT)
         if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
             if (visitor->isCompiledFrame()) {
-                const AOT::CompiledFrame& frame = visitor->compiledFrame();
-                if (frame.visibility != AOT::TraceVisibility::Visible)
-                    return IterationStatus::Continue;
-                sourceOrigin = frame.sourceOrigin();
-                return IterationStatus::Done;
+                return AOT::findCallerOrigin(visitor.compiledFrames(), sourceOrigin) ? IterationStatus::Done : IterationStatus::Continue;
             }
         }
 #endif
@@ -254,7 +250,14 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
 
         RELEASE_ASSERT_NOT_REACHED();
         return IterationStatus::Done;
-    });
+    };
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) {
+        StackVisitor::visitWithCompiledFrames(this, vm, findCaller, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
+        return sourceOrigin;
+    }
+#endif
+    StackVisitor::visit(this, vm, findCaller);
     return sourceOrigin;
 }
 

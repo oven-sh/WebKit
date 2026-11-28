@@ -777,6 +777,8 @@ void run(const TestConfig* config)
     RUN(testPhiFoldInBlockReachedOnlyByRetreatingEdge(true));
     RUN(testPhiFoldConstantInBlockReachedOnlyByRetreatingEdge(false));
     RUN(testPhiFoldConstantInBlockReachedOnlyByRetreatingEdge(true));
+    RUN(testPhiFoldInputFromMergedBlock(false));
+    RUN(testPhiFoldInputFromMergedBlock(true));
     RUN(testPhiFoldDeadLoopHeaderEnteredFromRoot());
     RUN(testPhiFoldLoopPhiTrivialAfterLatch());
     RUN(testBranchNotEqualFoldPtr(42));
@@ -1234,6 +1236,7 @@ void run(const TestConfig* config)
     RUN(testWasmBoundsCheck(std::numeric_limits<unsigned>::max() - 5));
 
     RUN(testWasmAddress());
+    RUN(testWasmAddressWithConstantIndex());
     RUN(testWasmAddressZeroExtendScaledIndex());
     RUN(testWasmAddressZeroExtend32BitShiftWraps());
     RUN(testWasmAddressScaledIndexWithLockedShlChild());
@@ -1568,6 +1571,8 @@ void run(const TestConfig* config)
         RUN(testVectorRelaxedDotI8x16I7x16());
         RUN(testVectorRelaxedDotI8x16I7x16Add());
         RUN(testVectorDotProductSplatOne());
+        RUN(testVectorReplaceLaneOfZeroWithLoad());
+        RUN(testVectorDotProductSum());
         RUN(testVectorShrZipToExtend());
         RUN(testVectorShrZipToExtendI32());
         RUN(testVectorShrZipToExtendI64());
@@ -1605,10 +1610,24 @@ void run(const TestConfig* config)
         RUN(testUMulHigh32());
         RUN(testUMulHigh64());
         RUN(testMemoryMove());
-        RUN(testMemoryFill());
         RUN(testMemoryMoveConstant());
-        RUN(testMemoryFillConstant());
-        RUN(testGCSafeMemoryMove());
+        RUN(testMemoryMoveShort(false));
+        RUN(testGCSafeMemoryMove(false));
+        RUN(testMemoryFill(MemoryFill8, false, false));
+        RUN(testMemoryFill(MemoryFill16, false, false));
+        RUN(testMemoryFill(MemoryFill32, false, false));
+        RUN(testMemoryFill(MemoryFill64, false, false));
+        RUN(testMemoryFill(MemoryFill64, true, false));
+        if (Options::useWasmSIMD()) {
+            RUN(testMemoryMoveShort(true));
+            RUN(testGCSafeMemoryMove(true));
+            RUN(testMemoryFill(MemoryFill8, false, true));
+            RUN(testMemoryFill(MemoryFill16, false, true));
+            RUN(testMemoryFill(MemoryFill32, false, true));
+            RUN(testMemoryFill(MemoryFill64, false, true));
+            RUN(testMemoryFill(MemoryFill64, true, true));
+            RUN(testMemoryFill(MemoryFill128, false, true));
+        }
     }
 
     Lock lock;
@@ -1675,6 +1694,8 @@ int main(int argc, char** argv)
     WTF::initializeMainThread();
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
+        // A disassembly covers the whole allocation, whose end is not written where branches were compacted.
+        JSC::Options::zeroExecutableMemoryOnFree() = true;
     });
 
 #if ENABLE(JIT_OPERATION_VALIDATION)

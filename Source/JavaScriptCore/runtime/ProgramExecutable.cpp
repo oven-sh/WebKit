@@ -68,7 +68,7 @@ enum class GlobalPropertyLookUpStatus {
 static GlobalPropertyLookUpStatus hasRestrictedGlobalProperty(JSGlobalObject* globalObject, PropertyName propertyName)
 {
 #if ENABLE(AOT)
-    if (globalObject->structure()->isImmutablePropertyForReader(propertyName.uid())) [[unlikely]]
+    if (globalObject->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
         return GlobalPropertyLookUpStatus::Immutable;
 #endif
     PropertyDescriptor descriptor;

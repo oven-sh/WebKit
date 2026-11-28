@@ -332,8 +332,10 @@ static void appendListItem(StringBuilder& builder, const ValueType& value)
 }
 
 template <typename ContainerType>
-static String buildList(const ContainerType& values)
+static String buildIntegerList(const ContainerType& values)
 {
+    using ValueType = std::remove_reference_t<decltype(*std::begin(values))>;
+    static_assert(std::is_arithmetic_v<ValueType>, "buildIntegerList() must only be used with integer domain IDs, not domain strings");
     StringBuilder builder;
     for (auto& value : values)
         appendListItem(builder, value);
@@ -341,17 +343,18 @@ static String buildList(const ContainerType& values)
 }
 
 template <typename ValueType>
-static String buildList(const Vector<ValueType>& values)
+static String buildIntegerList(const Vector<ValueType>& values)
 {
+    static_assert(std::is_arithmetic_v<ValueType>, "buildIntegerList() must only be used with integer domain IDs, not domain strings");
     StringBuilder builder;
     for (auto& value : borrow(values))
         appendListItem(builder, value);
     return builder.toString();
 }
 
-static WeakHashSet<ResourceLoadStatisticsStore>& LEGACY_NODELETE allStores()
+NODELETE static WeakHashSet<ResourceLoadStatisticsStore>& allStores()
 {
-    ASSERT(!RunLoop::isMain());
+    RELEASE_ASSERT(!RunLoop::isMain());
 
     static NeverDestroyed<WeakHashSet<ResourceLoadStatisticsStore>> map;
     return map;
@@ -360,13 +363,13 @@ static WeakHashSet<ResourceLoadStatisticsStore>& LEGACY_NODELETE allStores()
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ResourceLoadStatisticsStore);
 
 ResourceLoadStatisticsStore::ResourceLoadStatisticsStore(WebResourceLoadStatisticsStore& store, SuspendableWorkQueue& workQueue, ShouldIncludeLocalhost shouldIncludeLocalhost, const String& storageDirectoryPath, PAL::SessionID sessionID)
-    : DatabaseUtilities(FileSystem::pathByAppendingComponent(storageDirectoryPath, "observations.db"_s))
+    : DatabaseUtilities(workQueue, FileSystem::pathByAppendingComponent(storageDirectoryPath, "observations.db"_s))
     , m_store(store)
     , m_workQueue(workQueue)
     , m_sessionID(sessionID)
     , m_shouldIncludeLocalhost(shouldIncludeLocalhost)
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(m_workQueue);
 
     openAndUpdateSchemaIfNecessary();
     enableForeignKeys();
@@ -380,7 +383,7 @@ ResourceLoadStatisticsStore::ResourceLoadStatisticsStore(WebResourceLoadStatisti
 
 ResourceLoadStatisticsStore::~ResourceLoadStatisticsStore()
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(m_workQueue);
     close();
     allStores().remove(*this);
 }
@@ -392,26 +395,26 @@ void ResourceLoadStatisticsStore::openITPDatabase()
 
 bool ResourceLoadStatisticsStore::shouldSkip(const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     return !(parameters().isRunningTest)
     && m_shouldIncludeLocalhost == ShouldIncludeLocalhost::No && domain.string() == "localhost"_s;
 }
 
 void ResourceLoadStatisticsStore::setIsRunningTest(bool value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     m_parameters.isRunningTest = value;
 }
 
 void ResourceLoadStatisticsStore::setShouldClassifyResourcesBeforeDataRecordsRemoval(bool value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     m_parameters.shouldClassifyResourcesBeforeDataRecordsRemoval = value;
 }
 
 void ResourceLoadStatisticsStore::removeDataRecords(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (!shouldRemoveDataRecords()) {
         completionHandler();
@@ -425,7 +428,7 @@ void ResourceLoadStatisticsStore::removeDataRecords(CompletionHandler<void()>&& 
     }
 
     if (m_debugLoggingEnabled) [[unlikely]] {
-        ITP_DEBUG_MODE_RELEASE_LOG("About to remove data records for %" PUBLIC_LOG_STRING ".", domainsToString(domainsToDeleteOrRestrictWebsiteDataFor).utf8());
+        ITP_DEBUG_MODE_RELEASE_LOG("About to remove data records for %" PUBLIC_LOG_STRING ".", makeUTF8CString(domainsToString(domainsToDeleteOrRestrictWebsiteDataFor)));
         debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] About to remove data records for: ["_s, domainsToString(domainsToDeleteOrRestrictWebsiteDataFor), "]."_s));
     }
 
@@ -460,19 +463,19 @@ void ResourceLoadStatisticsStore::removeDataRecords(CompletionHandler<void()>&& 
 
 void ResourceLoadStatisticsStore::processStatisticsAndDataRecords(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (m_parameters.shouldClassifyResourcesBeforeDataRecordsRemoval)
         classifyPrevalentResources();
     
     removeDataRecords([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] () mutable {
-        ASSERT(!RunLoop::isMain());
         RefPtr protectedThis = weakThis;
         if (!protectedThis) {
             completionHandler();
             return;
         }
 
+        assertIsCurrent(protectedThis->m_workQueue);
         protectedThis->pruneStatisticsIfNeeded();
 
         protectedThis->logTestingEvent("Storage Synced"_s);
@@ -482,7 +485,7 @@ void ResourceLoadStatisticsStore::processStatisticsAndDataRecords(CompletionHand
 
 std::optional<HashMap<RegistrableDomain, WallTime>> ResourceLoadStatisticsStore::loadWebsitesWithUserInteraction()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     HashMap<RegistrableDomain, WallTime> results;
     auto statement = m_database->prepareStatement(domainWithUserInteractionQuery);
@@ -497,7 +500,7 @@ std::optional<HashMap<RegistrableDomain, WallTime>> ResourceLoadStatisticsStore:
 
 void ResourceLoadStatisticsStore::grandfatherExistingWebsiteData(CompletionHandler<void()>&& callback)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }, callback = WTF::move(callback), workQueue = m_workQueue, store = Ref { m_store.get() }] () mutable {
         store->registrableDomainsWithWebsiteData(WebResourceLoadStatisticsStore::monitoredDataTypes(), [weakThis = WTF::move(weakThis), callback = WTF::move(callback), workQueue] (HashSet<RegistrableDomain>&& domainsWithWebsiteData) mutable {
@@ -519,7 +522,7 @@ void ResourceLoadStatisticsStore::grandfatherExistingWebsiteData(CompletionHandl
 
 void ResourceLoadStatisticsStore::setResourceLoadStatisticsDebugMode(bool enable)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (m_debugModeEnabled == enable)
         return;
@@ -562,7 +565,7 @@ void ResourceLoadStatisticsStore::setManagedDomains(HashSet<RegistrableDomain>&&
 
 void ResourceLoadStatisticsStore::scheduleStatisticsProcessingRequestIfNecessary()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     m_pendingStatisticsProcessingRequestIdentifier = ++m_lastStatisticsProcessingRequestIdentifier;
     m_workQueue->dispatchAfter(minimumStatisticsProcessingInterval, [weakThis = WeakPtr { *this }, statisticsProcessingRequestIdentifier = *m_pendingStatisticsProcessingRequestIdentifier] {
@@ -582,14 +585,14 @@ void ResourceLoadStatisticsStore::scheduleStatisticsProcessingRequestIfNecessary
 
 void ResourceLoadStatisticsStore::cancelPendingStatisticsProcessingRequest()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     m_pendingStatisticsProcessingRequestIdentifier = std::nullopt;
 }
 
 void ResourceLoadStatisticsStore::setTimeToLiveUserInteraction(Seconds seconds)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     ASSERT(seconds >= 0_s);
 
     m_parameters.timeToLiveUserInteraction = seconds;
@@ -597,7 +600,7 @@ void ResourceLoadStatisticsStore::setTimeToLiveUserInteraction(Seconds seconds)
 
 void ResourceLoadStatisticsStore::setMinimumTimeBetweenDataRecordsRemoval(Seconds seconds)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     ASSERT(seconds >= 0_s);
 
     m_parameters.minimumTimeBetweenDataRecordsRemoval = seconds;
@@ -605,7 +608,7 @@ void ResourceLoadStatisticsStore::setMinimumTimeBetweenDataRecordsRemoval(Second
 
 void ResourceLoadStatisticsStore::setGrandfatheringTime(Seconds seconds)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     ASSERT(seconds >= 0_s);
 
     m_parameters.grandfatheringTime = seconds;
@@ -613,7 +616,7 @@ void ResourceLoadStatisticsStore::setGrandfatheringTime(Seconds seconds)
 
 void ResourceLoadStatisticsStore::setCacheMaxAgeCap(Seconds seconds)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     ASSERT(seconds >= 0_s);
 
     m_parameters.cacheMaxAgeCapTime = seconds;
@@ -622,7 +625,7 @@ void ResourceLoadStatisticsStore::setCacheMaxAgeCap(Seconds seconds)
 
 void ResourceLoadStatisticsStore::updateCacheMaxAgeCap()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     
     RunLoop::mainSingleton().dispatch([store = Ref { m_store.get() }, seconds = m_parameters.cacheMaxAgeCapTime] () {
         store->setCacheMaxAgeCap(seconds, [] { });
@@ -631,7 +634,7 @@ void ResourceLoadStatisticsStore::updateCacheMaxAgeCap()
 
 void ResourceLoadStatisticsStore::updateClientSideCookiesAgeCap()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     Seconds capTime;
 #if ENABLE(JS_COOKIE_CHECKING)
@@ -650,7 +653,7 @@ void ResourceLoadStatisticsStore::updateClientSideCookiesAgeCap()
 
 bool ResourceLoadStatisticsStore::shouldRemoveDataRecords() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (m_dataRecordsBeingRemoved)
         return false;
@@ -660,7 +663,7 @@ bool ResourceLoadStatisticsStore::shouldRemoveDataRecords() const
 
 void ResourceLoadStatisticsStore::setDataRecordsBeingRemoved(bool value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     m_dataRecordsBeingRemoved = value;
     if (m_dataRecordsBeingRemoved)
@@ -669,7 +672,7 @@ void ResourceLoadStatisticsStore::setDataRecordsBeingRemoved(bool value)
 
 void ResourceLoadStatisticsStore::updateCookieBlockingForDomains(RegistrableDomainsToBlockCookiesFor&& domainsToBlock, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     
     RunLoop::mainSingleton().dispatch([store = Ref { m_store.get() }, domainsToBlock = crossThreadCopy(WTF::move(domainsToBlock)), completionHandler = WTF::move(completionHandler)] () mutable {
         store->callUpdatePrevalentDomainsToBlockCookiesForHandler(domainsToBlock, [store, completionHandler = WTF::move(completionHandler)]() mutable {
@@ -689,21 +692,21 @@ bool ResourceLoadStatisticsStore::shouldEnforceSameSiteStrictForSpecificDomain(c
 
 void ResourceLoadStatisticsStore::setMaxStatisticsEntries(size_t maximumEntryCount)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     m_parameters.maxStatisticsEntries = maximumEntryCount;
 }
 
 void ResourceLoadStatisticsStore::setPruneEntriesDownTo(size_t pruneTargetCount)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     m_parameters.pruneEntriesDownTo = pruneTargetCount;
 }
 
 void ResourceLoadStatisticsStore::resetParametersToDefaultValues()
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(m_workQueue);
 
     m_parameters = { };
     m_appBoundDomains.clear();
@@ -716,7 +719,7 @@ void ResourceLoadStatisticsStore::resetParametersToDefaultValues()
 
 void ResourceLoadStatisticsStore::logTestingEvent(String&& event)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     RunLoop::mainSingleton().dispatch([store = Ref { m_store.get() }, event = WTF::move(event).isolatedCopy()] {
         store->logTestingEvent(event);
@@ -725,7 +728,7 @@ void ResourceLoadStatisticsStore::logTestingEvent(String&& event)
 
 void ResourceLoadStatisticsStore::removeAllStorageAccess(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     RunLoop::mainSingleton().dispatch([store = Ref { m_store.get() }, completionHandler = WTF::move(completionHandler)]() mutable {
         store->removeAllStorageAccess([store, completionHandler = WTF::move(completionHandler)]() mutable {
             store->statisticsQueue().dispatch([completionHandler = WTF::move(completionHandler)]() mutable {
@@ -737,7 +740,7 @@ void ResourceLoadStatisticsStore::removeAllStorageAccess(CompletionHandler<void(
 
 void ResourceLoadStatisticsStore::didCreateNetworkProcess()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     updateCookieBlocking([]() { });
     updateCacheMaxAgeCap();
@@ -749,13 +752,13 @@ void ResourceLoadStatisticsStore::debugBroadcastConsoleMessage(MessageSource sou
     if (!RunLoop::isMain()) {
         RunLoop::mainSingleton().dispatch([store = Ref { store() }, source = crossThreadCopy(source), level = crossThreadCopy(level), message = crossThreadCopy(message)]() {
             if (CheckedPtr networkSession = store->networkSession())
-                networkSession->networkProcess().broadcastConsoleMessage(networkSession->sessionID(), source, level, message);
+                protect(NetworkProcess::singleton())->broadcastConsoleMessage(networkSession->sessionID(), source, level, message);
         });
         return;
     }
 
     if (CheckedPtr networkSession = m_store->networkSession())
-        networkSession->networkProcess().broadcastConsoleMessage(networkSession->sessionID(), source, level, message);
+        protect(NetworkProcess::singleton())->broadcastConsoleMessage(networkSession->sessionID(), source, level, message);
 }
 
 void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, const RegistrableDomainsToBlockCookiesFor& domainsToBlock)
@@ -776,12 +779,11 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
     static const auto maxNumberOfDomainsInOneLogStatement = 50;
 
     if (domains.size() <= maxNumberOfDomainsInOneLogStatement) {
-        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to: %" PUBLIC_LOG_STRING ".", action.characters(), domainsToString(domains).utf8());
+        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to: %" PUBLIC_LOG_STRING ".", action.characters(), makeUTF8CString(domainsToString(domains)));
         return;
     }
 
-    Vector<RegistrableDomain> batch;
-    batch.reserveInitialCapacity(maxNumberOfDomainsInOneLogStatement);
+    Vector<RegistrableDomain> batch(ReserveCapacityTag { }, maxNumberOfDomainsInOneLogStatement);
 #if !RELEASE_LOG_DISABLED
     auto batchNumber = 1;
     unsigned numberOfBatches = std::ceil(domains.size() / static_cast<float>(maxNumberOfDomainsInOneLogStatement));
@@ -789,7 +791,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
 
     for (auto& domain : domains) {
         if (batch.size() == maxNumberOfDomainsInOneLogStatement) {
-            ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, domainsToString(batch).utf8());
+            ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, makeUTF8CString(domainsToString(batch)));
             batch.shrink(0);
 #if !RELEASE_LOG_DISABLED
             ++batchNumber;
@@ -798,7 +800,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
         batch.append(domain);
     }
     if (!batch.isEmpty())
-        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, domainsToString(batch).utf8());
+        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, makeUTF8CString(domainsToString(batch)));
 }
 
 bool ResourceLoadStatisticsStore::shouldExemptFromWebsiteDataDeletion(const RegistrableDomain& domain) const
@@ -1001,7 +1003,7 @@ void ResourceLoadStatisticsStore::addMissingTablesIfNecessary()
         ITP_RELEASE_LOG_ERROR("addMissingTablesIfNecessary: failed to create unique indices");
 }
 
-template<typename T, typename U, size_t size> bool LEGACY_NODELETE vectorEqualsArray(const Vector<T>& vector, const std::array<U, size> array)
+template<typename T, typename U, size_t size> NODELETE bool vectorEqualsArray(const Vector<T>& vector, const std::array<U, size> array)
 {
     if (vector.size() != size)
         return false;
@@ -1068,14 +1070,14 @@ void ResourceLoadStatisticsStore::openAndUpdateSchemaIfNecessary()
 
 void ResourceLoadStatisticsStore::interruptAllDatabases()
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(WebResourceLoadStatisticsStore::statisticsQueueSingleton());
     for (Ref store : allStores())
         store->interrupt();
 }
 
 bool ResourceLoadStatisticsStore::isEmpty() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_observedDomainCountStatement, observedDomainCountQuery, "isEmpty"_s);
     if (!scopedStatement
@@ -1108,7 +1110,7 @@ bool ResourceLoadStatisticsStore::createUniqueIndices()
 
 bool ResourceLoadStatisticsStore::createSchema()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (!m_database->executeCommand(createObservedDomain)) {
         ITP_RELEASE_LOG_DATABASE_ERROR("createSchema: failed to execute statement createObservedDomain");
@@ -1184,7 +1186,7 @@ bool ResourceLoadStatisticsStore::createSchema()
 
 void ResourceLoadStatisticsStore::destroyStatements()
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(m_workQueue);
 
     m_observedDomainCountStatement = nullptr;
     m_insertObservedDomainStatement = nullptr;
@@ -1229,7 +1231,7 @@ void ResourceLoadStatisticsStore::destroyStatements()
 
 bool ResourceLoadStatisticsStore::insertObservedDomain(const ResourceLoadStatistics& loadStatistics)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (domainID(loadStatistics.registrableDomain)) {
         ITP_RELEASE_LOG_ERROR("insertObservedDomain: domain already exists");
@@ -1265,7 +1267,7 @@ bool ResourceLoadStatisticsStore::relationshipExists(SQLiteStatementAutoResetSco
     if (!firstDomainID)
         return false;
 
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (!statement
         || statement->bindInt(1, *firstDomainID) != SQLITE_OK
@@ -1279,7 +1281,7 @@ bool ResourceLoadStatisticsStore::relationshipExists(SQLiteStatementAutoResetSco
 
 std::optional<unsigned> ResourceLoadStatisticsStore::domainID(const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_domainIDFromStringStatement, domainIDFromStringQuery, "domainID"_s);
     if (!scopedStatement || scopedStatement->bindText(1, domain.string()) != SQLITE_OK) {
@@ -1295,29 +1297,46 @@ std::optional<unsigned> ResourceLoadStatisticsStore::domainID(const RegistrableD
     return scopedStatement->columnInt(0);
 }
 
-String ResourceLoadStatisticsStore::ensureAndMakeDomainList(const HashSet<RegistrableDomain>& domainList)
+Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensureAndMakeDomainList(const HashSet<RegistrableDomain>& domainList)
 {
-    StringBuilder builder;
+    Vector<RegistrableDomain> ensuredDomains;
     for (auto& topFrameResource : domainList) {
         // Insert query will fail if top frame domain is not already in the database
         if (ensureResourceStatisticsForRegistrableDomain(topFrameResource, "ensureAndMakeDomainList"_s).second)
-            builder.append(builder.isEmpty() ? ""_s : ", "_s, '"', topFrameResource.string(), '"');
+            ensuredDomains.append(topFrameResource);
     }
-    return builder.toString();
+    return ensuredDomains;
 }
 
 void ResourceLoadStatisticsStore::insertDomainRelationshipList(const String& statement, const HashSet<RegistrableDomain>& domainList, unsigned domainID)
 {
-    auto insertRelationshipStatement = m_database->prepareStatementSlow(makeString(statement, ensureAndMakeDomainList(domainList), " );"_s));
+    auto ensuredDomains = ensureAndMakeDomainList(domainList);
+    if (ensuredDomains.isEmpty())
+        return;
+
+    StringBuilder placeholders;
+    for (size_t i = 0; i < ensuredDomains.size(); ++i)
+        placeholders.append(i ? ", ?"_s : "?"_s);
+
+    auto insertRelationshipStatement = m_database->prepareStatementSlow(makeString(statement, placeholders.toString(), " );"_s));
 
     if (!insertRelationshipStatement || insertRelationshipStatement->bindInt(1, domainID) != SQLITE_OK) {
         ITP_RELEASE_LOG_DATABASE_ERROR("insertDomainRelationshipList: failed to bind first parameter");
         return;
     }
 
+    int domainBindStart = 2;
     if (statement.contains("REPLACE"_s)) {
         if (insertRelationshipStatement->bindDouble(2, nowTime(m_timeAdvanceForTesting).secondsSinceEpoch().value()) != SQLITE_OK) {
             ITP_RELEASE_LOG_DATABASE_ERROR("insertDomainRelationshipList: failed to bind second parameter");
+            return;
+        }
+        domainBindStart = 3;
+    }
+
+    for (size_t i = 0; i < ensuredDomains.size(); ++i) {
+        if (insertRelationshipStatement->bindText(domainBindStart + static_cast<int>(i), borrow(ensuredDomains)[i].string()) != SQLITE_OK) {
+            ITP_RELEASE_LOG_DATABASE_ERROR("insertDomainRelationshipList: failed to bind domain");
             return;
         }
     }
@@ -1328,7 +1347,7 @@ void ResourceLoadStatisticsStore::insertDomainRelationshipList(const String& sta
 
 void ResourceLoadStatisticsStore::insertDomainRelationships(const ResourceLoadStatistics& loadStatistics)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -1351,7 +1370,7 @@ void ResourceLoadStatisticsStore::insertDomainRelationships(const ResourceLoadSt
 
 void ResourceLoadStatisticsStore::merge(WebCore::SQLiteStatement* current, const ResourceLoadStatistics& other)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     RELEASE_LOG(ResourceLoadStatistics, "ResourceLoadStatisticsStore::merge: sessionID=%" PRIu64, m_sessionID.toUInt64());
 
     auto transactionScope = beginTransactionIfNecessary();
@@ -1391,7 +1410,7 @@ void ResourceLoadStatisticsStore::merge(WebCore::SQLiteStatement* current, const
 
 void ResourceLoadStatisticsStore::mergeStatistic(const ResourceLoadStatistics& statistic)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
     auto scopedStatement = this->scopedStatement(m_getResourceDataByDomainNameStatement, getResourceDataByDomainNameQuery, "mergeStatistic"_s);
@@ -1407,7 +1426,7 @@ void ResourceLoadStatisticsStore::mergeStatistic(const ResourceLoadStatistics& s
 
 void ResourceLoadStatisticsStore::mergeStatistics(Vector<ResourceLoadStatistics>&& statistics)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     if (statistics.isEmpty())
         return;
 
@@ -1468,14 +1487,14 @@ Vector<ITPThirdPartyDataForSpecificFirstParty> ResourceLoadStatisticsStore::getT
     return thirdPartyDataForSpecificFirstPartyDomains;
 }
 
-static bool LEGACY_NODELETE hasBeenThirdParty(unsigned timesUnderFirstParty)
+NODELETE static bool hasBeenThirdParty(unsigned timesUnderFirstParty)
 {
     return timesUnderFirstParty > 0;
 }
 
 Vector<ITPThirdPartyData> ResourceLoadStatisticsStore::aggregatedThirdPartyData() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     Vector<ITPThirdPartyData> thirdPartyDataList;
     auto mode = thirdPartyCookieBlockingMode();
@@ -1501,20 +1520,45 @@ Vector<ITPThirdPartyData> ResourceLoadStatisticsStore::aggregatedThirdPartyData(
     return thirdPartyDataList;
 }
 
+void ResourceLoadStatisticsStore::updateObservedDomainsList(ASCIILiteral updateClause, const HashSet<RegistrableDomain>& domains, ASCIILiteral logContext)
+{
+    assertIsCurrent(m_workQueue);
+
+    if (domains.isEmpty())
+        return;
+
+    StringBuilder placeholders;
+    for (size_t i = 0; i < domains.size(); ++i)
+        placeholders.append(i ? ", ?"_s : "?"_s);
+
+    auto statement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET "_s, updateClause, " WHERE registrableDomain IN ("_s, placeholders.toString(), ')'));
+    if (!statement) {
+        ITP_RELEASE_LOG_DATABASE_ERROR("%" PUBLIC_LOG_STRING ": failed to prepare statement", logContext.characters());
+        return;
+    }
+
+    int bindIndex = 1;
+    for (auto& domain : domains) {
+        if (statement->bindText(bindIndex++, domain.string()) != SQLITE_OK) {
+            ITP_RELEASE_LOG_DATABASE_ERROR("%" PUBLIC_LOG_STRING ": failed to bind domain", logContext.characters());
+            return;
+        }
+    }
+
+    if (statement->step() != SQLITE_DONE)
+        ITP_RELEASE_LOG_DATABASE_ERROR("%" PUBLIC_LOG_STRING ": failed to step statement", logContext.characters());
+}
+
 void ResourceLoadStatisticsStore::incrementRecordsDeletedCountForDomains(HashSet<RegistrableDomain>&& domains)
 {
-    ASSERT(!RunLoop::isMain());
-
-    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET dataRecordsRemoved = dataRecordsRemoved + 1 WHERE registrableDomain IN ("_s, buildList(domains), ')'));
-    if (!domainsToUpdateStatement || domainsToUpdateStatement->step() != SQLITE_DONE)
-        ITP_RELEASE_LOG_DATABASE_ERROR("incrementRecordsDeletedCountForDomains: failed to step statement");
+    updateObservedDomainsList("dataRecordsRemoved = dataRecordsRemoved + 1"_s, domains, "incrementRecordsDeletedCountForDomains"_s);
 }
 
 static constexpr unsigned maxNumberOfRecursiveCallsInRedirectTraceBack { 50 };
 
 unsigned ResourceLoadStatisticsStore::recursivelyFindNonPrevalentDomainsThatRedirectedToThisDomain(unsigned primaryDomainID, StdSet<unsigned>& nonPrevalentRedirectionSources, unsigned numberOfRecursiveCalls)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (numberOfRecursiveCalls >= maxNumberOfRecursiveCallsInRedirectTraceBack) {
         ITP_RELEASE_LOG_ERROR("recursivelyFindNonPrevalentDomainsThatRedirectedToThisDomain: hit %u recursive calls in redirect backtrace", maxNumberOfRecursiveCallsInRedirectTraceBack);
@@ -1562,7 +1606,7 @@ unsigned ResourceLoadStatisticsStore::recursivelyFindNonPrevalentDomainsThatRedi
 
 void ResourceLoadStatisticsStore::markAsPrevalentIfHasRedirectedToPrevalent()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     StdSet<unsigned> prevalentDueToRedirect;
     auto subresourceRedirectStatement = m_database->prepareStatement("SELECT DISTINCT SubresourceUniqueRedirectsTo.subresourceDomainID FROM SubresourceUniqueRedirectsTo JOIN ObservedDomains ON ObservedDomains.domainID = SubresourceUniqueRedirectsTo.toDomainID AND ObservedDomains.isPrevalent = 1"_s);
@@ -1577,14 +1621,14 @@ void ResourceLoadStatisticsStore::markAsPrevalentIfHasRedirectedToPrevalent()
             prevalentDueToRedirect.insert(topFrameRedirectStatement->columnInt(0));
     }
 
-    auto markPrevalentStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildList(prevalentDueToRedirect), ')'));
+    auto markPrevalentStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildIntegerList(prevalentDueToRedirect), ')'));
     if (!markPrevalentStatement || markPrevalentStatement->step() != SQLITE_DONE)
         ITP_RELEASE_LOG_DATABASE_ERROR("markAsPrevalentIfHasRedirectedToPrevalent: failed to step statement");
 }
 
 HashMap<unsigned, ResourceLoadStatisticsStore::NotVeryPrevalentResources> ResourceLoadStatisticsStore::findNotVeryPrevalentResources()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     HashMap<unsigned, NotVeryPrevalentResources> results;
     auto notVeryPrevalentResourcesStatement = m_database->prepareStatement("SELECT domainID, registrableDomain, isPrevalent FROM ObservedDomains WHERE isVeryPrevalent = 0"_s);
@@ -1600,7 +1644,7 @@ HashMap<unsigned, ResourceLoadStatisticsStore::NotVeryPrevalentResources> Resour
         }
     }
 
-    auto domainIDsOfInterest = buildList(results.keys());
+    auto domainIDsOfInterest = buildIntegerList(results.keys());
 
     auto subresourceUnderTopFrameDomainsStatement = m_database->prepareStatementSlow(makeString("SELECT subresourceDomainID, COUNT(topFrameDomainID) FROM SubresourceUnderTopFrameDomains WHERE subresourceDomainID IN ("_s, domainIDsOfInterest, ") GROUP BY subresourceDomainID"_s));
     if (subresourceUnderTopFrameDomainsStatement) {
@@ -1659,7 +1703,7 @@ HashMap<unsigned, ResourceLoadStatisticsStore::NotVeryPrevalentResources> Resour
 
 void ResourceLoadStatisticsStore::reclassifyResources()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto notVeryPrevalentResources = findNotVeryPrevalentResources();
     if (notVeryPrevalentResources.isEmpty())
@@ -1679,7 +1723,7 @@ void ResourceLoadStatisticsStore::reclassifyResources()
 
 void ResourceLoadStatisticsStore::classifyPrevalentResources()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     ensurePrevalentResourcesForDebugMode();
     markAsPrevalentIfHasRedirectedToPrevalent();
     reclassifyResources();
@@ -1687,7 +1731,7 @@ void ResourceLoadStatisticsStore::classifyPrevalentResources()
 
 void ResourceLoadStatisticsStore::runIncrementalVacuumCommand()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     m_database->runIncrementalVacuumCommand();
 }
 
@@ -1699,7 +1743,7 @@ bool ResourceLoadStatisticsStore::hasStorageAccess(const TopFrameDomain& topFram
 
 void ResourceLoadStatisticsStore::hasStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(bool)>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto result = ensureResourceStatisticsForRegistrableDomain(subFrameDomain, "hasStorageAccess"_s);
     if (!result.second) {
@@ -1736,7 +1780,7 @@ void ResourceLoadStatisticsStore::hasStorageAccess(SubFrameDomain&& subFrameDoma
 
 void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessStatus)>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto subFrameStatus = ensureResourceStatisticsForRegistrableDomain(subFrameDomain, "requestStorageAccess"_s);
     if (!subFrameStatus.second)
@@ -1745,14 +1789,14 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
     switch (cookieAccess(subFrameDomain, topFrameDomain, canRequestStorageAccessWithoutUserInteraction)) {
     case CookieAccess::CannotRequest:
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("Cannot grant storage access to %" PRIVATE_LOG_STRING " since its cookies are blocked in third-party contexts and it has not received user interaction as first-party.", subFrameDomain.string().utf8());
+            ITP_DEBUG_MODE_RELEASE_LOG("Cannot grant storage access to %" PRIVATE_LOG_STRING " since its cookies are blocked in third-party contexts and it has not received user interaction as first-party.", makeUTF8CString(subFrameDomain.string()));
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Error, makeString("[ITP] Cannot grant storage access to '"_s, subFrameDomain.string(), "' since its cookies are blocked in third-party contexts and it has not received user interaction as first-party."_s));
         }
         completionHandler(StorageAccessStatus::CannotRequestAccess);
         return;
     case CookieAccess::BasedOnCookiePolicy:
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("No need to grant storage access to %" PRIVATE_LOG_STRING " since its cookies are not blocked in third-party contexts. Note that the underlying cookie policy may still block this third-party from setting cookies.", subFrameDomain.string().utf8());
+            ITP_DEBUG_MODE_RELEASE_LOG("No need to grant storage access to %" PRIVATE_LOG_STRING " since its cookies are not blocked in third-party contexts. Note that the underlying cookie policy may still block this third-party from setting cookies.", makeUTF8CString(subFrameDomain.string()));
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] No need to grant storage access to '"_s, subFrameDomain.string(), "' since its cookies are not blocked in third-party contexts. Note that the underlying cookie policy may still block this third-party from setting cookies."_s));
         }
         completionHandler(StorageAccessStatus::HasAccess);
@@ -1765,7 +1809,7 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
     auto userWasPromptedEarlier = hasUserGrantedStorageAccessThroughPrompt(*subFrameStatus.second, topFrameDomain);
     if (userWasPromptedEarlier == StorageAccessPromptWasShown::No) {
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("About to ask the user whether they want to grant storage access to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING " or not.", subFrameDomain.string().utf8(), topFrameDomain.string().utf8());
+            ITP_DEBUG_MODE_RELEASE_LOG("About to ask the user whether they want to grant storage access to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING " or not.", makeUTF8CString(subFrameDomain.string()), makeUTF8CString(topFrameDomain.string()));
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] About to ask the user whether they want to grant storage access to '"_s, subFrameDomain.string(), "' under '"_s, topFrameDomain.string(), "' or not."_s));
         }
         completionHandler(StorageAccessStatus::RequiresUserPrompt);
@@ -1774,7 +1818,7 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
 
     if (userWasPromptedEarlier == StorageAccessPromptWasShown::Yes) {
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("Storage access was granted to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING ".", subFrameDomain.string().utf8(), topFrameDomain.string().utf8());
+            ITP_DEBUG_MODE_RELEASE_LOG("Storage access was granted to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING ".", makeUTF8CString(subFrameDomain.string()), makeUTF8CString(topFrameDomain.string()));
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] Storage access was granted to '"_s, subFrameDomain.string(), "' under '"_s, topFrameDomain.string(), "'."_s));
         }
     }
@@ -1796,7 +1840,7 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
 
 void ResourceLoadStatisticsStore::queryStorageAccessPermission(const SubFrameDomain& subFrameDomain, const TopFrameDomain& topFrameDomain, CompletionHandler<void(PermissionState)>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto subFrameDomainID = domainID(subFrameDomain);
     if (!subFrameDomainID)
@@ -1811,13 +1855,13 @@ void ResourceLoadStatisticsStore::queryStorageAccessPermission(const SubFrameDom
 void ResourceLoadStatisticsStore::requestStorageAccessUnderOpener(DomainInNeedOfStorageAccess&& domainInNeedOfStorageAccess, WebPageProxyIdentifier openerWebPageProxyID, OpenerDomain&& openerDomain, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction)
 {
     ASSERT(domainInNeedOfStorageAccess != openerDomain);
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (domainInNeedOfStorageAccess == openerDomain)
         return;
 
     if (debugLoggingEnabled()) [[unlikely]] {
-        ITP_DEBUG_MODE_RELEASE_LOG("[Temporary combatibility fix] Storage access was granted for %" PRIVATE_LOG_STRING " under opener page from %" PRIVATE_LOG_STRING ", with user interaction in the opened window.", domainInNeedOfStorageAccess.string().utf8(), openerDomain.string().utf8());
+        ITP_DEBUG_MODE_RELEASE_LOG("[Temporary combatibility fix] Storage access was granted for %" PRIVATE_LOG_STRING " under opener page from %" PRIVATE_LOG_STRING ", with user interaction in the opened window.", makeUTF8CString(domainInNeedOfStorageAccess.string()), makeUTF8CString(openerDomain.string()));
         debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] Storage access was granted for '"_s, domainInNeedOfStorageAccess.string(), "' under opener page from '"_s, openerDomain.string(), "', with user interaction in the opened window."_s));
     }
 
@@ -1826,7 +1870,7 @@ void ResourceLoadStatisticsStore::requestStorageAccessUnderOpener(DomainInNeedOf
 
 auto ResourceLoadStatisticsStore::grantStorageAccessPermission(const RegistrableDomain& topFrameDomain, const RegistrableDomain& subFrameDomain) -> std::pair<AddedRecord, std::optional<unsigned>>
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto subFrameStatus = ensureResourceStatisticsForRegistrableDomain(subFrameDomain, "grantStorageAccessPermission"_s);
     if (!subFrameStatus.second)
@@ -1838,7 +1882,7 @@ auto ResourceLoadStatisticsStore::grantStorageAccessPermission(const Registrable
 
 void ResourceLoadStatisticsStore::revokeStorageAccessPermission(const RegistrableDomain& domain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto targetResult = ensureResourceStatisticsForRegistrableDomain(domain, "revokeStorageAccessPermission"_s);
     if (!targetResult.second)
@@ -1854,7 +1898,7 @@ void ResourceLoadStatisticsStore::revokeStorageAccessPermission(const Registrabl
 
 void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -1911,7 +1955,7 @@ void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDo
 
 void ResourceLoadStatisticsStore::grantStorageAccessInternal(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShownNowOrEarlier, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (subFrameDomain == topFrameDomain) {
         completionHandler(StorageAccessWasGranted::Yes);
@@ -1947,7 +1991,8 @@ void ResourceLoadStatisticsStore::grantStorageAccessInternal(SubFrameDomain&& su
 
 void ResourceLoadStatisticsStore::grandfatherDataForDomains(const HashSet<RegistrableDomain>& domains)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
+
     if (domains.isEmpty())
         return;
 
@@ -1958,20 +2003,17 @@ void ResourceLoadStatisticsStore::grandfatherDataForDomains(const HashSet<Regist
         UNUSED_PARAM(result);
     }
 
-    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET grandfathered = 1 WHERE registrableDomain IN ("_s, buildList(domains), ')'));
-    if (!domainsToUpdateStatement || domainsToUpdateStatement->step() != SQLITE_DONE)
-        ITP_RELEASE_LOG_DATABASE_ERROR("grandfatherDataForDomains: failed to step statement");
+    updateObservedDomainsList("grandfathered = 1"_s, domains, "grandfatherDataForDomains"_s);
 }
 
 Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesForDebugMode()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (!debugModeEnabled())
         return { };
 
-    Vector<RegistrableDomain> primaryDomainsToBlock;
-    primaryDomainsToBlock.reserveInitialCapacity(2);
+    Vector<RegistrableDomain> primaryDomainsToBlock(ReserveCapacityTag { }, 2);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -1988,7 +2030,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesF
         primaryDomainsToBlock.append(debugManualPrevalentResource());
 
         if (debugLoggingEnabled()) {
-            ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PRIVATE_LOG_STRING " as prevalent resource for the purposes of ITP Debug Mode.", debugManualPrevalentResource().string().utf8());
+            ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PRIVATE_LOG_STRING " as prevalent resource for the purposes of ITP Debug Mode.", makeUTF8CString(debugManualPrevalentResource().string()));
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] Did set '"_s, debugManualPrevalentResource().string(), "' as prevalent resource for the purposes of ITP Debug Mode."_s));
         }
     }
@@ -1998,7 +2040,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesF
 
 void ResourceLoadStatisticsStore::logFrameNavigation(const RegistrableDomain& targetDomain, const RegistrableDomain& topFrameDomain, const RegistrableDomain& sourceDomain, bool isRedirect, bool isMainFrame, Seconds delayAfterMainFrameDocumentLoad, bool wasPotentiallyInitiatedByUser)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     bool areTargetAndTopFrameDomainsSameSite = targetDomain == topFrameDomain;
     bool areTargetAndSourceDomainsSameSite = targetDomain == sourceDomain;
@@ -2030,7 +2072,7 @@ void ResourceLoadStatisticsStore::logFrameNavigation(const RegistrableDomain& ta
                     insertDomainRelationshipList(topFrameUniqueRedirectsToSinceSameSiteStrictEnforcementQuery, HashSet<RegistrableDomain>({ targetDomain }), *redirectingDomainResult.second);
 
                     if (debugLoggingEnabled()) [[unlikely]] {
-                        ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PUBLIC_LOG_STRING " as making a top frame redirect to %" PUBLIC_LOG_STRING ".", sourceDomain.string().utf8(), targetDomain.string().utf8());
+                        ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PUBLIC_LOG_STRING " as making a top frame redirect to %" PUBLIC_LOG_STRING ".", makeUTF8CString(sourceDomain.string()), makeUTF8CString(targetDomain.string()));
                         debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("Did set '"_s, sourceDomain.string(), "' as making a top frame redirect to '"_s, targetDomain.string(), "'."_s));
                     }
                 }
@@ -2055,7 +2097,7 @@ void ResourceLoadStatisticsStore::logFrameNavigation(const RegistrableDomain& ta
 
 void ResourceLoadStatisticsStore::logCrossSiteLoadWithLinkDecoration(const NavigatedFromDomain& fromDomain, const NavigatedToDomain& toDomain, DidFilterKnownLinkDecoration didFilterKnownLinkDecoration)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     ASSERT(fromDomain != toDomain);
 
     auto transactionScope = beginTransactionIfNecessary();
@@ -2080,7 +2122,7 @@ void ResourceLoadStatisticsStore::logCrossSiteLoadWithLinkDecoration(const Navig
 
 void ResourceLoadStatisticsStore::clearTopFrameUniqueRedirectsToSinceSameSiteStrictEnforcement(const RegistrableDomain& domain, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2099,7 +2141,7 @@ void ResourceLoadStatisticsStore::clearTopFrameUniqueRedirectsToSinceSameSiteStr
 
 void ResourceLoadStatisticsStore::setUserInteraction(const RegistrableDomain& domain, bool hadUserInteraction, WallTime mostRecentInteraction)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_mostRecentUserInteractionStatement, mostRecentUserInteractionQuery, "setUserInteraction"_s);
     if (!scopedStatement
@@ -2112,7 +2154,7 @@ void ResourceLoadStatisticsStore::setUserInteraction(const RegistrableDomain& do
 
 void ResourceLoadStatisticsStore::logUserInteraction(const TopFrameDomain& domain, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2131,7 +2173,7 @@ void ResourceLoadStatisticsStore::logUserInteraction(const TopFrameDomain& domai
 
 void ResourceLoadStatisticsStore::clearUserInteraction(const RegistrableDomain& domain, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2147,7 +2189,7 @@ void ResourceLoadStatisticsStore::clearUserInteraction(const RegistrableDomain& 
 
 bool ResourceLoadStatisticsStore::hasHadUserInteraction(const RegistrableDomain& domain, OperatingDatesWindow operatingDatesWindow)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
     auto scopedStatement = this->scopedStatement(m_hadUserInteractionStatement, hadUserInteractionQuery, "hasHadUserInteraction"_s);
@@ -2176,7 +2218,7 @@ bool ResourceLoadStatisticsStore::hasHadUserInteraction(const RegistrableDomain&
 
 void ResourceLoadStatisticsStore::setTimeAdvanceForTesting(Seconds time)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     constexpr Seconds secondsPerDay { 3600 * 24 };
     for (Seconds t = m_timeAdvanceForTesting; t <= time; t += secondsPerDay) {
         m_timeAdvanceForTesting = t;
@@ -2186,7 +2228,7 @@ void ResourceLoadStatisticsStore::setTimeAdvanceForTesting(Seconds time)
 
 void ResourceLoadStatisticsStore::setPrevalentResource(const RegistrableDomain& domain, ResourceLoadPrevalence newPrevalence)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (shouldSkip(domain))
         return;
@@ -2226,16 +2268,16 @@ void ResourceLoadStatisticsStore::setPrevalentResource(const RegistrableDomain& 
 
 void ResourceLoadStatisticsStore::setDomainsAsPrevalent(StdSet<unsigned>&& domains)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
-    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildList(domains), ')'));
+    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildIntegerList(domains), ')'));
     if (!domainsToUpdateStatement || domainsToUpdateStatement->step() != SQLITE_DONE)
         ITP_RELEASE_LOG_DATABASE_ERROR("setDomainsAsPrevalent: failed to step statement");
 }
 
 void ResourceLoadStatisticsStore::dumpResourceLoadStatistics(CompletionHandler<void(const String&)>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(m_workQueue);
     if (m_dataRecordsBeingRemoved) {
         m_dataRecordRemovalCompletionHandlers.append([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)]() mutable {
             RefPtr protectedThis = weakThis;
@@ -2275,7 +2317,7 @@ void ResourceLoadStatisticsStore::dumpResourceLoadStatistics(CompletionHandler<v
 
 int ResourceLoadStatisticsStore::predicateValueForDomain(SQLiteStatementAutoResetScope& predicateStatement, const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (!predicateStatement
         || predicateStatement->bindText(1, domain.string()) != SQLITE_OK
@@ -2288,7 +2330,7 @@ int ResourceLoadStatisticsStore::predicateValueForDomain(SQLiteStatementAutoRese
 
 bool ResourceLoadStatisticsStore::isPrevalentResource(const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (shouldSkip(domain))
         return false;
@@ -2299,7 +2341,7 @@ bool ResourceLoadStatisticsStore::isPrevalentResource(const RegistrableDomain& d
 
 bool ResourceLoadStatisticsStore::isVeryPrevalentResource(const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (shouldSkip(domain))
         return false;
@@ -2310,7 +2352,7 @@ bool ResourceLoadStatisticsStore::isVeryPrevalentResource(const RegistrableDomai
 
 DataRemovalFrequency ResourceLoadStatisticsStore::dataRemovalFrequency(const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (shouldSkip(domain))
         return DataRemovalFrequency::Never;
@@ -2322,7 +2364,7 @@ DataRemovalFrequency ResourceLoadStatisticsStore::dataRemovalFrequency(const Reg
 
 bool ResourceLoadStatisticsStore::isRegisteredAsSubresourceUnder(const SubResourceDomain& subresourceDomain, const TopFrameDomain& topFrameDomain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_subresourceUnderTopFrameDomainExistsStatement, subresourceUnderTopFrameDomainExistsQuery, "isRegisteredAsSubresourceUnder"_s);
     return relationshipExists(scopedStatement, domainID(subresourceDomain), topFrameDomain);
@@ -2330,7 +2372,7 @@ bool ResourceLoadStatisticsStore::isRegisteredAsSubresourceUnder(const SubResour
 
 bool ResourceLoadStatisticsStore::isRegisteredAsSubFrameUnder(const SubFrameDomain& subFrameDomain, const TopFrameDomain& topFrameDomain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_subframeUnderTopFrameDomainExistsStatement, subframeUnderTopFrameDomainExistsQuery, "isRegisteredAsSubFrameUnder"_s);
     return relationshipExists(scopedStatement, domainID(subFrameDomain), topFrameDomain);
@@ -2338,7 +2380,7 @@ bool ResourceLoadStatisticsStore::isRegisteredAsSubFrameUnder(const SubFrameDoma
 
 bool ResourceLoadStatisticsStore::isRegisteredAsRedirectingTo(const RedirectedFromDomain& redirectedFromDomain, const RedirectedToDomain& redirectedToDomain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_subresourceUniqueRedirectsToExistsStatement, subresourceUniqueRedirectsToExistsQuery, "isRegisteredAsRedirectingTo"_s);
     return relationshipExists(scopedStatement, domainID(redirectedFromDomain), redirectedToDomain);
@@ -2346,7 +2388,7 @@ bool ResourceLoadStatisticsStore::isRegisteredAsRedirectingTo(const RedirectedFr
 
 void ResourceLoadStatisticsStore::clearPrevalentResource(const RegistrableDomain& domain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2362,7 +2404,7 @@ void ResourceLoadStatisticsStore::clearPrevalentResource(const RegistrableDomain
 
 void ResourceLoadStatisticsStore::setGrandfathered(const RegistrableDomain& domain, bool value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2379,7 +2421,7 @@ void ResourceLoadStatisticsStore::setGrandfathered(const RegistrableDomain& doma
 
 void ResourceLoadStatisticsStore::setIsScheduledForAllScriptWrittenStorageRemoval(const RegistrableDomain& domain, DataRemovalFrequency dataRemovalFrequency)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
     if (!ensureResourceStatisticsForRegistrableDomain(domain, "setIsScheduledForAllScriptWrittenStorageRemoval"_s).second)
@@ -2396,7 +2438,7 @@ void ResourceLoadStatisticsStore::setIsScheduledForAllScriptWrittenStorageRemova
 
 void ResourceLoadStatisticsStore::setMostRecentWebPushInteractionTime(const RegistrableDomain& domain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto time = nowTime(m_timeAdvanceForTesting);
 
@@ -2415,7 +2457,7 @@ void ResourceLoadStatisticsStore::setMostRecentWebPushInteractionTime(const Regi
 
 Seconds ResourceLoadStatisticsStore::getMostRecentlyUpdatedTimestamp(const RegistrableDomain& subDomain, const TopFrameDomain& topFrameDomain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     std::optional<unsigned> subFrameDomainID = domainID(subDomain);
     std::optional<unsigned> topFrameDomainID = domainID(topFrameDomain);
@@ -2444,7 +2486,7 @@ Seconds ResourceLoadStatisticsStore::getMostRecentlyUpdatedTimestamp(const Regis
 
 bool ResourceLoadStatisticsStore::isGrandfathered(const RegistrableDomain& domain) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_isGrandfatheredStatement, isGrandfatheredQuery, "isGrandfathered"_s);
     return !!predicateValueForDomain(scopedStatement, domain);
@@ -2452,7 +2494,7 @@ bool ResourceLoadStatisticsStore::isGrandfathered(const RegistrableDomain& domai
 
 void ResourceLoadStatisticsStore::setSubframeUnderTopFrameDomain(const SubFrameDomain& subFrameDomain, const TopFrameDomain& topFrameDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2466,7 +2508,7 @@ void ResourceLoadStatisticsStore::setSubframeUnderTopFrameDomain(const SubFrameD
 
 void ResourceLoadStatisticsStore::setSubresourceUnderTopFrameDomain(const SubResourceDomain& subresourceDomain, const TopFrameDomain& topFrameDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2480,7 +2522,7 @@ void ResourceLoadStatisticsStore::setSubresourceUnderTopFrameDomain(const SubRes
 
 void ResourceLoadStatisticsStore::setSubresourceUniqueRedirectTo(const SubResourceDomain& subresourceDomain, const RedirectDomain& redirectDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2494,7 +2536,7 @@ void ResourceLoadStatisticsStore::setSubresourceUniqueRedirectTo(const SubResour
 
 void ResourceLoadStatisticsStore::setSubresourceUniqueRedirectFrom(const SubResourceDomain& subresourceDomain, const RedirectDomain& redirectDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2508,7 +2550,7 @@ void ResourceLoadStatisticsStore::setSubresourceUniqueRedirectFrom(const SubReso
 
 void ResourceLoadStatisticsStore::setTopFrameUniqueRedirectTo(const TopFrameDomain& topFrameDomain, const RedirectDomain& redirectDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2522,7 +2564,7 @@ void ResourceLoadStatisticsStore::setTopFrameUniqueRedirectTo(const TopFrameDoma
 
 void ResourceLoadStatisticsStore::setTopFrameUniqueRedirectFrom(const TopFrameDomain& topFrameDomain, const RedirectDomain& redirectDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2536,7 +2578,7 @@ void ResourceLoadStatisticsStore::setTopFrameUniqueRedirectFrom(const TopFrameDo
 
 std::pair<ResourceLoadStatisticsStore::AddedRecord, std::optional<unsigned>> ResourceLoadStatisticsStore::ensureResourceStatisticsForRegistrableDomain(const RegistrableDomain& domain, ASCIILiteral reason)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     {
         auto scopedStatement = this->scopedStatement(m_domainIDFromStringStatement, domainIDFromStringQuery, "ensureResourceStatisticsForRegistrableDomain"_s);
@@ -2570,6 +2612,8 @@ std::pair<ResourceLoadStatisticsStore::AddedRecord, std::optional<unsigned>> Res
 
 void ResourceLoadStatisticsStore::clearDatabaseContents()
 {
+    auto transactionScope = beginTransactionIfNecessary();
+
     m_database->clearAllTables();
 
     if (!createSchema())
@@ -2591,7 +2635,7 @@ void ResourceLoadStatisticsStore::removeDataForDomain(const RegistrableDomain& d
 
 Vector<RegistrableDomain> ResourceLoadStatisticsStore::allDomains() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_getAllDomainsStatement, getAllDomainsQuery, "allDomains"_s);
     if (!scopedStatement)
@@ -2605,7 +2649,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::allDomains() const
 
 HashMap<RegistrableDomain, WallTime> ResourceLoadStatisticsStore::allDomainsWithLastAccessedTime() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     HashMap<RegistrableDomain, WallTime> result;
     for (auto& domainData : domains()) {
@@ -2618,7 +2662,7 @@ HashMap<RegistrableDomain, WallTime> ResourceLoadStatisticsStore::allDomainsWith
 
 void ResourceLoadStatisticsStore::clear(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     clearDatabaseContents();
 
@@ -2648,7 +2692,7 @@ bool ResourceLoadStatisticsStore::areAllUnpartitionedThirdPartyCookiesBlockedUnd
 
 CookieAccess ResourceLoadStatisticsStore::cookieAccess(const SubResourceDomain& subresourceDomain, const TopFrameDomain& topFrameDomain, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto statement = m_database->prepareStatement("SELECT isPrevalent, hadUserInteraction FROM ObservedDomains WHERE registrableDomain = ?"_s);
     if (!statement || statement->bindText(1, subresourceDomain.string()) != SQLITE_OK) {
@@ -2671,7 +2715,7 @@ CookieAccess ResourceLoadStatisticsStore::cookieAccess(const SubResourceDomain& 
 
 StorageAccessPromptWasShown ResourceLoadStatisticsStore::hasUserGrantedStorageAccessThroughPrompt(unsigned requestingDomainID, const RegistrableDomain& firstPartyDomain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto result = ensureResourceStatisticsForRegistrableDomain(firstPartyDomain, "hasUserGrantedStorageAccessThroughPrompt"_s);
     if (!result.second)
@@ -2691,7 +2735,7 @@ StorageAccessPromptWasShown ResourceLoadStatisticsStore::hasUserGrantedStorageAc
 
 Vector<RegistrableDomain> ResourceLoadStatisticsStore::domainsToBlockAndDeleteCookiesFor() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     Vector<RegistrableDomain> results;
     auto statement = m_database->prepareStatement("SELECT registrableDomain FROM ObservedDomains WHERE isPrevalent = 1 AND hadUserInteraction = 0"_s);
@@ -2706,7 +2750,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::domainsToBlockAndDeleteCo
 
 Vector<RegistrableDomain> ResourceLoadStatisticsStore::domainsToBlockButKeepCookiesFor() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     Vector<RegistrableDomain> results;
     auto statement = m_database->prepareStatement("SELECT registrableDomain FROM ObservedDomains WHERE isPrevalent = 1 AND hadUserInteraction = 1"_s);
@@ -2721,7 +2765,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::domainsToBlockButKeepCook
 
 Vector<RegistrableDomain> ResourceLoadStatisticsStore::domainsWithUserInteractionAsFirstParty() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     Vector<RegistrableDomain> results;
     auto statement = m_database->prepareStatement("SELECT registrableDomain FROM ObservedDomains WHERE hadUserInteraction = 1"_s);
@@ -2736,7 +2780,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::domainsWithUserInteractio
 
 HashMap<TopFrameDomain, Vector<SubResourceDomain>> ResourceLoadStatisticsStore::domainsWithStorageAccess() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> results;
     auto statement = m_database->prepareStatement("SELECT subFrameDomain, registrableDomain FROM (SELECT o.registrableDomain as subFrameDomain, s.topLevelDomainID as topLevelDomainID FROM ObservedDomains as o INNER JOIN StorageAccessUnderTopFrameDomains as s WHERE o.domainID = s.domainID) as z INNER JOIN ObservedDomains ON domainID = z.topLevelDomainID;"_s);
@@ -2751,7 +2795,7 @@ HashMap<TopFrameDomain, Vector<SubResourceDomain>> ResourceLoadStatisticsStore::
 
 void ResourceLoadStatisticsStore::updateCookieBlocking(CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto domainsToBlockAndDeleteCookiesFor = this->domainsToBlockAndDeleteCookiesFor();
     auto domainsToBlockButKeepCookiesFor = this->domainsToBlockButKeepCookiesFor();
@@ -2788,7 +2832,7 @@ void ResourceLoadStatisticsStore::updateCookieBlocking(CompletionHandler<void()>
 
 Vector<ResourceLoadStatisticsStore::DomainData> ResourceLoadStatisticsStore::domains() const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     Vector<DomainData> results;
     auto statement = m_database->prepareStatement("SELECT domainID, registrableDomain, mostRecentUserInteractionTime, mostRecentWebPushInteractionTime, hadUserInteraction, grandfathered, isScheduledForAllButCookieDataRemoval, countOfTopFrameRedirects FROM ObservedDomains LEFT JOIN (SELECT sourceDomainID, COUNT(*) as countOfTopFrameRedirects from TopFrameUniqueRedirectsToSinceSameSiteStrictEnforcement GROUP BY sourceDomainID) as z ON z.sourceDomainID = domainID"_s);
@@ -2812,12 +2856,12 @@ Vector<ResourceLoadStatisticsStore::DomainData> ResourceLoadStatisticsStore::dom
 
 void ResourceLoadStatisticsStore::clearGrandfathering(Vector<unsigned>&& domainIDsToClear)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (domainIDsToClear.isEmpty())
         return;
 
-    auto listToClear = buildList(domainIDsToClear);
+    auto listToClear = buildIntegerList(domainIDsToClear);
 
     auto clearGrandfatheringStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET grandfathered = 0 WHERE domainID IN ("_s, listToClear, ')'));
     if (!clearGrandfatheringStatement)
@@ -2897,7 +2941,7 @@ SUPPRESS_NODELETE std::optional<WallTime> ResourceLoadStatisticsStore::mostRecen
 
 RegistrableDomainsToDeleteOrRestrictWebsiteDataFor ResourceLoadStatisticsStore::registrableDomainsToDeleteOrRestrictWebsiteDataFor()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto now = nowTime(m_timeAdvanceForTesting);
     bool shouldCheckForGrandfathering = endOfGrandfatheringTimestamp() > now;
@@ -2937,7 +2981,7 @@ RegistrableDomainsToDeleteOrRestrictWebsiteDataFor ResourceLoadStatisticsStore::
                 toDeleteOrRestrictFor.domainsToEnforceSameSiteStrictFor.append(statistic.registrableDomain);
 
                 if (debugLoggingEnabled()) [[unlikely]] {
-                    ITP_DEBUG_MODE_RELEASE_LOG("Scheduled %" PUBLIC_LOG_STRING " to have its cookies set to SameSite=strict.", statistic.registrableDomain.string().utf8());
+                    ITP_DEBUG_MODE_RELEASE_LOG("Scheduled %" PUBLIC_LOG_STRING " to have its cookies set to SameSite=strict.", makeUTF8CString(statistic.registrableDomain.string()));
                     debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("Scheduled '"_s, statistic.registrableDomain.string(), "' to have its cookies set to SameSite=strict'."_s));
                 }
             }
@@ -2957,7 +3001,7 @@ RegistrableDomainsToDeleteOrRestrictWebsiteDataFor ResourceLoadStatisticsStore::
 
 void ResourceLoadStatisticsStore::pruneStatisticsIfNeeded()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     unsigned count = 0;
     auto scopedStatement = this->scopedStatement(m_observedDomainCountStatement, observedDomainCountQuery, "pruneStatisticsIfNeeded"_s);
@@ -2985,7 +3029,7 @@ void ResourceLoadStatisticsStore::pruneStatisticsIfNeeded()
     while (recordsToPrune->step() == SQLITE_ROW)
         entriesToPrune.append(recordsToPrune->columnInt(0));
 
-    auto listToPrune = buildList(entriesToPrune);
+    auto listToPrune = buildIntegerList(entriesToPrune);
 
     auto pruneCommand = m_database->prepareStatementSlow(makeString("DELETE from ObservedDomains WHERE domainID IN ("_s, listToPrune, ')'));
     if (!pruneCommand || pruneCommand->step() != SQLITE_DONE)
@@ -2994,7 +3038,7 @@ void ResourceLoadStatisticsStore::pruneStatisticsIfNeeded()
 
 void ResourceLoadStatisticsStore::updateLastSeen(const RegistrableDomain& domain, WallTime lastSeen)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_updateLastSeenStatement, updateLastSeenQuery, "updateLastSeen"_s);
     if (!scopedStatement
@@ -3006,7 +3050,7 @@ void ResourceLoadStatisticsStore::updateLastSeen(const RegistrableDomain& domain
 
 void ResourceLoadStatisticsStore::setLastSeen(const RegistrableDomain& domain, Seconds seconds)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -3018,7 +3062,7 @@ void ResourceLoadStatisticsStore::setLastSeen(const RegistrableDomain& domain, S
 
 void ResourceLoadStatisticsStore::setPrevalentResource(const RegistrableDomain& domain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (shouldSkip(domain))
         return;
@@ -3033,7 +3077,7 @@ void ResourceLoadStatisticsStore::setPrevalentResource(const RegistrableDomain& 
 
 void ResourceLoadStatisticsStore::setVeryPrevalentResource(const RegistrableDomain& domain)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     if (shouldSkip(domain))
         return;
@@ -3048,7 +3092,7 @@ void ResourceLoadStatisticsStore::setVeryPrevalentResource(const RegistrableDoma
 
 void ResourceLoadStatisticsStore::updateDataRecordsRemoved(const RegistrableDomain& domain, int value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     auto scopedStatement = this->scopedStatement(m_updateDataRecordsRemovedStatement, updateDataRecordsRemovedQuery, "updateDataRecordsRemoved"_s);
     if (!scopedStatement
@@ -3168,7 +3212,7 @@ void ResourceLoadStatisticsStore::appendSubStatisticList(StringBuilder& builder,
     }
 }
 
-SUPPRESS_NODELETE static bool LEGACY_NODELETE hasHadRecentUserInteraction(WTF::Seconds interactionTimeSeconds, WallTime now)
+NODELETE SUPPRESS_NODELETE static bool hasHadRecentUserInteraction(WTF::Seconds interactionTimeSeconds, WallTime now)
 {
     return interactionTimeSeconds > Seconds(0) && now.secondsSinceEpoch() - interactionTimeSeconds < 24_h;
 }
@@ -3320,7 +3364,7 @@ void ResourceLoadStatisticsStore::updateOperatingDatesParameters()
 
 void ResourceLoadStatisticsStore::includeTodayAsOperatingDateIfNecessary()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
     RELEASE_LOG(ResourceLoadStatistics, "ResourceLoadStatisticsStore::includeTodayAsOperatingDateIfNecessary: sessionID=%" PRIu64, m_sessionID.toUInt64());
 
     auto today = OperatingDate::today(m_timeAdvanceForTesting);
@@ -3357,7 +3401,7 @@ void ResourceLoadStatisticsStore::includeTodayAsOperatingDateIfNecessary()
 
 bool ResourceLoadStatisticsStore::hasStatisticsExpired(WallTime mostRecentUserInteractionTime, OperatingDatesWindow operatingDatesWindow) const
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workQueue);
 
     switch (operatingDatesWindow) {
     case OperatingDatesWindow::Long:

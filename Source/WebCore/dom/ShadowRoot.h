@@ -45,7 +45,7 @@ class WebAnimation;
 
 enum class ParserContentPolicy : uint8_t;
 enum class ShadowRootAvailableToElementInternals : bool { No, Yes };
-enum class ShadowRootScopedCustomElementRegistry : bool { No, Yes };
+enum class ShadowRootKeepsCustomElementRegistryNull : bool { No, Yes };
 
 struct GetHTMLOptions;
 
@@ -57,14 +57,19 @@ class ShadowRoot final : public DocumentFragment, public TreeScope {
     WTF_MAKE_TZONE_ALLOCATED(ShadowRoot);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ShadowRoot);
 public:
+    using DocumentFragment::checkedPtrCount;
+    using DocumentFragment::checkedPtrCountWithoutThreadCheck;
+    using DocumentFragment::decrementCheckedPtrCount;
+    using DocumentFragment::incrementCheckedPtrCount;
+    using DocumentFragment::setDidBeginCheckedPtrDeletion;
 
     enum class Clonable : bool { No, Yes };
 
     static Ref<ShadowRoot> create(Document& document, ShadowRootMode type, SlotAssignmentMode assignmentMode = SlotAssignmentMode::Named,
         ShadowRootDelegatesFocus delegatesFocus = ShadowRootDelegatesFocus::No, Clonable clonable = Clonable::No, ShadowRootSerializable serializable = ShadowRootSerializable::No, ShadowRootAvailableToElementInternals availableToElementInternals = ShadowRootAvailableToElementInternals::No,
-        RefPtr<CustomElementRegistry>&& registry = nullptr, ShadowRootScopedCustomElementRegistry scopedRegistry = ShadowRootScopedCustomElementRegistry::No, const AtomString& referenceTarget = nullAtom())
+        RefPtr<CustomElementRegistry>&& registry = nullptr, ShadowRootKeepsCustomElementRegistryNull keepsRegistryNull = ShadowRootKeepsCustomElementRegistryNull::No, const AtomString& referenceTarget = nullAtom())
     {
-        return adoptRef(*new ShadowRoot(document, type, assignmentMode, delegatesFocus, clonable, serializable, availableToElementInternals, WTF::move(registry), scopedRegistry, referenceTarget));
+        return adoptRef(*new ShadowRoot(document, type, assignmentMode, delegatesFocus, clonable, serializable, availableToElementInternals, WTF::move(registry), keepsRegistryNull, referenceTarget));
     }
 
     static Ref<ShadowRoot> create(Document& document, std::unique_ptr<SlotAssignment>&& assignment)
@@ -96,14 +101,9 @@ public:
     void setIsDeclarativeShadowRoot(bool flag) { m_isDeclarativeShadowRoot = flag; }
 
     Element* host() const { return m_host; }
-    inline void LEGACY_NODELETE setHost(Element*); // Defined and only used in Element.cpp
     void setHost(WeakPtr<Element, WeakPtrImplWithEventTargetData>&& host) { m_host = WTF::move(host); }
 
-    Node* shadowIncludingRoot() const { return m_shadowIncludingRoot; }
-    inline void setShadowIncludingRoot(Node* root) { m_shadowIncludingRoot = root; }
-
-    bool hasScopedCustomElementRegistry() const { return m_hasScopedCustomElementRegistry; }
-    CustomElementRegistry* registryForBindings() const;
+    bool keepsCustomElementRegistryNull() const { return m_keepsCustomElementRegistryNull; }
 
     ExceptionOr<void> setHTMLUnsafe(Variant<Ref<TrustedHTML>, String>&&);
     String getHTML(GetHTMLOptions&&) const;
@@ -122,7 +122,7 @@ public:
     void removeAllEventListeners() override;
 
     SlotAssignmentMode slotAssignmentMode() const { return m_slotAssignmentMode; }
-    inline HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&); // Defined in SlotAssignment.h
+    NODELETE inline HTMLSlotElement* findAssignedSlot(const Node&); // Defined in SlotAssignment.h
 
     void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName);
     void addSlotElementByName(const AtomString&, HTMLSlotElement&);
@@ -130,12 +130,12 @@ public:
     void slotManualAssignmentDidChange(HTMLSlotElement&, Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>& previous, Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>& current);
     void didRemoveManuallyAssignedNode(HTMLSlotElement&, const Node&);
     void slotFallbackDidChange(HTMLSlotElement&);
-    inline void LEGACY_NODELETE resolveSlotsBeforeNodeInsertionOrRemoval(); // Defined in SlotAssignment.h
-    inline void LEGACY_NODELETE willRemoveAllChildren(ContainerNode&); // Defined in SlotAssignment.h
+    NODELETE inline void resolveSlotsBeforeNodeInsertionOrRemoval(); // Defined in SlotAssignment.h
+    NODELETE inline void willRemoveAllChildren(ContainerNode&); // Defined in SlotAssignment.h
     inline void willRemoveAssignedNode(Node&); // Defined in SlotAssignment.h
 
     inline void didRemoveAllChildrenOfShadowHost(); // Defined in SlotAssignment.h
-    inline void didMutateTextNodesOfShadowHost(); // Defined in SlotAssignment.h
+    inline void didMutateTextNodesOfShadowHost(ChildChange::Type); // Defined in SlotAssignment.h
     inline void didChangeSlotNamesOfShadowHostChildren(); // Defined in SlotAssignment.h
     inline void hostChildElementDidChange(const Element&); // Defined in SlotAssignment.h
     inline void hostChildElementDidChangeSlotAttribute(Element&, const AtomString& oldValue, const AtomString& newValue); // Defined in SlotAssignment.h
@@ -160,7 +160,7 @@ public:
     }
 
 private:
-    ShadowRoot(Document&, ShadowRootMode, SlotAssignmentMode, ShadowRootDelegatesFocus, Clonable, ShadowRootSerializable, ShadowRootAvailableToElementInternals, RefPtr<CustomElementRegistry>&&, ShadowRootScopedCustomElementRegistry, const AtomString& referenceTarget);
+    ShadowRoot(Document&, ShadowRootMode, SlotAssignmentMode, ShadowRootDelegatesFocus, Clonable, ShadowRootSerializable, ShadowRootAvailableToElementInternals, RefPtr<CustomElementRegistry>&&, ShadowRootKeepsCustomElementRegistryNull, const AtomString& referenceTarget);
     ShadowRoot(Document&, std::unique_ptr<SlotAssignment>&&);
 
     Node::NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
@@ -177,12 +177,11 @@ private:
     bool m_containsFocusedElement : 1 { false };
     bool m_availableToElementInternals : 1 { false };
     bool m_isDeclarativeShadowRoot : 1 { false };
-    bool m_hasScopedCustomElementRegistry : 1 { false };
+    bool m_keepsCustomElementRegistryNull : 1 { false };
     ShadowRootMode m_mode { ShadowRootMode::UserAgent };
     SlotAssignmentMode m_slotAssignmentMode { SlotAssignmentMode::Named };
 
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_host;
-    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_shadowIncludingRoot;
     const RefPtr<StyleSheetList> m_styleSheetList;
 
     std::unique_ptr<Style::Scope> m_styleScope;

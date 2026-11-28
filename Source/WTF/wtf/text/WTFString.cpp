@@ -414,23 +414,6 @@ Latin1CString String::latin1() const
     return result;
 }
 
-std::expected<UTF8CString, UTF8ConversionError> String::tryGetUTF8(ConversionMode mode) const
-{
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryGetUTF8(mode) : UTF8CString { u8""_span };
-}
-
-std::expected<UTF8CString, UTF8ConversionError> String::tryGetUTF8() const
-{
-    return tryGetUTF8(LenientConversion);
-}
-
-UTF8CString String::utf8(ConversionMode mode) const
-{
-    auto expectedString = tryGetUTF8(mode);
-    RELEASE_ASSERT(expectedString);
-    return expectedString.value();
-}
-
 String String::make8Bit(std::span<const char16_t> source)
 {
     std::span<Latin1Character> destination;
@@ -553,7 +536,7 @@ double charactersToFixedDouble(std::span<const char16_t> data, bool* ok)
     return toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Preserve, ParseMode::Fixed>(data, ok, parsedLength);
 }
 
-static inline float LEGACY_NODELETE doubleToFloatCheckingOverflow(double number, bool* isValid)
+NODELETE static inline float doubleToFloatCheckingOverflow(double number, bool* isValid)
 {
     float result = static_cast<float>(number);
     if (isValid && *isValid && std::isfinite(number) && !std::isfinite(result))

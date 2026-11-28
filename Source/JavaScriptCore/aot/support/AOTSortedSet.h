@@ -7,9 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompactList.h"
 #include "AOTSort.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
@@ -20,15 +18,14 @@
 
 namespace JSC { namespace AOT {
 
-// The values of a list that is so many times shorter than the other are looked for there by halving.
-AOT_THRESHOLD(size_t, timesShorterToSearchByHalving, 16);
+static constexpr size_t lengthRatioForBinarySearch = 16;
 
 template<typename T>
 bool sortedListsOverlap(std::span<const T> a, std::span<const T> b)
 {
     if (a.size() > b.size())
         std::swap(a, b);
-    if (a.size() * timesShorterToSearchByHalving < b.size()) {
+    if (a.size() * lengthRatioForBinarySearch < b.size()) {
         return std::ranges::any_of(a, [&](T value) {
             return std::ranges::binary_search(b, value);
         });
@@ -51,7 +48,7 @@ bool sortedListIncludes(std::span<const T> list, std::span<const T> included)
 {
     if (included.size() > list.size())
         return false;
-    if (included.size() * timesShorterToSearchByHalving < list.size()) {
+    if (included.size() * lengthRatioForBinarySearch < list.size()) {
         return std::ranges::all_of(included, [&](T value) {
             return std::ranges::binary_search(list, value);
         });
@@ -69,6 +66,13 @@ public:
     {
     }
     explicit SortedSet(std::span<const T> unsortedValues);
+    static SortedSet fromAscending(std::span<const T> values)
+    {
+        ASSERT(std::ranges::adjacent_find(values, std::ranges::greater_equal { }) == values.end());
+        SortedSet set;
+        set.m_values = Values(values);
+        return set;
+    }
 
     size_t size() const { return m_values.size(); }
     bool isEmpty() const { return m_values.isEmpty(); }
@@ -93,8 +97,8 @@ public:
 private:
     enum class CommonValues : bool { Remove, Retain };
 
-    static constexpr unsigned numberOfValuesInPlace = std::max<size_t>(inlineCapacity, 12 / sizeof(T));
-    using Values = std::conditional_t<!!numberOfValuesInPlace, Typed::InlineList<T, std::max(numberOfValuesInPlace, 1u)>, Vector<T>>;
+    static constexpr size_t numberOfInlineValues = std::max<size_t>(inlineCapacity, 12 / sizeof(T));
+    using Values = Vector<T, numberOfInlineValues>;
 
     size_t lowerBound(T value) const { return std::lower_bound(begin(), end(), value) - begin(); }
     void filter(const SortedSet&, CommonValues);
@@ -149,8 +153,7 @@ bool SortedSet<T, inlineCapacity>::remove(T value)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::unite(const SortedSet& other)
 {
-    // A few values find their places by halving, and what stands behind them moves up: nothing is compared one by one, nothing copied.
-    AOT_THRESHOLD(size_t, mostValuesAddedOneByOne, 4);
+    static constexpr size_t mostValuesAddedOneByOne = 4;
     if (other.size() <= mostValuesAddedOneByOne && &other != this) {
         bool hasGrown = false;
         for (T value : other)
@@ -192,7 +195,7 @@ void SortedSet<T, inlineCapacity>::filter(const SortedSet& other, CommonValues c
 {
     size_t writeIndex = 0;
     size_t otherIndex = 0;
-    bool usesBinarySearch = size() * timesShorterToSearchByHalving < other.size();
+    bool usesBinarySearch = size() * lengthRatioForBinarySearch < other.size();
     for (size_t readIndex = 0; readIndex < size(); ++readIndex) {
         T value = m_values[readIndex];
         if (usesBinarySearch)

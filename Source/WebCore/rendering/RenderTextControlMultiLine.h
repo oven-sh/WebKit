@@ -31,10 +31,10 @@ class RenderTextControlMultiLine final : public RenderTextControl {
     WTF_MAKE_TZONE_ALLOCATED(RenderTextControlMultiLine);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTextControlMultiLine);
 public:
-    RenderTextControlMultiLine(HTMLTextAreaElement&, Style::ComputedStyle&&);
+    RenderTextControlMultiLine(HTMLTextAreaElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderTextControlMultiLine();
 
-    HTMLTextAreaElement& LEGACY_NODELETE textAreaElement() const;
+    NODELETE HTMLTextAreaElement& textAreaElement() const;
 
 private:
     void element() const = delete;

@@ -1,0 +1,13 @@
+# `Object.defineProperties(Taker.prototype, { wide: taken.wide })`, taken = a map of descriptors that another body has written and laid whole on Source.prototype.
+# Native code has only looked into the map: it was taken apart whole, each entry an accessor as written, so it stays in sight, and the reading in which unseen code does anything finds the getter as what is held does.
+# RUN(WIDE): link members held mechanisms=all
+# WIDE: on-prototype L0 "wide" getter=f5
+# RUN(DEEP): link members held mechanisms=all
+# DEEP: on-prototype L0 "deep" getter=f6 setter=f7
+# RUN(PROVEN): link members mechanisms=all
+# PROVEN: on-prototype L0 "wide" getter=f5
+# RUN(MAP): summary f0
+# MAP: Define {{*}}"wide" {{*}}accessor-as-written getter=f5 in-map=L
+# RUN(TAKEN): summary f3
+# TAKEN: Define {{*}}"wide" {{*}}descriptor-from=
+# PROGRAM-OF: ../answers/an-accessor-laid-by-a-descriptor-out-of-a-map-is-found-while-the-guards-hold.ir

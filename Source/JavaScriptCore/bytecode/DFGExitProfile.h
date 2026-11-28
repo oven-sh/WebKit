@@ -180,7 +180,7 @@ public:
     // in the compiler. It should be strictly cheaper than building a
     // QueryableExitProfile, if you really expect this to be called infrequently
     // and you believe that there are few exit sites.
-    bool LEGACY_NODELETE hasExitSite(const ConcurrentJSLocker&, const FrequentExitSite&) const;
+    NODELETE bool hasExitSite(const ConcurrentJSLocker&, const FrequentExitSite&) const;
     bool hasExitSite(const ConcurrentJSLocker& locker, ExitKind kind) const
     {
         return hasExitSite(locker, FrequentExitSite(kind));
@@ -232,7 +232,7 @@ private:
         return m_frequentExitSites.find(site) != m_frequentExitSites.end();
     }
     
-    UncheckedKeyHashSet<FrequentExitSite> m_frequentExitSites;
+    HashSet<FrequentExitSite> m_frequentExitSites;
 };
 
 } } // namespace JSC::DFG

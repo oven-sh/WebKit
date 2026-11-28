@@ -141,7 +141,7 @@ private:
     void collectStyleSheets(CSSStyleSheet*, Vector<CSSStyleSheet*>&);
     void setActiveStyleSheetsForDocument(Document&, Vector<CSSStyleSheet*>&);
     InspectorStyleSheet* createInspectorStyleSheetForDocument(Document&);
-    Inspector::Protocol::CSS::StyleSheetOrigin LEGACY_NODELETE detectOrigin(CSSStyleSheet*, Document*);
+    NODELETE Inspector::Protocol::CSS::StyleSheetOrigin detectOrigin(CSSStyleSheet*, Document*);
     void nodeHasLayoutFlagsChange(Node&);
     void nodesWithPendingLayoutFlagsChangeDispatchTimerFired();
     void pushLayoutContextNodesToFrontend(FrameDOMAgent&);
@@ -155,7 +155,7 @@ private:
     HashMap<Ref<Document>, Vector<Ref<InspectorStyleSheet>>> m_documentToInspectorStyleSheet;
     HashMap<Document*, HashSet<CSSStyleSheet*>> m_documentToKnownCSSStyleSheets;
     HashMap<Node*, Ref<InspectorStyleSheetForInlineStyle>> m_nodeToInspectorStyleSheet;
-    using PseudoClassHashSet = HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>, WTF::StrongEnumHashTraits<CSSSelector::PseudoClass>>;
+    using PseudoClassHashSet = HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>>;
     HashMap<Inspector::Protocol::DOM::NodeId, PseudoClassHashSet> m_nodeIdToForcedPseudoState;
     HashSet<Document*> m_documentsWithForcedPseudoStates;
     WeakHashMap<Node, OptionSet<InspectorCSSAgent::LayoutFlag>, WeakPtrImplWithEventTargetData> m_lastLayoutFlagsForNode;

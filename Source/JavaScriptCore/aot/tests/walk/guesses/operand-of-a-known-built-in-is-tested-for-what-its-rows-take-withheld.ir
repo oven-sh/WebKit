@@ -1,0 +1,7 @@
+# the same function with guesses withheld: nothing is tested, and the native code converts the operand itself
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: testedType=i32
+# CHECK-NOT: = GetStringCodeUnit
+# CHECK: Return
+# PROGRAM-OF: operand-of-a-known-built-in-is-tested-for-what-its-rows-take.ir

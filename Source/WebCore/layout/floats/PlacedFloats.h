@@ -31,12 +31,10 @@
 #include <wtf/EnumSet.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class Box;
 class BoxGeometry;
-class Rect;
 
 // PlacedFloats are relative to the BFC's logical top/left.
 // When floats added by nested IFCs with mismatching inline direcctions (e.g. where BFC is RTL but IFC is RTL)
@@ -55,6 +53,7 @@ public:
         enum class Position { Start, End };
         Item(Position, const BoxGeometry& absoluteBoxGeometry, LayoutPoint localTopLeft, RefPtr<const LayoutShape>&&);
         Item(const Box&, Position, const BoxGeometry& absoluteBoxGeometry, LayoutPoint localTopLeft, std::optional<size_t> line);
+        Item(const Box&, Position);
 
         ~Item();
 
@@ -64,10 +63,14 @@ public:
 
         BoxGeometry boxGeometry() const;
 
-        Rect absoluteRectWithMargin() const { return BoxGeometry::marginBoxRect(m_absoluteBoxGeometry); }
-        Rect absoluteBorderBoxRect() const { return BoxGeometry::borderBoxRect(m_absoluteBoxGeometry); }
+        AxisPosition<ParentFormattingContextRoot> marginBoxTop() const { return AxisPosition<ParentFormattingContextRoot> { BoxGeometry::marginBoxRect(m_absoluteBoxGeometry).top() }; }
+        AxisPosition<ParentFormattingContextRoot> marginBoxBottom() const { return AxisPosition<ParentFormattingContextRoot> { BoxGeometry::marginBoxRect(m_absoluteBoxGeometry).bottom() }; }
+        AxisPosition<ParentFormattingContextRoot> marginBoxLeft() const { return AxisPosition<ParentFormattingContextRoot> { BoxGeometry::marginBoxRect(m_absoluteBoxGeometry).left() }; }
+        AxisPosition<ParentFormattingContextRoot> marginBoxRight() const { return AxisPosition<ParentFormattingContextRoot> { BoxGeometry::marginBoxRect(m_absoluteBoxGeometry).right() }; }
+        LayoutSize marginBoxSize() const { return BoxGeometry::marginBoxRect(m_absoluteBoxGeometry).size(); }
+        AxisPosition<ParentFormattingContextRoot> borderBoxTop() const { return AxisPosition<ParentFormattingContextRoot> { BoxGeometry::borderBoxRect(m_absoluteBoxGeometry).top() }; }
+        AxisPosition<ParentFormattingContextRoot> borderBoxLeft() const { return AxisPosition<ParentFormattingContextRoot> { BoxGeometry::borderBoxRect(m_absoluteBoxGeometry).left() }; }
         BoxGeometry::HorizontalEdges inlineAxisMargin() const { return m_absoluteBoxGeometry.horizontalMargin(); }
-        PositionInContextRoot absoluteBottom() const { return { absoluteRectWithMargin().bottom() }; }
 
         const LayoutShape* shape() const { return m_shape.get(); }
         std::optional<size_t> placedByLine() const { return m_placedByLine; }
@@ -84,7 +87,6 @@ public:
     };
     using List = Vector<Item>;
     const List& list() const LIFETIME_BOUND { return m_list; }
-    const Item* last() const LIFETIME_BOUND { return list().isEmpty() ? nullptr : &m_list.last(); }
 
     void add(Item);
     bool remove(const Box&);
@@ -94,12 +96,17 @@ public:
     bool hasStartPositioned() const;
     bool hasEndPositioned() const;
 
-    std::optional<LayoutUnit> LEGACY_NODELETE highestPositionOnBlockAxis() const;
-    std::optional<LayoutUnit> LEGACY_NODELETE lowestPositionOnBlockAxis(Clear = Clear::Both) const;
+    NODELETE std::optional<AxisPosition<ParentFormattingContextRoot>> highestPositionOnBlockAxis() const;
+    NODELETE std::optional<AxisPosition<ParentFormattingContextRoot>> lowestPositionOnBlockAxis(Clear = Clear::Both) const;
+    // A new float cannot start above it. It is not necessarily the top of the last item in the list (see add()).
+    std::optional<AxisPosition<ParentFormattingContextRoot>> lowestTopPositionOnBlockAxis() const { return m_lowestTopPositionOnBlockAxis; }
 
     void shrinkToFit();
 
 private:
+    void computeLowestPositionsOnBlockAxis();
+    void computeLowestTopPositionOnBlockAxis();
+
     CheckedRef<const ElementBox> m_blockFormattingContextRoot;
     List m_list;
     enum class PositionType : bool {
@@ -107,14 +114,23 @@ private:
         End
     };
     EnumSet<PositionType> m_positionTypes;
+    // The lowest margin box bottom of the start and of the end positioned floats.
+    std::optional<AxisPosition<ParentFormattingContextRoot>> m_lowestStartPositionOnBlockAxis;
+    std::optional<AxisPosition<ParentFormattingContextRoot>> m_lowestEndPositionOnBlockAxis;
+    std::optional<AxisPosition<ParentFormattingContextRoot>> m_lowestTopPositionOnBlockAxis;
     WritingMode m_writingMode;
 };
 
 inline bool PlacedFloats::remove(const Box& floatBox)
 {
-    return m_list.removeFirstMatching([&floatBox](auto& placedFloatItem) {
+    auto removed = m_list.removeFirstMatching([&floatBox](auto& placedFloatItem) {
         return placedFloatItem.layoutBox() == &floatBox;
     });
+    if (removed) {
+        computeLowestPositionsOnBlockAxis();
+        computeLowestTopPositionOnBlockAxis();
+    }
+    return removed;
 }
 
 inline bool PlacedFloats::hasStartPositioned() const
@@ -127,5 +143,4 @@ inline bool PlacedFloats::hasEndPositioned() const
     return m_positionTypes.contains(PositionType::End);
 }
 
-}
 }

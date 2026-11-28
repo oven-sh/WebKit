@@ -93,6 +93,12 @@ struct FrontendFeatures : FeatureSetBase
         &members,
     };
 
+    FeatureInfo ensureLoopForwardProgress = {
+        "ensureLoopForwardProgress",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
     FeatureInfo enableProgramBinaryForCapture = {
         "enableProgramBinaryForCapture",
         FeatureCategory::FrontendFeatures,
@@ -221,6 +227,12 @@ struct FrontendFeatures : FeatureSetBase
 
     FeatureInfo forceDebugContexts = {
         "forceDebugContexts",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo retainShaderDebugInfo = {
+        "retainShaderDebugInfo",
         FeatureCategory::FrontendFeatures,
         &members,
     };

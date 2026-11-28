@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
@@ -97,27 +97,27 @@ public:
     WEBCORE_EXPORT bool shouldDisplayPosterImage() const;
 
     URL posterImageURL() const;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     enum class VideoPresentationMode { Inline, Fullscreen, PictureInPicture, InWindow };
-    static VideoPresentationMode LEGACY_NODELETE toPresentationMode(HTMLMediaElementEnums::VideoFullscreenMode);
+    NODELETE static VideoPresentationMode toPresentationMode(HTMLMediaElementEnums::VideoFullscreenMode);
     WEBCORE_EXPORT bool webkitSupportsPresentationMode(VideoPresentationMode) const;
-    VideoPresentationMode LEGACY_NODELETE webkitPresentationMode() const;
-    VideoPresentationMode LEGACY_NODELETE webkitPresentationModeForBindings() const;
+    NODELETE VideoPresentationMode webkitPresentationMode() const;
+    NODELETE VideoPresentationMode webkitPresentationModeForBindings() const;
     void webkitSetPresentationMode(VideoPresentationMode);
 
     WEBCORE_EXPORT void setPresentationMode(VideoPresentationMode);
     WEBCORE_EXPORT void didEnterFullscreenOrPictureInPicture(const FloatSize&);
     WEBCORE_EXPORT void didExitFullscreenOrPictureInPicture();
-    WEBCORE_EXPORT bool LEGACY_NODELETE isChangingPresentationMode() const;
+    NODELETE WEBCORE_EXPORT bool isChangingPresentationMode() const;
     WEBCORE_EXPORT void setPresentationModeIgnoringPermissionsPolicy(VideoPresentationMode);
 
     void setVideoFullscreenFrame(const FloatRect&) final;
 
 #if ENABLE(PICTURE_IN_PICTURE_API)
-    void LEGACY_NODELETE setPictureInPictureObserver(PictureInPictureObserver*);
+    NODELETE void setPictureInPictureObserver(PictureInPictureObserver*);
 #endif
 #endif
 
@@ -154,9 +154,6 @@ public:
     void suspend(ReasonForSuspension) final;
     void stop() final;
 
-    bool isIntersectingViewport() const final { return m_isIntersectingViewport; }
-    void lazyLoadIntersectionCallbackInvoked(bool isIntersecting);
-
     static constexpr double defaultSpatialCameraFieldOfView = 80;
 
     double defaultYaw() const;
@@ -167,6 +164,11 @@ public:
     double pitch() const;
     double fieldOfView() const;
     void spatialCameraDidMove(double yaw, double pitch, double fieldOfView);
+
+    bool isSpatialVideoRendererActive() const { return m_spatialVideoRendererActive; }
+    void setSpatialVideoRendererActive(bool);
+
+    bool hasSpatialVideoProjection() const;
 
 private:
     friend class HTMLVideoElementPictureInPicture;
@@ -185,10 +187,16 @@ private:
     bool isVideo() const final { return true; }
     bool hasVideo() const final { return player() && protect(player())->hasVideo(); }
     bool supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenMode) const final;
-    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    NODELETE bool isURLAttribute(const Attribute&) const final;
     String imageSourceURL() const final;
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
+
+    void runLazyLoadResumptionSteps() final;
+    void viewportIntersectionChanged() final;
+    bool tracksViewportIntersection() const final { return true; }
+    void loadDeferredPosterImage();
+    void resumePosterLoadIfAlreadyVisible();
 
     bool hasAvailableVideoFrame() const;
     void mediaPlayerFirstVideoFrameAvailable() final;
@@ -213,6 +221,7 @@ private:
     std::optional<double> m_cameraYaw;
     std::optional<double> m_cameraPitch;
     std::optional<double> m_cameraFieldOfView;
+    bool m_spatialVideoRendererActive { false };
 
     bool m_renderingCanBeAccelerated { false };
 
@@ -239,7 +248,6 @@ private:
     Vector<UniqueRef<VideoFrameRequest>> m_videoFrameRequests;
     Vector<UniqueRef<VideoFrameRequest>> m_servicedVideoFrameRequests;
     unsigned m_nextVideoFrameRequestIndex { 0 };
-    bool m_isIntersectingViewport { false };
 
 #if USE(GSTREAMER)
     bool m_enableGStreamerHolePunching { false };

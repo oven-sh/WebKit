@@ -30,6 +30,7 @@
 #include "AccessibilityNodeObject.h"
 
 #include "AXAttachmentHelpers.h"
+#include "AXChildIterator.h"
 #include "AXImageMapHelpers.h"
 #include "AXListHelpers.h"
 #include "AXLogger.h"
@@ -82,6 +83,7 @@
 #include "HTMLParagraphElement.h"
 #include "HTMLParserIdioms.h"
 #include "HTMLSelectElement.h"
+#include "HTMLSelectedContentElement.h"
 #include "HTMLSlotElement.h"
 #include "HTMLSummaryElement.h"
 #include "HTMLTableCaptionElement.h"
@@ -116,7 +118,6 @@
 #include "RenderImage.h"
 #include "RenderListBox.h"
 #include "RenderListItem.h"
-#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderTableCell.h"
 #include "RenderView.h"
@@ -136,11 +137,13 @@
 #include "VisibleUnits.h"
 #include "XLinkNames.h"
 #include <numeric>
+#include <wtf/Language.h>
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/CharacterNames.h>
+#include <wtf/unicode/ListFormatter.h>
 
 namespace WebCore {
 
@@ -187,33 +190,26 @@ void AccessibilityNodeObject::detachRemoteParts(AccessibilityDetachmentType deta
 
 AccessibilityObject* AccessibilityNodeObject::firstChild() const
 {
-    RefPtr currentChild = node() ? node()->firstChild() : nullptr;
-    if (!currentChild)
+    RefPtr node = this->node();
+    if (!node)
         return nullptr;
 
     CheckedPtr cache = axObjectCache();
     if (!cache)
         return nullptr;
 
-    RefPtr axCurrentChild = cache->getOrCreate(*currentChild);
-    while (!axCurrentChild && currentChild) {
-        currentChild = currentChild->nextSibling();
-        axCurrentChild = cache->getOrCreate(currentChild.get());
+    RefPtr<AccessibilityObject> axCurrentChild;
+    if (RefPtr element = dynamicDowncast<Element>(*node); element && element->hasDisplayContents()) {
+        for (Ref currentChild : composedTreeChildren</* InlineContextCapacity */ 0>(*element)) {
+            axCurrentChild = cache->getOrCreate(currentChild.get());
+            if (axCurrentChild)
+                break;
+        }
+    } else {
+        for (RefPtr currentChild = node->firstChild(); currentChild && !axCurrentChild; currentChild = currentChild->nextSibling())
+            axCurrentChild = cache->getOrCreate(*currentChild);
     }
     return axCurrentChild.unsafeGet();
-}
-
-AccessibilityObject* AccessibilityNodeObject::lastChild() const
-{
-    if (!node())
-        return nullptr;
-
-    RefPtr lastChild = node()->lastChild();
-    if (!lastChild)
-        return nullptr;
-
-    CheckedPtr objectCache = axObjectCache();
-    return objectCache ? objectCache->getOrCreate(*lastChild) : nullptr;
 }
 
 AccessibilityObject* AccessibilityNodeObject::previousSibling() const
@@ -355,7 +351,7 @@ bool AccessibilityNodeObject::supportsPath() const
         if (is<RenderText>(renderer) || renderer->isRenderOrLegacyRenderSVGShape())
             return true;
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer)) {
-            if (renderBox->style().border().hasBorderRadius())
+            if (renderBox->usedStyle().hasBorderRadius())
                 return true;
         }
         if (auto* renderElement = dynamicDowncast<RenderElement>(renderer); renderElement && renderElement->hasClipPath())
@@ -923,8 +919,16 @@ bool AccessibilityNodeObject::canHaveChildren() const
     if (node() && !renderer() && WebCore::elementName(node()) == ElementName::HTML_noscript)
         return false;
 
-    if (CheckedPtr listMarker = dynamicDowncast<RenderListOutsideMarker>(renderer()))
-        return listMarker->hasContentProperty();
+    // Alternative text replaces the generated content as a whole, so the content itself isn't exposed.
+    if (!altTextFromStyle().isNull())
+        return false;
+
+    if (CheckedPtr renderer = this->renderer(); renderer && renderer->isOutsideListMarker())
+        return listMarkerHasContent(renderer->style(), protect(renderer->document()));
+
+    // Markers are exposed as markerText(), so ignore any children.
+    if (CheckedPtr renderer = this->renderer(); renderer && renderer->isListMarkerBox())
+        return false;
 
     if (optGroupForLabel())
         return false;
@@ -1021,7 +1025,9 @@ bool AccessibilityNodeObject::isValidTree() const
             continue;
         if (hasRole(*childElement, "treeitem"_s))
             continue;
-        if (!hasAnyRole(*childElement, { "group"_s, "presentation"_s }))
+        // Generic wrappers (a div or span without a role) are transparent, so look through them like we do for groups.
+        bool isGenericWrapper = (childElement->hasTagName(divTag) || childElement->hasTagName(spanTag)) && hasRole(*childElement, nullAtom());
+        if (!isGenericWrapper && !hasAnyRole(*childElement, { "group"_s, "presentation"_s }))
             return false;
 
         for (RefPtr groupChild = child->firstChild(); groupChild; groupChild = queue.last()->nextSibling())
@@ -1085,7 +1091,7 @@ bool AccessibilityNodeObject::hasElementDescendant() const
     return element && childrenOfType<Element>(*element).first();
 }
 
-static bool LEGACY_NODELETE isFlowContent(Node& node)
+NODELETE static bool isFlowContent(Node& node)
 {
     if (auto* element = dynamicDowncast<HTMLElement>(node)) {
         // https://html.spec.whatwg.org/#flow-content
@@ -1621,7 +1627,7 @@ bool AccessibilityNodeObject::isHiddenUntilFoundContainer() const
     return element && element->isHiddenUntilFound();
 }
 
-static bool LEGACY_NODELETE isDateFieldWithStandardFocus(HTMLInputElement& input)
+NODELETE static bool isDateFieldWithStandardFocus(HTMLInputElement& input)
 {
     return (input.isDateField() || input.isDateTimeLocalField()) && !input.hasCustomFocusLogic();
 }
@@ -2144,10 +2150,9 @@ AXCoreObject::AccessibilityChildrenVector AccessibilityNodeObject::cells()
     if (!rareData)
         return { };
 
-    AXCoreObject::AccessibilityChildrenVector cells;
     // row * columns may not be exactly correct when considering things
     // like rowspan / colspan, but it should be close enough.
-    cells.reserveInitialCapacity(rareData->rowCount() * rareData->columnCount());
+    AXCoreObject::AccessibilityChildrenVector cells(ReserveCapacityTag { }, rareData->rowCount() * rareData->columnCount());
     for (const auto& row : rareData->tableRows())
         cells.appendVector(row->unignoredChildren());
     return cells;
@@ -2246,7 +2251,7 @@ AccessibilityObject* AccessibilityNodeObject::tableHeaderContainer()
     tableHeader->setParent(this);
     rareData->setTableHeaderContainer(tableHeader.get());
 
-    return tableHeader.unsafePtr();
+    return rareData->tableHeaderContainer();
 }
 
 AXCoreObject::AccessibilityChildrenVector AccessibilityNodeObject::columns()
@@ -2906,7 +2911,7 @@ AccessibilityObject::AccessibilityChildrenVector AccessibilityNodeObject::disclo
     return disclosedRows;
 }
 
-AccessibilityObject* AccessibilityNodeObject::disclosedByRow() const
+RefPtr<AXCoreObject> AccessibilityNodeObject::disclosedByRow() const
 {
     if (!isARIATreeGridRow())
         return AccessibilityObject::disclosedByRow();
@@ -2930,7 +2935,7 @@ AccessibilityObject* AccessibilityNodeObject::disclosedByRow() const
 
     for (int k = index - 1; k >= 0; --k) {
         if (protect(allRows[k])->hierarchicalLevel() == level - 1)
-            return downcast<AccessibilityObject>(allRows[k].unsafePtr());
+            return WTF::move(allRows[k]);
     }
     return nullptr;
 }
@@ -3299,13 +3304,18 @@ String AccessibilityNodeObject::textAsLabelFor(const AccessibilityObject& labele
     if (!labelAttribute.isEmpty())
         return labelAttribute;
 
-    labelAttribute = altTextFromAttributeOrStyle();
+    labelAttribute = getAttribute(altAttr);
     if (!labelAttribute.isEmpty())
         return labelAttribute;
 
     labelAttribute = getAttribute(titleAttr);
     if (!labelAttribute.isEmpty())
         return labelAttribute;
+
+    // The alt text of 'content' stands in for this element's content, so it ranks with the content
+    // (below the attributes above), and replaces the children it hides.
+    if (auto contentAlt = altTextFromContent(); !contentAlt.isEmpty())
+        return contentAlt;
 
     if (isNativeLabel()) {
         StringBuilder builder;
@@ -3476,7 +3486,7 @@ void AccessibilityNodeObject::alternativeText(Vector<AccessibilityText>& textOrd
         }
         // Images should use alt as long as the attribute is present, even if empty.
         // Otherwise, it should fallback to other methods, like the title attribute.
-        if (String alt = altTextFromAttributeOrStyle(); !alt.isNull())
+        if (String alt = altText(); !alt.isNull())
             textOrder.append(AccessibilityText(WTF::move(alt), AccessibilityTextSource::Alternative));
     }
 
@@ -3552,9 +3562,9 @@ void AccessibilityNodeObject::alternativeText(Vector<AccessibilityText>& textOrd
         textOrder.append(AccessibilityText(getAttribute(MathMLNames::alttextAttr), AccessibilityTextSource::Alternative));
 #endif
 
-    if (CheckedPtr style = this->style()) {
-        String altText = style->content().altText();
-        if (!altText.isEmpty())
+    // An element replaced by a 'content' image is described by that image's alt text, whatever its role.
+    if (CheckedPtr image = dynamicDowncast<RenderImage>(renderer()); image && image->isGeneratedContent()) {
+        if (String altText = image->altText(); !altText.isEmpty())
             textOrder.append(AccessibilityText(WTF::move(altText), AccessibilityTextSource::Alternative));
     }
 }
@@ -3739,7 +3749,7 @@ String AccessibilityNodeObject::description() const
     if (usesAltForTextComputation()) {
         // Images should use alt as long as the attribute is present, even if empty.
         // Otherwise, it should fallback to other methods, like the title attribute.
-        if (String alt = altTextFromAttributeOrStyle(); !alt.isNull())
+        if (String alt = altText(); !alt.isNull())
             return alt;
         // Image map elements shouldn't fallback.
         if (isImageMapLink())
@@ -3933,7 +3943,7 @@ static void appendNameToStringBuilder(StringBuilder& builder, String&& text, boo
 }
 
 
-static bool LEGACY_NODELETE displayNeedsSpace(Style::Display display)
+NODELETE static bool displayNeedsSpace(Style::Display display)
 {
     return display == Style::DisplayType::BlockFlow
         || display == Style::DisplayType::InlineFlowRoot
@@ -3972,6 +3982,38 @@ static bool shouldPrependNewline(AccessibilityObject* previousObject)
     return node && WebCore::shouldEmitNewlinesBeforeAndAfterNode(*node);
 }
 
+static RefPtr<HTMLSelectElement> selectForSelectedContent(Node* node)
+{
+    RefPtr selectedContent = dynamicDowncast<HTMLSelectedContentElement>(node);
+    if (!selectedContent || selectedContent->isDisabled())
+        return nullptr;
+    RefPtr select = ancestorsOfType<HTMLSelectElement>(*selectedContent).first();
+    return select && select->updatesSelectedContent() ? select : nullptr;
+}
+
+// The <selectedcontent> of a multi-select holds a clone of every option, of which only the selected ones render.
+static String selectedOptionLabels(const AccessibilityObject& selectedContent, const HTMLSelectElement& select)
+{
+    Vector<String> labels;
+    for (Ref child : AXChildIterator(selectedContent)) {
+        RefPtr option = dynamicDowncast<HTMLOptionElement>(child->node());
+        if (!option)
+            continue;
+        auto label = option->attributeTrimmedWithDefaultARIA(aria_labelAttr);
+        if (label.isEmpty())
+            label = child->textUnderElement();
+        if (!label.isEmpty())
+            labels.append(WTF::move(label));
+    }
+    if (labels.size() < 2)
+        return labels.isEmpty() ? String() : WTF::move(labels[0]);
+
+    auto& language = select.effectiveLang();
+    ListFormatter formatter { (language.isEmpty() ? defaultLanguage() : language.string()).ascii(), ListFormatter::Type::Conjunction, ListFormatter::Style::Long };
+    auto list = formatter.format(labels.span());
+    return list ? WTF::move(*list) : makeStringByJoining(labels.span(), ", "_s);
+}
+
 String AccessibilityNodeObject::textUnderElement(TextUnderElementMode mode) const
 {
     RefPtr node = this->node();
@@ -4004,6 +4046,16 @@ String AccessibilityNodeObject::textUnderElement(TextUnderElementMode mode) cons
             // Unlike visibility:visible + visiblity:visible where the latter can override the former in a subtree,
             // display:none guarantees nothing within will be rendered, so we can exit early.
             return { };
+        }
+    }
+
+    // A <selectedcontent> shows the selected options, so their labels give its text.
+    if (RefPtr select = selectForSelectedContent(node.get()); select && !mode.isHidden()) {
+        if (select->multiple())
+            return selectedOptionLabels(*this, *select);
+        if (RefPtr option = select->selectedOptionForSelectedContent()) {
+            if (auto label = option->attributeTrimmedWithDefaultARIA(aria_labelAttr); !label.isEmpty())
+                return label;
         }
     }
 
@@ -4221,22 +4273,22 @@ Vector<AXStitchGroup> AccessibilityNodeObject::stitchGroups() const
     };
     // Our own outside marker takes no part in our lines, so it is not one of the leaf boxes below, but it belongs at
     // the start of the group for the line it was positioned against, when that line is one of ours.
-    auto stitchableExcludedMarker = [&]() -> CheckedPtr<RenderListOutsideMarker> {
+    auto stitchableOutsideMarker = [&] -> CheckedPtr<RenderBlockFlow> {
         // The marker's list item is this block flow itself when the item's own content makes the line, and an
         // ancestor of it when the line is in a descendant block of the item.
-        for (CheckedPtr<const RenderBlock> ancestor = renderBlockFlow.get(); ancestor; ancestor = ancestor->containingBlock()) {
+        for (CheckedPtr<const RenderBoxModelObject> ancestor = renderBlockFlow; ancestor; ancestor = ancestor->containingBlock()) {
             CheckedPtr listItem = dynamicDowncast<RenderListItem>(ancestor.get());
             CheckedPtr marker = listItem ? listItem->markerBox() : nullptr;
-            if (!marker || !marker->isExcludedMarker() || marker->isDisclosureMarker())
+            if (!marker || listMarkerIsDisclosure(marker.get()))
                 continue;
-            auto excludedPosition = marker->excludedPosition();
-            if (excludedPosition && excludedPosition->firstFormattedLineRoot.get() == renderBlockFlow.get())
+            auto& markerPosition = listItem->outsideMarkerPosition();
+            if (markerPosition && markerPosition->firstFormattedLineRoot.get() == renderBlockFlow.get())
                 return marker;
         }
         return { };
     }();
-    if (stitchableExcludedMarker) {
-        if (RefPtr object = cache->getOrCreate(*stitchableExcludedMarker))
+    if (stitchableOutsideMarker) {
+        if (RefPtr object = cache->getOrCreate(*stitchableOutsideMarker))
             appendToCurrentGroup(object->objectID());
     }
 
@@ -4248,12 +4300,6 @@ Vector<AXStitchGroup> AccessibilityNodeObject::stitchGroups() const
 
             if (listMarkerIsDisclosure(protect(dynamicDowncast<RenderElement>(box->renderer()))) || listMarkerIsDisclosure(protect(box->renderer().parent()))) {
                 finalizeCurrentGroup();
-                continue;
-            }
-
-            if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(box->renderer())) {
-                if (RefPtr object = cache->getOrCreate(const_cast<RenderListOutsideMarker&>(*renderListMarker)))
-                    appendToCurrentGroup(object->objectID());
                 continue;
             }
 
@@ -4380,11 +4426,10 @@ String AccessibilityNodeObject::stringValue() const
                 if (!runStartNode)
                     runStartNode = memberNode;
                 runEndNode = memberNode;
-            } else if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(object->renderer())) {
+            } else if (CheckedPtr renderer = object->renderer(); renderer && renderer->isListMarkerBox()) {
                 // List markers have no DOM node. Flush any pending text run, then append marker text.
                 flushRun();
-                if (CheckedPtr listItem = renderListMarker->listItem())
-                    builder.append(listItem->markerText());
+                builder.append(RenderListItem::markerText(*renderer));
             }
         }
         flushRun();
@@ -4551,8 +4596,8 @@ static String accessibleNameForNode(Node& node, Node* labelledbyNode, DescendInt
 
     if (auto* slotElement = dynamicDowncast<HTMLSlotElement>(node); slotElement && labelledbyNode) {
         // Compute the accessible name for a slot's assigned nodes only if it's being used to label
-        // another node. If no assigned nodes exist, or all assigned nodes are hidden, fall through to
-        // textUnderElement, which will return the slot's fallback content.
+        // another node. If no assigned nodes exist, fall through to textUnderElement, which will
+        // return the slot's fallback content.
         if (auto* assignedNodes = slotElement->assignedNodes()) {
             StringBuilder builder;
             for (const auto& assignedNode : *assignedNodes) {

@@ -26,12 +26,24 @@
 private import CxxStdlib
 import WebGPU_Internal.Texture
 import WebGPU_Private.WebGPU
+import wtf
 
 // FIXME (rdar://162375123): This should be in the standard library.
 extension MutableSpan where Element: BitwiseCopyable {
     @_lifetime(self: copy self)
     mutating func copyMemory(from source: Span<Element>) {
         // Safety: This is lifetime safe because we have exclusive access to 'self' and we don't escape 'selfBuffer'
+        #if compiler(>=6.4)
+        withUnsafeMutableBufferPointer { selfBuffer in
+            // Safety: This is lifetime safe because we have exclusive access to 'source' and we don't escape 'sourceBuffer'
+            source.withUnsafeBufferPointer { sourceBuffer in
+                // Safety: This is bounds safe because we do a manual bounds check
+                // Safety: This is type safe because we statically declare that our element types match and are BitwiseCopyable
+                precondition(sourceBuffer.count <= selfBuffer.count)
+                _ = unsafe memcpy(selfBuffer.baseAddress, sourceBuffer.baseAddress, sourceBuffer.count)
+            }
+        }
+        #else
         unsafe withUnsafeMutableBufferPointer { selfBuffer in
             // Safety: This is lifetime safe because we have exclusive access to 'source' and we don't escape 'sourceBuffer'
             unsafe source.withUnsafeBufferPointer { sourceBuffer in
@@ -41,6 +53,7 @@ extension MutableSpan where Element: BitwiseCopyable {
                 _ = unsafe memcpy(selfBuffer.baseAddress, sourceBuffer.baseAddress, sourceBuffer.count)
             }
         }
+        #endif
     }
 }
 

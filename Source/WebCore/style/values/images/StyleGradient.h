@@ -29,6 +29,7 @@
 
 #include <WebCore/CSSGradient.h>
 #include <WebCore/StyleColor.h>
+#include <WebCore/StyleGradientColorInterpolationMethod.h>
 #include <WebCore/StylePosition.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
@@ -47,12 +48,6 @@ using Vertical                     = CSS::Vertical;
 
 using RadialGradientExtent         = CSS::RadialGradientExtent;
 using PrefixedRadialGradientExtent = CSS::PrefixedRadialGradientExtent;
-
-// MARK: - Gradient Color Interpolation Definitions.
-
-using GradientColorInterpolationMethod = CSS::GradientColorInterpolationMethod;
-
-template<> inline constexpr bool TreatAsNonConverting<GradientColorInterpolationMethod> = true;
 
 // MARK: - Gradient Color Stop Definitions.
 
@@ -388,7 +383,7 @@ using Gradient = Variant<
 >;
 
 // Creates a platform gradient from the style representation.
-Ref<WebCore::Gradient> createPlatformGradient(const Gradient&, const FloatSize&, const Style::ComputedStyle&);
+Ref<const WebCore::Gradient> createPlatformGradient(const Gradient&, const FloatSize&, const Style::ComputedStyle&);
 
 // Returns whether it caching based on the gradient's stops is allowed.
 WEBCORE_EXPORT bool stopsAreCacheable(const Gradient&);

@@ -47,6 +47,7 @@
 #include "FontFace.h"
 #include "FontPaletteValues.h"
 #include "SVGFontFaceElement.h"
+#include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
 #include "StyleFontMetricsOverride.h"
@@ -65,6 +66,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSFontFace);
 
 static void iterateClients(WeakHashSet<CSSFontFaceClient>& clients, NOESCAPE const Function<void(CSSFontFaceClient&)>& callback)
 {
+    ScriptDisallowedScope scope;
     for (auto& client : copyToVectorOf<Ref<CSSFontFaceClient>>(clients)) {
         if (clients.contains(client))
             callback(client);
@@ -144,6 +146,24 @@ MutableStyleProperties& CSSFontFace::mutableProperties()
             return connection->mutableProperties();
         }
     );
+}
+
+FontFaceLoadStatus CSSFontFace::fontFaceLoadStatus() const
+{
+    switch (m_status) {
+    case Status::Pending:
+        return FontFaceLoadStatus::Unloaded;
+    case Status::Loading:
+        return FontFaceLoadStatus::Loading;
+    case Status::TimedOut:
+        return FontFaceLoadStatus::Error;
+    case Status::Success:
+        return FontFaceLoadStatus::Loaded;
+    case Status::Failure:
+        return FontFaceLoadStatus::Error;
+    }
+    ASSERT_NOT_REACHED();
+    return FontFaceLoadStatus::Error;
 }
 
 StyleRuleFontFace* CSSFontFace::cssConnection() const
@@ -768,7 +788,7 @@ void CSSFontFace::load()
     pump(ExternalResourceDownloadPolicy::Allow);
 }
 
-static Font::Visibility LEGACY_NODELETE visibility(CSSFontFace::Status status, CSSFontFace::FontLoadTiming timing)
+NODELETE static Font::Visibility visibility(CSSFontFace::Status status, CSSFontFace::FontLoadTiming timing)
 {
     switch (status) {
     case CSSFontFace::Status::Pending:
@@ -836,10 +856,11 @@ void CSSFontFace::updateStyleIfNeeded()
     });
 }
 
-bool CSSFontFace::hasSVGFontFaceSource() const
+bool CSSFontFace::supportsSVGVariantCaps(FontVariantCaps variantCaps) const
 {
-    return m_sources.containsIf([](auto& source) {
-        return protect(*source)->isSVGFontFaceSource();
+    return std::ranges::all_of(m_sources, [&](auto& source) {
+        RefPtr element = source->svgFontFaceElement();
+        return !element || element->supportsVariantCaps(variantCaps);
     });
 }
 

@@ -18,6 +18,7 @@ function mac_process_webcontent_entitlements()
     if [[ "${WK_USE_RESTRICTED_ENTITLEMENTS}" == YES ]]
     then
         plistbuddy Add :com.apple.private.verified-jit bool YES
+        plistbuddy Add :com.apple.private.verified-jit-mode integer 1
         plistbuddy Add :com.apple.security.cs.single-jit bool YES
     fi
 
@@ -290,7 +291,6 @@ function mac_process_webpushd_entitlements()
         then
             plistbuddy Add :com.apple.security.hardened-process.checked-allocations.no-tagged-receive bool YES
         fi
-        plistbuddy Add :com.apple.security.hardened-process.checked-allocations.soft-mode bool YES
     fi
 }
 
@@ -343,6 +343,7 @@ function maccatalyst_process_webcontent_entitlements()
     plistbuddy Add :com.apple.security.cs.allow-jit bool YES
 
     plistbuddy Add :com.apple.private.verified-jit bool YES
+    plistbuddy Add :com.apple.private.verified-jit-mode integer 1
     plistbuddy Add :com.apple.security.cs.single-jit bool YES
 
     maccatalyst_process_webcontent_shared_entitlements
@@ -530,6 +531,7 @@ function ios_family_process_gpu_entitlements()
     plistbuddy Add :com.apple.private.coremedia.pidinheritance.allow bool YES
     plistbuddy Add :com.apple.private.memorystatus bool YES
     plistbuddy Add :com.apple.private.memory.ownership_transfer bool YES
+    plistbuddy Add :com.apple.private.metal.hardened-compiler bool YES
     plistbuddy Add :com.apple.private.network.socket-delegate bool YES
     plistbuddy Add :com.apple.private.webkit.use-xpc-endpoint bool YES
     plistbuddy Add :com.apple.runningboard.assertions.webkit bool YES
@@ -623,7 +625,6 @@ function ios_family_process_webpushd_entitlements()
     plistbuddy Add :com.apple.security.exception.files.absolute-path.read-only:0 string /private/var/db/os_eligibility/eligibility.plist
     plistbuddy Add :com.apple.developer.hardened-process bool YES
     plistbuddy Add :com.apple.security.hardened-process.checked-allocations.no-tagged-receive bool YES
-    plistbuddy Add :com.apple.security.hardened-process.checked-allocations.soft-mode bool YES
 }
 
 function ios_family_process_network_entitlements()

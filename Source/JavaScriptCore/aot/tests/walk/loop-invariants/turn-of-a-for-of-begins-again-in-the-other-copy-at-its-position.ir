@@ -1,0 +1,56 @@
+# `for (const item of items) sum += item.weight`: the typed copy steps by index alone, so what catches a throw of the body has nothing to close and the body stands under no handler:
+# a test of `item` that fails begins the turn again in the other copy, which takes the position of the iteration as it takes the parameters of the head, behind them.
+# It used to be one copy, with closed arms that come back and the sum boxed: 43 instructions a turn, 21 since; by index 20.
+# interface Item { weight: number; name: string }   function total(items: Item[]): number { let sum = 0; for (const item of items) sum += item.weight; return sum; }   kept = total; sink(total([{ weight: 2, name: "a" }, ..]));
+# f1 = total
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# the entry of the other copy: the sum, and the position behind it. It is no rare code: one item of another shape sends all the turns that are left there
+# CHECK: [[entry]]({{*}}@JSValue, {{*}}: int[0, 34359738368] @Int64):
+# CHECK: ([[sum]]: number @Double, [[position]]: int[0, 34359738368] @Int64) isInLoop=true isLoopHead=true
+# CHECK: = ShapeTest
+# CHECK: [[boxed]]: number @JSValue = Box [[sum]]
+# CHECK: Jump -> next [[entry]]([[boxed]], [[position]])
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=10 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|L0 elements=[Object{layout=L0 members=[{key="weight" value=Number{value=2}}, {key="name" value=String{value="a"}}]}, Object{layout=L0 members=[{key="weight" value=Number{value=3.5}}, {key="name" value=String{value="b"}}]}, Object{layout=L0 members=[{key="weight" value=Number{value=7}}, {key="name" value=String{value="c"}}]}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="kept"
+    v3 = PropGet v1 key="sink" [isFreeName]
+    v4 = Data data=d0
+    v5 = Call v0, -, v4
+    v6 = Call v3, -, v5
+    Return v6
+}
+function f1 name="total" module=m0 position=48 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer @98
+    v2 = Convert v1 declared={type=number} @98
+    v3 = IteratorOpen v0 @101
+    Jump -> next b1(v2) @101
+  b1(v4: number):
+    LoopHint @101
+    v6 = IteratorResume v3 @101
+    v7 = ResultAt v6 @101
+    v8 = ResultAt v6 index=1 @101
+    Branch v7 -> taken b2(), notTaken b3() @101
+  b2():
+    v9 = Convert v4 declared={type=number} @154
+    Return v9 @154
+  b3():
+    Jump -> next b4() @101
+  b4() handler=b5():
+    v10 = PropGet v8 key="weight" @134
+    v11 = Add v4, v10 @134
+    v12 = Convert v11 declared={type=number} @127
+    Jump -> next b1(v12) @127
+  b5() role=IterationCleanup subject=v3:
+    v13 = CatchException @101
+    IteratorClose v3 completion=Throw @101
+    Rethrow v13 @101
+}

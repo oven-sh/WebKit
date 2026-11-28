@@ -1,0 +1,22 @@
+# const { iterator: steps } = Symbol;  typeof String.prototype[steps];
+# The pattern is a read of `iterator` off Symbol. Symbol.iterator can be neither written nor defined anew: what the read gives is that one symbol, as the constant written out is. The read under it goes by that name,
+# for the look and for Link alike: one member of String.prototype is read, no other is asked for.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link accesses mechanisms=all
+# CHECK: access f0 v3 under @@iterator
+# RUN(LACKED): lacked
+# LACKED-NOT: lacked
+# RUN(LOOK): features mechanisms=all
+# LOOK-NOT: feature
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = PropGet v0 key="iterator"
+    v2 = Builtin builtin=StringPrototype
+    v3 = ElemGet v2, v1
+    v4 = TypeOf v3
+    Return v4
+}

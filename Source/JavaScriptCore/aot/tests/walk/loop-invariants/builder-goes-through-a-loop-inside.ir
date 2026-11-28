@@ -1,0 +1,142 @@
+# a text that grows in a loop and in a loop inside it goes through the head of the inner loop in the builder of the outer one: one builder is begun, both loops append to it, and no turn of either joins strings
+# function table() { let s = ""; for (let i = 0; i < 16; i++) { for (let j = 0; j < 16; j++) s += "x"; s += ";"; } return s; }
+# function reset() { let s = ""; for (let i = 0; i < 16; i++) { for (let j = 0; j < 16; j++) s += "x"; sink(s); s = ""; } return s; }
+# the one property that is changed: the outer loop does not only let the text grow, so there it goes round as a string. A builder for the inner loop would be begun with the whole of it at every outer turn
+# function nested() { let s = ""; for (let i = 0; i < 16; i++) { s += "x"; let t = ""; for (let j = 0; j < 4; j++) t += s; sink(t); } return s; }
+# the inner loop has a text of its own and reads the outer one, which is a string to the looks at the inner loop
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK: StringBuilderAppendConstant {{*}}string="x"
+# CHECK: StringBuilderAppendConstant {{*}}string=";"
+# RUN(OUT): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# OUT-LABEL: code f1:Body
+# OUT-COUNT-1: StringBuilderFinish
+# OUT-NOT: StringBuilderFinish
+# RUN(ROPES): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# ROPES-NOT: StringBuilderToString
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-COUNT-1: StringBuilderBegin
+# ALL-NOT: StringBuilderBegin
+# ALL: StringBuilderAppendConstant {{*}}string="x"
+# RUN(RESET): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# RESET-LABEL: code f2:Body
+# RESET-NOT: StringBuilder
+# RUN(NESTED): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NESTED-LABEL: code f3:Body
+# NESTED-COUNT-2: StringBuilderBegin
+# NESTED: [[outer]]: {{*}}StringBuilderToString
+# NESTED: StringBuilderAppendString {{*}}[[outer]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="table" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string=""
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=16
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = Integer
+    Jump -> next b3(v2, v7)
+  b3(v8, v9):
+    LoopHint
+    v11 = Integer integer=16
+    v12 = Less v9, v11
+    Branch v12 -> taken b4(), notTaken b5()
+  b4():
+    v13 = String string="x"
+    v14 = Add v8, v13
+    v15 = Increment v9
+    Jump -> next b3(v14, v15)
+  b5():
+    v16 = String string=";"
+    v17 = Add v8, v16
+    v18 = Increment v3
+    Jump -> next b1(v17, v18)
+  b6():
+    Return v2
+}
+function f2 name="reset" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=16
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    v9 = Integer
+    Jump -> next b3(v4, v9)
+  b3(v10, v11):
+    LoopHint
+    v13 = Integer integer=16
+    v14 = Less v11, v13
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    v15 = String string="x"
+    v16 = Add v10, v15
+    v17 = Increment v11
+    Jump -> next b3(v16, v17)
+  b5():
+    v18 = Call v1, -, v10
+    v19 = String string=""
+    v20 = Increment v5
+    Jump -> next b1(v19, v20)
+  b6():
+    Return v4
+}
+function f3 name="nested" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=16
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    v9 = String string="x"
+    v10 = Add v4, v9
+    v11 = String string=""
+    v12 = Integer
+    Jump -> next b3(v11, v12)
+  b3(v13, v14):
+    LoopHint
+    v16 = Integer integer=4
+    v17 = Less v14, v16
+    Branch v17 -> taken b4(), notTaken b5()
+  b4():
+    v18 = Add v13, v10
+    v19 = Increment v14
+    Jump -> next b3(v18, v19)
+  b5():
+    v20 = Call v1, -, v13
+    v21 = Increment v5
+    Jump -> next b1(v10, v21)
+  b6():
+    Return v4
+}

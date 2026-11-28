@@ -1,0 +1,7 @@
+# nothing in the program can change what an object of A, B1 or B2 finds under `m`, so no row of the family stands on a guard. Nothing ever puts the lookup into the table, so there is no unit for it. The entries are there
+# class A { m() {} }  class B1 extends A { m() {} }  class B2 extends A { m() {} }  function f(x) { return x.m(); }  f(new A); f(new B1); f(new B2);
+# RUN: units-with-code mechanisms=all
+# CHECK: :TableEntry
+# RUN(NEVER): units-with-code mechanisms=all
+# NEVER-NOT: :TableLookup
+# PROGRAM-OF: ../../driver/method-that-one-call-enters-has-no-row-in-the-method-table.ir
