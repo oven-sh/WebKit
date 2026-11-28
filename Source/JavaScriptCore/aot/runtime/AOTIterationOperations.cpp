@@ -833,23 +833,25 @@ static bool tryAppendNumbersOfView(JSGlobalObject* globalObject, JSArray* target
     VM& vm = globalObject->vm();
     if (view->type() < Int8ArrayType || view->type() > Float64ArrayType || view->isOutOfBounds() || !view->isIteratorProtocolFastAndNonObservable())
         return false;
-    uint64_t newLength = static_cast<uint64_t>(target->length()) + view->length();
+    // Another thread may grow the buffer that the view follows: the length is read once.
+    const size_t length = view->length();
+    uint64_t newLength = static_cast<uint64_t>(target->length()) + length;
     if (newLength > MAX_STORAGE_VECTOR_LENGTH)
         return false;
-    if (!view->length())
+    if (!length)
         return true;
     bool holdsInt32Alone = view->type() >= Int8ArrayType && view->type() <= Int32ArrayType;
     if (IndexingType mode = target->indexingMode(); holdsInt32Alone && (mode == ArrayWithInt32 || mode == ArrayWithContiguous)) {
         unsigned start = target->length();
         if (!target->ensureLength(vm, static_cast<unsigned>(newLength)))
             return false;
-        copyNumbersOfView(view, target->butterfly()->indexingPayload<EncodedJSValue>() + start, view->length());
+        copyNumbersOfView(view, target->butterfly()->indexingPayload<EncodedJSValue>() + start, length);
         return true;
     }
     Vector<EncodedJSValue, 64> values;
-    if (!values.tryReserveInitialCapacity(view->length()))
+    if (!values.tryReserveInitialCapacity(length))
         return false;
-    values.grow(view->length());
+    values.grow(length);
     copyNumbersOfView(view, values.mutableSpan().data(), values.size());
     std::optional<IndexingType> kind = holdsInt32Alone ? hasDouble(target->indexingType()) ? ArrayWithDouble : ArrayWithInt32 : findIndexingTypeOfValues(target, values.span());
     RELEASE_ASSERT(kind);
@@ -857,9 +859,8 @@ static bool tryAppendNumbersOfView(JSGlobalObject* globalObject, JSArray* target
 }
 
 template<typename View>
-static bool copyFractionsOfView(JSArrayBufferView* view, double* __restrict numbers)
+static ALWAYS_INLINE bool copyFractionsOfUnsharedView(JSArrayBufferView* view, double* __restrict numbers, size_t length)
 {
-    size_t length = view->length();
     const auto* __restrict elements = uncheckedDowncast<View>(view)->typedVector();
     bool holdsNaN = false;
     for (size_t index = 0; index < length; ++index) {
@@ -868,6 +869,27 @@ static bool copyFractionsOfView(JSArrayBufferView* view, double* __restrict numb
         numbers[index] = number;
     }
     return !holdsNaN;
+}
+
+// Another thread may store into the elements, so what is tested is the copy. The loop above may be compiled to read each of them twice.
+template<typename View>
+static NEVER_INLINE bool copyFractionsOfSharedView(JSArrayBufferView* view, double* numbers, size_t length)
+{
+    const auto* elements = uncheckedDowncast<View>(view)->typedVector();
+    for (size_t index = 0; index < length; ++index)
+        numbers[index] = static_cast<double>(elements[index]);
+    WTF::compilerFence();
+    return std::ranges::none_of(std::span { numbers, length }, [](double number) {
+        return number != number;
+    });
+}
+
+template<typename View>
+static bool copyFractionsOfView(JSArrayBufferView* view, double* numbers, size_t length)
+{
+    if (view->isShared()) [[unlikely]]
+        return copyFractionsOfSharedView<View>(view, numbers, length);
+    return copyFractionsOfUnsharedView<View>(view, numbers, length);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfView, JSCell*, (Instance* instance, JSCell* cell, uint32_t roomAndKind))
@@ -888,9 +910,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfView, JSCell*, (Instance
         OPERATION_RETURN(scope, nullptr);
     bool isFilled = true;
     if (type == Float64ArrayType && holdsFractions)
-        isFilled = copyFractionsOfView<JSFloat64Array>(view, array->butterfly()->indexingPayload<double>());
+        isFilled = copyFractionsOfView<JSFloat64Array>(view, array->butterfly()->indexingPayload<double>(), length);
     else if (holdsFractions)
-        isFilled = copyFractionsOfView<JSFloat32Array>(view, array->butterfly()->indexingPayload<double>());
+        isFilled = copyFractionsOfView<JSFloat32Array>(view, array->butterfly()->indexingPayload<double>(), length);
     else
         copyNumbersOfView(view, array->butterfly()->indexingPayload<EncodedJSValue>(), length);
     vm.mutatorFence();
