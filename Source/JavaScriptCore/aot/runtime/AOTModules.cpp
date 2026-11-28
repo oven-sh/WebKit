@@ -6824,7 +6824,7 @@ void Modules::keepFailureOfRequest(ModuleID module, ModuleRecord* record, const 
 
 struct Modules::RequestsOfUncompiledCode {
     struct Request {
-        UniquedStringImpl* key;
+        Identifier key;
         RefPtr<ScriptFetchParameters> fetchParameters;
     };
 
@@ -6856,11 +6856,12 @@ void Modules::collectRequestsBelow(ModuleID module, RequestsOfUncompiledCode& re
         if (!data(target).reachesUncompiledCode())
             continue;
         if (data(target).isUncompiledCode()) {
-            const Identifier& key = resolvedKey(target);
+            // Resolving what follows may run code of the program that lets go of this key.
+            Identifier key = resolvedKey(target);
             RETURN_IF_EXCEPTION(scope, void());
             RefPtr<ScriptFetchParameters> fetchParameters = fetchParametersOf(target);
             if (requests.seen.add(placeInLoader(key, fetchParameters.get())).isNewEntry)
-                requests.list.append({ key.impl(), WTF::move(fetchParameters) });
+                requests.list.append({ WTF::move(key), WTF::move(fetchParameters) });
         } else if (status(target) == ModuleStatus::Unlinked && !isOrWillBeMocked(target) && !visited.quickSet(target.index()))
             path.append(m_table.requests(target));
     }
@@ -6875,10 +6876,10 @@ bool Modules::importsUnloadedCode(ModuleID module)
     collectRequestsBelow(module, requests);
     RETURN_IF_EXCEPTION(scope, false);
     return std::ranges::any_of(requests.list, [&](const auto& request) {
-        ModuleRegistryEntry* entry = registryEntry(Identifier::fromUid(*m_instance.vm, request.key), request.fetchParameters.get());
+        ModuleRegistryEntry* entry = registryEntry(request.key, request.fetchParameters.get());
         if (entry && entry->record())
             return false;
-        std::optional<ModuleID> compiled = m_table.findByPath(String(request.key));
+        std::optional<ModuleID> compiled = m_table.findByPath(request.key.string());
         return !compiled || isEvicted(*compiled);
     });
 }
@@ -6893,7 +6894,7 @@ bool Modules::comesToCodeThatDoesNotLoad(ModuleID root)
         return true;
     }
     for (const auto& request : requests.list) {
-        if (ModuleRegistryEntry* entry = registryEntry(Identifier::fromUid(*m_instance.vm, request.key), request.fetchParameters.get()); entry && entry->fetchError())
+        if (ModuleRegistryEntry* entry = registryEntry(request.key, request.fetchParameters.get()); entry && entry->fetchError())
             return true;
     }
     return false;
@@ -6909,14 +6910,14 @@ ModuleRecord* Modules::appendRequestsOfUncompiledCode(ModuleID module, ModuleRec
     collectRequestsOfUncompiledCode(module, requests);
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (auto& request : requests.list) {
-        if (std::optional<ModuleID> compiled = m_table.findByPath(String(request.key)); compiled && isCommonJSModuleOrFacade(*compiled)) {
-            noteLoadOfFile(*compiled, loader()->registryEntry(Identifier::fromUid(vm, request.key)) ? LoadOfFile::HasComeToFile : LoadOfFile::IsRequested);
+        if (std::optional<ModuleID> compiled = m_table.findByPath(request.key.string()); compiled && isCommonJSModuleOrFacade(*compiled)) {
+            noteLoadOfFile(*compiled, loader()->registryEntry(request.key) ? LoadOfFile::HasComeToFile : LoadOfFile::IsRequested);
             RETURN_IF_EXCEPTION(scope, nullptr);
             noteRequestByLoader(*compiled);
             if (!m_isMainCommonJSModuleDecided)
                 m_firstFilesOfLoads.append(fileOf(*compiled));
         }
-        record->appendRequestedModule(Identifier::fromUid(vm, request.key), WTF::move(request.fetchParameters), ModulePhase::Evaluation);
+        record->appendRequestedModule(request.key, WTF::move(request.fetchParameters), ModulePhase::Evaluation);
     }
     return record;
 }

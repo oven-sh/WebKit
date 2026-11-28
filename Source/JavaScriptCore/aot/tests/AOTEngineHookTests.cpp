@@ -14,6 +14,7 @@
 #include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTModules.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRealmTestSupport.h"
@@ -43,6 +44,7 @@
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <array>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -663,6 +665,57 @@ static void testStructuresWithPropertiesComeAndGo(LoadedProgram& program)
     }
 }
 
+static constexpr ASCIILiteral programThatImportsUncompiledCode =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]\n"
+    "module m1 path=\"first\" displayPath=\"first\" kind=External externalKind=UncompiledCode referrer=m0\n"
+    "module m2 path=\"second\" displayPath=\"second\" kind=External externalKind=UncompiledCode referrer=m0\n"
+    "entry module=m0\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"_s;
+
+static unsigned s_numberOfNamesResolved;
+
+static Identifier resolveNamesAnewWhileSecondNameIsResolved(JSGlobalObject* realm, JSModuleLoader*, JSValue name, JSValue, RefPtr<ScriptFetcher>, bool)
+{
+    VM& vm = realm->vm();
+    unsigned number = s_numberOfNamesResolved++;
+    if (number == 1) {
+        Modules& modules = *Instance::of(realm)->state->modules;
+        modules.forgetWhatNamesResolvedTo();
+        modules.importsUnloadedCode(ModuleID(0u));
+    }
+    return Identifier::fromString(vm, makeString(asString(name)->getString(realm), " resolved by call "_s, number));
+}
+
+static void testKeyOfRequestOutlivesItsResolution(LoadedProgram& program)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    // It is the table that the test support made for this realm, which is not const there.
+    auto& methodTable = const_cast<GlobalObjectMethodTable&>(*program.realm()->globalObjectMethodTable());
+    SetForScope resolve(methodTable.moduleLoaderResolve, resolveNamesAnewWhileSecondNameIsResolved);
+
+    Modules& modules = *program.state().modules;
+    for (bool (Modules::*collectsRequests)(ModuleID) : { &Modules::importsUnloadedCode, &Modules::comesToCodeThatDoesNotLoad }) {
+        s_numberOfNamesResolved = 0;
+        modules.forgetWhatNamesResolvedTo();
+        (modules.*collectsRequests)(ModuleID(0u));
+        AOT_TEST_CHECK(!scope.exception());
+        AOT_TEST_CHECK(s_numberOfNamesResolved == 4);
+    }
+    s_numberOfNamesResolved = 0;
+    modules.forgetWhatNamesResolvedTo();
+    ModuleRecord* record = modules.ensureRecord(ModuleID(0u));
+    modules.appendRequestsOfUncompiledCode(ModuleID(0u), record);
+    AOT_TEST_CHECK(!scope.exception());
+    AOT_TEST_CHECK(s_numberOfNamesResolved == 4);
+    AOT_TEST_CHECK(record->requestedModules().size() == 2);
+    // The atom itself is compared: one that was let go of is in the table of atoms no more.
+    AOT_TEST_CHECK(record->requestedModules()[0].m_specifier == Identifier::fromString(program.vm(), "first resolved by call 0"_s));
+    AOT_TEST_CHECK(record->requestedModules()[1].m_specifier == Identifier::fromString(program.vm(), "second resolved by call 1"_s));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<engineHookTests, programText, body>;
 
@@ -681,6 +734,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
         { "engine-hooks/a-driver-whose-frame-is-not-saved-is-not-resumed"_s, withProgram<testDriverWithoutSavedFrameIsNotResumed> },
         { "engine-hooks/an-interpreted-driver-is-resumed-only-where-it-is-suspended"_s, withProgram<testInterpretedDriverIsResumedOnlyWhereItIsSuspended> },
+        { "engine-hooks/key-of-request-outlives-its-resolution"_s, runNativeTestWithLoadedProgram<engineHookTests, programThatImportsUncompiledCode, testKeyOfRequestOutlivesItsResolution> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },
         { "engine-hooks/create-with-properties"_s, withProgram<testCreateWithProperties> },
         { "engine-hooks/structures-with-properties-come-and-go-between-collections"_s, withProgram<testStructuresWithPropertiesComeAndGo> },
