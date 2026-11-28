@@ -6,7 +6,7 @@ if (platformSupportsSamplingProfiler()) {
 
     const never = 1000 * 1000 * 1000;
     const create = options => {
-        const profiler = createSamplingProfiler({ intervalInMicroseconds: 500, ...options });
+        const profiler = createSamplingProfiler({ intervalInMicroseconds: stretchInSlowBuild(500), ...options });
         return Object.assign(new Tally(profiler.releaseSamples), { start: profiler.start, shutdown: profiler.shutdown });
     };
     const sample = (tally, count = 10, start = tally.total) => tally.repeatUntil(tally => tally.total >= start + count, () => spin(1));
@@ -17,7 +17,7 @@ if (platformSupportsSamplingProfiler()) {
         const records = create({ recordsSamplesWithoutFrames: true });
         const doesNotRecord = create();
         const neverReleases = create({ recordsSamplesWithoutFrames: true });
-        await records.repeatAsyncUntil(tally => tally.Idle >= 5, () => new Promise(resolve => setTimeout(resolve, 2)));
+        await records.repeatAsyncUntil(tally => tally.Idle >= 5, () => new Promise(resolve => setTimeout(resolve, stretchInSlowBuild(2))));
         assert(!update(doesNotRecord).withoutFrames, "it did not ask for them: " + doesNotRecord);
         neverReleases.shutdown();
         assert(!update(neverReleases).total, "it has kept samples: " + neverReleases);
@@ -62,7 +62,7 @@ if (platformSupportsSamplingProfiler()) {
             failIfOutOfTime(() => found);
             const profilers = [create(), create()];
             for (let i = 0; i < 10; i++)
-                new Function("spin", `return function temporary${i}() { spin(0.5); }`)(spin)();
+                new Function("spin", `return function temporary${i}() { spin(stretchInSlowBuild(0.5)); }`)(spin)();
             fullGC();
             for (let i = 0; i < 100; i++)
                 new Function(`return function other${i}() { }`)()();

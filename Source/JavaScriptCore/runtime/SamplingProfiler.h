@@ -235,9 +235,9 @@ public:
     // A deeper stack loses its outermost frames. A function that was inlined does not count.
     static constexpr size_t unlimitedStackDepth = std::numeric_limits<size_t>::max();
     JS_EXPORT_PRIVATE void setMaximumStackDepth(size_t) WTF_REQUIRES_LOCK(m_lock);
-    // With this, every tick of the timer leaves either a stack trace or a sample without frames. If JavaScript has returned by the
-    // time the thread is suspended, or its stack cannot be walked, the stack trace is cut down to its outermost frame.
-    // That frame is known unless it was called while the VM had no profiler.
+    // With this, every tick of the timer leaves either a stack trace or a sample without frames, unless this profiler is writing a
+    // report. If JavaScript has returned by the time the thread is suspended, or its stack cannot be walked, the stack trace is cut
+    // down to its outermost frame. That frame is known unless it was called while the VM had no profiler.
     void setRecordsSamplesWithoutFrames(bool records) WTF_REQUIRES_LOCK(m_lock)
     {
         if (std::exchange(m_recordsSamplesWithoutFrames, records) != records)
@@ -262,21 +262,26 @@ public:
     JS_EXPORT_PRIVATE void reportTopFunctions(PrintStream&);
     JS_EXPORT_PRIVATE void reportTopBytecodes();
     JS_EXPORT_PRIVATE void reportTopBytecodes(PrintStream&);
+    // Of the same samples.
+    JS_EXPORT_PRIVATE void reportTopFunctionsAndBytecodes(PrintStream&);
 
     NODELETE JS_EXPORT_PRIVATE Thread* thread() const;
 
 private:
+    class Report;
     class Sampler;
 
     void appendStackTrace(MonotonicTime, SharedStackTrace&) WTF_REQUIRES_LOCK(m_lock);
     void appendSampleWithoutFrames(MonotonicTime, ThreadState) WTF_REQUIRES_LOCK(m_lock);
-    std::pair<Vector<StackTrace>, Seconds> stackTracesAndTimingInterval() WTF_EXCLUDES_LOCK(m_lock);
+    void reportTopFunctions(PrintStream&, Report&);
+    void reportTopBytecodes(PrintStream&, Report&);
 
     const Ref<Sampler> m_sampler;
     Lock& m_lock;
     bool m_isRunning WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_hasJustStarted WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_isWritingReport WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_recordsSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_canExtendLastSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_needsReportAtExit { false };

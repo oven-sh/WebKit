@@ -10,6 +10,11 @@ function failIfOutOfTime(describe) {
         throw new Error("out of time: " + describe());
 }
 
+// For the interval of a profiler that runs while its samples are looked at. If that takes longer than collecting them, there are more each time.
+function stretchInSlowBuild(duration) {
+    return $vm.assertEnabled() || $vm.asanEnabled() ? duration * 10 : duration;
+}
+
 class Tally {
     Idle = 0;
     Program = 0;

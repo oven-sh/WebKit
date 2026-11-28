@@ -752,8 +752,12 @@ void SamplingProfiler::Sampler::timerLoop()
                 dueProfilers.append(profiler);
         }
 
+        std::span<SamplingProfiler*> profilersToSample = std::ranges::partition(dueProfilers.mutableSpan(), [](SamplingProfiler* profiler) {
+            assertIsHeld(profiler->m_lock);
+            return profiler->m_isWritingReport;
+        });
         Seconds stackTraceProcessingTime = 0_s;
-        takeSample(dueProfilers.mutableSpan(), timingInterval, stackTraceProcessingTime);
+        takeSample(profilersToSample, timingInterval, stackTraceProcessingTime);
 
         // Read section 6.2 of this paper for more elaboration of why we add a random
         // fluctuation here. The main idea is to prevent our timer from being in sync
@@ -770,6 +774,8 @@ void SamplingProfiler::Sampler::timerLoop()
         for (SamplingProfiler* profiler : dueProfilers) {
             assertIsHeld(profiler->m_lock);
             profiler->m_hasJustStarted = false;
+            if (profiler->m_isWritingReport)
+                profiler->m_canExtendLastSamplesWithoutFrames = false;
             if (profiler->m_timingInterval == timingInterval)
                 profiler->m_nextSampleTime = nextTick;
             else
@@ -1740,16 +1746,49 @@ auto SamplingProfiler::releaseSamples() -> Samples
     return result;
 }
 
-// What a report does with them allocates. That may finalize the owner of another profiler, which takes the lock to shut it down.
-auto SamplingProfiler::stackTracesAndTimingInterval() -> std::pair<Vector<StackTrace>, Seconds>
-{
-    Locker locker { m_lock };
+// The profiler takes no samples while this exists. The lock is only held to collect them: writing a report allocates,
+// which may finalize the owner of another profiler, which takes the lock to shut it down.
+class SamplingProfiler::Report {
+    WTF_MAKE_NONCOPYABLE(Report);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit Report(SamplingProfiler& profiler)
+        : m_profiler(profiler)
     {
-        HeapIterationScope heapIterationScope(m_vm.heap);
-        processUnverifiedStackTraces();
+        Locker locker { profiler.m_lock };
+        ASSERT(!profiler.m_isWritingReport);
+        profiler.m_isWritingReport = true;
+        m_isYetToTakeFirstSample = profiler.m_isRunning && profiler.m_hasJustStarted;
+        if (m_isYetToTakeFirstSample)
+            profiler.pause();
+        {
+            HeapIterationScope heapIterationScope(profiler.m_vm.heap);
+            profiler.processUnverifiedStackTraces();
+        }
+        m_stackTraces = profiler.m_stackTraces;
+        m_timingInterval = profiler.m_timingInterval;
     }
-    return { m_stackTraces, m_timingInterval };
-}
+
+    ~Report()
+    {
+        m_stackTraces.clear();
+        {
+            Locker locker { m_profiler.m_lock };
+            m_profiler.m_isWritingReport = false;
+        }
+        if (m_isYetToTakeFirstSample)
+            m_profiler.start(); // Not startWithLock(): this is the entry point by which the sampler can be removed from an executable.
+    }
+
+    std::span<StackTrace> stackTraces() LIFETIME_BOUND { return m_stackTraces.mutableSpan(); }
+    Seconds timingInterval() const { return m_timingInterval; }
+
+private:
+    SamplingProfiler& m_profiler;
+    Vector<StackTrace> m_stackTraces;
+    Seconds m_timingInterval;
+    bool m_isYetToTakeFirstSample;
+};
 
 static String descriptionForLocation(SamplingProfiler::StackFrame::CodeLocation location, std::optional<Wasm::CompilationMode> wasmCompilationMode, BytecodeIndex wasmOffset)
 {
@@ -1863,7 +1902,7 @@ static String tierName(SamplingProfiler::StackFrame& frame)
 Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
 {
     DeferGC deferGC(m_vm);
-    auto [stackTraces, timingInterval] = stackTracesAndTimingInterval();
+    Report report(*this);
 
     UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
 
@@ -1947,9 +1986,9 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
     };
 
     auto result = JSON::Object::create();
-    result->setDouble("interval"_s, timingInterval.seconds());
+    result->setDouble("interval"_s, report.timingInterval().seconds());
     auto traces = JSON::Array::create();
-    for (StackTrace& stackTrace : stackTraces)
+    for (StackTrace& stackTrace : report.stackTraces())
         traces->pushValue(stackTraceAsJSON(stackTrace));
     result->setValue("traces"_s, WTF::move(traces));
 
@@ -1958,8 +1997,10 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
         sourcesArray->pushValue(sourceAsJSON(sourceProvider.get()));
     result->setValue("sources"_s, WTF::move(sourcesArray));
 
-    Locker locker { m_lock };
-    clearData(); // What has been sampled in the meantime is this function.
+    {
+        Locker locker { m_lock };
+        clearData();
+    }
 
     return result;
 }
@@ -1979,7 +2020,7 @@ void SamplingProfiler::registerForReportAtExit()
         });
     }
 
-    profilesToReport->add(adoptRef(this));
+    profilesToReport->add(this);
     m_needsReportAtExit = true;
 }
 
@@ -1993,9 +2034,16 @@ void SamplingProfiler::reportDataToOptionFile()
         pathOut.print(path, "/");
         pathOut.print("JSCSampilingProfile-", reinterpret_cast<uintptr_t>(this), ".txt");
         auto out = FilePrintStream::open(pathOut.toUTF8CString(), "w"_s);
-        reportTopFunctions(*out);
-        reportTopBytecodes(*out);
+        reportTopFunctionsAndBytecodes(*out);
     }
+}
+
+void SamplingProfiler::reportTopFunctionsAndBytecodes(PrintStream& out)
+{
+    DeferGCForAWhile deferGC(m_vm);
+    Report report(*this);
+    reportTopFunctions(out, report);
+    reportTopBytecodes(out, report);
 }
 
 void SamplingProfiler::reportTopFunctions()
@@ -2006,11 +2054,15 @@ void SamplingProfiler::reportTopFunctions()
 void SamplingProfiler::reportTopFunctions(PrintStream& out)
 {
     DeferGCForAWhile deferGC(m_vm);
-    auto [stackTraces, timingInterval] = stackTracesAndTimingInterval();
+    Report report(*this);
+    reportTopFunctions(out, report);
+}
 
+void SamplingProfiler::reportTopFunctions(PrintStream& out, Report& report)
+{
     size_t totalSamples = 0;
     UncheckedKeyHashMap<String, size_t> functionCounts;
-    for (StackTrace& stackTrace : stackTraces) {
+    for (StackTrace& stackTrace : report.stackTraces()) {
         if (!stackTrace.frames.size())
             continue;
 
@@ -2047,7 +2099,7 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
     };
 
     if (Options::samplingProfilerTopFunctionsCount()) {
-        out.println("\n\nSampling rate: ", timingInterval.microseconds(), " microseconds. Total samples: ", totalSamples);
+        out.println("\n\nSampling rate: ", report.timingInterval().microseconds(), " microseconds. Total samples: ", totalSamples);
         out.println("Top functions as <numSamples  'functionName#hash:sourceID'>");
         for (size_t i = 0; i < Options::samplingProfilerTopFunctionsCount(); i++) {
             auto pair = takeMax();
@@ -2067,8 +2119,12 @@ void SamplingProfiler::reportTopBytecodes()
 void SamplingProfiler::reportTopBytecodes(PrintStream& out)
 {
     DeferGCForAWhile deferGC(m_vm);
-    auto [stackTraces, timingInterval] = stackTracesAndTimingInterval();
+    Report report(*this);
+    reportTopBytecodes(out, report);
+}
 
+void SamplingProfiler::reportTopBytecodes(PrintStream& out, Report& report)
+{
     size_t totalSamples = 0;
     UncheckedKeyHashMap<String, size_t> bytecodeCounts;
     UncheckedKeyHashMap<String, size_t> tierCounts;
@@ -2092,7 +2148,7 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
         func(Tiers::unknownExecutable);
     };
 
-    for (StackTrace& stackTrace : stackTraces) {
+    for (StackTrace& stackTrace : report.stackTraces()) {
         if (!stackTrace.frames.size())
             continue;
 
@@ -2130,7 +2186,7 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
     };
 
     if (Options::samplingProfilerTopBytecodesCount()) {
-        out.println("\n\nSampling rate: ", timingInterval.microseconds(), " microseconds. Total samples: ", totalSamples, "\n");
+        out.println("\n\nSampling rate: ", report.timingInterval().microseconds(), " microseconds. Total samples: ", totalSamples, "\n");
 
         out.println("Tier breakdown:");
         out.println("-----------------------------------");

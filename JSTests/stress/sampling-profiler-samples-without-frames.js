@@ -3,10 +3,10 @@
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplesWithoutFrames.js", "caller relative");
 
-    const leaveVM = () => new Promise(resolve => setTimeout(resolve, 2));
+    const leaveVM = () => new Promise(resolve => setTimeout(resolve, stretchInSlowBuild(2)));
 
     runAsyncTest(async () => {
-        let intervalInMicroseconds = 200;
+        let intervalInMicroseconds = stretchInSlowBuild(200);
         startSamplingProfiler({ intervalInMicroseconds });
         let tally = await new Tally().repeatAsyncUntil(tally => tally.stackTraces >= 10, () => (spin(1), leaveVM()));
         assert(!tally.withoutFrames, "they have to be asked for: " + tally);

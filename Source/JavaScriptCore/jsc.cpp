@@ -4015,7 +4015,7 @@ JSC_DEFINE_HOST_FUNCTION(functionReleaseSamplingProfilerSamples, (JSGlobalObject
     RELEASE_AND_RETURN(scope, releaseSamples(globalObject, *samplingProfiler));
 }
 
-// Starts one that the functions above do not know of. Takes the options of startSamplingProfiler(). Returns { releaseSamples(), start(), pause(), shutdown() }.
+// Starts one that the functions above do not know of. Takes the options of startSamplingProfiler(). Returns { releaseSamples(), report(), start(), pause(), shutdown() }.
 JSC_DEFINE_HOST_FUNCTION(functionCreateSamplingProfiler, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -4031,6 +4031,11 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateSamplingProfiler, (JSGlobalObject* global
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, Identifier::fromString(vm, "releaseSamples"_s), JSNativeStdFunction::create(vm, globalObject, 0, "releaseSamples"_s, [samplingProfiler](JSGlobalObject* globalObject, CallFrame*) {
         return releaseSamples(globalObject, samplingProfiler);
+    }));
+    result->putDirect(vm, Identifier::fromString(vm, "report"_s), JSNativeStdFunction::create(vm, globalObject, 0, "report"_s, [samplingProfiler](JSGlobalObject* globalObject, CallFrame*) {
+        StringPrintStream out;
+        samplingProfiler->reportTopFunctionsAndBytecodes(out);
+        return JSValue::encode(jsString(globalObject->vm(), out.toString()));
     }));
     result->putDirect(vm, Identifier::fromString(vm, "start"_s), JSNativeStdFunction::create(vm, globalObject, 0, "start"_s, [samplingProfiler](JSGlobalObject*, CallFrame*) {
         samplingProfiler->start();
@@ -5320,8 +5325,7 @@ int runJSC(const CommandLine& options, bool isWorker, NOESCAPE const Func& func)
         if (options.m_dumpSamplingProfilerData) {
 #if ENABLE(SAMPLING_PROFILER)
             JSLockHolder locker(&vm);
-            vm.samplingProfiler()->reportTopFunctions();
-            vm.samplingProfiler()->reportTopBytecodes();
+            vm.samplingProfiler()->reportTopFunctionsAndBytecodes(WTF::dataFile());
 #else
             dataLog("Sampling profiler is not enabled on this platform\n");
 #endif
