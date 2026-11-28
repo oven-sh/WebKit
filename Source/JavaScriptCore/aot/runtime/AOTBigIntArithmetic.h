@@ -70,7 +70,7 @@ public:
 
         ALWAYS_INLINE JSBigInt* finish(JSBigInt* result) const
         {
-            result->finishCreation(m_vm);
+            m_vm.mutatorFence();
             return result;
         }
 
@@ -78,7 +78,7 @@ public:
         {
             length = trimmedLength(result, length);
             result->setLength(length);
-            result->finishCreation(m_vm);
+            m_vm.mutatorFence();
             return length ? result : zero();
         }
 
