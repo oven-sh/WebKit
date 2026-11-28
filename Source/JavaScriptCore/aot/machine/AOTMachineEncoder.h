@@ -294,7 +294,7 @@ public:
 
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
-            ASSERT(memory.offsetFromSP() < m_frame.bytesBelowFrameRecord());
+            ASSERT(static_cast<uint64_t>(memory.offsetFromSP()) + sizeof(CPURegister) <= m_proc.callArgAreaSizeInBytes());
             return MacroAssembler::Address(MacroAssembler::stackPointerRegister, safeCast<int32_t>(memory.offsetFromSP()));
 
         case Location::InstanceWord:
