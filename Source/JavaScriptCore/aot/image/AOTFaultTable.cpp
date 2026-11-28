@@ -670,9 +670,10 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
     if (!Image::isRegistered())
         return false;
 #if CPU(X86_64) && OS(LINUX)
-    // Only a page fault says which address it is about. The address of any other exception is 0.
-    constexpr greg_t pageFault = 14;
-    if (registers.machineContext.gregs[REG_TRAPNO] != pageFault)
+    // These two come with the address 0, whatever the address was. A sandbox that makes its own signal frames may give no number at all.
+    constexpr greg_t stackFault = 12;
+    constexpr greg_t generalProtectionFault = 13;
+    if (greg_t exception = registers.machineContext.gregs[REG_TRAPNO]; exception == stackFault || exception == generalProtectionFault)
         return false;
 #endif
     void* pc = instructionPointer->untaggedPtr();
